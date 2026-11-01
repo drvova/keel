@@ -23,15 +23,15 @@
     "url": "git+https://github.com/drvova/pi-vcc.git"
   },
   "scripts": {
+    "setup:omp": "npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @oh-my-pi/pi-coding-agent@${OMP_VERSION:-latest}",
     "typecheck": "tsc --ignoreConfig --noEmit --skipLibCheck --module preserve --moduleResolution bundler --target ES2022 --types node index.ts"
   },
   "devDependencies": {
-    "@oh-my-pi/pi-coding-agent": "18.14.2",
     "@types/node": "26.6.5",
     "typescript": "7.0.2"
   },
   "peerDependencies": {
-    "@oh-my-pi/pi-coding-agent": ">=18.14.0 <19.0.0"
+    "@oh-my-pi/pi-coding-agent": ">=18.14.0"
   },
   "peerDependenciesMeta": {
     "@oh-my-pi/pi-coding-agent": {

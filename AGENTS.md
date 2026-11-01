@@ -6,17 +6,12 @@ omp-vcc is an omp (oh-my-pi) extension: algorithmic compaction (no LLM call), pi
 
 ```sh
 bun install --frozen-lockfile --ignore-scripts
+bun run setup:omp
 bun run typecheck
 bun test
 ```
 
-omp needs Bun >= 1.4.4. `bun.lock` pins omp (`@oh-my-pi/pi-coding-agent`, a dev dependency), so the suite runs against omp's real code: tests drive the hook with omp's own `convertToLlm` (`tests/support/host.ts`), read sessions with omp's own parser (`tests/support/load-session.ts`), and `tests/omp-host.test.ts` runs omp-vcc inside a real omp session. To try a newer omp, install it over the locked one:
-
-```sh
-V=18.14.2
-npm install --no-save --ignore-scripts --no-audit --no-fund @oh-my-pi/pi-coding-agent@$V
-bun test
-```
+omp is not a dependency: it releases often, and a pinned copy would test a version users have long updated past. `bun run setup:omp` installs the latest omp into `node_modules` without saving it (`OMP_VERSION=18.14.0 bun run setup:omp` for another one); typecheck and the suite need it, since tests drive the hook with omp's own `convertToLlm` (`tests/support/host.ts`), read sessions with omp's own parser (`tests/support/load-session.ts`), and `tests/omp-host.test.ts` runs omp-vcc inside a real omp session. omp needs a recent Bun (its `engines.bun`). CI runs everything against the latest omp and against the floor of the peer range in `package.json`, on every push and pull request and weekly.
 
 `tests/long-horizon.test.ts` holds the long-horizon floor: a synthetic 60- and 120-turn session with planted facts, compacted every 6 turns through the real hook (`tests/support/long-horizon.ts`). `bun run scripts/benchmark-long-horizon.ts` prints the per-fact table; run it before and after a change to the summary or recall.
 
@@ -37,7 +32,7 @@ omp's own docs ship inside its package (`dist/docs-index.generated.txt`: a JSON 
 
 ## Rules
 
-- Support the whole peer range (`>=18.14.0 <19.0.0`). Use a newer omp API only behind a check that keeps older releases on the old path.
+- Support the whole peer range (`>=18.14.0`; CI tests its floor and the latest omp). Raise the floor in `package.json` when a change needs a newer omp; otherwise use a newer omp API only behind a check that keeps older releases on the old path.
 - Nothing under `src/` or `index.ts` imports a package at runtime, omp's included: types come from `@oh-my-pi/*` with `import type`, functions from `pi.pi`. CI checks that `bun build index.ts --target bun --packages external` imports only node builtins.
 - omp binds the factory again for every subagent session while module state is shared, so per-session state lives in the binding (`createCompactionState()`), not in a module variable.
 - `#N` refs in summaries are session-wide entry indices that `vcc_recall` resolves. Any change to which entries are indexed must keep them stable; `[History Index]` ranges are `#N` too. Pins are `custom` entries, so they are never counted. In another session (`session:'id'`, `scope:'project'` hits) `#N` is that session's own.
