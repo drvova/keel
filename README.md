@@ -65,6 +65,7 @@ pi-vcc runs automatically when your context window fills up, or on demand:
 
 - `/pi-vcc` compacts now, keeping the last user turn.
 - `/pi-vcc keep:N [prompt]` keeps the last `N` user turns (`keep:0` compacts everything) and sends the optional prompt to the agent afterwards.
+- `/pi-vcc-pin <note>` pins a note that stays at the top of every summary until `/pi-vcc-unpin <N>`; `/pi-vcc-pin` alone lists the notes. The agent pins its own with the `vcc_pin` tool (decisions, constraints, facts the task depends on).
 
 With the default `keep:1`, a small tail is grown automatically (see `smartKeepTail`). To leave `/compact` and automatic compactions to Pi core, set `overrideDefaultCompaction: false`.
 
@@ -73,6 +74,9 @@ On a short session `/pi-vcc` can answer "Nothing to compact yet" whatever `keep:
 ### Compacted message structure
 
 ```
+[Pinned Notes]
+- [1] Never touch the legacy SSO flow, it is being removed (user, #3)
+
 [Early Session Requests]
 - Fix the auth bug, users can't log in after password reset
 - It happens only after a password reset, not after a normal logout
@@ -117,6 +121,7 @@ A section only appears when it has something to say; a session with no git commi
 
 | Section | Contents |
 |---|---|
+| `[Pinned Notes]` | Notes pinned with `/pi-vcc-pin` or `vcc_pin`, verbatim, until unpinned (the newest 20 are shown) |
 | `[Early Session Requests]` | The session's first 3 user messages, as written. Kept for the whole session; they can be stale later in a long session |
 | `[Files And Changes]` | Files modified, created or read (capped, paths trimmed to a common root) |
 | `[Commits]` | Last 8 commits made in the session (hash + subject) |
@@ -129,7 +134,7 @@ On the next compaction, the sections are merged with the previous summary and re
 
 ## Recall
 
-Pi's default compaction drops old messages for good. `vcc_recall` reads the raw session file instead, so anything compacted away stays reachable. It searches the active conversation lineage by default; `scope:"all"` also covers edited or retried branches. Only the current session is searchable.
+Pi's default compaction drops old messages for good. `vcc_recall` reads the raw session file instead, so anything compacted away stays reachable. It searches the active conversation lineage by default; `scope:"all"` also covers edited or retried branches, and `scope:"project"` this project's earlier sessions (restarts, `/new`, forks, handoffs).
 
 Plain keywords work best. Multi-word queries are OR-matched and ranked, rare terms weigh more, and a regex is accepted (falling back to keywords if it matches nothing):
 
@@ -149,12 +154,24 @@ vcc_recall({ mode: "touched" })                      // files worked on, with #N
 vcc_recall({ query: "#1253:auth.ts" })               // a file's content from #1253
 ```
 
+Earlier sessions of the same project (the session files in the same directory) are reachable too:
+
+```
+vcc_recall({ mode: "sessions" })                     // list them, newest first, with their pinned notes
+vcc_recall({ query: "auth token", scope: "project" }) // search them and this one; hits name their session
+vcc_recall({ session: "01a194d8", expand: [12] })    // read one: any call works inside it
+```
+
+`scope:"project"` searches the 20 newest earlier sessions (up to 24 MB); `session:` reaches any of them. Each session's `#N` are its own.
+
 Each call does one of these. `page` and `scope` work with all of them, and a param the call cannot use is named in the output instead of dropped silently. One result is capped at 50 KB, or a tenth of the model's context window when that is smaller (at least 8 KB); a clipped one starts with a warning. A search word also matches other forms of it (`rounding` finds `rounds`, `failure` finds `FAIL`).
 
 The same search as a slash command, with results shown in the chat and passed to the agent:
 
 ```
 /pi-vcc-recall auth token scope:all
+/pi-vcc-recall sessions
+/pi-vcc-recall auth token session:01a194d8
 ```
 
 ## How it works

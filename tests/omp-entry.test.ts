@@ -122,12 +122,13 @@ const conversation = () => [
 ];
 
 describe("omp entry: registration", () => {
-  test("registers the hook, both commands and the tool, and no continue machinery", () => {
+  test("registers the hook, the commands and tools, and no continue machinery", () => {
     const omp = createOmp();
     expect([...omp.handlers.keys()].sort()).toEqual(
       ["auto_compaction_end", "auto_compaction_start", "session_before_compact", "session_compact"],
     );
-    expect([...omp.commands.keys()].sort()).toEqual(["pi-vcc", "pi-vcc-recall"]);
+    expect([...omp.commands.keys()].sort()).toEqual(["pi-vcc", "pi-vcc-pin", "pi-vcc-recall", "pi-vcc-unpin"]);
+    expect(omp.tools.map((t: any) => t.name)).toEqual(["vcc_recall", "vcc_pin"]);
   });
 
   test("vcc_recall is a top-level read-only tool with a plain JSON Schema", () => {
@@ -136,7 +137,7 @@ describe("omp entry: registration", () => {
     expect(tool.loadMode).toBe("essential");
     expect(tool.approval).toBe("read");
     expect(tool.parameters.type).toBe("object");
-    expect(Object.keys(tool.parameters.properties).sort()).toEqual(["expand", "mode", "page", "query", "range", "scope"]);
+    expect(Object.keys(tool.parameters.properties).sort()).toEqual(["expand", "mode", "page", "query", "range", "scope", "session"]);
     expect(Object.getOwnPropertySymbols(tool.parameters)).toEqual([]);
   });
 

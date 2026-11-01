@@ -11,6 +11,7 @@ import { registerBeforeCompactHook } from "../../src/hooks/before-compact";
 import { parseToolRequest } from "../../src/core/recall-request";
 import { openRecallView, runRecall } from "../../src/core/recall-run";
 import { TOOL_PAGING_HINTS } from "../../src/tools/recall-spec";
+import { PIN_ENTRY_TYPE } from "../../src/core/pins";
 
 export type NeedleKind = "constraint" | "decision" | "tool_value" | "early_file" | "early_commit" | "fixed_error" | "mid_request";
 
@@ -30,6 +31,8 @@ export interface Needle {
 export interface LongHorizonOptions {
   turns?: number;
   compactEvery?: number;
+  /** Pin a note (a pi-vcc custom entry, as vcc_pin writes) at the end of these turns. */
+  pins?: Record<number, string>;
   /** Runs before the temp session is removed: extra queries for debugging. */
   inspect?: (recall: (params: Record<string, unknown>) => string, needles: Needle[]) => void;
 }
@@ -189,6 +192,11 @@ export const runLongHorizon = (options: LongHorizonOptions = {}): LongHorizonRes
     let compactions = 0;
     for (let t = 0; t < turns; t++) {
       turnFns[t]();
+      const pin = options.pins?.[t];
+      if (pin) {
+        const id = entries.filter((e) => e.type === "custom").length + 1;
+        entries.push({ type: "custom", id: `p${id}`, parentId: entries[entries.length - 1].id, customType: PIN_ENTRY_TYPE, data: { v: 1, op: "add", id, text: pin, by: "agent" } });
+      }
       if ((t + 1) % compactEvery !== 0) continue;
       writeFile();
       const chars = entries.reduce((sum, e) => sum + JSON.stringify((e as any).message?.content ?? "").length, 0);

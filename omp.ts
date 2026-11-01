@@ -9,6 +9,8 @@ import type { OmpExtensionAPI } from "./src/omp/api";
 import { createOmpCompactionHost, trackOmpCompactionTrigger } from "./src/omp/host";
 import { registerOmpPiVccCommand } from "./src/omp/commands";
 import { registerOmpRecallTool } from "./src/omp/recall-tool";
+import { registerOmpPinTool } from "./src/omp/pin-tool";
+import { registerPinCommands } from "./src/commands/pin";
 
 export default (pi: OmpExtensionAPI) => {
   setSettingsAgentDir(() => pi.pi.getAgentDir());
@@ -20,10 +22,12 @@ export default (pi: OmpExtensionAPI) => {
   const host = createOmpCompactionHost(pi, trackOmpCompactionTrigger(pi));
 
   // The session_before_compact / session_compact payloads and the command
-  // context used by /pi-vcc-recall have the same shape on omp as on Pi.
+  // context used by /pi-vcc-recall and /pi-vcc-pin have the same shape on omp as on Pi.
   const piShaped = pi as unknown as ExtensionAPI;
   registerCompactionHook(piShaped, host, state);
   registerOmpPiVccCommand(pi, state);
   registerVccRecallCommand(piShaped);
   registerOmpRecallTool(pi);
+  registerOmpPinTool(pi);
+  registerPinCommands(piShaped);
 };

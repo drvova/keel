@@ -66,6 +66,8 @@ export interface OmpExtensionAPI {
     options?: { triggerTurn?: boolean; deliverAs?: string },
   ) => void;
   sendUserMessage: (content: string, options?: { deliverAs?: string }) => unknown;
+  /** A `custom` session entry: persisted, not sent to the model. */
+  appendEntry: (customType: string, data?: unknown) => void;
   /** omp's own package exports (resolved on first access). */
   readonly pi: {
     convertToLlm: (messages: any[]) => any[];

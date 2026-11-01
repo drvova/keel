@@ -8,6 +8,7 @@ import { formatSummary, capBrief, capItems, stripCapMarker, BRIEF_MAX_LINES, FIL
 import { COMMAND_SEPARATOR, COMMANDS_PER_NAME } from "../extract/tracked-commands";
 import { selectRankedBriefBlocks, type BriefRankingOptions } from "./rank";
 import { formatHistoryRange, type HistoryRange } from "./history-index";
+import { formatPinLines, type PinnedNote } from "./pins";
 
 export interface CompileInput {
   messages: Message[];
@@ -29,6 +30,8 @@ export interface CompileInput {
    * from summary text.
    */
   historyIndex?: readonly HistoryRange[];
+  /** The pinned notes (core/pins.ts), rendered first; never merged from summary text. */
+  pinnedNotes?: readonly PinnedNote[];
 }
 
 export interface RankedCompileInput extends CompileInput {
@@ -315,20 +318,33 @@ const compileWithBriefBlocks = (input: CompileInput, options: CompileWithBriefBl
   const data = buildSections({ blocks, briefBlocks, fileOps: input.fileOps, trackCommands: input.trackCommands, earlyRequestSlots });
   const fresh = formatSummary(data, { capBriefTranscript: options.capFreshBrief ?? true });
   const mergedText = prev ? mergePrevious(prev, fresh, { preserveFreshBrief: options.preserveFreshBriefOnMerge }) : fresh;
-  const merged = withHistoryIndex(mergedText, input.historyIndex);
+  const merged = withStructuredSections(mergedText, input.pinnedNotes, input.historyIndex);
   if (!merged) return "";
   return wrapLongLines(merged + SEPARATOR + RECALL_NOTE);
 };
 
 const HISTORY_INDEX = "History Index";
+const PINNED_NOTES = "Pinned Notes";
 
-/** Put the index last in the header area, replacing any previous one. */
-const withHistoryIndex = (text: string, ranges?: readonly HistoryRange[]): string => {
-  if (!ranges || ranges.length === 0 || !text) return text;
-  const section = `[${HISTORY_INDEX}]\n${ranges.map((r) => `- ${formatHistoryRange(r)}`).join("\n")}`;
+/**
+ * Sections rebuilt from structured data on every compaction, never merged from
+ * the previous summary's text: [Pinned Notes] first (the start of the context
+ * is where a model attends best, arXiv:2307.03172) and [History Index] last in
+ * the header area. Any earlier copy of either is replaced.
+ */
+const withStructuredSections = (
+  text: string,
+  pins?: readonly PinnedNote[],
+  ranges?: readonly HistoryRange[],
+): string => {
+  const pinSection = pins && pins.length > 0 ? `[${PINNED_NOTES}]\n${formatPinLines(pins).map((l) => `- ${l}`).join("\n")}` : "";
+  const indexSection = ranges && ranges.length > 0 ? `[${HISTORY_INDEX}]\n${ranges.map((r) => `- ${formatHistoryRange(r)}`).join("\n")}` : "";
+  if (!pinSection && !indexSection) return text;
   const { head, brief } = splitSummary(text);
-  const kept = head.split("\n\n").filter((part) => !part.startsWith(`[${HISTORY_INDEX}]`)).filter(Boolean);
-  const newHead = [...kept, section].join("\n\n");
+  const kept = head.split("\n\n")
+    .filter((part) => !part.startsWith(`[${HISTORY_INDEX}]`) && !part.startsWith(`[${PINNED_NOTES}]`))
+    .filter(Boolean);
+  const newHead = [pinSection, ...kept, indexSection].filter(Boolean).join("\n\n");
   return brief ? `${newHead}${SEPARATOR}${brief}` : newHead;
 };
 

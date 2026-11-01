@@ -31,6 +31,7 @@ export const OMP_RECALL_PARAMETERS = {
     page: { description: D.page, ...numberOrText },
     scope: { type: "string", description: D.scope },
     mode: { type: "string", description: D.mode },
+    session: { type: "string", description: D.session },
   },
 } as const;
 

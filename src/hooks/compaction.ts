@@ -5,6 +5,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { writeFileSync } from "fs";
 import { compileRanked } from "../core/summarize";
 import { mergeHistoryIndex, rangeOfWindow, readHistoryIndex, unindexedRange } from "../core/history-index";
+import { readPins } from "../core/pins";
 import { normalize } from "../core/normalize";
 import { buildGlobalIndexById, loadGlobalIndexById } from "../core/global-indices";
 import { parseKeepAndPrompt, PI_VCC_COMPACT_INSTRUCTION } from "../core/compact-args";
@@ -992,10 +993,13 @@ export const registerCompactionHook = (
         )
       : undefined;
 
+    const pinnedNotes = readPins(branchEntries as any[]);
+
     const summary = compileRanked({
       messages,
       sourceIndices,
       historyIndex,
+      pinnedNotes,
       previousSummary: preparation.previousSummary,
       fileOps: {
         readFiles: [...preparation.fileOps.read],

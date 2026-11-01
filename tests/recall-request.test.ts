@@ -65,7 +65,7 @@ describe("normalizeToolParams", () => {
         'page 0 (not a page number)',
         'expand "the auth one" (not #N indices)',
         "range [5,6,7] (not [from, to])",
-        'scope "branch" (use \'lineage\' or \'all\')',
+        'scope "branch" (use \'lineage\', \'all\' or \'project\')',
       ],
     });
     const r = parseToolRequest(p);

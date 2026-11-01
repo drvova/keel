@@ -29,6 +29,7 @@ describe.skipIf(!ompInstalled)("omp host", () => {
   let extensionsResult: any;
   const notices: string[] = [];
   let model: any;
+  let omp: any;
 
   const now = () => Date.now();
   const user = (text: string) => sessionManager.appendMessage({ role: "user", content: text, timestamp: now() });
@@ -47,7 +48,7 @@ describe.skipIf(!ompInstalled)("omp host", () => {
     process.env.PI_CODING_AGENT_DIR = join(work, "agent");
     process.env.PI_VCC_CONFIG_PATH = join(work, "pi-vcc-config.json");
 
-    const omp: any = await import("@oh-my-pi/pi-coding-agent");
+    omp = await import("@oh-my-pi/pi-coding-agent");
     const { getBundledModels }: any = await import("@oh-my-pi/pi-catalog/models" as string);
     const { initializeExtensions }: any = await import("@oh-my-pi/pi-coding-agent/modes/runtime-init" as string);
     model = getBundledModels("anthropic")[0];
@@ -143,5 +144,38 @@ describe.skipIf(!ompInstalled)("omp host", () => {
     expect(compaction.details).toMatchObject({ compactor: "pi-vcc", reason: "idle", willRetry: false, previousSummaryUsed: false });
     expect(compaction.summary).toContain("- abc1234: chore: move billing cron");
     expect(compaction.summary).not.toContain("password reset");
+  });
+
+  test("a vcc_pin note is stored by omp and leads the next summary", async () => {
+    const pin = session.getToolByName("vcc_pin");
+    expect(pin.approval).toBe("read");
+    const result = await pin.execute("p", { note: "Never edit anything under migrations/." }, undefined, undefined);
+    expect(result.content[0].text).toMatch(/^Pinned \[1\] Never edit anything under migrations\/\. \(agent, #\d+\)\.$/);
+    expect(sessionManager.getBranch().some((e: any) => e.type === "custom" && e.customType === "pi-vcc.pin")).toBe(true);
+    user("Then add a dry-run flag");
+    assistant([{ type: "text", text: "Dry-run flag added." }]);
+    user("And document it");
+    assistant([{ type: "text", text: "Documented." }]);
+    await session.prompt("/pi-vcc keep:1");
+    expect(latestCompaction().summary.startsWith("[Pinned Notes]\n- [1] Never edit anything under migrations/. (agent")).toBe(true);
+  });
+
+  test("vcc_recall lists and searches the project's other omp sessions", async () => {
+    const other = omp.SessionManager.create(work, join(work, "sessions"));
+    other.appendMessage({ role: "user", content: "Rotate the staging API key", timestamp: now() });
+    other.appendMessage({
+      role: "assistant", content: [{ type: "text", text: "Rotated it; the old key is revoked in vault path secret/staging/api." }],
+      api: model.api, provider: model.provider, model: model.id, stopReason: "stop", timestamp: now(),
+      usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+    });
+    await other.flush?.();
+    const short = other.getSessionId().replace(/-/g, "").slice(0, 8);
+    const recall = session.getToolByName("vcc_recall");
+    const listed = (await recall.execute("s", { mode: "sessions" }, undefined, undefined)).content[0].text;
+    expect(listed).toContain(`${short} · `);
+    expect(listed).toContain('"Rotate the staging API key"');
+    const found = (await recall.execute("q", { query: "vault staging key revoked", scope: "project" }, undefined, undefined)).content[0].text;
+    expect(found).toContain(`[session ${short}] #1 [assistant]`);
+    await other.close?.();
   });
 });

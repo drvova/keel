@@ -7,6 +7,8 @@ export interface RenderedEntry {
   role: string;
   summary: string;
   files?: string[];
+  /** Short id of the earlier session the entry is from (scope:'project' search); unset for this session. */
+  session?: string;
 }
 
 const toolCallParts = (content: Message["content"]): ToolCall[] => {

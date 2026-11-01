@@ -28,11 +28,12 @@ export const registerRecallTool = (pi: ExtensionAPI) => {
       expand: Type.Optional(Type.Array(Type.Number(), { description: D.expand })),
       page: Type.Optional(Type.Number({ description: D.page })),
       scope: Type.Optional(
-        Type.Union([Type.Literal("lineage"), Type.Literal("all")], { description: D.scope }),
+        Type.Union([Type.Literal("lineage"), Type.Literal("all"), Type.Literal("project")], { description: D.scope }),
       ),
       mode: Type.Optional(
-        Type.Union([Type.Literal("hybrid"), Type.Literal("touched")], { description: D.mode }),
+        Type.Union([Type.Literal("hybrid"), Type.Literal("touched"), Type.Literal("sessions")], { description: D.mode }),
       ),
+      session: Type.Optional(Type.String({ description: D.session })),
     }),
     // Runs before pi validates the schema, so repairable mistakes never reach the agent as errors.
     prepareArguments: (args: unknown) => normalizeToolParams(args) as any,

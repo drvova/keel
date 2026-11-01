@@ -7,6 +7,7 @@ export type DrillTarget = NonNullable<ReturnType<typeof parseDrillDown>>;
 export type RecallAction =
   | { kind: "drill"; target: DrillTarget }
   | { kind: "touched"; page?: number }
+  | { kind: "sessions"; page: number }
   | { kind: "expand"; indices: number[] }
   | { kind: "range"; range: unknown[]; page: number }
   | { kind: "search"; query: string; page: number }
@@ -15,6 +16,8 @@ export type RecallAction =
 export interface RecallRequest {
   scope: RecallScope;
   action: RecallAction;
+  /** An earlier session of this project to run the action in (id prefix, see core/sessions.ts). */
+  session?: string;
   /** Params the caller set that this action does not use. Defaults (page:1, expand:[]) are not listed. */
   ignored?: string[];
   /** Values normalizeToolParams could not repair and removed. */
@@ -28,12 +31,13 @@ export interface RecallToolParams {
   page?: number;
   scope?: string;
   mode?: string;
+  session?: string;
 }
 
 /** Where normalizeToolParams records values it had to drop; read by parseToolRequest. */
 export const DROPPED_KEY = "_vccDropped";
 
-const KNOWN_PARAMS = new Set(["query", "range", "expand", "page", "scope", "mode"]);
+const KNOWN_PARAMS = new Set(["query", "range", "expand", "page", "scope", "mode", "session"]);
 
 /** 12, "12", "#12", " 12 " -> 12. Anything else -> undefined. */
 const toIndex = (v: unknown): number | undefined => {
@@ -104,8 +108,16 @@ export const normalizeToolParams = (raw: unknown): Record<string, unknown> => {
     p.scope = p.mode;
     delete p.mode;
   }
-  if (p.scope !== undefined && p.scope !== "lineage" && p.scope !== "all") drop("scope", "use 'lineage' or 'all'");
-  if (p.mode !== undefined && p.mode !== "hybrid" && p.mode !== "touched") drop("mode", "use 'touched' or leave it out");
+  if ((p.mode === "project") && p.scope === undefined) {
+    p.scope = p.mode;
+    delete p.mode;
+  }
+  if (p.scope !== undefined && p.scope !== "lineage" && p.scope !== "all" && p.scope !== "project") drop("scope", "use 'lineage', 'all' or 'project'");
+  if (p.mode !== undefined && p.mode !== "hybrid" && p.mode !== "touched" && p.mode !== "sessions") drop("mode", "use 'touched', 'sessions' or leave it out");
+  if (p.session !== undefined) {
+    if (typeof p.session === "string" && p.session.trim()) p.session = p.session.trim().replace(/^(?:@|session:)/i, "");
+    else drop("session", "not a session id");
+  }
   if (p.query !== undefined && typeof p.query !== "string") drop("query", "not text");
 
   if (dropped.length > 0) p[DROPPED_KEY] = dropped;
@@ -122,39 +134,62 @@ export const parseToolRequest = (params: RecallToolParams): RecallRequest => {
   const q = params.query?.trim();
   const indices = [...new Set(params.expand ?? [])];
   const hasRange = Array.isArray(params.range) && params.range.length > 0;
+  const mode = normalizeRecallMode(params.mode);
+  const session = typeof params.session === "string" && params.session ? params.session : undefined;
   const set = {
     query: Boolean(q),
     expand: indices.length > 0,
     range: hasRange,
     page: (params.page ?? 1) > 1,
-    touched: normalizeRecallMode(params.mode) === "touched",
+    touched: mode === "touched",
+    sessions: mode === "sessions",
   };
   const droppedRaw = (params as Record<string, unknown>)[DROPPED_KEY];
   const dropped = Array.isArray(droppedRaw) && droppedRaw.length > 0 ? droppedRaw.map(String) : undefined;
   const req = (action: RecallAction, uses: (keyof typeof set)[]): RecallRequest => {
-    const ignored = (Object.keys(set) as (keyof typeof set)[])
+    const ignored: string[] = (Object.keys(set) as (keyof typeof set)[])
       .filter((k) => set[k] && !uses.includes(k))
-      .map((k) => (k === "touched" ? "mode" : k));
-    const base: RecallRequest = dropped ? { scope, action, dropped } : { scope, action };
+      .map((k) => (k === "touched" || k === "sessions" ? "mode" : k));
+    // A listing names sessions, it does not read one; and one session has no
+    // earlier sessions of its own to widen to.
+    let effectiveScope = scope;
+    let target = session;
+    if (session && action.kind === "sessions") {
+      ignored.push("session");
+      target = undefined;
+    } else if (session && scope === "project") {
+      ignored.push("scope");
+      effectiveScope = "lineage";
+    }
+    const base: RecallRequest = { scope: effectiveScope, action, ...(target ? { session: target } : {}), ...(dropped ? { dropped } : {}) };
     return ignored.length > 0 ? { ...base, ignored } : base;
   };
 
   const target = q ? parseDrillDown(q) : null;
   if (target) return req({ kind: "drill", target }, ["query"]);
   if (set.touched) return req({ kind: "touched", page: params.page }, ["touched", "page"]);
+  if (set.sessions) return req({ kind: "sessions", page: Math.max(1, params.page ?? 1) }, ["sessions", "page"]);
   if (set.expand) return req({ kind: "expand", indices }, ["expand"]);
   if (hasRange) return req({ kind: "range", range: params.range!, page: Math.max(1, params.page ?? 1) }, ["range", "page"]);
   if (q) return req({ kind: "search", query: params.query!, page: Math.max(1, params.page ?? 1) }, ["query", "page"]);
   return req({ kind: "recent", query: params.query }, []);
 };
 
-/** /pi-vcc-recall args -> request. A person types a query, scope:all and page:N only. */
+/**
+ * /pi-vcc-recall args -> request. A person types a query, scope:all|project,
+ * session:<id> and page:N; "sessions" alone lists the earlier sessions.
+ */
 export const parseCommandRequest = (args: string): RecallRequest => {
   const parsed = parseRecallScope(args.trim());
-  const scope = parsed.scope;
-  const pageMatch = parsed.text.match(/\bpage:(\d+)\b/i);
+  const sessionMatch = parsed.text.match(/(?:^|\s)session:(\S+)/i);
+  const session = sessionMatch?.[1];
+  const rest = parsed.text.replace(/(?:^|\s)session:\S+/i, " ");
+  const pageMatch = rest.match(/\bpage:(\d+)\b/i);
   const page = pageMatch ? Math.max(1, parseInt(pageMatch[1], 10)) : 1;
-  const query = parsed.text.replace(/\bpage:\d+\b/i, "").trim();
-  if (!query) return { scope, action: { kind: "recent" } };
-  return { scope, action: { kind: "search", query, page } };
+  const query = rest.replace(/\bpage:\d+\b/i, "").trim();
+  const scope = session && parsed.scope === "project" ? "lineage" : parsed.scope;
+  const target = session ? { session } : {};
+  if (!session && /^sessions$/i.test(query)) return { scope, action: { kind: "sessions", page } };
+  if (!query) return { scope, action: { kind: "recent" }, ...target };
+  return { scope, action: { kind: "search", query, page }, ...target };
 };

@@ -1,12 +1,18 @@
-export type RecallScope = "lineage" | "all";
-export type RecallMode = "hybrid" | "touched";
+/**
+ * lineage: the current conversation path. all: every branch of this session.
+ * project: search also covers this project's earlier sessions (core/sessions.ts).
+ */
+export type RecallScope = "lineage" | "all" | "project";
+export type RecallMode = "hybrid" | "touched" | "sessions";
 
-const SCOPE_RE = /\bscope:(lineage|all)\b/i;
+const SCOPE_RE = /\bscope:(lineage|all|project)\b/i;
 
-const VALID_MODES = new Set(["hybrid", "touched"]);
+const VALID_MODES = new Set(["hybrid", "touched", "sessions"]);
 
-export const normalizeRecallScope = (scope?: unknown): RecallScope =>
-  typeof scope === "string" && scope.toLowerCase() === "all" ? "all" : "lineage";
+export const normalizeRecallScope = (scope?: unknown): RecallScope => {
+  const s = typeof scope === "string" ? scope.toLowerCase() : "";
+  return s === "all" || s === "project" ? s : "lineage";
+};
 
 /**
  * Normalize a mode param to a supported recall mode. Without OM integration,
