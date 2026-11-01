@@ -14,7 +14,7 @@ const userMsg = (id: string, content: string) => ({
 
 let dirCount = 0;
 const makeSession = (n: number, textOf: (i: number) => string) => {
-  const dir = mkdtempSync(join(tmpdir(), `pi-vcc-recall-quality-${dirCount++}-`));
+  const dir = mkdtempSync(join(tmpdir(), `omp-vcc-recall-quality-${dirCount++}-`));
   const file = join(dir, "session.jsonl");
   const ids = Array.from({ length: n }, (_, i) => `m${i}`);
   const lines = ids.map((id, i) => JSON.stringify(userMsg(id, textOf(i))));

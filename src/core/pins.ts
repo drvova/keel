@@ -5,9 +5,9 @@
 // stay true all along: a constraint, a decision and why, a fact the work depends
 // on. A pinned note is kept verbatim at the top of every summary until it is
 // unpinned (MemGPT's always-in-context "core memory", arXiv:2310.08560). The
-// user pins with /pi-vcc-pin, the agent with the vcc_pin tool.
+// user pins with /omp-vcc-pin, the agent with the vcc_pin tool.
 //
-// Each pin or unpin is a pi-vcc `custom` session entry (in the session file, not
+// Each pin or unpin is an omp-vcc `custom` session entry (in the session file, not
 // in the model's context; not counted in #N). The notes are the ops replayed
 // along the current branch, so a branch keeps the pins made on it and an edited
 // or retried turn drops the ones made after the edit point. omp's /clear (a
@@ -15,7 +15,7 @@
 import { clip } from "./content";
 import { isCountedMessageEntry } from "./global-indices";
 
-export const PIN_ENTRY_TYPE = "pi-vcc.pin";
+export const PIN_ENTRY_TYPE = "omp-vcc.pin";
 /** One note is clipped to this many characters. */
 export const PIN_CHARS = 300;
 /** Notes shown in a summary; past this the newest are shown and the count says so. */

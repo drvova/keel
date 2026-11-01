@@ -1,4 +1,4 @@
-import type { Message } from "@earendil-works/pi-ai";
+import type { Message } from "@oh-my-pi/pi-ai";
 import type { FileOps } from "../types";
 import { normalize } from "./normalize";
 import { filterNoise } from "./filter-noise";
@@ -22,7 +22,7 @@ export interface CompileInput {
   sourceIndices?: Array<number | undefined>;
   /** See BuildSectionsInput.trackCommands (core/build-sections.ts) --
    * empty/omitted by default, threaded through from
-   * PiVccSettings.trackCommands by the caller (hooks/before-compact.ts). */
+   * VccSettings.trackCommands by the caller (hooks/compaction.ts). */
   trackCommands?: readonly string[];
   /**
    * The history index to show (already merged with the previous one; see

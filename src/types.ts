@@ -1,6 +1,6 @@
-import type { Message } from "@earendil-works/pi-ai";
+import type { Message } from "@oh-my-pi/pi-ai";
 
-/** Pi reports the first three; omp also compacts when idle and after a cut-off ("incomplete") reply. */
+/** What started a compaction: omp's auto_compaction_start reason, or manual (/compact, /omp-vcc). */
 export type CompactionReason = "manual" | "threshold" | "overflow" | "idle" | "incomplete";
 
 export interface FileOps {
@@ -18,5 +18,5 @@ export type NormalizedBlock =
   // `failed`: the call's result came back as an error (toolResult isError).
   | { kind: "tool_call"; name: string; args: Record<string, unknown>; sourceIndex?: number; failed?: true }
   | { kind: "tool_result"; name: string; text: string; sourceIndex?: number }
-  // A command the user ran themselves: Pi/omp `!cmd`, or (lang "python") an omp python cell.
+  // A command the user ran themselves: `!cmd`, or (lang "python") a python cell.
   | { kind: "bash"; command: string; output: string; exitCode: number | undefined; sourceIndex?: number; lang?: "python" };

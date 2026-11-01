@@ -48,8 +48,8 @@ describe("token estimate", () => {
     ])).toBe(5 + 4 + JSON.stringify({ path: "a.ts" }).length + 4 + 4800);
   });
 
-  test("counts real Pi part shapes: thinking text and toolCall arguments", () => {
-    // Pi assistant content: thinking.thinking + toolCall.arguments (not .input).
+  test("counts real omp part shapes: thinking text and toolCall arguments", () => {
+    // omp assistant content: thinking.thinking + toolCall.arguments (not .input).
     expect(estimateMessageContentChars([
       { type: "thinking", thinking: "reasoning", thinkingSignature: "sig" },
       { type: "text", text: "answer" },

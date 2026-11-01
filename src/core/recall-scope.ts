@@ -17,7 +17,7 @@ export const normalizeRecallScope = (scope?: unknown): RecallScope => {
 /**
  * Normalize a mode param to a supported recall mode. Without OM integration,
  * only "touched" adds behavior beyond the default hybrid search — "file"-only
- * search is not implemented in pi-vcc, so it is not exposed.
+ * search is not implemented here, so it is not exposed.
  *
  * Ported from pi-blackhole (https://github.com/k0valik/pi-blackhole, MIT) by
  * k0valik — a pi-vcc derivative.

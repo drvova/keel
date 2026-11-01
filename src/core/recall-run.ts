@@ -5,7 +5,7 @@ import { getActiveLineageEntryIds, type LineageSessionManagerLike } from "./line
 import { expandEntryFile } from "./drill-down";
 import type { RecallScope } from "./recall-scope";
 import type { RecallRequest } from "./recall-request";
-import type { Message } from "@earendil-works/pi-ai";
+import type { Message } from "@oh-my-pi/pi-ai";
 import { describeSession, fileBranchIds, listProjectSessions, type SessionInfo } from "./sessions";
 
 export const SEARCH_PAGE_SIZE = 5;
@@ -128,7 +128,7 @@ const OFF_PATH_NOTE =
 export const invalidExpandIndices = (requested: number[], available: Set<number>): number[] =>
   requested.filter((i) => !Number.isInteger(i) || !available.has(i));
 
-/** Surface-specific wording: the tool says page:N, the command says /pi-vcc-recall … page:N. */
+/** Surface-specific wording: the tool says page:N, the command says /omp-vcc-recall … page:N. */
 export interface RecallPagingHints {
   outOfRange(query: string, scope: RecallScope, totalPages: number, truncated: boolean): string;
   nextPage(query: string, scope: RecallScope, page: number): string;
@@ -137,7 +137,7 @@ export interface RecallPagingHints {
   /**
    * Leave the current turn (last user message on the path and everything after
    * it) out of search: the agent has it in context, and its question would
-   * otherwise match itself. Only the tool sets this; a /pi-vcc-recall command
+   * otherwise match itself. Only the tool sets this; a /omp-vcc-recall command
    * adds no user message, so the last one there belongs to a finished turn.
    */
   skipCurrentTurn?: boolean;
@@ -161,7 +161,7 @@ export const ignoredNote = (request: RecallRequest): string =>
     ? `Ignored: ${request.ignored.join(", ")} (${IGNORED_REASON[request.action.kind]}).\n\n`
     : "");
 
-/** Ceiling for one recall result, the 50 KB of Pi's read tool: one long entry
+/** Ceiling for one recall result, 50 KB like a read tool's: one long entry
  *  (a base64 image on one line) must not flood the context. */
 export const RECALL_OUTPUT_CHARS = 50 * 1024;
 const MIN_RECALL_OUTPUT_CHARS = 8 * 1024;

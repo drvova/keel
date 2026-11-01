@@ -3,9 +3,9 @@ import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { nextPinId, PIN_CHARS, PIN_ENTRY_TYPE, readPins } from "../src/core/pins";
-import { addPin, executePin, removePin } from "../src/tools/pin-spec";
+import { addPin, executePin, removePin } from "../src/tools/pin";
 import { registerPinCommands } from "../src/commands/pin";
-import { registerBeforeCompactHook } from "../src/hooks/before-compact";
+import { registerHook } from "./support/host";
 import { runLongHorizon } from "./support/long-horizon";
 
 /** A session whose branch is an array; appendEntry adds to it, as the hosts do. */
@@ -66,7 +66,7 @@ describe("vcc_pin", () => {
   });
 });
 
-describe("/pi-vcc-pin and /pi-vcc-unpin", () => {
+describe("/omp-vcc-pin and /omp-vcc-unpin", () => {
   it("pin, tell the agent on its next turn, list, unpin", async () => {
     const s = session([message("m1")]);
     const commands = new Map<string, (args: string, ctx: any) => Promise<void>>();
@@ -78,15 +78,15 @@ describe("/pi-vcc-pin and /pi-vcc-unpin", () => {
       sendMessage: (m: any, o: any) => sent.push({ m, o }),
     } as any);
     const ctx = { sessionManager: s.sm, ui: { notify: (m: string) => notices.push(m) } };
-    await commands.get("pi-vcc-pin")!("never edit migrations/", ctx);
+    await commands.get("omp-vcc-pin")!("never edit migrations/", ctx);
     expect(notices.at(-1)).toBe("Pinned [1] never edit migrations/ (user, #0).");
     expect(sent[0]).toEqual({
-      m: { customType: "pi-vcc-pin", content: "The user pinned [1] never edit migrations/ (user, #0). It stays at the top of every summary.", display: true },
+      m: { customType: "omp-vcc-pin", content: "The user pinned [1] never edit migrations/ (user, #0). It stays at the top of every summary.", display: true },
       o: { deliverAs: "nextTurn" },
     });
-    await commands.get("pi-vcc-pin")!("", ctx);
+    await commands.get("omp-vcc-pin")!("", ctx);
     expect(notices.at(-1)).toContain("- [1] never edit migrations/");
-    await commands.get("pi-vcc-unpin")!("1", ctx);
+    await commands.get("omp-vcc-unpin")!("1", ctx);
     expect(readPins(s.entries)).toEqual([]);
     expect(sent.at(-1).m.content).toContain("The user unpinned [1]");
   });
@@ -94,15 +94,15 @@ describe("/pi-vcc-pin and /pi-vcc-unpin", () => {
 
 describe("pinned notes in summaries", () => {
   let dir: string;
-  const prev = process.env.PI_VCC_CONFIG_PATH;
+  const prev = process.env.OMP_VCC_CONFIG_PATH;
   beforeAll(() => {
-    dir = mkdtempSync(join(tmpdir(), "pi-vcc-pins-"));
-    process.env.PI_VCC_CONFIG_PATH = join(dir, "c.json");
-    writeFileSync(process.env.PI_VCC_CONFIG_PATH, JSON.stringify({ overrideDefaultCompaction: true, smartKeepTail: false }));
+    dir = mkdtempSync(join(tmpdir(), "omp-vcc-pins-"));
+    process.env.OMP_VCC_CONFIG_PATH = join(dir, "c.json");
+    writeFileSync(process.env.OMP_VCC_CONFIG_PATH, JSON.stringify({ overrideDefaultCompaction: true, smartKeepTail: false }));
   });
   afterAll(() => {
-    if (prev === undefined) delete process.env.PI_VCC_CONFIG_PATH;
-    else process.env.PI_VCC_CONFIG_PATH = prev;
+    if (prev === undefined) delete process.env.OMP_VCC_CONFIG_PATH;
+    else process.env.OMP_VCC_CONFIG_PATH = prev;
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -110,9 +110,10 @@ describe("pinned notes in summaries", () => {
     const s = session([message("m1", "user", "first request here"), message("m2", "assistant", "ok"), message("m3", "user", "second request here"), message("m4", "assistant", "ok")]);
     addPin(s.host, s.sm, "never edit migrations/", "user");
     let handler: any;
-    registerBeforeCompactHook({ on: (name: string, fn: any) => { if (name === "session_before_compact") handler = fn; } } as any, "1.1.0");
+    const hook = registerHook({ on: (name: string, fn: any) => { if (name === "session_before_compact") handler = fn; } });
+    hook.autoCompactionStart("threshold");
     const out = handler({
-      type: "session_before_compact", branchEntries: s.entries, customInstructions: undefined, reason: "threshold", willRetry: false,
+      type: "session_before_compact", branchEntries: s.entries, customInstructions: undefined,
       preparation: { previousSummary: undefined, fileOps: { read: [], written: [], edited: [] }, tokensBefore: 100 },
       signal: new AbortController().signal,
     }, { ui: { notify: () => {} }, sessionManager: s.sm });

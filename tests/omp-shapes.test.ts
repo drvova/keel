@@ -1,10 +1,10 @@
-// Session and tool shapes that only omp writes, handled in the shared code: the
-// `/clear` boundary, native-replay compactions, hashline edits, read selectors,
-// and omp's extra message roles in recall.
+// Session and tool shapes particular to omp: the `/clear` boundary, native-replay
+// compactions, hashline edits, read selectors, and omp's extra message roles in
+// recall.
 import { afterEach, describe, expect, test } from "bun:test";
 import { join } from "path";
 import { homedir } from "os";
-import { applyTailBudget, buildOwnCut } from "../src/hooks/before-compact";
+import { applyTailBudget, buildOwnCut, registerHook } from "./support/host";
 import { extractPaths, hashlineEditPaths, stripReadSelector } from "../src/core/tool-args";
 import { extractFiles } from "../src/extract/files";
 import { renderMessage } from "../src/core/render-entries";
@@ -121,51 +121,50 @@ describe("recall rendering of omp roles", () => {
 });
 
 describe("settings path follows the host's agent dir", () => {
-  const previous = process.env.PI_VCC_CONFIG_PATH;
+  const previous = process.env.OMP_VCC_CONFIG_PATH;
   afterEach(() => {
-    if (previous === undefined) delete process.env.PI_VCC_CONFIG_PATH;
-    else process.env.PI_VCC_CONFIG_PATH = previous;
+    if (previous === undefined) delete process.env.OMP_VCC_CONFIG_PATH;
+    else process.env.OMP_VCC_CONFIG_PATH = previous;
     setSettingsAgentDir();
   });
 
-  test("the entry point's agent dir, unless PI_VCC_CONFIG_PATH is set", () => {
-    delete process.env.PI_VCC_CONFIG_PATH;
+  test("the entry point's agent dir, unless OMP_VCC_CONFIG_PATH is set", () => {
+    delete process.env.OMP_VCC_CONFIG_PATH;
     setSettingsAgentDir(() => join(homedir(), ".omp", "agent"));
-    expect(settingsPath()).toBe(join(homedir(), ".omp", "agent", "pi-vcc-config.json"));
-    process.env.PI_VCC_CONFIG_PATH = "/tmp/elsewhere.json";
+    expect(settingsPath()).toBe(join(homedir(), ".omp", "agent", "omp-vcc-config.json"));
+    process.env.OMP_VCC_CONFIG_PATH = "/tmp/elsewhere.json";
     expect(settingsPath()).toBe("/tmp/elsewhere.json");
   });
 });
 
-describe("Pi host: a turn still running", () => {
-  const prev = process.env.PI_VCC_CONFIG_PATH;
+describe("a turn still running", () => {
+  const prev = process.env.OMP_VCC_CONFIG_PATH;
   afterEach(() => {
-    if (prev === undefined) delete process.env.PI_VCC_CONFIG_PATH;
-    else process.env.PI_VCC_CONFIG_PATH = prev;
+    if (prev === undefined) delete process.env.OMP_VCC_CONFIG_PATH;
+    else process.env.OMP_VCC_CONFIG_PATH = prev;
   });
 
   test("an automatic pass between tool calls is left alone when compact-all is the only cut", async () => {
     const { mkdtempSync, writeFileSync } = await import("fs");
     const { tmpdir } = await import("os");
-    const dir = mkdtempSync(join(tmpdir(), "pi-vcc-running-"));
-    process.env.PI_VCC_CONFIG_PATH = join(dir, "c.json");
-    writeFileSync(process.env.PI_VCC_CONFIG_PATH, JSON.stringify({ overrideDefaultCompaction: true }));
-    const { registerBeforeCompactHook } = await import("../src/hooks/before-compact");
+    const dir = mkdtempSync(join(tmpdir(), "omp-vcc-running-"));
+    process.env.OMP_VCC_CONFIG_PATH = join(dir, "c.json");
+    writeFileSync(process.env.OMP_VCC_CONFIG_PATH, JSON.stringify({ overrideDefaultCompaction: true }));
     let handler: any;
-    registerBeforeCompactHook({ on: (name: string, fn: any) => { if (name === "session_before_compact") handler = fn; } } as any, "1.1.0");
+    const hook = registerHook({ on: (name: string, fn: any) => { if (name === "session_before_compact") handler = fn; } });
     const entries = [
       msg("u1", "user", "Run the tests"),
       { id: "a1", type: "message", message: { role: "assistant", content: [{ type: "toolCall", id: "t1", name: "bash", arguments: { command: "bun test" } }] } },
       { id: "r1", type: "message", message: { role: "toolResult", toolCallId: "t1", toolName: "bash", content: [{ type: "text", text: "12 pass" }], isError: false } },
     ];
-    const event = (reason: string, willRetry: boolean) => ({
-      type: "session_before_compact", branchEntries: entries, customInstructions: undefined, reason, willRetry,
+    const event = (reason: "threshold" | "overflow") => (hook.autoCompactionStart(reason), {
+      type: "session_before_compact", branchEntries: entries, customInstructions: undefined,
       preparation: { previousSummary: undefined, fileOps: { read: [], written: [], edited: [] }, tokensBefore: 1000 },
       signal: new AbortController().signal,
     });
     const ctx = { ui: { notify: () => {} } };
-    expect(handler(event("threshold", false), ctx)).toEqual({ cancel: true });
-    expect(handler(event("overflow", true), ctx)).toBeUndefined();
+    expect(handler(event("threshold"), ctx)).toEqual({ cancel: true });
+    expect(handler(event("overflow"), ctx)).toBeUndefined();
   });
 });
 

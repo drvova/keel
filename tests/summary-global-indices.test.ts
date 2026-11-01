@@ -19,23 +19,21 @@ import {
 } from "../src/core/global-indices";
 import { normalize } from "../src/core/normalize";
 import { compile } from "../src/core/summarize";
-import {
-  registerBeforeCompactHook,
-  PI_VCC_COMPACT_INSTRUCTION,
-} from "../src/hooks/before-compact";
+import { OMP_VCC_COMPACT_INSTRUCTION } from "../src/hooks/compaction";
+import { registerHook } from "./support/host";
 import { userMsg, assistantWithToolCall, toolResult } from "./fixtures";
 
 let tmpDir: string;
 let CONFIG_PATH: string;
 
 beforeAll(() => {
-  tmpDir = mkdtempSync(join(tmpdir(), "pi-vcc-gidx-"));
-  CONFIG_PATH = join(tmpDir, "pi-vcc-config.json");
-  process.env.PI_VCC_CONFIG_PATH = CONFIG_PATH;
+  tmpDir = mkdtempSync(join(tmpdir(), "omp-vcc-gidx-"));
+  CONFIG_PATH = join(tmpDir, "omp-vcc-config.json");
+  process.env.OMP_VCC_CONFIG_PATH = CONFIG_PATH;
 });
 
 afterAll(() => {
-  delete process.env.PI_VCC_CONFIG_PATH;
+  delete process.env.OMP_VCC_CONFIG_PATH;
   rmSync(tmpDir, { recursive: true, force: true });
 });
 
@@ -190,7 +188,7 @@ function hookHarness(allEntries: any[] | undefined) {
     // When undefined, exercises the fail-closed path (no refs at all).
     sessionManager: allEntries === undefined ? undefined : { getEntries: () => allEntries },
   };
-  registerBeforeCompactHook(pi, "0.84.4");
+  registerHook(pi);
   if (!handler) throw new Error("hook not registered");
   const invoke = (branchEntries: any[], preparation: any = {}) =>
     handler(
@@ -203,7 +201,7 @@ function hookHarness(allEntries: any[] | undefined) {
           tokensBefore: 1000,
           ...preparation,
         },
-        customInstructions: PI_VCC_COMPACT_INSTRUCTION,
+        customInstructions: OMP_VCC_COMPACT_INSTRUCTION,
         signal: new AbortController().signal,
       },
       ctx,
@@ -214,7 +212,7 @@ function hookHarness(allEntries: any[] | undefined) {
 const alphaRead = assistantWithToolCall("read", { file_path: "alpha.txt" });
 const betaEdit = assistantWithToolCall("edit", { file_path: "beta.txt" });
 
-describe("before-compact hook emits session-global refs", () => {
+describe("compaction hook emits session-global refs", () => {
   test("second compact-all numbers the edit at its global index", () => {
     const all = [
       msgEntry("m1", userMsg("Inspect the alpha fixture")),

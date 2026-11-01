@@ -38,7 +38,7 @@ describe("parseToolRequest", () => {
 });
 
 import { normalizeToolParams } from "../src/core/recall-request";
-import { validateToolArguments } from "@earendil-works/pi-ai";
+import { validateToolArguments } from "@oh-my-pi/pi-ai";
 import { registerRecallTool } from "../src/tools/recall";
 
 describe("normalizeToolParams", () => {
@@ -77,12 +77,13 @@ describe("normalizeToolParams", () => {
     expect(normalizeToolParams(args)).toEqual(args);
   });
 
-  it("passes pi's own schema validation after repair", () => {
+  it("omp's own validator lets the loose forms through, for normalizeToolParams to repair", () => {
     let tool: any;
     registerRecallTool({ registerTool: (t: any) => { tool = t; } } as any);
     const raw = { query: "jpeg", mode: "all", expand: "459", limit: 20 };
-    expect(() => validateToolArguments(tool, { id: "1", name: "vcc_recall", arguments: raw } as any)).toThrow();
-    const args = validateToolArguments(tool, { id: "1", name: "vcc_recall", arguments: tool.prepareArguments(raw) } as any);
-    expect(args).toMatchObject({ query: "jpeg", scope: "all", expand: [459], _vccDropped: ["limit 20 (not a vcc_recall param)"] });
+    const args = validateToolArguments(tool, { id: "1", name: "vcc_recall", arguments: raw } as any);
+    expect(normalizeToolParams(args)).toMatchObject({ query: "jpeg", scope: "all", expand: [459], _vccDropped: ["limit 20 (not a vcc_recall param)"] });
+    // A shape no repair could read still fails omp's check before execute().
+    expect(() => validateToolArguments(tool, { id: "1", name: "vcc_recall", arguments: { range: { from: 1 } } } as any)).toThrow();
   });
 });

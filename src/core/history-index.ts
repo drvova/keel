@@ -13,11 +13,12 @@
 // geometrically. Each range is built from the messages, never from summary text,
 // and is stored in the compaction's details, so it is not re-parsed or reworded
 // across compactions. Nothing depends on wording: it works in every language.
-import type { Message } from "@earendil-works/pi-ai";
+import type { Message } from "@oh-my-pi/pi-ai";
 import type { NormalizedBlock } from "../types";
 import { clip } from "./content";
 import { normalize } from "./normalize";
 import { filterNoise } from "./filter-noise";
+import { vccDetailsOf } from "../details";
 import { extractFiles } from "../extract/files";
 import { extractCommits } from "../extract/commits";
 import { extractUserMessages } from "../extract/user-messages";
@@ -154,10 +155,9 @@ const isRange = (value: unknown): value is HistoryRange => {
     && (r.requests === undefined || Number.isInteger(r.requests));
 };
 
-/** The index a pi-vcc compaction stored in its details, if it is well-formed. */
+/** The index an omp-vcc (or, before the rename, pi-vcc) compaction stored in its details, if it is well-formed. */
 export const readHistoryIndex = (details: unknown): HistoryRange[] | undefined => {
-  const d = details as { compactor?: unknown; historyIndex?: unknown; hookDetails?: unknown } | undefined;
-  const own = d?.compactor === "pi-vcc" ? d : (d?.hookDetails as typeof d | undefined);
-  if (own?.compactor !== "pi-vcc" || !Array.isArray(own.historyIndex)) return undefined;
-  return own.historyIndex.every(isRange) ? (own.historyIndex as HistoryRange[]) : undefined;
+  const index: unknown = vccDetailsOf(details)?.historyIndex;
+  if (!Array.isArray(index)) return undefined;
+  return index.every(isRange) ? (index as HistoryRange[]) : undefined;
 };

@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { parseCommandRequest } from "../core/recall-request";
 import {
   openRecallView,
@@ -10,7 +10,7 @@ import {
   type RecallPagingHints,
 } from "../core/recall-run";
 import { resolveSession } from "../core/sessions";
-import { sessionDirOf } from "../tools/recall-spec";
+import { sessionDirOf } from "../tools/recall";
 
 const scopeArg = (scope: string) => (scope === "all" ? " scope:all" : scope === "project" ? " scope:project" : "");
 
@@ -18,14 +18,14 @@ const commandHints = (session?: string): RecallPagingHints => {
   const at = session ? ` session:${session}` : "";
   return {
     outOfRange: (query, scope, totalPages, truncated) =>
-      `Use /pi-vcc-recall ${query}${at}${scopeArg(scope)} page:N with N between 1 and ${totalPages}` +
+      `Use /omp-vcc-recall ${query}${at}${scopeArg(scope)} page:N with N between 1 and ${totalPages}` +
       (truncated ? "." : ", or refine your query."),
-    nextPage: (query, scope, page) => `\n--- /pi-vcc-recall ${query}${at}${scopeArg(scope)} page:${page} ---`,
+    nextPage: (query, scope, page) => `\n--- /omp-vcc-recall ${query}${at}${scopeArg(scope)} page:${page} ---`,
   };
 };
 
 export const registerVccRecallCommand = (pi: ExtensionAPI) => {
-  pi.registerCommand("pi-vcc-recall", {
+  pi.registerCommand("omp-vcc-recall", {
     description:
       "Recall earlier parts of this session. Plain keywords work best; scope:all reaches edited or retried turns, " +
       "scope:project this project's earlier sessions; 'sessions' lists them, session:<id> reads one.",

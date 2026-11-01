@@ -1,4 +1,4 @@
-import type { SessionMessageEntry } from "@earendil-works/pi-coding-agent";
+import type { SessionMessageEntry } from "@oh-my-pi/pi-coding-agent";
 import type { NormalizedBlock } from "../types";
 import { textOf } from "./content";
 import { sanitize } from "./sanitize";

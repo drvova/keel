@@ -2,10 +2,9 @@
 //
 // A long task outlives one session: a restart, /new, a fork, an omp handoff or
 // a sibling move starts a new session file, and recall over the current file
-// alone loses everything before it. Both hosts keep one directory of session
-// files per working directory (Pi: ~/.pi/agent/sessions/<cwd>/, omp:
-// ~/.omp/agent/sessions/<cwd>/), so "this project's earlier sessions" is that
-// directory minus the current file. Each is read the way the current one is:
+// alone loses everything before it. omp keeps one directory of session files
+// per working directory (~/.omp/agent/sessions/<cwd>/), so "this project's
+// earlier sessions" is that directory minus the current file. Each is read the way the current one is:
 // its active branch (its last entry back to the root), with `#N` in its own
 // index space.
 import { readdirSync, realpathSync, statSync } from "fs";
@@ -81,9 +80,8 @@ export const scanSession = (file: string): SessionInfo | undefined => {
         if (e?.type === "custom" || e?.type === "reset_boundary") pinEntries.push(e);
         return;
       }
-      if (lineHas(line, '"session_info"') || lineHas(line, '"title_change"')) {
+      if (lineHas(line, '"title_change"')) {
         const e = parse(line);
-        if (e?.type === "session_info" && typeof e.name === "string" && e.name.trim()) title = e.name.trim();
         if (e?.type === "title_change" && typeof e.title === "string" && e.title.trim()) title = e.title.trim();
       }
     });

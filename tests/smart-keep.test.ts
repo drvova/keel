@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { resolveSmartKeepUserTurns } from "../src/hooks/before-compact";
+import { resolveSmartKeepUserTurns } from "./support/host";
 
 const msg = (id: string, role: "user" | "assistant" | "toolResult", content = "x") => ({
   id,

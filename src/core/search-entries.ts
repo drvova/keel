@@ -1,4 +1,4 @@
-import type { Message, ToolCall } from "@earendil-works/pi-ai";
+import type { Message, ToolCall } from "@oh-my-pi/pi-ai";
 import { fileMentionPaths, type RenderedEntry } from "./render-entries";
 import { textOf, isContentBearing, extractToolCallText, extractToolCallArgsText, clip } from "./content";
 import { extractPaths, hashlineEditPaths } from "./tool-args";

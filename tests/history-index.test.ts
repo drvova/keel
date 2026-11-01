@@ -10,7 +10,7 @@ import {
   readHistoryIndex,
   type HistoryRange,
 } from "../src/core/history-index";
-import { registerBeforeCompactHook } from "../src/hooks/before-compact";
+import { registerHook } from "./support/host";
 
 const range = (from: number, to: number, extra: Partial<HistoryRange> = {}): HistoryRange =>
   ({ from, to, requests: 1, asks: [`ask ${from}`], files: [], commits: [], commitCount: 0, failed: 0, ...extra });
@@ -75,26 +75,27 @@ describe("formatHistoryRange", () => {
 });
 
 describe("readHistoryIndex", () => {
-  it("reads pi-vcc details, including omp's notes-backed wrapper, and rejects anything else", () => {
+  it("reads omp-vcc details (and pre-rename pi-vcc ones), including omp's notes-backed wrapper, and rejects anything else", () => {
     const historyIndex = [range(0, 9)];
+    expect(readHistoryIndex({ compactor: "omp-vcc", historyIndex })).toEqual(historyIndex);
     expect(readHistoryIndex({ compactor: "pi-vcc", historyIndex })).toEqual(historyIndex);
-    expect(readHistoryIndex({ kind: "experimental-context-rollover", hookDetails: { compactor: "pi-vcc", historyIndex } })).toEqual(historyIndex);
+    expect(readHistoryIndex({ kind: "experimental-context-rollover", hookDetails: { compactor: "omp-vcc", historyIndex } })).toEqual(historyIndex);
     expect(readHistoryIndex({ compactor: "other", historyIndex })).toBeUndefined();
-    expect(readHistoryIndex({ compactor: "pi-vcc", historyIndex: [{ from: "x" }] })).toBeUndefined();
+    expect(readHistoryIndex({ compactor: "omp-vcc", historyIndex: [{ from: "x" }] })).toBeUndefined();
   });
 });
 
-describe("history index across compactions (Pi hook)", () => {
+describe("history index across compactions (the hook)", () => {
   let dir: string;
-  const prev = process.env.PI_VCC_CONFIG_PATH;
+  const prev = process.env.OMP_VCC_CONFIG_PATH;
   beforeAll(() => {
-    dir = mkdtempSync(join(tmpdir(), "pi-vcc-index-"));
-    process.env.PI_VCC_CONFIG_PATH = join(dir, "c.json");
-    writeFileSync(process.env.PI_VCC_CONFIG_PATH, JSON.stringify({ overrideDefaultCompaction: true, smartKeepTail: false }));
+    dir = mkdtempSync(join(tmpdir(), "omp-vcc-index-"));
+    process.env.OMP_VCC_CONFIG_PATH = join(dir, "c.json");
+    writeFileSync(process.env.OMP_VCC_CONFIG_PATH, JSON.stringify({ overrideDefaultCompaction: true, smartKeepTail: false }));
   });
   afterAll(() => {
-    if (prev === undefined) delete process.env.PI_VCC_CONFIG_PATH;
-    else process.env.PI_VCC_CONFIG_PATH = prev;
+    if (prev === undefined) delete process.env.OMP_VCC_CONFIG_PATH;
+    else process.env.OMP_VCC_CONFIG_PATH = prev;
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -107,9 +108,10 @@ describe("history index across compactions (Pi hook)", () => {
 
   const compact = (branchEntries: any[], previousSummary?: string) => {
     let handler: any;
-    registerBeforeCompactHook({ on: (name: string, fn: any) => { if (name === "session_before_compact") handler = fn; } } as any, "1.1.0");
+    const hook = registerHook({ on: (name: string, fn: any) => { if (name === "session_before_compact") handler = fn; } });
+    hook.autoCompactionStart("threshold");
     return handler({
-      type: "session_before_compact", branchEntries, customInstructions: undefined, reason: "threshold", willRetry: false,
+      type: "session_before_compact", branchEntries, customInstructions: undefined,
       preparation: { previousSummary, fileOps: { read: [], written: [], edited: [] }, tokensBefore: 1000 },
       signal: new AbortController().signal,
     }, { ui: { notify: () => {} }, sessionManager: { getEntries: () => branchEntries } }).compaction;
@@ -129,7 +131,7 @@ describe("history index across compactions (Pi hook)", () => {
 
   it("indexes history a compaction without an index left behind as one range", () => {
     const first = turns(2);
-    const old = { id: "k0", type: "compaction", firstKeptEntryId: "", summary: "[user]\nold", details: { compactor: "pi-vcc", version: 2 } };
+    const old = { id: "k0", type: "compaction", firstKeptEntryId: "", summary: "[user]\nold", details: { compactor: "omp-vcc", version: 2 } };
     const c = compact([...first, old, ...turns(3)], "[user]\nold");
     expect(c.details.historyIndex[0]).toEqual({ from: 0, to: 3, asks: [], files: [], commits: [], commitCount: 0, failed: 0 });
     expect(c.summary).toContain("#0–#3: earlier, not indexed");

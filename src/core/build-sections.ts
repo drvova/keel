@@ -13,7 +13,7 @@ export interface BuildSectionsInput {
   /** Hook-provided file activity; authoritative for files touched before this compaction. */
   fileOps?: FileOps;
   /** Command names to record in a [Tracked Commands] section (see
-   * PiVccSettings.trackCommands). Empty/omitted = section stays empty. */
+   * VccSettings.trackCommands). Empty/omitted = section stays empty. */
   trackCommands?: readonly string[];
   /** The previous summary already holds the early requests, so this
    * compaction's first messages are ordinary user messages. */

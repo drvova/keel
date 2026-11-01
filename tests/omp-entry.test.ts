@@ -1,51 +1,33 @@
-// The omp entry (omp.ts) against a fake omp extension API. tests/omp-host.test.ts
-// runs the same entry inside a real omp when one is installed.
+// The omp entry (index.ts) against a fake omp extension API that hands it omp's
+// real convertToLlm. tests/omp-host.test.ts runs the same entry inside a real omp.
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import registerOmp from "../omp";
-import { PI_VCC_COMPACT_INSTRUCTION } from "../src/core/compact-args";
+import registerOmp from "../index";
+import { ompConvertToLlm } from "./support/host";
+import { OMP_VCC_COMPACT_INSTRUCTION } from "../src/core/compact-args";
 import { setSettingsAgentDir } from "../src/core/settings";
 
 let dir: string;
 let previousConfig: string | undefined;
 
 beforeAll(() => {
-  dir = mkdtempSync(join(tmpdir(), "pi-vcc-omp-entry-"));
-  previousConfig = process.env.PI_VCC_CONFIG_PATH;
-  process.env.PI_VCC_CONFIG_PATH = join(dir, "pi-vcc-config.json");
+  dir = mkdtempSync(join(tmpdir(), "omp-vcc-omp-entry-"));
+  previousConfig = process.env.OMP_VCC_CONFIG_PATH;
+  process.env.OMP_VCC_CONFIG_PATH = join(dir, "omp-vcc-config.json");
 });
 
 afterAll(() => {
   setSettingsAgentDir();
-  if (previousConfig === undefined) delete process.env.PI_VCC_CONFIG_PATH;
-  else process.env.PI_VCC_CONFIG_PATH = previousConfig;
+  if (previousConfig === undefined) delete process.env.OMP_VCC_CONFIG_PATH;
+  else process.env.OMP_VCC_CONFIG_PATH = previousConfig;
   rmSync(dir, { recursive: true, force: true });
 });
 
 beforeEach(() => {
-  writeFileSync(process.env.PI_VCC_CONFIG_PATH!, JSON.stringify({ overrideDefaultCompaction: true, smartKeepTail: false }));
+  writeFileSync(process.env.OMP_VCC_CONFIG_PATH!, JSON.stringify({ overrideDefaultCompaction: true, smartKeepTail: false }));
 });
-
-/** omp's convertToLlm per role (session/messages.ts convertOne), reduced to what the summary reads. */
-const ompConvertToLlm = (messages: any[]): any[] =>
-  messages.flatMap((m) => {
-    switch (m.role) {
-      case "bashExecution":
-        return m.excludeFromContext ? [] : [{ role: "user", content: `$ ${m.command}\n${m.output}`, attribution: "user" }];
-      case "pythonExecution":
-        return [{ role: "user", content: `>>> ${m.code}\n${m.output}`, attribution: "user" }];
-      case "fileMention":
-        return [{ role: "developer", content: m.files.map((f: any) => `<file path="${f.path}">${f.content}</file>`).join("\n") }];
-      case "custom":
-        return [{ role: "developer", content: m.content }];
-      case "branchSummary":
-        return [{ role: "user", content: `Branch summary: ${m.summary}` }];
-      default:
-        return [m];
-    }
-  });
 
 function createOmp(mode: "tui" | "rpc" = "rpc") {
   const handlers = new Map<string, Array<(event: any, ctx: any) => any>>();
@@ -127,7 +109,7 @@ describe("omp entry: registration", () => {
     expect([...omp.handlers.keys()].sort()).toEqual(
       ["auto_compaction_end", "auto_compaction_start", "session_before_compact", "session_compact"],
     );
-    expect([...omp.commands.keys()].sort()).toEqual(["pi-vcc", "pi-vcc-pin", "pi-vcc-recall", "pi-vcc-unpin"]);
+    expect([...omp.commands.keys()].sort()).toEqual(["omp-vcc", "omp-vcc-pin", "omp-vcc-recall", "omp-vcc-unpin"]);
     expect(omp.tools.map((t: any) => t.name)).toEqual(["vcc_recall", "vcc_pin"]);
   });
 
@@ -149,7 +131,7 @@ describe("omp entry: registration", () => {
   });
 });
 
-describe("omp entry: /pi-vcc", () => {
+describe("omp entry: /omp-vcc", () => {
   test("passes callbacks to ctx.compact and the marker to the hook through state", async () => {
     const omp = createOmp();
     const entries = conversation();
@@ -162,14 +144,14 @@ describe("omp entry: /pi-vcc", () => {
       arg.onComplete();
     });
 
-    await omp.run("pi-vcc", "keep:2");
+    await omp.run("omp-vcc", "keep:2");
 
     expect(typeof omp.compactCalls[0]).toBe("object");
-    expect(hookResult.compaction.details.compactor).toBe("pi-vcc");
+    expect(hookResult.compaction.details.compactor).toBe("omp-vcc");
     // keep:2 reached the hook: the tail starts at the second user turn.
     expect(hookResult.compaction.firstKeptEntryId).toBe(entries[2].id);
     await Bun.sleep(600);
-    expect(omp.notices.some((x) => x.msg.startsWith("pi-vcc: kept 2/3 turns"))).toBe(true);
+    expect(omp.notices.some((x) => x.msg.startsWith("omp-vcc: kept 2/3 turns"))).toBe(true);
     // The marker is only for the pass the command started.
     expect(omp.beforeCompact(undefined)?.compaction.details.reason).toBe("manual");
   });
@@ -181,7 +163,7 @@ describe("omp entry: /pi-vcc", () => {
       omp.beforeCompact(undefined);
       arg.onComplete();
     });
-    await omp.run("pi-vcc", "keep:1 carry on");
+    await omp.run("omp-vcc", "keep:1 carry on");
     expect((omp.compactCalls[0] as any).suppressContinuation).toBe(true);
     expect(omp.userMessages).toEqual(["carry on"]);
   });
@@ -193,17 +175,17 @@ describe("omp entry: /pi-vcc", () => {
       arg.onError(err);
       throw err;
     });
-    await omp.run("pi-vcc");
+    await omp.run("omp-vcc");
     expect(omp.notices).toHaveLength(1);
     expect(omp.notices[0].msg).toContain("compaction.keepRecentTokens in omp settings");
   });
 
-  test("TUI: omp shows the failure itself, so pi-vcc adds nothing for a generic error", async () => {
+  test("TUI: omp shows the failure itself, so omp-vcc adds nothing for a generic error", async () => {
     const omp = createOmp("tui");
     omp.setCompact(async (arg: any) => {
       arg.onError(new Error("Compaction cancelled"));
     });
-    await omp.run("pi-vcc");
+    await omp.run("omp-vcc");
     expect(omp.notices).toEqual([]);
   });
 });
@@ -217,7 +199,7 @@ describe("omp entry: automatic compactions", () => {
     expect(omp.beforeCompact().compaction.details).toMatchObject({ reason: "manual", willRetry: false });
   });
 
-  test("overflow recovery falls back to omp's own method when pi-vcc cannot cut", () => {
+  test("overflow recovery falls back to omp's own method when omp-vcc cannot cut", () => {
     const omp = createOmp();
     omp.setEntries([user("only one message")]);
     omp.fire("auto_compaction_start", { reason: "overflow", action: "context-full" });
@@ -242,7 +224,7 @@ describe("omp entry: what the summary reads", () => {
   const summarize = (entries: any[]) => {
     const omp = createOmp();
     omp.setEntries(entries);
-    return omp.beforeCompact(`${PI_VCC_COMPACT_INSTRUCTION} keep:1`).compaction.summary as string;
+    return omp.beforeCompact(`${OMP_VCC_COMPACT_INSTRUCTION} keep:1`).compaction.summary as string;
   };
 
   test("a custom message (omp: developer) is read as injected user content", () => {
@@ -314,14 +296,14 @@ describe("omp entry: a turn still running", () => {
     omp.setEntries(entries);
     omp.fire("auto_compaction_start", { reason: "threshold", action: "context-full" });
     const { compaction } = omp.beforeCompact();
-    expect(compaction.details).toMatchObject({ compactor: "pi-vcc", reason: "threshold" });
+    expect(compaction.details).toMatchObject({ compactor: "omp-vcc", reason: "threshold" });
     // The final answer stays in context (omp's print mode prints it from there).
     expect(compaction.firstKeptEntryId).toBe(entries[3].id);
   });
 
-  test("/pi-vcc still compacts a running turn when asked", () => {
+  test("/omp-vcc still compacts a running turn when asked", () => {
     const omp = createOmp();
     omp.setEntries(running());
-    expect(omp.beforeCompact(PI_VCC_COMPACT_INSTRUCTION).compaction.firstKeptEntryId).toBe("");
+    expect(omp.beforeCompact(OMP_VCC_COMPACT_INSTRUCTION).compaction.firstKeptEntryId).toBe("");
   });
 });

@@ -15,7 +15,7 @@ const userMsg = (id: string, content: string) => ({
 
 let dirCount = 0;
 const makeSession = (n: number, textOf: (i: number) => string) => {
-  const dir = mkdtempSync(join(tmpdir(), `pi-vcc-recall-command-${dirCount++}-`));
+  const dir = mkdtempSync(join(tmpdir(), `omp-vcc-recall-command-${dirCount++}-`));
   const file = join(dir, "session.jsonl");
   const ids = Array.from({ length: n }, (_, i) => `m${i}`);
   const lines = ids.map((id, i) => JSON.stringify(userMsg(id, textOf(i))));
@@ -28,7 +28,7 @@ const register = () => {
   const sent: Array<{ customType: string; content: string; display: boolean }> = [];
   const pi = {
     registerCommand: (name: string, command: { handler: typeof handler }) => {
-      expect(name).toBe("pi-vcc-recall");
+      expect(name).toBe("omp-vcc-recall");
       handler = command.handler;
     },
     sendMessage: (msg: any) => {
@@ -50,7 +50,7 @@ const invoke = async (handler: (args: string, ctx: any) => Promise<void>, file: 
   });
 };
 
-describe("/pi-vcc-recall command pagination and hard-cap truncation signaling", () => {
+describe("/omp-vcc-recall command pagination and hard-cap truncation signaling", () => {
   it("reports a capped page count and an explicit truncation message when raw hits exceed the cap", async () => {
     // "." makes this a regex-mode query, matching every one of the 60
     // messages deterministically (no BM25/floor involved) — isolates the
@@ -89,7 +89,7 @@ describe("/pi-vcc-recall command pagination and hard-cap truncation signaling", 
     }
   });
 
-  it("reports an explicit out-of-range page (not a false 'No matches') using /pi-vcc-recall syntax, without duplicating 'refine your query'", async () => {
+  it("reports an explicit out-of-range page (not a false 'No matches') using /omp-vcc-recall syntax, without duplicating 'refine your query'", async () => {
     // 60 raw matches capped to 50 → pages 1-10 exist. Page 11 has no rows to
     // slice, but hits.length (50) is > 0 — must not claim "No matches", and
     // since this IS a truncated result, the guidance must not repeat the
@@ -103,7 +103,7 @@ describe("/pi-vcc-recall command pagination and hard-cap truncation signaling", 
       expect(content).toContain("Page 11 is outside the available range 1-10");
       expect(content).toContain("50 matches");
       expect(content).not.toContain("No matches");
-      expect(content).toContain("/pi-vcc-recall");
+      expect(content).toContain("/omp-vcc-recall");
       expect(content).toContain("page:N");
       // "refine your query" must appear exactly once (from the truncation
       // note), not again in the out-of-range guidance.
@@ -144,9 +144,9 @@ describe("/pi-vcc-recall command pagination and hard-cap truncation signaling", 
 });
 
 // Issue #1: a brand-new session has no JSONL on disk yet.
-describe("/pi-vcc-recall in a fresh session with no session file on disk", () => {
+describe("/omp-vcc-recall in a fresh session with no session file on disk", () => {
   const freshSessionFile = () => {
-    const dir = mkdtempSync(join(tmpdir(), "pi-vcc-recall-fresh-"));
+    const dir = mkdtempSync(join(tmpdir(), "omp-vcc-recall-fresh-"));
     return { dir, file: join(dir, "sessions", "not-written-yet.jsonl") };
   };
 

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "bun:test";
 import { renderMessage } from "../src/core/render-entries";
-import type { Message } from "@earendil-works/pi-ai";
+import type { Message } from "@oh-my-pi/pi-ai";
 import { userMsg, assistantText, assistantWithToolCall, toolResult } from "./fixtures";
 
 describe("renderMessage", () => {

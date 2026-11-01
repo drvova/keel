@@ -9,7 +9,7 @@ const dirs: string[] = [];
 afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
 
 const writeSession = (entries: any[]) => {
-  const dir = mkdtempSync(join(tmpdir(), "pi-vcc-range-"));
+  const dir = mkdtempSync(join(tmpdir(), "omp-vcc-range-"));
   dirs.push(dir);
   const file = join(dir, "session.jsonl");
   writeFileSync(file, entries.map((e) => JSON.stringify(e)).join("\n") + "\n", "utf8");
@@ -107,13 +107,16 @@ describe("vcc_recall range", () => {
     expect(p4).toContain("Page 4 is outside the available range 1-3");
   });
 
-  it("rejects malformed ranges and reports the last index for empty ones", async () => {
+  it("repairs the ranges it can read, rejects the rest, and reports the last index for empty ones", async () => {
     const entries = linear(3);
     const file = writeSession(entries);
     const ids = entries.map((e) => e.id);
-    for (const range of [[5, 2], [1], [1.5, 3], [-1, 2], ["1", "2"]]) {
-      expect(await recall(file, { range }, ids)).toContain("Invalid range");
-    }
+    // omp has no prepareArguments: the tool repairs loose forms itself.
+    expect(await recall(file, { range: [5, 2] }, ids)).toStartWith("Range #2..#2 (1 messages, #2 is the last entry):");
+    expect(await recall(file, { range: [1] }, ids)).toStartWith("Range #1..#1 (1 messages):");
+    expect(await recall(file, { range: ["1", "2"] }, ids)).toStartWith("Range #1..#2 (2 messages):");
+    expect(await recall(file, { range: [1.5, 3] }, ids)).toStartWith("Ignored: range [1.5,3] (not [from, to]).");
+    expect(await recall(file, { range: [-1, 2] }, ids)).toContain("Invalid range");
     expect(await recall(file, { range: [10, 20] }, ids)).toBe("No messages #10..#20 in session history (last entry is #2).");
   });
 

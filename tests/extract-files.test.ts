@@ -54,16 +54,16 @@ describe("settings defaults", () => {
 });
 
 describe("loadSettings coercion", () => {
-  // PI_VCC_CONFIG_PATH is settings.ts' existing override — point it at a
-  // tmp file so the real ~/.pi/agent/pi-vcc-config.json is never touched.
+  // OMP_VCC_CONFIG_PATH is settings.ts' existing override — point it at a
+  // tmp file so the real ~/.omp/agent/omp-vcc-config.json is never touched.
   const writeConfig = (value: unknown) => {
-    const dir = mkdtempSync(join(tmpdir(), "pi-vcc-cfg-"));
+    const dir = mkdtempSync(join(tmpdir(), "omp-vcc-cfg-"));
     const path = join(dir, "config.json");
     writeFileSync(path, JSON.stringify({ trackCommands: value }));
-    process.env.PI_VCC_CONFIG_PATH = path;
+    process.env.OMP_VCC_CONFIG_PATH = path;
   };
 
-  afterEach(() => delete process.env.PI_VCC_CONFIG_PATH);
+  afterEach(() => delete process.env.OMP_VCC_CONFIG_PATH);
 
   it("malformed trackCommands values coerce fail-closed to string[]", () => {
     for (const bad of ["ssh", 42, [1, " kubectl ", null, "kubectl"], null, { 0: "ssh" }]) {

@@ -1,20 +1,20 @@
-// Host-agnostic compaction hook. Nothing here imports a host package at runtime:
-// the host's own functions arrive through a CompactionHost, so the same code runs
-// natively on Pi (src/hooks/before-compact.ts) and on omp (src/omp/).
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+// The compaction hook. It imports no host package at runtime: omp's own
+// functions arrive through a CompactionHost (src/hooks/omp-host.ts), so `bun build
+// --packages external` stays on node builtins.
+import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { writeFileSync } from "fs";
 import { compileRanked } from "../core/summarize";
 import { mergeHistoryIndex, rangeOfWindow, readHistoryIndex, unindexedRange } from "../core/history-index";
 import { readPins } from "../core/pins";
 import { normalize } from "../core/normalize";
 import { buildGlobalIndexById, loadGlobalIndexById } from "../core/global-indices";
-import { parseKeepAndPrompt, PI_VCC_COMPACT_INSTRUCTION } from "../core/compact-args";
-import { loadSettings, type PiVccSettings } from "../core/settings";
+import { parseKeepAndPrompt, OMP_VCC_COMPACT_INSTRUCTION } from "../core/compact-args";
+import { loadSettings, type VccSettings } from "../core/settings";
 import { calibrateCharsPerToken, estimateMessageContentChars, estimateMessageContentTokens, estimateTokensFromChars } from "../core/token-estimate";
-import type { PiVccCompactionDetails } from "../details";
+import { VCC_COMPACTOR, vccDetailsOf, type VccCompactionDetails } from "../details";
 import type { CompactionReason } from "../types";
 
-export { PI_VCC_COMPACT_INSTRUCTION } from "../core/compact-args";
+export { OMP_VCC_COMPACT_INSTRUCTION } from "../core/compact-args";
 
 export interface CompactionStats {
   summarized: number;
@@ -38,152 +38,46 @@ export interface CompactionStats {
 export type BudgetCutKind = "no_anchor" | "oversized_tail";
 export const OVERSIZED_TAIL_FACTOR = 2.5;
 
-/** What the compaction hook needs from the host it runs in. */
+/** What started a compaction, and whether omp retries the turn after it. */
+export interface CompactionTrigger {
+  reason: CompactionReason;
+  willRetry: boolean;
+}
+
+const MANUAL_TRIGGER: CompactionTrigger = { reason: "manual", willRetry: false };
+
+/** What the compaction hook needs from omp. */
 export interface CompactionHost {
-  /** The host's convertToLlm; pi-vcc calls it with one message at a time. */
+  /** omp's convertToLlm; omp-vcc calls it with one message at a time. */
   convertToLlm: (messages: any[]) => any[];
   /**
-   * The host's projection for branches with context edits (Pi's
-   * buildSessionProjection). Read when such a branch is compacted; undefined on
-   * hosts that have none.
+   * The trigger of the compaction the hook is running for: omp's
+   * session_before_compact carries none (src/hooks/omp-host.ts reads it from
+   * auto_compaction_start). Called once per hook run; omitted means manual.
    */
-  readonly buildSessionProjection?: (entries: any[]) => { entries: Array<{ sourceEntry: any; messages: any[] }> };
-  /**
-   * Whether pi-vcc sends its own continue after an automatic compaction, given
-   * the user's `continueAfterThresholdCompact`. Omit it on a host that always
-   * resumes by itself: pi-vcc then registers no continue machinery at all.
-   */
-  shouldAutoContinue?: (settingEnabled: boolean) => boolean;
-  /**
-   * Trigger reason for a compaction whose session_before_compact event does not
-   * carry one (omp). Called once per hook run.
-   */
-  compactionContext?: () => { reason?: CompactionReason; willRetry?: boolean } | undefined;
+  compactionTrigger?: () => CompactionTrigger;
 }
 
 /** Per-registration state. omp binds the factory again for every subagent, so it gets one per binding. */
 export interface CompactionState {
   lastStats: CompactionStats | null;
-  lastCompactWasPiVcc: boolean;
+  /** The last compaction came from /omp-vcc, which reports its own outcome. */
+  lastCompactFromCommand: boolean;
   pendingFollowUpPrompt: string | null;
-  pendingAutoContinueTimer: ReturnType<typeof setTimeout> | null;
   /**
-   * The /pi-vcc marker for the manual compaction a command is starting, on a
-   * host whose ctx.compact() cannot carry instructions together with callbacks
-   * (omp). The hook reads it for a manual pass that arrives without instructions.
+   * The /omp-vcc marker for the manual compaction the command is starting:
+   * omp's ctx.compact() cannot carry instructions together with callbacks. The
+   * hook reads it for a manual pass that arrives without instructions.
    */
   pendingManualInstructions: string | null;
 }
 
 export const createCompactionState = (): CompactionState => ({
   lastStats: null,
-  lastCompactWasPiVcc: false,
+  lastCompactFromCommand: false,
   pendingFollowUpPrompt: null,
-  pendingAutoContinueTimer: null,
   pendingManualInstructions: null,
 });
-
-const defaultState = createCompactionState();
-
-// One host per process: an entry point installs its own before anything runs.
-// The cut helpers below fall back to it when no host is passed.
-let defaultHost: CompactionHost | undefined;
-
-export const setDefaultCompactionHost = (host: CompactionHost): void => {
-  defaultHost = host;
-};
-
-const resolveHost = (host?: CompactionHost): CompactionHost => {
-  const resolved = host ?? defaultHost;
-  if (!resolved) throw new Error("pi-vcc: no compaction host installed");
-  return resolved;
-};
-
-// Invisible auto-continue: resume the agent after compaction without polluting
-// the LLM context with a user-visible continue prompt. triggerInvisibleContinue
-// sends a custom message marked with a dedicated customType (content:[],
-// display:false, triggerTurn:true, deliverAs:'followUp') so Pi's queue/busy-state
-// stays coherent; the on('context') filter registered in registerBeforeCompactHook
-// removes that message (by customType ONLY) from the LLM payload — the model
-// simply continues from the compaction summary.
-//
-// Ported from monotykamary/pi-vcc branch 'tom'
-// (https://github.com/monotykamary/pi-vcc, MIT) — a pi-vcc derivative.
-export const AUTO_CONTINUE_CUSTOM_TYPE = "pi-vcc-auto-continue";
-
-/**
- * First Pi version that resumes the run by itself after an automatic compaction.
- * From this version on pi-vcc's fallback continue is redundant, and because it is
- * scheduled blind (setTimeout(0), no idle check) it lands as a ghost turn once the
- * self-resumed run ends - see issue #22, which reports both behaviours on 0.84.4.
- * Kept as a [major, minor, patch] tuple so there is one source of truth.
- */
-export const PI_SELF_RESUME_VERSION: readonly [number, number, number] = [0, 84, 4];
-
-/**
- * Minimal semver core parse: [major, minor, patch], or null when unusable.
- * Prerelease/build suffixes are dropped, so 0.84.4-rc.1 counts as 0.84.4 - the
- * safe direction, since such a build already carries the self-resume behaviour.
- */
-const parseVersionCore = (version: unknown): [number, number, number] | null => {
-  if (typeof version !== "string") return null;
-  const m = /^v?(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/.exec(version.trim());
-  if (!m) return null;
-  return [Number(m[1]), Number(m[2]), Number(m[3])];
-};
-
-/**
- * Two keys must both turn for pi-vcc to send its own continue:
- *  - `settingEnabled` is the user's permission (`continueAfterThresholdCompact`);
- *    false always wins.
- *  - the running Pi must be old enough to still need the fallback.
- * An unreadable/malformed version fails safe to "no continue": a missing continue
- * costs one idle turn, a ghost turn corrupts the transcript.
- */
-export const shouldScheduleAutoContinue = (settingEnabled: boolean, piVersion: unknown): boolean => {
-  if (!settingEnabled) return false;
-  const running = parseVersionCore(piVersion);
-  if (!running) return false;
-  for (let i = 0; i < 3; i++) {
-    if (running[i] !== PI_SELF_RESUME_VERSION[i]) return running[i] < PI_SELF_RESUME_VERSION[i];
-  }
-  return false;
-};
-
-export const triggerInvisibleContinue = (pi: ExtensionAPI): void => {
-  pi.sendMessage(
-    {
-      customType: AUTO_CONTINUE_CUSTOM_TYPE,
-      content: [],
-      display: false,
-      details: undefined,
-    },
-    {
-      triggerTurn: true,
-      deliverAs: "followUp",
-    },
-  );
-};
-
-const clearPendingAutoContinue = (state: CompactionState) => {
-  if (state.pendingAutoContinueTimer) {
-    clearTimeout(state.pendingAutoContinueTimer);
-    state.pendingAutoContinueTimer = null;
-  }
-};
-
-const scheduleAutoContinue = (pi: any, state: CompactionState) => {
-  clearPendingAutoContinue(state);
-  state.pendingAutoContinueTimer = setTimeout(() => {
-    state.pendingAutoContinueTimer = null;
-    try {
-      triggerInvisibleContinue(pi);
-    } catch {}
-  }, 0);
-};
-
-/** Stats of the last pi-vcc compaction on the default (Pi) registration. */
-export const getLastCompactionStats = () => defaultState.lastStats;
 
 const formatTokens = (n: number): string => {
   if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
@@ -193,29 +87,13 @@ const formatTokens = (n: number): string => {
 export const formatCompactionStats = (stats: CompactionStats): string => {
   if (stats.budgetCut) {
     const reason = stats.budgetCut === "no_anchor" ? "no user anchor" : "oversized tail";
-    return `pi-vcc: kept ~${formatTokens(stats.keptTokensEst)} tok tail (mid-turn cut, ${reason}), summarized ${stats.summarized}.`;
+    return `omp-vcc: kept ~${formatTokens(stats.keptTokensEst)} tok tail (mid-turn cut, ${reason}), summarized ${stats.summarized}.`;
   }
   const notes: string[] = [`summarized ${stats.summarized}`];
   if (stats.smartKeepAdjusted) {
     notes.push("smart-keep");
   }
-  return `pi-vcc: kept ${stats.keptUserTurns}/${stats.totalUserTurns} turns, ~${formatTokens(stats.keptTokensEst)} tok (${notes.join(", ")}).`;
-};
-
-const COMPACTION_REASONS: readonly CompactionReason[] = ["manual", "threshold", "overflow", "idle", "incomplete"];
-
-const toCompactionReason = (value: unknown): CompactionReason | undefined =>
-  COMPACTION_REASONS.includes(value as CompactionReason) ? (value as CompactionReason) : undefined;
-
-/** Pi puts the trigger on the event; a host that does not (omp) supplies it through compactionContext. */
-const readCompactionEventContext = (
-  event: unknown,
-  fallback?: { reason?: CompactionReason; willRetry?: boolean },
-): { reason?: CompactionReason; willRetry: boolean } => {
-  const raw = event as { reason?: unknown; willRetry?: unknown };
-  const reason = toCompactionReason(raw.reason);
-  if (reason) return { reason, willRetry: raw.willRetry === true };
-  return { reason: toCompactionReason(fallback?.reason), willRetry: raw.willRetry === true || fallback?.willRetry === true };
+  return `omp-vcc: kept ${stats.keptUserTurns}/${stats.totalUserTurns} turns, ~${formatTokens(stats.keptTokensEst)} tok (${notes.join(", ")}).`;
 };
 
 export const scheduleCompactionStatsNotify = (ctx: any, stats: CompactionStats) => {
@@ -230,21 +108,21 @@ export const scheduleCompactionStatsNotify = (ctx: any, stats: CompactionStats) 
 };
 
 const parseCompactionInstructions = (customInstructions?: string): {
-  isPiVcc: boolean;
+  fromCommand: boolean;
   keepUserTurns: number;
   keepUserTurnsExplicit: boolean;
   followUpPrompt: string | null;
 } => {
   const trimmed = customInstructions?.trim();
-  if (trimmed === PI_VCC_COMPACT_INSTRUCTION) {
-    return { isPiVcc: true, keepUserTurns: 1, keepUserTurnsExplicit: false, followUpPrompt: null };
+  if (trimmed === OMP_VCC_COMPACT_INSTRUCTION) {
+    return { fromCommand: true, keepUserTurns: 1, keepUserTurnsExplicit: false, followUpPrompt: null };
   }
 
-  const keepPrefix = `${PI_VCC_COMPACT_INSTRUCTION} `;
+  const keepPrefix = `${OMP_VCC_COMPACT_INSTRUCTION} `;
   if (trimmed?.startsWith(keepPrefix)) {
     const parsed = parseKeepAndPrompt(trimmed.slice(keepPrefix.length));
     return {
-      isPiVcc: true,
+      fromCommand: true,
       keepUserTurns: parsed.keepUserTurns ?? 1,
       keepUserTurnsExplicit: parsed.keepUserTurnsExplicit,
       followUpPrompt: null,
@@ -253,7 +131,7 @@ const parseCompactionInstructions = (customInstructions?: string): {
 
   const parsed = parseKeepAndPrompt(customInstructions);
   return {
-    isPiVcc: false,
+    fromCommand: false,
     keepUserTurns: parsed.keepUserTurns ?? 1,
     keepUserTurnsExplicit: parsed.keepUserTurnsExplicit,
     followUpPrompt: parsed.followUpPrompt || null,
@@ -265,9 +143,9 @@ const normalizeKeepUserTurns = (keepUserTurns: number): number => {
   return Math.max(0, Math.floor(keepUserTurns));
 };
 
-const dbg = (settings: PiVccSettings, data: Record<string, unknown>) => {
+const dbg = (settings: VccSettings, data: Record<string, unknown>) => {
   if (!settings.debug) return;
-  try { writeFileSync("/tmp/pi-vcc-debug.json", JSON.stringify(data, null, 2)); } catch {}
+  try { writeFileSync("/tmp/omp-vcc-debug.json", JSON.stringify(data, null, 2)); } catch {}
 };
 
 const previewContent = (content: unknown): string => {
@@ -313,11 +191,11 @@ const toLlmSafe = (message: unknown, host: CompactionHost): any[] => {
  * - An extension's custom_message, and user text an extension sent on the agent's
  *   behalf (omp `attribution: "agent"`), are marked `injected` so the early
  *   requests and [User Messages] read only what the user wrote. omp converts a
- *   custom message to a developer message; it is read back as user content, as on Pi.
+ *   custom message to a developer message; it is read back as user content.
  * - omp's developer-role turns (host reminders) and @file mention contents are
  *   host context, not conversation, and are left out.
  */
-const toSummaryMessage = (message: any, host: CompactionHost): any | null => {
+export const toSummaryMessage = (message: any, host: CompactionHost): any | null => {
   const role = message?.role;
   if (role === "developer" || role === "fileMention") return null;
   const converted = toLlmSafe(message, host);
@@ -349,8 +227,8 @@ const prefixHasRenderableContent = (
   ).length > 0;
 
 // Convert a non-message entry that carries LLM-context text (custom_message /
-// branch_summary) into its agent-message form, mirroring pi-core's
-// createCustomMessage / createBranchSummaryMessage (not root-exported, so inlined).
+// branch_summary) into its agent-message form, as omp's session context builds
+// them when it replays the branch.
 const toLiveMessage = (entry: any): { role: string; content: unknown; [key: string]: unknown } | null => {
   if (entry.type === "message" && entry.message) return entry.message;
   if (entry.type === "custom_message") {
@@ -433,20 +311,7 @@ const liveWindowStart = (branchEntries: any[]): number => {
   return compactionIdx + 1;
 };
 
-const collectLiveMessages = (branchEntries: any[], host?: CompactionHost): EntryWithMessage[] => {
-  if (branchEntries.some((entry) => entry.type === "context_edit")) {
-    // Pi owns edit ordering and compaction visibility. Keep source ids for recall
-    // refs, but use projected messages for summaries, calibration and tail cuts.
-    // The Pi host reads the export at call time, which preserves loading on older
-    // supported hosts without it. If edited history reaches such a host, defer via
-    // the hook error rather than silently resurrecting omitted/replaced content.
-    const project = resolveHost(host).buildSessionProjection;
-    if (typeof project !== "function") throw new Error("Context-edited history requires Pi's buildSessionProjection");
-    return project(branchEntries).entries.flatMap(({ sourceEntry: entry, messages }: any) =>
-      entry.type === "compaction" ? [] : messages.map((message: any) => ({ entry, message })),
-    );
-  }
-
+const collectLiveMessages = (branchEntries: any[]): EntryWithMessage[] => {
   const liveMessages: EntryWithMessage[] = [];
   for (let i = liveWindowStart(branchEntries); i < branchEntries.length; i++) {
     const e = branchEntries[i];
@@ -458,14 +323,13 @@ const collectLiveMessages = (branchEntries: any[], host?: CompactionHost): Entry
 };
 
 export function buildOwnCut(
+  host: CompactionHost,
   branchEntries: any[],
   keepUserTurns = 1,
   skipCustomTypes: readonly string[] = [],
-  hostArg?: CompactionHost,
 ): OwnCutResult {
-  const host = resolveHost(hostArg);
   const normalizedKeepUserTurns = normalizeKeepUserTurns(keepUserTurns);
-  const liveMessages = collectLiveMessages(branchEntries, host);
+  const liveMessages = collectLiveMessages(branchEntries);
 
   if (liveMessages.length === 0) return { ok: false, reason: "no_live_messages" };
   if (liveMessages.length <= 2) return { ok: false, reason: "too_few_live_messages" };
@@ -499,17 +363,17 @@ export function buildOwnCut(
   if (cutIdx <= 0) {
     // Keep request cannot form a safe boundary (single user prompt, no user prompt,
     // or keep larger than available user turns), so compact EVERYTHING and keep no tail.
-    // firstKeptEntryId="" is a sentinel: pi-core's buildSessionContext won't match it
+    // firstKeptEntryId="" is a sentinel: omp's buildSessionContext won't match it
     // (so 0 kept from pre-compaction), and next buildOwnCut triggers orphan recovery.
     return compactAll(true);
   }
 
   // A prefix that renders no block would compile to "", storing an empty summary
   // while keeping every message: context never shrinks and the next agent_end
-  // re-triggers compaction indefinitely. Pi 1.0 persists the prompt/tool loadout
-  // as a role:"system" entry (agent-session _preparePromptAndToolLoadout) that
-  // renders nothing, so when it alone precedes the first user message the prefix
-  // is empty; a custom_message listed in skipCustomTypes does the same. Fall back
+  // re-triggers compaction indefinitely. A role:"system" entry renders nothing
+  // (omp's convertToLlm drops it), so when it alone precedes the first user
+  // message the prefix is empty; a custom_message listed in skipCustomTypes does
+  // the same. Fall back
   // to compact-all, the same path already used when no safe boundary exists;
   // applyTailBudget then decides the tail.
   if (!prefixHasRenderableContent(liveMessages.slice(0, cutIdx), skipCustomTypes, host)) return compactAll(true);
@@ -530,7 +394,7 @@ export function buildOwnCut(
 // Token-budget tail cut: rescue default-path sessions when the user-turn
 // anchored tail is absent (autonomous: no user boundary in the live window)
 // or oversized (a single giant last user turn). Cuts at the nearest valid
-// non-toolResult boundary, mirroring pi-core's findCutPoint.
+// non-toolResult boundary, like omp's own cut point.
 export const findBudgetCutIndex = (
   live: EntryWithMessage[],
   maxTokens: number,
@@ -561,15 +425,15 @@ const isFinalAnswer = (message: { role: string; content: unknown }): boolean =>
   !message.content.some((part: any) => part?.type === "toolCall");
 
 export const applyTailBudget = (
+  host: CompactionHost,
   branchEntries: any[],
   cut: OwnCutResult,
-  opts: { maxTokens?: number; oversizedFactor?: number; charsPerToken?: number; skipCustomTypes?: readonly string[]; host?: CompactionHost } = {},
+  opts: { maxTokens?: number; oversizedFactor?: number; charsPerToken?: number; skipCustomTypes?: readonly string[] } = {},
 ): OwnCutResult => {
   if (!cut.ok) return cut;
   const maxTokens = opts.maxTokens ?? MAX_SMART_TAIL_TOKENS;
   const factor = opts.oversizedFactor ?? OVERSIZED_TAIL_FACTOR;
-  const host = resolveHost(opts.host);
-  const live = collectLiveMessages(branchEntries, host);
+  const live = collectLiveMessages(branchEntries);
   // Same guard as buildOwnCut, for the compact-all re-cut: a budget cut right
   // after a lone system entry (first user message alone over budget) would
   // summarize nothing. Case B never needs it: its cut extends a prefix that
@@ -597,8 +461,8 @@ export const applyTailBudget = (
     if (idx >= 0) return renders(idx) ? budgetResult(idx, "no_anchor") : cut;
     // The whole window fits the budget. When it ends with the turn's final
     // answer, keep that answer and summarize the rest: compact-all would take the
-    // reply out of context too, and a host that reads the last assistant message
-    // back (omp's print mode prints it) would then have nothing.
+    // reply out of context too, and omp's print mode, which prints the last
+    // assistant message, would then have nothing.
     const last = live.length - 1;
     if (last > 0 && isFinalAnswer(live[last].message) && renders(last)) return budgetResult(last, "no_anchor");
     return cut;
@@ -635,7 +499,7 @@ export interface ResolveSmartKeepOptions {
   maxTokens?: number;
   /** Calibrated chars/token for the current session; defaults to heuristic when omitted. */
   charsPerToken?: number;
-  host?: CompactionHost;
+  host: CompactionHost;
 }
 
 export interface ResolveSmartKeepResult {
@@ -655,9 +519,9 @@ const tailTokensForKeep = (
   branchEntries: any[],
   keepUserTurns: number,
   charsPerToken: number | undefined,
-  host: CompactionHost | undefined,
+  host: CompactionHost,
 ): number | null => {
-  const cut = buildOwnCut(branchEntries, keepUserTurns, [], host);
+  const cut = buildOwnCut(host, branchEntries, keepUserTurns, []);
   if (!cut.ok || cut.compactAll) return null;
   const idx = branchEntries.findIndex((e: any) => e.id === cut.firstKeptEntryId);
   if (idx < 0) return null;
@@ -691,7 +555,7 @@ export const resolveSmartKeepUserTurns = (opts: ResolveSmartKeepOptions): Resolv
     return { keepUserTurns: baseKeep, smartAdjusted: false, fromKeep: baseKeep };
   }
 
-  const baseCut = buildOwnCut(opts.branchEntries, baseKeep, [], opts.host);
+  const baseCut = buildOwnCut(opts.host, opts.branchEntries, baseKeep, []);
   const totalUserTurns = baseCut.ok ? baseCut.totalUserTurns : 0;
 
   let selected = baseKeep;
@@ -709,64 +573,40 @@ export const resolveSmartKeepUserTurns = (opts: ResolveSmartKeepOptions): Resolv
 };
 
 const REASON_MESSAGES: Record<OwnCutCancelReason, string> = {
-  no_live_messages: "pi-vcc: Nothing to compact (no live messages)",
-  too_few_live_messages: "pi-vcc: Too few messages to compact",
+  no_live_messages: "omp-vcc: Nothing to compact (no live messages)",
+  too_few_live_messages: "omp-vcc: Too few messages to compact",
 };
 
-/** pi-vcc stamps details.compactor; omp's notes-backed rollover nests hook details under hookDetails. */
-const isPiVccCompactionEntry = (entry: any): boolean =>
-  entry?.details?.compactor === "pi-vcc" || entry?.details?.hookDetails?.compactor === "pi-vcc";
-
 /**
- * Register the compaction hook on `pi` for `host`. `state` defaults to the
- * module's own (what getLastCompactionStats reads); a host that binds the
- * factory once per session, like omp, passes a fresh one per binding.
+ * Register the compaction hook on `pi`. omp binds the factory once per session
+ * (subagents too), so each binding passes its own `state`.
  */
 export const registerCompactionHook = (
   pi: ExtensionAPI,
   host: CompactionHost,
-  state: CompactionState = defaultState,
+  state: CompactionState,
 ) => {
-  const { shouldAutoContinue } = host;
-  if (shouldAutoContinue) {
-    // Filter our invisible-continue marker out of the LLM context payload so the
-    // model just continues from the compaction summary (matched by customType ONLY).
-    // Only registered where pi-vcc can send that marker: a context handler makes
-    // some hosts (omp) deep-copy the whole context before every request.
-    pi.on("context", (event) => {
-      const messages = event.messages.filter((message) => {
-        if (message.role !== "custom") return true;
-        return message.customType !== AUTO_CONTINUE_CUSTOM_TYPE;
-      });
-      if (messages.length !== event.messages.length) return { messages };
-    });
-
-    pi.on("before_agent_start", () => {
-      clearPendingAutoContinue(state);
-    });
-  }
-
   pi.on("session_before_compact", (event, ctx) => {
     const { preparation, branchEntries } = event;
-    const { reason, willRetry } = readCompactionEventContext(event, host.compactionContext?.());
+    const { reason, willRetry } = host.compactionTrigger?.() ?? MANUAL_TRIGGER;
     const customInstructions = event.customInstructions
-      ?? ((reason ?? "manual") === "manual" ? state.pendingManualInstructions ?? undefined : undefined);
+      ?? (reason === "manual" ? state.pendingManualInstructions ?? undefined : undefined);
     const settings = loadSettings();
 
-    // Always handle explicit /pi-vcc marker.
+    // Always handle the /omp-vcc marker.
     // Otherwise, only handle when user opted in via settings.
-    const { isPiVcc, keepUserTurns, keepUserTurnsExplicit, followUpPrompt } = parseCompactionInstructions(customInstructions);
+    const { fromCommand, keepUserTurns, keepUserTurnsExplicit, followUpPrompt } = parseCompactionInstructions(customInstructions);
     state.pendingFollowUpPrompt = null;
-    if (!isPiVcc && !settings.overrideDefaultCompaction) return;
+    if (!fromCommand && !settings.overrideDefaultCompaction) return;
     // Provider-level opt-out (#27): defer to the provider's own compaction
-    // (e.g. remote compaction via pi-codex-compaction). Checked at call time
-    // because the model can change mid-session via /model. Explicit /pi-vcc
-    // bypasses the skip; undefined model never skips.
-    const provider = (ctx as any)?.model?.provider;
-    if (!isPiVcc && typeof provider === "string" &&
+    // (e.g. a provider's remote compaction). Checked at call time because the
+    // model can change mid-session via /model. Explicit /omp-vcc bypasses the
+    // skip; undefined model never skips.
+    const provider = ctx?.model?.provider;
+    if (!fromCommand && typeof provider === "string" &&
         settings.skipForProviders.some((p) => p.toLowerCase() === provider.toLowerCase())) return;
 
-    const calibrationCut = buildOwnCut(branchEntries as any[], 0, [], host);
+    const calibrationCut = buildOwnCut(host, branchEntries as any[], 0, []);
     const calibrationMessageChars = calibrationCut.ok
       ? calibrationCut.messages.reduce(
           (sum: number, message: any) => sum + estimateMessageContentChars(message.content),
@@ -791,14 +631,13 @@ export const registerCompactionHook = (
       charsPerToken: tokenEstimate.charsPerToken,
       host,
     });
-    let ownCut = buildOwnCut(branchEntries as any[], smartKeep.keepUserTurns, settings.skipCustomTypes, host);
+    let ownCut = buildOwnCut(host, branchEntries as any[], smartKeep.keepUserTurns, settings.skipCustomTypes);
     // Default path only: rescue autonomous / oversized-tail sessions with a
     // token-budget cut. Explicit keep:N is respected absolutely (no-op here).
     if (ownCut.ok && !keepUserTurnsExplicit) {
-      ownCut = applyTailBudget(branchEntries as any[], ownCut, {
+      ownCut = applyTailBudget(host, branchEntries as any[], ownCut, {
         charsPerToken: tokenEstimate.charsPerToken,
         skipCustomTypes: settings.skipCustomTypes,
-        host,
       });
     }
     // An automatic pass on a turn still running (its last message is a tool result:
@@ -809,7 +648,7 @@ export const registerCompactionHook = (
     // cut-off reply) goes to the host's own method, a threshold or idle pass waits
     // until the turn has ended.
     if (
-      ownCut.ok && ownCut.compactAll && ownCut.keepFallbackToCompactAll && !isPiVcc
+      ownCut.ok && ownCut.compactAll && ownCut.keepFallbackToCompactAll && !fromCommand
       && ownCut.messages[ownCut.messages.length - 1]?.role === "toolResult"
       && (reason === "threshold" || reason === "idle" || reason === "overflow" || reason === "incomplete")
     ) {
@@ -835,13 +674,13 @@ export const registerCompactionHook = (
       const userIndices = liveRoles.reduce<number[]>((acc, r, i) => (r === "user" ? (acc.push(i), acc) : acc), []);
 
       state.pendingFollowUpPrompt = null;
-      const fallbackToCore = !isPiVcc && (reason === "overflow" || willRetry);
+      const fallbackToCore = !fromCommand && (reason === "overflow" || willRetry);
       dbg(settings, {
         cancelled: !fallbackToCore,
         fallbackToCore,
         reason: ownCut.reason,
         compaction: { reason, willRetry },
-        isPiVcc,
+        fromCommand,
         counts: {
           total: branchEntries.length,
           messages: (branchEntries as any[]).filter((e: any) => e.type === "message").length,
@@ -977,7 +816,7 @@ export const registerCompactionHook = (
     const RANKED_BRIEF_BUDGET_TOKENS = 1100;
     const RANKED_BRIEF_CEILING_TOKENS = 2000;
     const RANKED_BRIEF_TOKENS_PER_BLOCK = 15;
-    // [History Index]: this window's range added to the one the previous pi-vcc
+    // [History Index]: this window's range added to the one the previous omp-vcc
     // compaction stored. Only a compaction still in context counts: after omp's
     // /clear (a later reset_boundary) the index starts over, as the summary does.
     const lastCompactionIdx = lastIndexOfType(branchEntries as any[], "compaction");
@@ -1041,8 +880,8 @@ export const registerCompactionHook = (
       sections: [...summary.matchAll(/^\[(.+?)\]/gm)].map((m) => m[1]),
     });
 
-    const details: PiVccCompactionDetails = {
-      compactor: "pi-vcc",
+    const details: VccCompactionDetails = {
+      compactor: VCC_COMPACTOR,
       // version 2 = refs are session-global (recall index space); version 1
       // summaries carried window-relative refs (issue #28).
       version: 2,
@@ -1054,7 +893,7 @@ export const registerCompactionHook = (
       ...(historyIndex ? { historyIndex } : {}),
     };
 
-    state.lastCompactWasPiVcc = isPiVcc;
+    state.lastCompactFromCommand = fromCommand;
 
     return {
       compaction: {
@@ -1066,38 +905,29 @@ export const registerCompactionHook = (
     };
   });
 
-  // Fire success toast for /compact path only (delayed to let UI settle).
-  // /pi-vcc path uses its own onComplete callback in the command handler.
+  // Fire success toast for /compact and automatic compactions (delayed to let the
+  // UI settle). /omp-vcc reports through its own onComplete callback.
   pi.on("session_compact", async (event, ctx) => {
     if (!event.fromExtension) return;
-    // The runner keeps the LAST non-null session_before_compact result, so
-    // another compaction extension can win even when pi-vcc also returned one.
-    // Read the truth from the persisted entry instead of lifecycle state:
-    // pi-vcc stamps details.compactor = "pi-vcc" on its own compactions.
-    const entry = (event as any).compactionEntry;
-    if (!isPiVccCompactionEntry(entry)) return;
-    // Pi puts the trigger on this event. On a host that does not (one with
-    // compactionContext), the entry's own details, stamped by the hook above,
-    // carry it.
-    const stamped = host.compactionContext
-      ? (entry?.details?.compactor === "pi-vcc" ? entry.details : entry?.details?.hookDetails)
-      : undefined;
-    const { reason, willRetry } = readCompactionEventContext(event, stamped);
+    // Another compaction extension can win even when omp-vcc also returned a
+    // result, so read the persisted entry rather than lifecycle state: omp-vcc
+    // stamps its compactor, reason and willRetry on its own details.
+    const details = vccDetailsOf(event.compactionEntry?.details);
+    if (!details) return;
     const followUpPrompt = state.pendingFollowUpPrompt;
     state.pendingFollowUpPrompt = null;
-    if (state.lastCompactWasPiVcc) return; // /pi-vcc handles its own toast via onComplete
-    if (willRetry) return;
+    if (state.lastCompactFromCommand) return;
+    // omp retries the turn itself after an overflow or a cut-off reply.
+    if (details.willRetry) return;
     const stats = state.lastStats;
     if (!stats) return;
-    const shouldContinueAfterAutoCompact = (reason === "threshold" || reason === "overflow")
-      && shouldAutoContinue?.(loadSettings().continueAfterThresholdCompact) === true;
     scheduleCompactionStatsNotify(ctx, stats);
+    // omp resumes an interrupted run by itself after automatic maintenance
+    // (compaction.autoContinue); only a /compact follow-up prompt is sent here.
     if (followUpPrompt) {
       try {
         await pi.sendUserMessage(followUpPrompt);
       } catch {}
-    } else if (shouldContinueAfterAutoCompact) {
-      scheduleAutoContinue(pi, state);
     }
   });
 };

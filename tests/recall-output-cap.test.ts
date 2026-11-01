@@ -19,7 +19,7 @@ let longLineIndex = -1;
 const longLine = `${"a1,".repeat(100_000)}needle_mark${"b2,".repeat(100_000)}`;
 
 beforeAll(() => {
-  dir = mkdtempSync(join(tmpdir(), "pi-vcc-recall-cap-"));
+  dir = mkdtempSync(join(tmpdir(), "omp-vcc-recall-cap-"));
   file = join(dir, "session.jsonl");
   const lines: string[] = [];
   const add = (message: unknown) => {

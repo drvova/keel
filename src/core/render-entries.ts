@@ -1,4 +1,4 @@
-import type { Message, ToolCall } from "@earendil-works/pi-ai";
+import type { Message, ToolCall } from "@oh-my-pi/pi-ai";
 import { clip, textOf } from "./content";
 import { summarizeToolArgs, extractPaths } from "./tool-args";
 

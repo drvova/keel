@@ -1,4 +1,4 @@
-import type { Message } from "@earendil-works/pi-ai";
+import type { Message } from "@oh-my-pi/pi-ai";
 import { renderMessage, type RenderedEntry } from "./render-entries";
 import { forEachJsonlLine } from "./jsonl";
 import { isCountedMessageEntry } from "./global-indices";
@@ -25,9 +25,9 @@ export const loadAllMessages = (
     // spaces must agree by construction.
     if (!isCountedMessageEntry(entry)) return;
 
-    // Pi >= 1.0 persists the prompt/tool loadout as `role: "system"` message
-    // entries. They still occupy a `#N` index (shared counting rule) but are
-    // not conversation content, so recall never renders or searches them.
+    // A `role: "system"` message entry (host prompt/tool loadout) still
+    // occupies a `#N` index (shared counting rule) but is not conversation
+    // content, so recall never renders or searches it.
     const allowed = (!allowedEntryIds || allowedEntryIds.has(entry.id))
       && entry.message.role !== "system";
     if (allowed) {
@@ -39,7 +39,7 @@ export const loadAllMessages = (
 
   // Streamed via forEachJsonlLine: large sessions can exceed V8's maximum
   // string length before parsing even starts. A missing file yields an empty
-  // result — Pi does not create a new session's JSONL until its first
+  // result — omp does not create a new session's JSONL until its first
   // persisted entry.
   forEachJsonlLine(sessionFile, processLine);
 

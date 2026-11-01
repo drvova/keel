@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, utimesSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { listProjectSessions, resolveSession, type SessionInfo } from "../src/core/sessions";
-import { executeRecall } from "../src/tools/recall-spec";
+import { executeRecall } from "../src/tools/recall";
 import { parseCommandRequest } from "../src/core/recall-request";
 import { PIN_ENTRY_TYPE } from "../src/core/pins";
 
@@ -35,8 +35,8 @@ const sm = (branch: any[]) => ({ getSessionFile: () => current, getSessionDir: (
 let currentBranch: any[];
 
 beforeAll(() => {
-  dir = mkdtempSync(join(tmpdir(), "pi-vcc-sessions-"));
-  // Earlier Pi session: a fact and a pinned note.
+  dir = mkdtempSync(join(tmpdir(), "omp-vcc-sessions-"));
+  // An earlier session: a fact and a pinned note.
   const a = chain([["user", "Ship the release and tag it"], ["assistant", "Deploy tag v2.14.7 was rolled back after the smoke test failed."]]);
   write(join(dir, "2026-10-01T10-00-00-000Z_aaaa1111-0000-7000-8000-000000000001.jsonl"), [
     header("aaaa1111-0000-7000-8000-000000000001", "2026-10-01T10:00:00.000Z"),
@@ -112,7 +112,7 @@ describe("vcc_recall across sessions", () => {
   });
 });
 
-describe("/pi-vcc-recall arguments", () => {
+describe("/omp-vcc-recall arguments", () => {
   it("parses sessions, session:<id> and scope:project", () => {
     expect(parseCommandRequest("sessions").action).toEqual({ kind: "sessions", page: 1 });
     expect(parseCommandRequest("session:aaaa1111 rolled back")).toMatchObject({ session: "aaaa1111", action: { kind: "search", query: "rolled back" } });

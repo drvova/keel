@@ -176,7 +176,7 @@ export const parseToolRequest = (params: RecallToolParams): RecallRequest => {
 };
 
 /**
- * /pi-vcc-recall args -> request. A person types a query, scope:all|project,
+ * /omp-vcc-recall args -> request. A person types a query, scope:all|project,
  * session:<id> and page:N; "sessions" alone lists the earlier sessions.
  */
 export const parseCommandRequest = (args: string): RecallRequest => {

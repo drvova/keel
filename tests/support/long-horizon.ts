@@ -1,5 +1,5 @@
 // A long synthetic coding session with planted facts at known depths, compacted
-// many times through the real Pi hook, then scored: which facts the final summary
+// many times through the real hook (on omp's convertToLlm), then scored: which facts the final summary
 // still carries, whether it points at where each one lives (an exact `(#N)` ref,
 // or a [History Index] range that names it), and whether vcc_recall finds each
 // one with a reworded query. Used by tests/long-horizon.test.ts and
@@ -7,10 +7,10 @@
 import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { registerBeforeCompactHook } from "../../src/hooks/before-compact";
+import { registerHook } from "./host";
 import { parseToolRequest } from "../../src/core/recall-request";
 import { openRecallView, runRecall } from "../../src/core/recall-run";
-import { TOOL_PAGING_HINTS } from "../../src/tools/recall-spec";
+import { TOOL_PAGING_HINTS } from "../../src/tools/recall";
 import { PIN_ENTRY_TYPE } from "../../src/core/pins";
 
 export type NeedleKind = "constraint" | "decision" | "tool_value" | "early_file" | "early_commit" | "fixed_error" | "mid_request";
@@ -31,7 +31,7 @@ export interface Needle {
 export interface LongHorizonOptions {
   turns?: number;
   compactEvery?: number;
-  /** Pin a note (a pi-vcc custom entry, as vcc_pin writes) at the end of these turns. */
+  /** Pin a note (an omp-vcc custom entry, as vcc_pin writes) at the end of these turns. */
   pins?: Record<number, string>;
   /** Runs before the temp session is removed: extra queries for debugging. */
   inspect?: (recall: (params: Record<string, unknown>) => string, needles: Needle[]) => void;
@@ -77,8 +77,8 @@ interface Entry { type: string; id: string; [key: string]: unknown }
 
 /**
  * The session's turns, one function per turn that writes its messages through
- * `push` (which returns the message's session-wide #N). The Pi harness below
- * pushes into an entry list; a host test can push into its own session.
+ * `push` (which returns the message's session-wide #N). The harness below
+ * pushes into an entry list; tests/omp-host.test.ts pushes into a real omp session.
  */
 export const generateTurns = (turns: number, needles: Needle[], push: (message: Record<string, unknown>) => number) => {
   const user = (text: string) => push({ role: "user", content: text });
@@ -169,16 +169,16 @@ const pointsAt = (summary: string, needle: Needle): boolean => {
 export const runLongHorizon = (options: LongHorizonOptions = {}): LongHorizonResult => {
   const turns = options.turns ?? 60;
   const compactEvery = options.compactEvery ?? 6;
-  const dir = mkdtempSync(join(tmpdir(), "pi-vcc-long-horizon-"));
-  const previousConfig = process.env.PI_VCC_CONFIG_PATH;
-  process.env.PI_VCC_CONFIG_PATH = join(dir, "config.json");
-  writeFileSync(process.env.PI_VCC_CONFIG_PATH, JSON.stringify({ overrideDefaultCompaction: true }));
+  const dir = mkdtempSync(join(tmpdir(), "omp-vcc-long-horizon-"));
+  const previousConfig = process.env.OMP_VCC_CONFIG_PATH;
+  process.env.OMP_VCC_CONFIG_PATH = join(dir, "config.json");
+  writeFileSync(process.env.OMP_VCC_CONFIG_PATH, JSON.stringify({ overrideDefaultCompaction: true }));
   const sessionFile = join(dir, "session.jsonl");
   try {
     const needles = NEEDLES(turns).map((n) => ({ ...n }));
     const { entries, turnFns } = buildSession(turns, needles);
     let handler: any;
-    registerBeforeCompactHook({ on: (name: string, fn: any) => { if (name === "session_before_compact") handler = fn; } } as any, "1.1.0");
+    const hook = registerHook({ on: (name: string, fn: any) => { if (name === "session_before_compact") handler = fn; } });
     const sessionManager = {
       getEntries: () => entries,
       getBranch: () => entries,
@@ -200,13 +200,12 @@ export const runLongHorizon = (options: LongHorizonOptions = {}): LongHorizonRes
       if ((t + 1) % compactEvery !== 0) continue;
       writeFile();
       const chars = entries.reduce((sum, e) => sum + JSON.stringify((e as any).message?.content ?? "").length, 0);
+      hook.autoCompactionStart("threshold");
       const out = handler({
         type: "session_before_compact",
         preparation: { previousSummary, fileOps: { read: [], written: [], edited: [] }, tokensBefore: Math.round(chars / 4) },
         branchEntries: entries,
         customInstructions: undefined,
-        reason: "threshold",
-        willRetry: false,
         signal: new AbortController().signal,
       }, { sessionManager, ui: { notify: () => {} } });
       if (!out?.compaction) continue;
@@ -243,8 +242,8 @@ export const runLongHorizon = (options: LongHorizonOptions = {}): LongHorizonRes
     }, needles);
     return { turns, compactions, summaryChars, needles: scores, finalSummary };
   } finally {
-    if (previousConfig === undefined) delete process.env.PI_VCC_CONFIG_PATH;
-    else process.env.PI_VCC_CONFIG_PATH = previousConfig;
+    if (previousConfig === undefined) delete process.env.OMP_VCC_CONFIG_PATH;
+    else process.env.OMP_VCC_CONFIG_PATH = previousConfig;
     rmSync(dir, { recursive: true, force: true });
   }
 };

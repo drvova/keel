@@ -212,7 +212,7 @@ the plain transcript-tail brief on your sessions. Run it from a clone of this
 repo (needs [bun](https://bun.sh) and the repo's installed dependencies):
 
 ```
-bun benchmarks/benchmark.ts --sessions=~/.pi/agent/sessions --limit=200
+bun benchmarks/benchmark.ts --sessions=~/.omp/agent/sessions --limit=200
 ```
 
 It prints a baseline-vs-ranked table plus the paired recall delta, and writes
@@ -220,7 +220,7 @@ It prints a baseline-vs-ranked table plus the paired recall delta, and writes
 
 | flag          | meaning                                 | default                |
 |---------------|-----------------------------------------|------------------------|
-| `--sessions`  | dir of `*.jsonl` sessions (recursed)    | `~/.pi/agent/sessions` |
+| `--sessions`  | dir of `*.jsonl` sessions (recursed)    | `~/.omp/agent/sessions` |
 | `--limit`     | max sessions to score                   | all                    |
 | `--floor`     | min brief budget, chars (§5)            | 4400                   |
 | `--ceiling`   | max brief budget, chars (§5)            | 8000                   |
