@@ -7,11 +7,16 @@ import {
   compactionBudgets,
   contextLengthOfModelEntry,
   DEFAULT_BUDGETS,
+  DEFAULT_SUMMARY_LIMITS,
   effectiveWindow,
   limitFromOverflowError,
   ompDefaultTrigger,
+  ompPolicyOf,
+  ompTrigger,
   RECOVERY_BAND,
 } from "../src/core/window";
+// omp's own function, which omp-vcc ports since omp does not export it to extensions.
+import { resolveThresholdTokens } from "@oh-my-pi/pi-agent-core/compaction";
 import { learnedWindow, probeProviderWindow, recordLearnedWindow, resetProviderProbes } from "../src/core/model-limits";
 import { createCompactionState } from "../src/hooks/compaction";
 import { triggerFor, windowOf } from "../src/hooks/window-limits";
@@ -77,6 +82,39 @@ describe("ompDefaultTrigger", () => {
   });
 });
 
+describe("ompTrigger", () => {
+  it("is where omp compacts: the same as omp's resolveThresholdTokens for every policy and window", () => {
+    const policies: Record<string, unknown>[] = [
+      {},
+      { thresholdPercent: 70 },
+      { thresholdPercent: 0.5 },
+      { thresholdPercent: 120 },
+      { thresholdTokens: 90_000 },
+      { thresholdTokens: 2_000_000 },
+      { reserveTokens: 30_000 },
+      { reserveTokens: 16_384 },
+      { reserveTokens: 500_000 },
+      { baseWindowTokens: 64_000 },
+      { baseWindowTokens: 64_000, thresholdPercent: 50 },
+      { baseWindowTokens: 64_000, thresholdTokens: 90_000 },
+      { thresholdPercent: -1, thresholdTokens: -1 },
+    ];
+    for (const window of [4_096, 16_384, 32_768, 65_536, 128_000, 200_000, 1_000_000]) {
+      for (const p of policies) {
+        const settings = { enabled: true, keepRecentTokens: 20_000, ...p } as any;
+        expect({ window, p, trigger: ompTrigger(window, ompPolicyOf(settings)) }).toEqual({ window, p, trigger: resolveThresholdTokens(window, settings) });
+      }
+    }
+  });
+
+  it("reads only the policy fields from omp's settings", () => {
+    expect(ompPolicyOf({ enabled: false, strategy: "off", thresholdPercent: 80, reserveTokens: 20_000, keepRecentTokens: 9, remoteEndpoint: "x" }))
+      .toEqual({ enabled: false, strategy: "off", thresholdPercent: 80, reserveTokens: 20_000 });
+    expect(ompPolicyOf(undefined)).toBeUndefined();
+    expect(ompPolicyOf({ thresholdTokens: Number.NaN })).toEqual({});
+  });
+});
+
 describe("compactionBudgets", () => {
   it("keeps the old fixed numbers on a typical window and when nothing is known", () => {
     expect(compactionBudgets(undefined)).toEqual(DEFAULT_BUDGETS);
@@ -96,11 +134,25 @@ describe("compactionBudgets", () => {
     expect(compactionBudgets(9_000, 8_000).maxTailTokens).toBe(1_000);
   });
 
-  it("raises only the summary ceiling on a very large window", () => {
+  it("raises the summary's ceiling and its sections, not the tail, on a very large window", () => {
     const b = compactionBudgets(ompDefaultTrigger(1_000_000), 10_000);
     expect(b.maxTailTokens).toBe(DEFAULT_BUDGETS.maxTailTokens);
     expect(b.briefTokens).toBe(DEFAULT_BUDGETS.briefTokens);
     expect(b.briefCeilingTokens).toBe(3_400);
+    // The sections grow with the brief's ceiling, and so does the framing a summary may add.
+    expect(b.summaryScale).toBe(1.7);
+    expect(b.summary).toEqual({ userMessages: 26, filesPerCategory: 17, commits: 14, historyRanges: 14, briefLines: 204 });
+    expect(b.growthMarginChars).toBe(850);
+  });
+
+  it("shrinks each summary section on a small window, never under its floor", () => {
+    expect(compactionBudgets(ompDefaultTrigger(200_000), 8_000).summary).toEqual(DEFAULT_SUMMARY_LIMITS);
+    const b = compactionBudgets(ompDefaultTrigger(32_768), 8_000);
+    // The square root of the trigger's share of a ~128K window's.
+    expect(b.summaryScale).toBe(0.39);
+    expect(b.summary).toEqual({ userMessages: 6, filesPerCategory: 4, commits: 3, historyRanges: 3, briefLines: 47 });
+    expect(b.growthMarginChars).toBe(DEFAULT_BUDGETS.growthMarginChars);
+    expect(compactionBudgets(2_000).summary).toEqual({ userMessages: 4, filesPerCategory: 3, commits: 2, historyRanges: 3, briefLines: 30 });
   });
 });
 
@@ -173,10 +225,24 @@ describe("triggerFor", () => {
     expect(triggerFor(windowOf(model), createCompactionState(), "p/m", "overflow", 30_000)).toBe(30_000);
   });
 
+  it("omp's policy, as its compactions carry it, places the trigger, for that model only", () => {
+    const state = createCompactionState();
+    const w = windowOf(model);
+    expect(triggerFor(w, state, "p/m", "threshold", 70_000, { thresholdPercent: 50 })).toBe(64_000);
+    // A later pass without one (a /omp-vcc) keeps it; another model does not.
+    expect(triggerFor(w, state, "p/m", "manual", 40_000)).toBe(64_000);
+    expect(triggerFor(windowOf({ ...model, id: "n" }), state, "p/n", "manual", 40_000)).toBe(108_800);
+    expect(triggerFor(w, createCompactionState(), "p/m", "manual", 40_000, { thresholdTokens: 90_000 })).toBe(90_000);
+    expect(triggerFor(w, createCompactionState(), "p/m", "overflow", 30_000, { thresholdTokens: 90_000 })).toBe(30_000);
+  });
+
   it("when a smaller real window is known, omp's trigger is above it and omp-vcc's own applies", () => {
     recordLearnedWindow("p/m", 32_768);
     const w = windowOf(model);
     expect(w).toMatchObject({ omp: 128_000, learned: 32_768, effective: 32_768, source: "overflow-error" });
     expect(triggerFor(w, createCompactionState(), "p/m", "threshold", 100_000)).toBe(16_384);
+    // The user's own policy, on the real window: 80% of it, and a fixed 90K past it falls back as omp's does.
+    expect(triggerFor(w, createCompactionState(), "p/m", "threshold", 100_000, { thresholdPercent: 80 })).toBe(26_214);
+    expect(triggerFor(w, createCompactionState(), "p/m", "threshold", 100_000, { thresholdTokens: 90_000 })).toBe(16_384);
   });
 });

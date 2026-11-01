@@ -5,6 +5,7 @@ import {
   openSessionView,
   projectSessions,
   recallOutputChars,
+  expandDetailChars,
   runRecall,
   sessionHeader,
   type RecallPagingHints,
@@ -42,6 +43,7 @@ export const registerVccRecallCommand = (pi: ExtensionAPI) => {
       const request = parseCommandRequest(args);
       const project = projectSessions(sessionDirOf(ctx.sessionManager as any, sessionFile), sessionFile);
       const maxChars = recallOutputChars(windowOf(ctx.model).effective);
+      const detailChars = expandDetailChars(maxChars);
       let content: string;
       if (request.session) {
         const target = resolveSession(request.session, project.list());
@@ -49,12 +51,12 @@ export const registerVccRecallCommand = (pi: ExtensionAPI) => {
           tell(ctx, target.error, "warning");
           return;
         }
-        content = runRecall(request, openSessionView(target, request.scope, project), commandHints(target.short), {
+        content = runRecall(request, openSessionView(target, request.scope, project, detailChars), commandHints(target.short), {
           maxChars: Math.max(0, maxChars - 300),
           header: sessionHeader(target),
         });
       } else {
-        content = runRecall(request, openRecallView(sessionFile, request.scope, ctx.sessionManager, { project }), commandHints(), { maxChars });
+        content = runRecall(request, openRecallView(sessionFile, request.scope, ctx.sessionManager, { project, detailChars }), commandHints(), { maxChars });
       }
       pi.sendMessage({ customType: "vcc-recall", content, display: true }, { triggerTurn: true });
     },

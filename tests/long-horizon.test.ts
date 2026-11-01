@@ -36,6 +36,26 @@ describe("long-horizon session", () => {
   });
 });
 
+// The same 120-turn session on a 32K, a 128K and a 1M window: budgets and
+// section sizes follow the window (core/window.ts), recall and pointers do not.
+describe("long-horizon session: the summary follows the window", () => {
+  const [small, typical, large] = [32_768, 128_000, 1_000_000].map((contextWindow) => runLongHorizon({ turns: 120, compactEvery: 6, contextWindow }));
+  const max = (r: typeof small) => Math.max(...r.summaryChars);
+  const count = (r: typeof small, key: "inSummary" | "pointed") => r.needles.filter((n) => n[key]).length;
+
+  it("a 32K window gets about half the summary, and keeps every pointer and recall", () => {
+    expect(max(small)).toBeLessThan(max(typical) * 0.6);
+    expect(count(small, "pointed")).toBeGreaterThanOrEqual(count(typical, "pointed"));
+    expect(small.needles.filter((n) => n.recallRank == null)).toEqual([]);
+    expect(small.needles.filter((n) => n.kind === "constraint" || n.kind === "mid_request").every((n) => n.inSummary)).toBe(true);
+  });
+
+  it("a 1M window keeps more facts in the summary itself, still bounded", () => {
+    expect(count(large, "inSummary")).toBeGreaterThan(count(typical, "inSummary"));
+    expect(max(large)).toBeLessThan(16_000);
+  });
+});
+
 describe("recall search: inflected forms", () => {
   it("stems plain ASCII words, leaves short, non-ASCII and regex terms alone", () => {
     expect(stemOf("rounding")).toBe("round");

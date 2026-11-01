@@ -14,6 +14,7 @@ import {
   openSessionView,
   projectSessions,
   recallOutputChars,
+  expandDetailChars,
   runRecall,
   sessionHeader,
   type RecallPagingHints,
@@ -109,16 +110,17 @@ export const executeRecall = (
   const request = parseToolRequest(normalizeToolParams(params) as RecallToolParams);
   const project = projectSessions(sessionDirOf(sessionManager, sessionFile), sessionFile);
   const maxChars = recallOutputChars(options.contextWindow);
+  const detailChars = expandDetailChars(maxChars);
   if (request.session) {
     const target = resolveSession(request.session, project.list());
     if ("error" in target) return target.error;
-    const view = openSessionView(target, request.scope, project);
+    const view = openSessionView(target, request.scope, project, detailChars);
     return runRecall(request, view, sessionPagingHints(TOOL_PAGING_HINTS, target.short), {
       maxChars: Math.max(0, maxChars - 300),
       header: sessionHeader(target),
     });
   }
-  const view = openRecallView(sessionFile, request.scope, sessionManager, { project });
+  const view = openRecallView(sessionFile, request.scope, sessionManager, { project, detailChars });
   return runRecall(request, view, TOOL_PAGING_HINTS, { maxChars });
 };
 

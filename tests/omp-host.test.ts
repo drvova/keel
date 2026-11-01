@@ -6,7 +6,7 @@
 // Runs only where @oh-my-pi/pi-coding-agent is installed (it needs Bun >= 1.4.4):
 //   V=18.14.2; npm install --no-save --ignore-scripts --no-audit --no-fund @oh-my-pi/pi-coding-agent@$V
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join, resolve } from "path";
 
@@ -63,7 +63,8 @@ describe.skipIf(!ompInstalled)("omp host", () => {
       agentDir: process.env.PI_CODING_AGENT_DIR,
       sessionManager,
       // Let a short test session compact: omp keeps this much verbatim before any hook runs.
-      settings: omp.Settings.isolated({ "compaction.keepRecentTokens": 1 }),
+      // A threshold of the user's own: omp hands it to the hook, which sizes for it.
+      settings: omp.Settings.isolated({ "compaction.keepRecentTokens": 1, "compaction.thresholdPercent": 60 }),
       model,
       additionalExtensionPaths: [REPO],
       disableExtensionDiscovery: true,
@@ -114,6 +115,8 @@ describe.skipIf(!ompInstalled)("omp host", () => {
     const compaction = latestCompaction();
     expect(compaction.fromExtension).toBe(true);
     expect(compaction.details).toMatchObject({ compactor: "omp-vcc", reason: "manual", willRetry: false });
+    // omp's own trigger for this model under that setting, not omp-vcc's guess of omp's default.
+    expect(compaction.details.limits).toMatchObject({ contextWindow: model.contextWindow, trigger: Math.floor(model.contextWindow * 0.6) });
     expect(compaction.summary).toContain("- Modified: src/auth/session.ts");
     expect(compaction.summary).toContain("- Read: src/auth/session.ts\n");
     expect(compaction.summary).toMatch(/>>> print\(1\+1\) \(#\d+\)/);
@@ -181,5 +184,27 @@ describe.skipIf(!ompInstalled)("omp host", () => {
     const found = (await recall.execute("q", { query: "vault staging key revoked", scope: "project" }, undefined, undefined)).content[0].text;
     expect(found).toContain(`[session ${short}] #1 [assistant]`);
     await other.close?.();
+  });
+
+  test("what omp blanks in the session file, vcc_recall still reads, with nothing set in omp", async () => {
+    // omp tells extensions of a finished turn; omp-vcc copies what omp may rewrite from omp's own entries.
+    await session.extensionRunner.emit({ type: "turn_end", turnIndex: 0, message: undefined, toolResults: [] });
+    const file = sessionManager.getSessionFile();
+    expect(existsSync(`${file}.vcc-raw`)).toBe(true);
+    // As omp's prune does: blank the first read's output in place and persist the rewrite.
+    const entries = sessionManager.getEntries().filter((e: any) => e.type === "message");
+    const read = entries.find((e: any) => e.message.role === "toolResult" && e.message.toolCallId === "c1");
+    read.message.content = [{ type: "text", text: "[Output truncated - 400 tokens]" }];
+    read.message.prunedAt = Date.now();
+    await sessionManager.rewriteEntries();
+    expect(readFileSync(file, "utf8")).not.toContain("export function refresh() {}");
+    const recall = session.getToolByName("vcc_recall");
+    const index = entries.indexOf(read);
+    const expanded = (await recall.execute("x", { expand: [index] }, undefined, undefined)).content[0].text;
+    expect(expanded).toContain("export function refresh() {}");
+    expect(expanded).not.toContain("[Output truncated");
+    // Before the next request omp hands extensions the messages: its placeholder now says where the original is.
+    const [pointed] = await session.extensionRunner.emitContext([structuredClone(read.message)]);
+    expect(pointed.content).toEqual([{ type: "text", text: `[Output truncated - 400 tokens] (the original: vcc_recall expand:[${index}])` }]);
   });
 });

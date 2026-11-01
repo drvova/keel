@@ -4,11 +4,12 @@ import { normalize } from "./normalize";
 import { filterNoise } from "./filter-noise";
 import { buildSections } from "./build-sections";
 import { EARLY_REQUESTS_KEPT, keepNewestUserMessages } from "../extract/user-messages";
-import { formatSummary, capBrief, capItems, stripCapMarker, BRIEF_MAX_LINES, FILES_PER_CATEGORY, RECALL_NOTE, wrapLongLines } from "./format";
+import { formatSummary, capBrief, capItems, stripCapMarker, RECALL_NOTE, wrapLongLines } from "./format";
 import { COMMAND_SEPARATOR, COMMANDS_PER_NAME } from "../extract/tracked-commands";
 import { selectRankedBriefBlocks, type BriefRankingOptions } from "./rank";
 import { formatHistoryRange, type HistoryRange } from "./history-index";
 import { formatPinLines, type PinnedNote } from "./pins";
+import { DEFAULT_SUMMARY_LIMITS, type SummaryLimits } from "./window";
 
 export interface CompileInput {
   messages: Message[];
@@ -32,6 +33,8 @@ export interface CompileInput {
   historyIndex?: readonly HistoryRange[];
   /** The pinned notes (core/pins.ts), rendered first; never merged from summary text. */
   pinnedNotes?: readonly PinnedNote[];
+  /** How many items each section keeps (core/window.ts: they follow the model's window). */
+  limits?: SummaryLimits;
 }
 
 export interface RankedCompileInput extends CompileInput {
@@ -91,7 +94,6 @@ const pinnedEarlyRequests = (prev: string): string[] => {
   return goal ? [goal] : [];
 };
 
-const COMMITS_CAP = 8;
 const COMMIT_HASH_RE = /^- [0-9a-f]{7,12}: /;
 const bareCommit = (line: string): string => line.replace(COMMIT_HASH_RE, "- ");
 
@@ -115,13 +117,13 @@ const dedupCommitLines = (lines: string[]): string[] => {
 };
 
 /** Merge a header section */
-const mergeHeaderSection = (header: string, prev: string, fresh: string): string => {
+const mergeHeaderSection = (header: string, prev: string, fresh: string, limits: SummaryLimits): string => {
   if (!prev) return fresh;
   if (!fresh) return prev;
 
   // Files And Changes: merge by category (Modified/Created/Read), dedup paths
   if (header === "Files And Changes") {
-    return mergeFileLines(prev, fresh);
+    return mergeFileLines(prev, fresh, limits.filesPerCategory);
   }
 
   // Tracked Commands: same categorized-merge shape as Files And Changes, but
@@ -137,11 +139,11 @@ const mergeHeaderSection = (header: string, prev: string, fresh: string): string
   const freshLines = fresh.split("\n").filter(isClean);
 
   if (header === "User Messages") {
-    return `[${header}]\n${keepNewestUserMessages([...prevLines, ...freshLines]).join("\n")}`;
+    return `[${header}]\n${keepNewestUserMessages([...prevLines, ...freshLines], limits.userMessages).join("\n")}`;
   }
 
   // Commits: one line per commit, cap
-  const capped = dedupCommitLines([...prevLines, ...freshLines]).slice(-COMMITS_CAP);
+  const capped = dedupCommitLines([...prevLines, ...freshLines]).slice(-limits.commits);
   if (capped.length === 0) return "";
   return `[${header}]\n${capped.join("\n")}`;
 };
@@ -204,7 +206,7 @@ const formatCategorizedLines = (
 const FILE_CATEGORIES = ["Modified", "Created", "Read"] as const;
 
 /** Merge Files And Changes by category, dedup paths across compactions */
-const mergeFileLines = (prev: string, fresh: string): string => {
+const mergeFileLines = (prev: string, fresh: string, filesPerCategory: number): string => {
   // Newest-last with re-touched files moved to the end, so the capped list
   // follows the files being worked on instead of freezing on the first ones.
   const merged = mergeCategorizedLines(FILE_CATEGORIES, prev, fresh, ",", true);
@@ -216,7 +218,7 @@ const mergeFileLines = (prev: string, fresh: string): string => {
     if (createdBefore.has(p)) merged.Modified.delete(p);
     else merged.Created.delete(p);
   }
-  return formatCategorizedLines("Files And Changes", merged, FILE_CATEGORIES, ", ", FILES_PER_CATEGORY);
+  return formatCategorizedLines("Files And Changes", merged, FILE_CATEGORIES, ", ", filesPerCategory);
 };
 
 /** Category names actually present in "- <name>: ..." lines in `text`. */
@@ -260,16 +262,16 @@ const capBriefToLineBudget = (text: string, maxLines: number): string => {
   return `...(${omitted} earlier lines omitted)\n\n${clean.join("\n")}`;
 };
 
-const mergeBriefTranscriptWithFreshBudget = (prev: string, fresh: string): string => {
+const mergeBriefTranscriptWithFreshBudget = (prev: string, fresh: string, maxLines: number): string => {
   if (!prev) return fresh;
-  if (!fresh) return capBrief(prev);
+  if (!fresh) return capBrief(prev, maxLines);
   const freshLines = briefLineCount(fresh);
-  const remainingPrevLines = Math.max(0, BRIEF_MAX_LINES - freshLines);
+  const remainingPrevLines = Math.max(0, maxLines - freshLines);
   const prevTail = capBriefToLineBudget(prev, remainingPrevLines);
   return prevTail ? `${prevTail}\n\n${fresh}` : fresh;
 };
 
-const mergePrevious = (prev: string, fresh: string, options: { preserveFreshBrief?: boolean } = {}): string => {
+const mergePrevious = (prev: string, fresh: string, limits: SummaryLimits, options: { preserveFreshBrief?: boolean } = {}): string => {
   // Merge header sections. Early requests the previous summary still had room
   // for are topped up from this compaction's first user messages.
   const early = [...new Set([...pinnedEarlyRequests(prev), ...unwrapSection(fresh, EARLY).split("\n").filter(isClean)])]
@@ -277,7 +279,7 @@ const mergePrevious = (prev: string, fresh: string, options: { preserveFreshBrie
   const headers = HEADER_NAMES
     .map((header) => {
       if (header === EARLY && early.length > 0) return `[${EARLY}]\n${early.join("\n")}`;
-      return mergeHeaderSection(header, unwrapSection(prev, header), unwrapSection(fresh, header));
+      return mergeHeaderSection(header, unwrapSection(prev, header), unwrapSection(fresh, header), limits);
     })
     .filter(Boolean);
 
@@ -285,7 +287,7 @@ const mergePrevious = (prev: string, fresh: string, options: { preserveFreshBrie
   const prevBrief = briefOf(prev);
   const freshBrief = briefOf(fresh);
   const mergedBrief = options.preserveFreshBrief
-    ? mergeBriefTranscriptWithFreshBudget(prevBrief, freshBrief)
+    ? mergeBriefTranscriptWithFreshBudget(prevBrief, freshBrief, limits.briefLines)
     : mergeBriefTranscript(prevBrief, freshBrief);
 
   const parts: string[] = [];
@@ -293,7 +295,7 @@ const mergePrevious = (prev: string, fresh: string, options: { preserveFreshBrie
     parts.push(headers.join("\n\n"));
   }
   if (mergedBrief) {
-    parts.push(options.preserveFreshBrief ? mergedBrief : capBrief(mergedBrief));
+    parts.push(options.preserveFreshBrief ? mergedBrief : capBrief(mergedBrief, limits.briefLines));
   }
 
   return parts.join(SEPARATOR);
@@ -321,9 +323,10 @@ const compileWithBriefBlocks = (input: CompileInput, options: CompileWithBriefBl
     : sectionOf(prev, EARLY)
       ? EARLY_REQUESTS_KEPT - pinnedEarlyRequests(prev).length
       : pinnedEarlyRequests(prev).length > 0 ? 0 : EARLY_REQUESTS_KEPT;
-  const data = buildSections({ blocks, briefBlocks, fileOps: input.fileOps, trackCommands: input.trackCommands, earlyRequestSlots });
-  const fresh = formatSummary(data, { capBriefTranscript: options.capFreshBrief ?? true });
-  const mergedText = prev ? mergePrevious(prev, fresh, { preserveFreshBrief: options.preserveFreshBriefOnMerge }) : fresh;
+  const limits = input.limits ?? DEFAULT_SUMMARY_LIMITS;
+  const data = buildSections({ blocks, briefBlocks, fileOps: input.fileOps, trackCommands: input.trackCommands, earlyRequestSlots, limits });
+  const fresh = formatSummary(data, { capBriefTranscript: options.capFreshBrief ?? true, briefLines: limits.briefLines });
+  const mergedText = prev ? mergePrevious(prev, fresh, limits, { preserveFreshBrief: options.preserveFreshBriefOnMerge }) : fresh;
   const merged = withStructuredSections(mergedText, input.pinnedNotes, input.historyIndex);
   if (!merged) return "";
   return wrapLongLines(merged + SEPARATOR + RECALL_NOTE);

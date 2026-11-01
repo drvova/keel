@@ -28,6 +28,8 @@ export interface VccCompactionDetails {
     overheadTokens?: number;
     maxTailTokens: number;
     briefCeilingTokens: number;
+    /** Section sizes against a ~128K window's, when they differ (core/window.ts summaryScale). */
+    summaryScale?: number;
   };
 }
 

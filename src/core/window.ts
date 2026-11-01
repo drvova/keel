@@ -6,14 +6,16 @@
 // the context must land inside omp's recovery band (80% of the trigger) or omp
 // treats it as a dead end and starts shaking tool output; a 25k-token kept tail
 // does that on a small window, and a 2k-token summary is needlessly thin on a
-// 1M one. So the tail, the smart-keep trigger and the summary budget are shares
-// of the trigger, clamped like the recall cap (recallOutputChars): the same
-// numbers as before on a typical 128K window, smaller below it, a larger summary
-// ceiling far above it.
+// 1M one. So the tail, the smart-keep trigger, the summary budget, the size of
+// each summary section and the growth a summary may add are shares of the
+// trigger, clamped like the recall cap (recallOutputChars): the same numbers as
+// before on a typical 128K window, smaller below it, a larger summary far above it.
 //
 // The window itself is the smallest one known: omp's, the provider's /models
-// answer, and a limit an overflow error stated. Pure functions; the IO is in
-// model-limits.ts.
+// answer, and a limit an overflow error stated. The trigger is omp's own: its
+// compaction policy (threshold, reserve, the model's entry) arrives with every
+// compaction, and ompTrigger applies it to that window as omp does. Pure
+// functions; the IO is in model-limits.ts.
 
 /** Clamp `value` to [floor, ceiling], rounded. */
 const clampTokens = (value: number, floor: number, ceiling: number): number =>
@@ -84,17 +86,78 @@ export const effectiveWindow = (...windows: Array<number | undefined>): number |
 };
 
 /**
- * Where omp compacts on `window` with its default policy: the window less a
- * reserve of 15% of it or 16,384 tokens, whichever is larger, and 15% alone when
- * that reserve would not fit (compaction.ts resolveBudgetReserveTokens). A user's
- * threshold moves this; a threshold pass measures the real one (tokensBefore).
+ * omp's compaction policy for the current model, as omp hands it to extensions
+ * in `session_before_compact` (`preparation.settings`, pi-agent-core's
+ * CompactionSettings, with the model's `compaction.modelThresholds` entry
+ * already applied). Only the fields that decide where omp compacts.
  */
-export const ompDefaultTrigger = (window: number): number => {
-  const proportional = Math.max(1, Math.floor(window * 0.15));
-  let reserve = Math.max(proportional, 16_384);
-  if (reserve >= window - proportional) reserve = proportional;
-  return Math.max(1, Math.min(window - 1, window - reserve));
+export interface OmpCompactionPolicy {
+  enabled?: boolean;
+  strategy?: string;
+  /** Compact at this share of the window (1–99). */
+  thresholdPercent?: number;
+  /** Compact at this many tokens; wins over the percentage. */
+  thresholdTokens?: number;
+  /** A model entry's token count, standing in for the window under the percentage or the reserve. */
+  baseWindowTokens?: number;
+  /** Kept free below the window; unset means omp's default, which a small window may override. */
+  reserveTokens?: number;
+}
+
+/** omp's reserve when `reserveTokens` is unset (pi-agent-core DEFAULT_RESERVE_TOKENS). */
+const OMP_DEFAULT_RESERVE_TOKENS = 16_384;
+
+const finitePositive = (value: unknown): number | undefined =>
+  typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
+
+/** The policy fields in omp's `preparation.settings`, or undefined when there are none. */
+export const ompPolicyOf = (settings: unknown): OmpCompactionPolicy | undefined => {
+  if (!isRecord(settings)) return undefined;
+  const policy: OmpCompactionPolicy = {};
+  if (typeof settings.enabled === "boolean") policy.enabled = settings.enabled;
+  if (typeof settings.strategy === "string") policy.strategy = settings.strategy;
+  for (const key of ["thresholdPercent", "thresholdTokens", "baseWindowTokens", "reserveTokens"] as const) {
+    const n = settings[key];
+    if (typeof n === "number" && Number.isFinite(n)) policy[key] = n;
+  }
+  return policy;
 };
+
+/** Whether omp compacts on its own under this policy. */
+export const ompAutoCompacts = (policy: OmpCompactionPolicy | undefined): boolean =>
+  policy?.enabled !== false && policy?.strategy !== "off";
+
+/** The reserve below the window omp keeps (pi-agent-core resolveBudgetReserveTokens). */
+const ompReserve = (window: number, policy: OmpCompactionPolicy): number => {
+  const proportional = Math.max(1, Math.floor(window * 0.15));
+  const reserve = Math.max(Math.floor(window * 0.15), policy.reserveTokens ?? OMP_DEFAULT_RESERVE_TOKENS);
+  const defaulted = policy.reserveTokens === undefined;
+  return (defaulted && reserve >= window - proportional) || reserve >= window ? proportional : reserve;
+};
+
+const ompPromptBudget = (window: number, policy: OmpCompactionPolicy): number =>
+  Math.max(0, Math.min(window - 1, window - ompReserve(window, policy)));
+
+/**
+ * Where omp compacts on `window` under `policy`: pi-agent-core's
+ * resolveThresholdTokens, which omp does not export to extensions. A fixed
+ * token threshold is exact unless it is at or past the window (then the window
+ * less its reserve); otherwise a percentage of the window (or of a model
+ * entry's base), or by default the window less a reserve of 15% or 16,384
+ * tokens, whichever is larger (15% alone when that would not fit).
+ */
+export const ompTrigger = (window: number, policy: OmpCompactionPolicy = {}): number => {
+  const fixed = finitePositive(policy.thresholdTokens);
+  if (fixed) return fixed >= window ? ompPromptBudget(window, policy) : Math.min(window - 1, Math.max(1, fixed));
+  const base = finitePositive(policy.baseWindowTokens);
+  const scaled = base ? Math.min(window, base) : window;
+  const percent = finitePositive(policy.thresholdPercent);
+  if (!percent) return ompPromptBudget(scaled, policy);
+  return Math.floor(scaled * (Math.min(99, Math.max(1, percent)) / 100));
+};
+
+/** Where omp compacts on `window` with its default policy. */
+export const ompDefaultTrigger = (window: number): number => Math.max(1, ompTrigger(window));
 
 /** omp re-compacts unless the result lands at or under this share of the trigger. */
 export const RECOVERY_BAND = 0.8;
@@ -102,8 +165,42 @@ export const RECOVERY_BAND = 0.8;
 const LANDING_SHARE = 0.6;
 /** The kept tail is at most this share of the trigger. */
 const TAIL_SHARE = 0.25;
-/** A rough allowance for the summary's sections around the brief. */
+/** A rough allowance for the summary's sections around the brief, at full size. */
 const SECTIONS_TOKENS = 600;
+/** omp's trigger on a 128K window: where the fixed numbers were tuned. */
+const REFERENCE_TRIGGER = ompDefaultTrigger(128_000);
+
+/** How many items each summary section keeps. */
+export interface SummaryLimits {
+  /** [User Messages] lines. */
+  userMessages: number;
+  /** Paths per [Files And Changes] category. */
+  filesPerCategory: number;
+  /** [Commits] lines. */
+  commits: number;
+  /** [History Index] lines. */
+  historyRanges: number;
+  /** Brief transcript lines, a merged one included. */
+  briefLines: number;
+}
+
+/** The section sizes from before the window was known; still those of a ~128K window. */
+export const DEFAULT_SUMMARY_LIMITS: SummaryLimits = {
+  userMessages: 15,
+  filesPerCategory: 10,
+  commits: 8,
+  historyRanges: 8,
+  briefLines: 120,
+};
+
+/** Never fewer than these, however small the window. */
+const SUMMARY_LIMIT_FLOORS: SummaryLimits = {
+  userMessages: 4,
+  filesPerCategory: 3,
+  commits: 2,
+  historyRanges: 3,
+  briefLines: 30,
+};
 
 export interface CompactionBudgets {
   /** Largest kept tail (smart keep-tail growth, token-budget cuts). */
@@ -113,6 +210,14 @@ export interface CompactionBudgets {
   /** The ranked brief's floor and ceiling. */
   briefTokens: number;
   briefCeilingTokens: number;
+  /**
+   * Chars a summary may add beyond what it replaces before it is not written
+   * (or a share of the prefix, when larger): its framing, which grows with its sections.
+   */
+  growthMarginChars: number;
+  /** Section sizes; summaryScale of the defaults. */
+  summary: SummaryLimits;
+  summaryScale: number;
 }
 
 /** The fixed values from before the window was known; still the budgets for a ~128K window. */
@@ -121,6 +226,30 @@ export const DEFAULT_BUDGETS: CompactionBudgets = {
   minTailTokens: 5_000,
   briefTokens: 1_100,
   briefCeilingTokens: 2_000,
+  growthMarginChars: 500,
+  summary: { ...DEFAULT_SUMMARY_LIMITS },
+  summaryScale: 1,
+};
+
+/**
+ * How much of each section list a summary keeps, against a ~128K window. Below
+ * it, the square root of the trigger's share (a 32K window keeps about 40%),
+ * never under a quarter: a small window needs the room, but the lists are
+ * where a long task keeps its bearings. Above it, nothing changes until the
+ * brief's ceiling grows (a trigger past 500K), then the lists grow with it.
+ */
+export const summaryScale = (trigger: number, briefCeilingTokens: number): number =>
+  trigger < REFERENCE_TRIGGER
+    ? Math.max(0.25, Math.sqrt(trigger / REFERENCE_TRIGGER))
+    : Math.max(1, briefCeilingTokens / DEFAULT_BUDGETS.briefCeilingTokens);
+
+/** The default section sizes scaled by `scale`, each at or above its floor. */
+export const summaryLimits = (scale: number): SummaryLimits => {
+  const limits = { ...DEFAULT_SUMMARY_LIMITS };
+  for (const key of Object.keys(limits) as Array<keyof SummaryLimits>) {
+    limits[key] = Math.max(SUMMARY_LIMIT_FLOORS[key], Math.round(DEFAULT_SUMMARY_LIMITS[key] * scale));
+  }
+  return limits;
 };
 
 /**
@@ -131,15 +260,19 @@ export const DEFAULT_BUDGETS: CompactionBudgets = {
  */
 export const compactionBudgets = (trigger?: number, overheadTokens = 0): CompactionBudgets => {
   const t = positive(trigger);
-  if (!t) return { ...DEFAULT_BUDGETS };
+  if (!t) return { ...DEFAULT_BUDGETS, summary: { ...DEFAULT_SUMMARY_LIMITS } };
   const briefCeilingTokens = Math.round(Math.min(0.1 * t, clampTokens(0.004 * t, DEFAULT_BUDGETS.briefCeilingTokens, 6_000)));
   const briefTokens = Math.round(Math.min(DEFAULT_BUDGETS.briefTokens, 0.06 * t, briefCeilingTokens));
-  const room = LANDING_SHARE * t - Math.max(0, overheadTokens) - briefCeilingTokens - SECTIONS_TOKENS;
+  const scale = summaryScale(t, briefCeilingTokens);
+  const room = LANDING_SHARE * t - Math.max(0, overheadTokens) - briefCeilingTokens - SECTIONS_TOKENS * scale;
   const maxTailTokens = clampTokens(Math.min(TAIL_SHARE * t, room), 1_000, DEFAULT_BUDGETS.maxTailTokens);
   return {
     maxTailTokens,
     minTailTokens: Math.round(maxTailTokens / 5),
     briefTokens,
     briefCeilingTokens,
+    growthMarginChars: Math.round(DEFAULT_BUDGETS.growthMarginChars * Math.max(1, scale)),
+    summary: summaryLimits(scale),
+    summaryScale: Math.round(scale * 100) / 100,
   };
 };

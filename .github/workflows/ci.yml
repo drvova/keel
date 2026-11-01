@@ -58,15 +58,17 @@ jobs:
 
       - run: bun run typecheck
 
-      # The extension imports no omp package at runtime: it gets omp's functions
-      # from pi.pi. Fail if a bundle with packages left external imports anything
-      # but node builtins.
+      # The extension imports no package at runtime, omp's included: it gets
+      # omp's functions from pi.pi. Fail if a bundle with packages left external
+      # imports anything, statically or dynamically, but node builtins.
       - name: Runtime imports are node builtins only
         run: |
           bun build index.ts --target bun --packages external > /tmp/bundle.js
-          if grep -E '^import .* from "[^"]+"' /tmp/bundle.js | grep -vE 'from "(node:)?(fs|path|os)"'; then
-            echo "omp-vcc must not import packages at runtime" >&2
-            exit 1
-          fi
+          bun -e '
+            const allowed = (p) => /^(node:)?(fs|path|os)$/.test(p);
+            const found = new Bun.Transpiler({ loader: "js" }).scanImports(await Bun.file("/tmp/bundle.js").text());
+            const bad = [...new Set(found.map((i) => i.path).filter((p) => !allowed(p)))];
+            if (bad.length) { console.error("omp-vcc must not import packages at runtime:", bad.join(", ")); process.exit(1); }
+          '
 
       - run: bun test

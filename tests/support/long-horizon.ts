@@ -33,6 +33,13 @@ export interface LongHorizonOptions {
   compactEvery?: number;
   /** Pin a note (an omp-vcc custom entry, as vcc_pin writes) at the end of these turns. */
   pins?: Record<number, string>;
+  /**
+   * The model's context window: each compaction sizes its budgets and sections
+   * for omp's default trigger on it (core/window.ts). The model has no id, so
+   * no learned limit or measured trigger applies. Omitted: no model, the ~128K
+   * defaults.
+   */
+  contextWindow?: number;
   /** Runs before the temp session is removed: extra queries for debugging. */
   inspect?: (recall: (params: Record<string, unknown>) => string, needles: Needle[]) => void;
 }
@@ -187,6 +194,7 @@ export const runLongHorizon = (options: LongHorizonOptions = {}): LongHorizonRes
     const writeFile = () =>
       writeFileSync(sessionFile, [JSON.stringify({ type: "session", version: 3, id: "s", timestamp: new Date(0).toISOString(), cwd: dir }), ...entries.map((e) => JSON.stringify(e))].join("\n") + "\n");
 
+    const model = options.contextWindow ? { contextWindow: options.contextWindow } : undefined;
     let previousSummary: string | undefined;
     const summaryChars: number[] = [];
     let compactions = 0;
@@ -207,7 +215,7 @@ export const runLongHorizon = (options: LongHorizonOptions = {}): LongHorizonRes
         branchEntries: entries,
         customInstructions: undefined,
         signal: new AbortController().signal,
-      }, { sessionManager, ui: { notify: () => {} } });
+      }, { sessionManager, ui: { notify: () => {} }, ...(model ? { model } : {}) });
       if (!out?.compaction) continue;
       compactions++;
       previousSummary = out.compaction.summary;

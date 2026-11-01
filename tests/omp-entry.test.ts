@@ -74,9 +74,10 @@ function createOmp(mode: "tui" | "rpc" = "rpc") {
   };
   registerOmp(pi);
 
-  const beforeCompact = (customInstructions?: string) =>
+  /** `settings`: omp's compaction policy, as omp passes it in preparation.settings. */
+  const beforeCompact = (customInstructions?: string, settings?: Record<string, unknown>) =>
     fire("session_before_compact", {
-      preparation: { previousSummary: undefined, fileOps: { read: new Set(), written: new Set(), edited: new Set() }, tokensBefore: 5000 },
+      preparation: { previousSummary: undefined, fileOps: { read: new Set(), written: new Set(), edited: new Set() }, tokensBefore: 5000, ...(settings ? { settings } : {}) },
       branchEntries: entries,
       customInstructions,
       signal: new AbortController().signal,
@@ -107,7 +108,7 @@ describe("omp entry: registration", () => {
   test("registers the hook, the commands and tools, and no continue machinery", () => {
     const omp = createOmp();
     expect([...omp.handlers.keys()].sort()).toEqual(
-      ["agent_end", "auto_compaction_end", "auto_compaction_start", "before_agent_start", "message_end", "session_before_compact", "session_compact", "session_start"],
+      ["agent_end", "auto_compaction_end", "auto_compaction_start", "before_agent_start", "context", "message_end", "session_before_compact", "session_compact", "session_start", "turn_end"],
     );
     expect([...omp.commands.keys()].sort()).toEqual(["omp-vcc", "omp-vcc-pin", "omp-vcc-recall", "omp-vcc-unpin"]);
     expect(omp.tools.map((t: any) => t.name)).toEqual(["vcc_recall", "vcc_pin"]);
@@ -361,6 +362,32 @@ describe("omp entry: the model's real window", () => {
     expect(omp.compactCalls).toHaveLength(1); // two run ends, one compaction
     expect(details).toMatchObject({ compactor: "omp-vcc", reason: "threshold" });
     expect(omp.notices.filter((n) => n.msg.includes("holds 32768 tokens (an overflow error said so), not the 128000 omp uses"))).toHaveLength(1);
+    rmSync(limitsFile(), { force: true });
+  });
+
+  test("omp's own policy decides: its threshold on the real window, and none when the user turned compaction off", async () => {
+    recordLimit(32_768);
+    const omp = createOmp();
+    omp.ctx.model = model;
+    omp.ctx.isIdle = () => true;
+    omp.ctx.getContextUsage = () => ({ tokens: 14_000, contextWindow: 128_000, percent: 11 });
+    omp.setEntries(big());
+    // The user compacts at 40%: on the real 32K window that is 13,107, not omp-vcc's default 16,384.
+    const policy = { enabled: true, thresholdPercent: 40, keepRecentTokens: 20_000 };
+    expect(omp.beforeCompact(undefined, policy).compaction.details.limits).toMatchObject({ contextWindow: 32_768, trigger: 13_107 });
+    omp.setCompact(async () => {});
+    omp.fire("agent_end", { messages: [] });
+    await new Promise((r) => setTimeout(r, 5));
+    expect(omp.compactCalls).toHaveLength(1); // 14,000 is past 13,107
+    const off = createOmp();
+    off.ctx.model = model;
+    off.ctx.isIdle = () => true;
+    off.ctx.getContextUsage = () => ({ tokens: 30_000, contextWindow: 128_000, percent: 23 });
+    off.setEntries(big());
+    off.beforeCompact(undefined, { ...policy, enabled: false });
+    off.fire("agent_end", { messages: [] });
+    await new Promise((r) => setTimeout(r, 5));
+    expect(off.compactCalls).toHaveLength(0);
     rmSync(limitsFile(), { force: true });
   });
 

@@ -60,6 +60,14 @@ describe("mergeHistoryIndex", () => {
     expect(index.reduce((n, r) => n + (r.requests ?? 0), 0)).toBe(40);
   });
 
+  it("coarsens to a smaller cap, which a small window sets", () => {
+    let index: HistoryRange[] = [];
+    for (let i = 0; i < 20; i++) index = mergeHistoryIndex(index, range(i * 10, i * 10 + 9), 3);
+    expect(index).toHaveLength(3);
+    expect(index[0].from).toBe(0);
+    expect(index.at(-1)).toMatchObject({ from: 190, to: 199 });
+  });
+
   it("a merged range keeps the longest asks and adds up counts", () => {
     const merged = mergeHistoryIndex(
       Array.from({ length: MAX_RANGES }, (_, i) => range(i * 10, i * 10 + 9, { asks: [i === 0 ? "the long constraint from the start" : "x"], failed: 1, commitCount: 1, commits: [`c${i}`] })),

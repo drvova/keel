@@ -11,9 +11,10 @@ import { buildGlobalIndexById, loadGlobalIndexById } from "../core/global-indice
 import { parseKeepAndPrompt, OMP_VCC_COMPACT_INSTRUCTION } from "../core/compact-args";
 import { loadSettings, type VccSettings } from "../core/settings";
 import { calibrateCharsPerToken, DEFAULT_CHARS_PER_TOKEN, estimateMessageChars, estimateMessageTokens, estimateTokensFromChars } from "../core/token-estimate";
-import { compactionBudgets } from "../core/window";
+import { compactionBudgets, ompPolicyOf, type OmpCompactionPolicy } from "../core/window";
 import { modelKey } from "../core/model-limits";
 import { triggerFor, windowOf } from "./window-limits";
+import { restoreOriginals } from "../core/raw-store";
 import { VCC_COMPACTOR, vccDetailsOf, type VccCompactionDetails } from "../details";
 import type { CompactionReason } from "../types";
 
@@ -83,6 +84,8 @@ export interface CompactionState {
   lastCancelNotice: string | null;
   /** omp's trigger as the last threshold pass measured it (its tokensBefore), for this model. */
   measuredTrigger: { key: string; tokens: number } | null;
+  /** omp's compaction policy as the last compaction carried it (preparation.settings), for this model. */
+  ompPolicy: { key: string | undefined; policy: OmpCompactionPolicy } | null;
   /** The compaction omp-vcc started itself (window-limits.ts), so the hook records why. */
   selfTrigger: CompactionTrigger | null;
   /** The note that omp's window is above the real one was shown. */
@@ -96,6 +99,7 @@ export const createCompactionState = (): CompactionState => ({
   pendingManualInstructions: null,
   lastCancelNotice: null,
   measuredTrigger: null,
+  ompPolicy: null,
   selfTrigger: null,
   windowNoticeShown: false,
 });
@@ -622,7 +626,8 @@ const measuredOverheadTokens = (branchEntries: any[]): number | undefined => {
   return undefined;
 };
 
-/** Growth a summary may add before it is not worth writing: fixed framing, or a share of what it replaces. */
+/** Growth a summary may add before it is not worth writing: its framing (the
+ * budgets' growthMarginChars, 500 up to a very large window), or a share of what it replaces. */
 const GROWTH_MARGIN_CHARS = 500;
 const GROWTH_MARGIN_SHARE = 0.25;
 
@@ -640,9 +645,14 @@ export interface SummaryGrowth {
  * and compact", a session barely past a low threshold) can be smaller than the
  * sections and brief that would replace it.
  */
-export const summaryGrowth = (summaryChars: number, previousSummaryChars: number, prefixChars: number): SummaryGrowth => {
+export const summaryGrowth = (
+  summaryChars: number,
+  previousSummaryChars: number,
+  prefixChars: number,
+  marginChars = GROWTH_MARGIN_CHARS,
+): SummaryGrowth => {
   const netChars = summaryChars - previousSummaryChars - prefixChars;
-  const allowedChars = Math.max(GROWTH_MARGIN_CHARS, Math.round(prefixChars * GROWTH_MARGIN_SHARE));
+  const allowedChars = Math.max(marginChars, Math.round(prefixChars * GROWTH_MARGIN_SHARE));
   return { netChars, allowedChars, grows: netChars > allowedChars };
 };
 
@@ -708,7 +718,7 @@ export const registerCompactionHook = (
 
     // Budgets from the model's real window and where the next compaction comes (core/window.ts).
     const window = windowOf(ctx?.model);
-    const trigger = triggerFor(window, state, modelKey(ctx?.model), reason, preparation.tokensBefore);
+    const trigger = triggerFor(window, state, modelKey(ctx?.model), reason, preparation.tokensBefore, ompPolicyOf(preparation.settings));
     const budgets = compactionBudgets(trigger, overheadTokens);
 
     // Smart keep-tail: boost default keep when the tail is small.
@@ -826,6 +836,11 @@ export const registerCompactionHook = (
       agentSelectedIds = pairs.map((p: any) => p.id);
     }
     const firstKeptEntryId = ownCut.firstKeptEntryId;
+    // omp may have blanked or shaken some of these in place since they landed.
+    // The summary is all that will remain of them, so it is written from the
+    // originals omp-vcc kept (core/raw-store.ts); the cut and the budgets above
+    // count what the context holds now.
+    agentMessages = restoreOriginals(agentMessages, agentSelectedIds, (ctx as any)?.sessionManager?.getSessionFile?.());
 
     // ── Session-global indices for summary refs (issue #28) ──────────
     // Recall numbers messages across the whole session file (all windows,
@@ -922,6 +937,7 @@ export const registerCompactionHook = (
       ? mergeHistoryIndex(
           storedIndex ?? (windowRange.from > 0 ? [unindexedRange(windowRange.from - 1)] : []),
           windowRange,
+          budgets.summary.historyRanges,
         )
       : undefined;
 
@@ -939,6 +955,7 @@ export const registerCompactionHook = (
         writtenFiles: [...preparation.fileOps.written],
       },
       trackCommands: settings.trackCommands,
+      limits: budgets.summary,
       ranking: {
         maxBriefChars: Math.round(RANKED_BRIEF_BUDGET_TOKENS * tokenEstimate.charsPerToken),
         maxBriefCharsCeiling: Math.round(RANKED_BRIEF_CEILING_TOKENS * tokenEstimate.charsPerToken),
@@ -954,6 +971,7 @@ export const registerCompactionHook = (
       summary.length,
       typeof preparation.previousSummary === "string" ? preparation.previousSummary.length : 0,
       ownCut.messages.reduce((sum: number, m: any) => sum + estimateMessageChars(m), 0),
+      budgets.growthMarginChars,
     );
     if (growth.grows) {
       state.pendingFollowUpPrompt = null;
@@ -1019,6 +1037,7 @@ export const registerCompactionHook = (
         ...(overheadTokens ? { overheadTokens } : {}),
         maxTailTokens: budgets.maxTailTokens,
         briefCeilingTokens: budgets.briefCeilingTokens,
+        ...(budgets.summaryScale !== 1 ? { summaryScale: budgets.summaryScale } : {}),
       },
     };
 

@@ -3,7 +3,7 @@
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { learnedWindow, modelKey, providerWindow, recordLearnedWindow, startProviderProbe, type ModelLike } from "../core/model-limits";
 import { loadSettings } from "../core/settings";
-import { effectiveWindow, limitFromOverflowError, ompDefaultTrigger } from "../core/window";
+import { effectiveWindow, limitFromOverflowError, ompAutoCompacts, ompTrigger, type OmpCompactionPolicy } from "../core/window";
 import type { CompactionState } from "./compaction";
 
 export interface WindowInfo {
@@ -34,12 +34,19 @@ export const windowOf = (model: ModelLike | undefined): WindowInfo => {
 export const ompOverestimates = (w: WindowInfo): boolean =>
   w.omp !== undefined && w.effective !== undefined && w.effective < w.omp;
 
+/** omp's policy for this model as the last compaction carried it; undefined before one, or for another model. */
+export const knownOmpPolicy = (state: CompactionState, key: string | undefined): OmpCompactionPolicy | undefined =>
+  state.ompPolicy && state.ompPolicy.key === key ? state.ompPolicy.policy : undefined;
+
 /**
- * Where this compaction's budgets assume the next one happens. A threshold pass
- * measured omp's real trigger (its tokensBefore just crossed it); an overflow
- * pass is bounded by the context that overflowed; otherwise omp's default on
- * the effective window. When omp's window is too high, its own trigger is
- * meaningless, and omp-vcc's (ompDefaultTrigger of the real window) applies.
+ * Where this compaction's budgets assume the next one happens. omp hands its
+ * compaction policy to every compaction (`policy`, from preparation.settings):
+ * its threshold, reserve and the model's own entry, applied to the effective
+ * window as omp applies them (ompTrigger). When omp's window is too high, its
+ * trigger can never fire, and the same policy on the real window applies.
+ * Without a policy (an omp that sends none): a threshold pass measures omp's
+ * trigger (its tokensBefore just crossed it), otherwise omp's default. An
+ * overflow pass is bounded by the context that overflowed.
  */
 export const triggerFor = (
   w: WindowInfo,
@@ -47,17 +54,21 @@ export const triggerFor = (
   key: string | undefined,
   reason: string,
   tokensBefore: number | undefined,
+  policy?: OmpCompactionPolicy,
 ): number | undefined => {
   const before = typeof tokensBefore === "number" && tokensBefore > 0 ? tokensBefore : undefined;
-  if (ompOverestimates(w)) return ompDefaultTrigger(w.effective!);
+  if (policy) state.ompPolicy = { key, policy };
+  const known = policy ?? knownOmpPolicy(state, key);
+  const bounded = (t: number | undefined) =>
+    (reason === "overflow" || reason === "incomplete") && before ? (t ? Math.min(t, before) : before) : t;
+  if (ompOverestimates(w)) return bounded(ompTrigger(w.effective!, known));
+  if (known && w.effective) return bounded(ompTrigger(w.effective, known));
   if (reason === "threshold" && before && key) {
     state.measuredTrigger = { key, tokens: before };
     return before;
   }
   const measured = state.measuredTrigger?.key === key ? state.measuredTrigger?.tokens : undefined;
-  const base = measured ?? (w.effective ? ompDefaultTrigger(w.effective) : undefined);
-  if ((reason === "overflow" || reason === "incomplete") && before) return base ? Math.min(base, before) : before;
-  return base;
+  return bounded(measured ?? (w.effective ? ompTrigger(w.effective) : undefined));
 };
 
 const describe = (w: WindowInfo): string =>
@@ -100,7 +111,12 @@ export const registerWindowTracking = (pi: ExtensionAPI, state: CompactionState)
     if (!settings.overrideDefaultCompaction) return;
     const w = windowOf(ctx?.model);
     if (!ompOverestimates(w)) return;
-    const trigger = ompDefaultTrigger(w.effective!);
+    // omp's own policy, once a compaction has carried it: a user who turned omp's
+    // automatic compaction off gets none from omp-vcc either, and a threshold of
+    // theirs applies to the real window.
+    const policy = knownOmpPolicy(state, modelKey(ctx?.model));
+    if (!ompAutoCompacts(policy)) return;
+    const trigger = ompTrigger(w.effective!, policy);
     const used = ctx?.getContextUsage?.()?.tokens;
     if (!(typeof used === "number" && used >= trigger)) return;
     if (!state.windowNoticeShown) {

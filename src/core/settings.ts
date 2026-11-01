@@ -82,6 +82,13 @@ export interface VccSettings {
    * that and omp's window. false: omp's window and overflow errors only.
    */
   probeProviderWindow: boolean;
+  /**
+   * When true (default), keep the original of every message omp may rewrite in
+   * the session file (tool output it blanks or shakes into artifact:// files,
+   * long text blocks it shakes) in `<session>.jsonl.vcc-raw`, so vcc_recall
+   * reads what was there (core/raw-store.ts, hooks/raw-capture.ts).
+   */
+  keepOriginals: boolean;
 }
 
 export const DEFAULT_SETTINGS: VccSettings = {
@@ -92,6 +99,7 @@ export const DEFAULT_SETTINGS: VccSettings = {
   skipCustomTypes: [],
   trackCommands: [],
   probeProviderWindow: true,
+  keepOriginals: true,
 };
 
 const readJson = (path: string): Record<string, unknown> | null => {

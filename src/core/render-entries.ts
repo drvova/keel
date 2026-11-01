@@ -1,6 +1,6 @@
 import type { Message, ToolCall } from "@oh-my-pi/pi-ai";
-import { clip, textOf } from "./content";
-import { summarizeToolArgs, extractPaths, PATH_KEYS } from "./tool-args";
+import { clip, isContentBearing, textOf } from "./content";
+import { summarizeToolArgs, extractPath, extractPaths, PATH_KEYS } from "./tool-args";
 
 export interface RenderedEntry {
   index: number;
@@ -24,8 +24,12 @@ const toolCalls = (content: Message["content"]): string => {
 
 const indent = (text: string, pad: string): string => text.replace(/^(?=.)/gm, pad);
 
-/** One expanded call's arguments are clipped here, as its paired result is. */
-const FULL_ARGS_CHARS = 4000;
+/**
+ * One expanded call's arguments, and the tool output shown with it, are clipped
+ * here under the 50 KB recall cap; a smaller cap (a smaller window) clips them
+ * at the same share of it (expandDetailChars in recall-run.ts).
+ */
+export const EXPAND_DETAIL_CHARS = 4000;
 /** omp's per-call intent line, shown in its UI; not an argument of the call. */
 const NOT_ARGUMENTS = new Set(["i"]);
 
@@ -35,8 +39,9 @@ const NOT_ARGUMENTS = new Set(["i"]);
  * edit's new text) is shown by expand too. String values print as written,
  * indented; others as JSON.
  */
-const fullToolArgs = (content: Message["content"], index: number): string => {
-  const blocks = toolCallParts(content).map((c) => {
+const fullToolArgs = (content: Message["content"], index: number, maxChars: number): string => {
+  const calls = toolCallParts(content);
+  const blocks = calls.map((c) => {
     const args = (c.arguments ?? {}) as Record<string, unknown>;
     const [path] = extractPaths(args);
     const shown = new Set<string>(path ? PATH_KEYS : typeof args.command === "string" ? ["command"] : typeof args.query === "string" ? ["query"] : []);
@@ -51,9 +56,12 @@ const fullToolArgs = (content: Message["content"], index: number): string => {
   const text = blocks
     .map((b) => (labelled ? `  ${b.name}:\n${indent(b.lines.join("\n"), "    ")}` : indent(b.lines.join("\n"), "  ")))
     .join("\n");
-  return text.length > FULL_ARGS_CHARS
-    ? `${text.slice(0, FULL_ARGS_CHARS)}\n  ...[arguments of #${index} clipped at ${FULL_ARGS_CHARS} of ${text.length} chars]`
-    : text;
+  if (text.length <= maxChars) return text;
+  // A write's or edit's content is still all there through the file drill-down.
+  const call = calls.find((c) => isContentBearing((c.arguments ?? {}) as Record<string, unknown>) && extractPath(c.arguments));
+  const path = call ? extractPath(call.arguments) : undefined;
+  const rest = path ? `; query '#${index}:${path}:full' reads the file content` : "";
+  return `${text.slice(0, maxChars)}\n  ...[arguments of #${index} clipped at ${maxChars} of ${text.length} chars${rest}]`;
 };
 
 const extractFilesFromContent = (content: Message["content"]): string[] => {
@@ -68,7 +76,7 @@ export const fileMentionPaths = (msg: unknown): string[] => {
     : [];
 };
 
-export const renderMessage = (msg: Message, index: number, full = false): RenderedEntry => {
+export const renderMessage = (msg: Message, index: number, full = false, detailChars = EXPAND_DETAIL_CHARS): RenderedEntry => {
   if (msg.role === "user") {
     return { index, role: "user", summary: full ? textOf(msg.content) : clip(textOf(msg.content), 300) };
   }
@@ -106,7 +114,7 @@ export const renderMessage = (msg: Message, index: number, full = false): Render
   const text = full ? textOf(msg.content) : clip(textOf(msg.content), 300);
   const tools = toolCalls(msg.content);
   const files = extractFilesFromContent(msg.content);
-  const args = full && tools ? fullToolArgs(msg.content, index) : "";
+  const args = full && tools ? fullToolArgs(msg.content, index, detailChars) : "";
   const summary = tools ? [tools, args, text].filter(Boolean).join("\n") : text;
   return { index, role: "assistant", summary, ...(files.length > 0 && { files }) };
 };
