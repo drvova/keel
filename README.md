@@ -57,6 +57,7 @@ omp loads pi-vcc's own omp entry, and everything below works the same there. The
 - For `/compact` and automatic compactions, pi-vcc stands in for the summary method omp picks from `compaction.methodOrder` (remote, snapcompact, handoff or soft). `shake`, which only trims tool output, still runs when omp reaches it first. On an overflow pi-vcc cannot cut, it steps aside so omp's own method recovers. With `overrideDefaultCompaction: false`, only `/pi-vcc` is handled.
 - While pi-vcc is installed, omp skips its background (speculative) compaction, as it does for any extension that handles compaction. pi-vcc's summary takes milliseconds, so there is no latency to hide.
 - After `/clear`, the summary covers only what follows it.
+- omp's `shake` can move large tool output out of the session file into an `artifact://` file before pi-vcc runs. `vcc_recall` then shows that reference, which the agent opens with `read`.
 
 ## Usage
 

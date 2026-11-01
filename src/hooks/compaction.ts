@@ -551,6 +551,13 @@ export const findBudgetCutIndex = (
   return -1;
 };
 
+/** An assistant message that ends a turn: text, and no tool call still waiting for its result. */
+const isFinalAnswer = (message: { role: string; content: unknown }): boolean =>
+  message.role === "assistant" &&
+  Array.isArray(message.content) &&
+  message.content.some((part: any) => part?.type === "text" && typeof part.text === "string" && part.text.trim() !== "") &&
+  !message.content.some((part: any) => part?.type === "toolCall");
+
 export const applyTailBudget = (
   branchEntries: any[],
   cut: OwnCutResult,
@@ -585,8 +592,14 @@ export const applyTailBudget = (
   if (cut.compactAll) {
     if (!cut.keepFallbackToCompactAll) return cut;
     const idx = findBudgetCutIndex(live, maxTokens, opts.charsPerToken);
-    if (idx < 0 || !renders(idx)) return cut;
-    return budgetResult(idx, "no_anchor");
+    if (idx >= 0) return renders(idx) ? budgetResult(idx, "no_anchor") : cut;
+    // The whole window fits the budget. When it ends with the turn's final
+    // answer, keep that answer and summarize the rest: compact-all would take the
+    // reply out of context too, and a host that reads the last assistant message
+    // back (omp's print mode prints it) would then have nothing.
+    const last = live.length - 1;
+    if (last > 0 && isFinalAnswer(live[last].message) && renders(last)) return budgetResult(last, "no_anchor");
+    return cut;
   }
 
   // Case B: oversized user-boundary tail. Only re-cut when the kept tail exceeds
@@ -785,6 +798,28 @@ export const registerCompactionHook = (
         skipCustomTypes: settings.skipCustomTypes,
         host,
       });
+    }
+    // An automatic pass on a turn still running (its last message is a tool result:
+    // omp compacts between the tool calls of one turn) whose live window has no
+    // earlier user turn and fits the tail budget: the only cut left is compact-all,
+    // which would summarize away the request and tool output the agent is working
+    // from, to free a few tokens. Leave the turn alone: a recovery pass (overflow,
+    // cut-off reply) goes to the host's own method, a threshold or idle pass waits
+    // until the turn has ended.
+    if (
+      ownCut.ok && ownCut.compactAll && ownCut.keepFallbackToCompactAll && !isPiVcc
+      && ownCut.messages[ownCut.messages.length - 1]?.role === "toolResult"
+      && (reason === "threshold" || reason === "idle" || reason === "overflow" || reason === "incomplete")
+    ) {
+      state.pendingFollowUpPrompt = null;
+      const toHost = reason === "overflow" || reason === "incomplete" || willRetry;
+      dbg(settings, {
+        deferredRunningTurn: true,
+        fallbackToCore: toHost,
+        compaction: { reason, willRetry },
+        liveMessages: ownCut.messages.length,
+      });
+      return toHost ? undefined : { cancel: true };
     }
     if (!ownCut.ok) {
       const lastComp = [...branchEntries].reverse().find((e) => e.type === "compaction");

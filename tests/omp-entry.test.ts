@@ -282,3 +282,45 @@ describe("omp entry: what the summary reads", () => {
     expect(summary).not.toContain("SECRET FILE BODY");
   });
 });
+
+describe("omp entry: a turn still running", () => {
+  // omp compacts between the tool calls of one turn. Here the live window is that
+  // one turn, well under the tail budget: compact-all is the only cut left.
+  const running = () => [
+    user("Run seq 1 2000 and tell me the last number"),
+    entry({ role: "assistant", content: [{ type: "toolCall", id: "t1", name: "bash", arguments: { command: "seq 1 2000" } }] }),
+    entry({ role: "toolResult", toolCallId: "t1", toolName: "bash", content: [{ type: "text", text: "1\n2\n...\n2000" }] }),
+  ];
+
+  test("a threshold pass waits for the turn to end instead of summarizing it away", () => {
+    const omp = createOmp();
+    omp.setEntries(running());
+    omp.fire("auto_compaction_start", { reason: "threshold", action: "context-full" });
+    expect(omp.beforeCompact()).toEqual({ cancel: true });
+    expect(omp.notices).toEqual([]);
+  });
+
+  test("an overflow pass goes to omp's own method", () => {
+    const omp = createOmp();
+    omp.setEntries(running());
+    omp.fire("auto_compaction_start", { reason: "overflow", action: "context-full" });
+    expect(omp.beforeCompact()).toBeUndefined();
+  });
+
+  test("once the turn has ended, the threshold pass compacts it", () => {
+    const omp = createOmp();
+    const entries = [...running(), assistant("2000")];
+    omp.setEntries(entries);
+    omp.fire("auto_compaction_start", { reason: "threshold", action: "context-full" });
+    const { compaction } = omp.beforeCompact();
+    expect(compaction.details).toMatchObject({ compactor: "pi-vcc", reason: "threshold" });
+    // The final answer stays in context (omp's print mode prints it from there).
+    expect(compaction.firstKeptEntryId).toBe(entries[3].id);
+  });
+
+  test("/pi-vcc still compacts a running turn when asked", () => {
+    const omp = createOmp();
+    omp.setEntries(running());
+    expect(omp.beforeCompact(PI_VCC_COMPACT_INSTRUCTION).compaction.firstKeptEntryId).toBe("");
+  });
+});

@@ -4,7 +4,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { join } from "path";
 import { homedir } from "os";
-import { buildOwnCut } from "../src/hooks/before-compact";
+import { applyTailBudget, buildOwnCut } from "../src/hooks/before-compact";
 import { extractPaths, hashlineEditPaths, stripReadSelector } from "../src/core/tool-args";
 import { extractFiles } from "../src/extract/files";
 import { renderMessage } from "../src/core/render-entries";
@@ -134,5 +134,56 @@ describe("settings path follows the host's agent dir", () => {
     expect(settingsPath()).toBe(join(homedir(), ".omp", "agent", "pi-vcc-config.json"));
     process.env.PI_VCC_CONFIG_PATH = "/tmp/elsewhere.json";
     expect(settingsPath()).toBe("/tmp/elsewhere.json");
+  });
+});
+
+describe("Pi host: a turn still running", () => {
+  const prev = process.env.PI_VCC_CONFIG_PATH;
+  afterEach(() => {
+    if (prev === undefined) delete process.env.PI_VCC_CONFIG_PATH;
+    else process.env.PI_VCC_CONFIG_PATH = prev;
+  });
+
+  test("an automatic pass between tool calls is left alone when compact-all is the only cut", async () => {
+    const { mkdtempSync, writeFileSync } = await import("fs");
+    const { tmpdir } = await import("os");
+    const dir = mkdtempSync(join(tmpdir(), "pi-vcc-running-"));
+    process.env.PI_VCC_CONFIG_PATH = join(dir, "c.json");
+    writeFileSync(process.env.PI_VCC_CONFIG_PATH, JSON.stringify({ overrideDefaultCompaction: true }));
+    const { registerBeforeCompactHook } = await import("../src/hooks/before-compact");
+    let handler: any;
+    registerBeforeCompactHook({ on: (name: string, fn: any) => { if (name === "session_before_compact") handler = fn; } } as any, "1.1.0");
+    const entries = [
+      msg("u1", "user", "Run the tests"),
+      { id: "a1", type: "message", message: { role: "assistant", content: [{ type: "toolCall", id: "t1", name: "bash", arguments: { command: "bun test" } }] } },
+      { id: "r1", type: "message", message: { role: "toolResult", toolCallId: "t1", toolName: "bash", content: [{ type: "text", text: "12 pass" }], isError: false } },
+    ];
+    const event = (reason: string, willRetry: boolean) => ({
+      type: "session_before_compact", branchEntries: entries, customInstructions: undefined, reason, willRetry,
+      preparation: { previousSummary: undefined, fileOps: { read: [], written: [], edited: [] }, tokensBefore: 1000 },
+      signal: new AbortController().signal,
+    });
+    const ctx = { ui: { notify: () => {} } };
+    expect(handler(event("threshold", false), ctx)).toEqual({ cancel: true });
+    expect(handler(event("overflow", true), ctx)).toBeUndefined();
+  });
+});
+
+describe("no user anchor, whole window under the tail budget", () => {
+  const callAndResult = [
+    { id: "a1", type: "message", message: { role: "assistant", content: [{ type: "toolCall", id: "t1", name: "bash", arguments: { command: "seq 1 20" } }] } },
+    { id: "r1", type: "message", message: { role: "toolResult", toolCallId: "t1", toolName: "bash", content: [{ type: "text", text: "1..20" }], isError: false } },
+  ];
+
+  test("a finished turn keeps its final answer and summarizes the rest", () => {
+    const entries = [msg("u1", "user", "Run seq 1 20, tell me the last number"), ...callAndResult, msg("f1", "assistant", "20")];
+    const cut = applyTailBudget(entries, buildOwnCut(entries, 1));
+    expect(cut).toMatchObject({ ok: true, compactAll: false, firstKeptEntryId: "f1", budgetCut: "no_anchor", selectedIds: ["u1", "a1", "r1"] });
+  });
+
+  test("a turn ending in a tool call keeps the old compact-all", () => {
+    const nextCall = { id: "a2", type: "message", message: { role: "assistant", content: [{ type: "toolCall", id: "t2", name: "bash", arguments: { command: "seq 1 30" } }] } };
+    const entries = [msg("u1", "user", "Run seq 1 20"), ...callAndResult, nextCall];
+    expect(applyTailBudget(entries, buildOwnCut(entries, 1))).toMatchObject({ ok: true, compactAll: true });
   });
 });

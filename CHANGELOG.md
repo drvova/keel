@@ -15,6 +15,11 @@ All notable changes to `@sting8k/pi-vcc` are documented in this file.
 - **omp's edit and read tools are understood** — files changed by omp's hashline `edit` (`[path#TAG]` sections) appear in `[Files And Changes]`, in the transcript and in `mode:"touched"`, and a file read with a line selector (`src/a.ts:50-100`) is listed once, without it.
 - The Pi peer dependencies are now optional, so installing on omp does not pull in Pi. Pi resolves them to its own copies either way.
 
+### Fixes
+
+- **A turn still running is no longer summarized away** — omp compacts between the tool calls of one turn. When that turn was the only user turn left in context and fit pi-vcc's 25k tail budget, the only cut was compact-all, which took the request and the tool output the agent was working from out of its context. In a test with a real model, the agent then spent request after request fetching them back with `vcc_recall`, which filled the context and compacted again. Such a pass is now left alone: a threshold or idle compaction waits until the turn has ended, and an overflow or cut-off-reply recovery goes to the host's own method. The same applies on Pi whenever it compacts between tool calls; `/pi-vcc`, `/compact` and explicit `keep:N` are unchanged.
+- **A finished turn keeps its final reply** — in the same situation once the turn has ended, an automatic compaction, `/compact` or a plain `/pi-vcc` summarized the whole turn, reply included. It now keeps the final reply in context and summarizes the rest. On omp, print mode (`omp -p`) printed nothing when this happened, since it prints the last reply still in context.
+
 ## [0.11.2]
 
 ### Fixes
