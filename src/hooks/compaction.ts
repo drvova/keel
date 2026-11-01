@@ -484,7 +484,11 @@ export const applyTailBudget = (
   if (cut.compactAll) {
     if (!cut.keepFallbackToCompactAll) return cut;
     const idx = findBudgetCutIndex(live, maxTokens, opts.charsPerToken);
-    if (idx >= 0) return renders(idx) ? budgetResult(idx, "no_anchor") : cut;
+    // A cut that keeps only the turn's final answer kept a finished turn's reply, not part of a running one.
+    if (idx >= 0) {
+      if (!renders(idx)) return cut;
+      return budgetResult(idx, idx === live.length - 1 && isFinalAnswer(live[idx].message) ? "final_reply" : "no_anchor");
+    }
     // The whole window fits the budget. When it ends with the turn's final
     // answer, keep that answer and summarize the rest: compact-all would take the
     // reply out of context too, and omp's print mode, which prints the last
@@ -598,6 +602,24 @@ export const resolveSmartKeepUserTurns = (opts: ResolveSmartKeepOptions): Resolv
   };
 };
 
+/**
+ * Prompt tokens of the session's first request less what its messages account
+ * for: the system prompt and tool schemas every request carries. Undefined when
+ * no request recorded its usage.
+ */
+const measuredOverheadTokens = (branchEntries: any[]): number | undefined => {
+  let chars = 0;
+  for (const e of branchEntries) {
+    if (e?.type !== "message" || !e.message) continue;
+    const m = e.message;
+    const u = m.role === "assistant" ? m.usage : undefined;
+    const prompt = u ? (Number(u.input) || 0) + (Number(u.cacheRead) || 0) + (Number(u.cacheWrite) || 0) : 0;
+    if (prompt > 0) return Math.max(0, prompt - estimateTokensFromChars(chars, DEFAULT_CHARS_PER_TOKEN));
+    chars += estimateMessageContentChars(m.content);
+  }
+  return undefined;
+};
+
 const REASON_MESSAGES: Record<OwnCutCancelReason, string> = {
   no_live_messages: "omp-vcc: Nothing to compact (no live messages)",
   too_few_live_messages: "omp-vcc: Too few messages to compact",
@@ -643,19 +665,24 @@ export const registerCompactionHook = (
     const calibrationSummaryChars = typeof preparation.previousSummary === "string"
       ? preparation.previousSummary.length
       : 0;
-    const tokenEstimate = calibrateCharsPerToken(
-      calibrationMessageChars + calibrationSummaryChars,
-      preparation.tokensBefore,
-    );
+    // The overhead is what a compaction cannot remove (system prompt, tool
+    // schemas). The session's first request measured it: its prompt held little
+    // else. Without one, the provider-counted context less what the messages
+    // account for at 4 chars/token, which overstates it for dense text.
+    const measuredOverhead = measuredOverheadTokens(branchEntries as any[]);
+    const contentChars = calibrationMessageChars + calibrationSummaryChars;
+    const contentTokens = measuredOverhead !== undefined && preparation.tokensBefore > measuredOverhead
+      ? preparation.tokensBefore - measuredOverhead
+      : preparation.tokensBefore;
+    // Calibrated on the messages alone where the overhead is known, so a summary's
+    // token budget maps to the chars the messages actually take.
+    const tokenEstimate = calibrateCharsPerToken(contentChars, contentTokens);
+    const overheadTokens = measuredOverhead
+      ?? (preparation.tokensBefore > 0 ? Math.max(0, preparation.tokensBefore - estimateTokensFromChars(contentChars, DEFAULT_CHARS_PER_TOKEN)) : 0);
 
-    // Budgets from the model's real window and where the next compaction comes
-    // (core/window.ts). The overhead is what the compaction cannot remove: the
-    // provider-counted context less what the messages account for.
+    // Budgets from the model's real window and where the next compaction comes (core/window.ts).
     const window = windowOf(ctx?.model);
     const trigger = triggerFor(window, state, modelKey(ctx?.model), reason, preparation.tokensBefore);
-    const overheadTokens = preparation.tokensBefore > 0
-      ? Math.max(0, preparation.tokensBefore - estimateTokensFromChars(calibrationMessageChars + calibrationSummaryChars, DEFAULT_CHARS_PER_TOKEN))
-      : 0;
     const budgets = compactionBudgets(trigger, overheadTokens);
 
     // Smart keep-tail: boost default keep when the tail is small.
@@ -941,6 +968,7 @@ export const registerCompactionHook = (
         // The provider's own figure when it differs from omp's (e.g. it serves 1M, models.yml says 128K).
         ...(window.provider && window.provider !== window.omp ? { providerWindow: window.provider } : {}),
         ...(trigger ? { trigger } : {}),
+        ...(overheadTokens ? { overheadTokens } : {}),
         maxTailTokens: budgets.maxTailTokens,
         briefCeilingTokens: budgets.briefCeilingTokens,
       },

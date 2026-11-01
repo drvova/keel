@@ -24,6 +24,8 @@ export interface VccCompactionDetails {
     windowSource?: "omp" | "provider" | "overflow-error" | "unknown";
     providerWindow?: number;
     trigger?: number;
+    /** System prompt and tools, which a compaction cannot remove. */
+    overheadTokens?: number;
     maxTailTokens: number;
     briefCeilingTokens: number;
   };

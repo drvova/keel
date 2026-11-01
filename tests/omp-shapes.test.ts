@@ -180,6 +180,12 @@ describe("no user anchor, whole window under the tail budget", () => {
     expect(cut).toMatchObject({ ok: true, compactAll: false, firstKeptEntryId: "f1", budgetCut: "final_reply", selectedIds: ["u1", "a1", "r1"] });
   });
 
+  test("a budget cut that keeps only a finished turn's reply says so", () => {
+    const long = (id: string) => ({ id, type: "message", message: { role: "toolResult", toolCallId: "t1", toolName: "bash", content: [{ type: "text", text: "y".repeat(40_000) }], isError: false } });
+    const entries = [msg("u1", "user", "Run it"), callAndResult[0], long("r1"), msg("f1", "assistant", "done, 20")];
+    expect(applyTailBudget(entries, buildOwnCut(entries, 1), { maxTokens: 1_000, charsPerToken: 4 })).toMatchObject({ ok: true, firstKeptEntryId: "f1", budgetCut: "final_reply" });
+  });
+
   test("a turn ending in a tool call keeps the old compact-all", () => {
     const nextCall = { id: "a2", type: "message", message: { role: "assistant", content: [{ type: "toolCall", id: "t2", name: "bash", arguments: { command: "seq 1 30" } }] } };
     const entries = [msg("u1", "user", "Run seq 1 20"), ...callAndResult, nextCall];

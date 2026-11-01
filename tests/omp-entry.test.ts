@@ -407,6 +407,32 @@ describe("omp entry: the model's real window", () => {
     resetProviderProbes();
   });
 
+  // Seen live (40K provider): dense text tokenized at ~3 chars/token, so "context less
+  // messages at 4 chars/token" doubled the overhead and pinned the tail at its floor.
+  test("the overhead comes from the session's first request, which held little but the system prompt", () => {
+    recordLimit(40_000);
+    const omp = createOmp();
+    omp.ctx.model = model;
+    const usage = (input: number, cacheRead = 0) => ({ input, output: 50, cacheRead, cacheWrite: 0, totalTokens: input + cacheRead + 50 });
+    const file = "x1 amber basil cedar ".repeat(1400); // ~29k chars
+    const call = (id: string, n: number) => entry({ role: "assistant", content: [{ type: "toolCall", id, name: "read", arguments: { path: `data/${n}.txt` } }], usage: usage(8_393 + n * 9_000, 0) });
+    const result = (id: string) => entry({ role: "toolResult", toolCallId: id, toolName: "read", content: [{ type: "text", text: file }], isError: false });
+    omp.setEntries([
+      user("Read the three data files and count their lines"),
+      call("t1", 0), result("t1"), call("t2", 1), result("t2"), call("t3", 2), result("t3"),
+      entry({ role: "assistant", content: [{ type: "text", text: "Each has 561 lines." }], usage: usage(14_014, 24_192), stopReason: "stop" }),
+    ]);
+    const out = omp.fire("session_before_compact", {
+      preparation: { previousSummary: undefined, fileOps: { read: new Set(), written: new Set(), edited: new Set() }, tokensBefore: 38_206 },
+      branchEntries: omp.ctx.sessionManager.getBranch(), customInstructions: undefined, signal: new AbortController().signal,
+    });
+    const limits = out.compaction.details.limits;
+    expect(limits.overheadTokens).toBeGreaterThan(8_300);
+    expect(limits.overheadTokens).toBeLessThan(8_400);
+    expect(limits.maxTailTokens).toBeGreaterThan(3_000); // was the 1,000 floor
+    rmSync(limitsFile(), { force: true });
+  });
+
   const recordLimit = (n: number) =>
     writeFileSync(limitsFile(), JSON.stringify({ "electronhub/small-model": { contextWindow: n, source: "overflow-error", at: "2026-11-01T00:00:00.000Z" } }));
 });
