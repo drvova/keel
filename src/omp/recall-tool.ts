@@ -45,7 +45,7 @@ export const registerOmpRecallTool = (pi: OmpExtensionAPI) => {
     loadMode: "essential",
     approval: "read",
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const text = executeRecall(params, ctx.sessionManager, { normalize: true });
+      const text = executeRecall(params, ctx.sessionManager, { normalize: true, contextWindow: ctx.model?.contextWindow });
       return { content: [{ type: "text", text }], details: undefined };
     },
   });

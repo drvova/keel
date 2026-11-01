@@ -167,9 +167,30 @@ interface Term {
   global: RegExp;  // same source with "gi", for counting occurrences
 }
 
+// Inflected forms of one word: a query rarely uses the session's own form
+// ("rounding" for "rounds", "failure" for "FAIL"), and literal matching then
+// misses the entry (NoLiMa, arXiv:2502.05167). A plain ASCII word also matches
+// its stem at the start of a word. Suffixes are English; other terms are untouched.
+const SUFFIXES = ["ations", "ation", "ings", "ing", "ures", "ure", "ies", "ers", "er", "ed", "es", "ly", "s"];
+const MIN_STEM = 4;
+
+export const stemOf = (term: string): string | undefined => {
+  if (term.length < MIN_STEM + 1 || !/^[a-z]+$/i.test(term)) return undefined;
+  const lower = term.toLowerCase();
+  for (const suffix of SUFFIXES) {
+    if (!lower.endsWith(suffix)) continue;
+    let stem = lower.slice(0, -suffix.length);
+    // "running" -> "runn" -> "run"
+    if (stem.length > MIN_STEM && stem[stem.length - 1] === stem[stem.length - 2]) stem = stem.slice(0, -1);
+    return stem.length >= MIN_STEM ? stem : undefined;
+  }
+  return undefined;
+};
+
 const compileTerms = (terms: string[]): Term[] =>
   terms.map((term) => {
-    const re = safeRegex(term);
+    const stem = stemOf(term);
+    const re = stem ? new RegExp(`${escapeRegex(term)}|(?<![a-z])${stem}`, "i") : safeRegex(term);
     return { term, re, global: new RegExp(re.source, "gi") };
   });
 

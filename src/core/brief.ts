@@ -290,7 +290,8 @@ export const buildBriefSections = (blocks: NormalizedBlock[]): BriefLine[] => {
         const cmd = b.lang === "python" ? compressCode(b.command) : compressBash(b.command);
         const ref = b.sourceIndex != null ? ` (#${b.sourceIndex})` : "";
         if (cmd) {
-          push("[user]", `${b.lang === "python" ? ">>>" : "$"} ${cmd}${ref}`);
+          const failed = b.exitCode != null && b.exitCode !== 0 ? " [failed]" : "";
+          push("[user]", `${b.lang === "python" ? ">>>" : "$"} ${cmd}${failed}${ref}`);
         }
         lastHeader = "[user]";
         break;
@@ -316,7 +317,7 @@ export const buildBriefSections = (blocks: NormalizedBlock[]): BriefLine[] => {
         // Skip malformed tool calls from streaming providers (empty name / fragmented args).
         if (!b.name || b.name.trim() === "") break;
         const ref = b.sourceIndex != null ? ` (#${b.sourceIndex})` : "";
-        const summary = toolOneLiner(b.name, b.args) + ref;
+        const summary = toolOneLiner(b.name, b.args) + (b.failed ? " [failed]" : "") + ref;
         push("[assistant]", summary);
         break;
       }

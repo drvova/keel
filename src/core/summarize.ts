@@ -7,6 +7,7 @@ import { EARLY_REQUESTS_KEPT, keepNewestUserMessages } from "../extract/user-mes
 import { formatSummary, capBrief, capItems, stripCapMarker, BRIEF_MAX_LINES, FILES_PER_CATEGORY, RECALL_NOTE, wrapLongLines } from "./format";
 import { COMMAND_SEPARATOR, COMMANDS_PER_NAME } from "../extract/tracked-commands";
 import { selectRankedBriefBlocks, type BriefRankingOptions } from "./rank";
+import { formatHistoryRange, type HistoryRange } from "./history-index";
 
 export interface CompileInput {
   messages: Message[];
@@ -22,6 +23,12 @@ export interface CompileInput {
    * empty/omitted by default, threaded through from
    * PiVccSettings.trackCommands by the caller (hooks/before-compact.ts). */
   trackCommands?: readonly string[];
+  /**
+   * The history index to show (already merged with the previous one; see
+   * core/history-index.ts). Rendered as the last header section; never merged
+   * from summary text.
+   */
+  historyIndex?: readonly HistoryRange[];
 }
 
 export interface RankedCompileInput extends CompileInput {
@@ -70,9 +77,9 @@ const isClean = (l: string) => l.startsWith("- ") && !l.includes("<skill") && !l
 const unwrapSection = (text: string, header: string) => sectionOf(text, header).replace(/\n[ \t]+(?=\S)/g, " ");
 
 /**
- * The previous summary's early requests, kept as they are: the first summary
- * sets them. An older version's [Session Goal] gives its first real line
- * (not a "- [skill: x]" / "- [Scope change]" marker).
+ * The previous summary's early requests, kept as they are: the first summaries
+ * set them, up to EARLY_REQUESTS_KEPT. An older version's [Session Goal] gives
+ * its first real line (not a "- [skill: x]" / "- [Scope change]" marker).
  */
 const pinnedEarlyRequests = (prev: string): string[] => {
   const early = unwrapSection(prev, EARLY).split("\n").filter(isClean);
@@ -254,8 +261,10 @@ const mergeBriefTranscriptWithFreshBudget = (prev: string, fresh: string): strin
 };
 
 const mergePrevious = (prev: string, fresh: string, options: { preserveFreshBrief?: boolean } = {}): string => {
-  // Merge header sections
-  const early = pinnedEarlyRequests(prev);
+  // Merge header sections. Early requests the previous summary still had room
+  // for are topped up from this compaction's first user messages.
+  const early = [...new Set([...pinnedEarlyRequests(prev), ...unwrapSection(fresh, EARLY).split("\n").filter(isClean)])]
+    .slice(0, EARLY_REQUESTS_KEPT);
   const headers = HEADER_NAMES
     .map((header) => {
       if (header === EARLY && early.length > 0) return `[${EARLY}]\n${early.join("\n")}`;
@@ -295,12 +304,32 @@ const compileWithBriefBlocks = (input: CompileInput, options: CompileWithBriefBl
   const prev = input.previousSummary
     ? stripRecallNote(input.previousSummary)
     : undefined;
-  const hasEarlyRequests = prev !== undefined && pinnedEarlyRequests(prev).length > 0;
-  const data = buildSections({ blocks, briefBlocks, fileOps: input.fileOps, trackCommands: input.trackCommands, hasEarlyRequests });
+  // Room left in [Early Session Requests]. Only a summary with that section can
+  // be topped up: after an older [Session Goal], the session's next requests
+  // are long gone, and this window's first ones are not them.
+  const earlyRequestSlots = prev === undefined
+    ? EARLY_REQUESTS_KEPT
+    : sectionOf(prev, EARLY)
+      ? EARLY_REQUESTS_KEPT - pinnedEarlyRequests(prev).length
+      : pinnedEarlyRequests(prev).length > 0 ? 0 : EARLY_REQUESTS_KEPT;
+  const data = buildSections({ blocks, briefBlocks, fileOps: input.fileOps, trackCommands: input.trackCommands, earlyRequestSlots });
   const fresh = formatSummary(data, { capBriefTranscript: options.capFreshBrief ?? true });
-  const merged = prev ? mergePrevious(prev, fresh, { preserveFreshBrief: options.preserveFreshBriefOnMerge }) : fresh;
+  const mergedText = prev ? mergePrevious(prev, fresh, { preserveFreshBrief: options.preserveFreshBriefOnMerge }) : fresh;
+  const merged = withHistoryIndex(mergedText, input.historyIndex);
   if (!merged) return "";
   return wrapLongLines(merged + SEPARATOR + RECALL_NOTE);
+};
+
+const HISTORY_INDEX = "History Index";
+
+/** Put the index last in the header area, replacing any previous one. */
+const withHistoryIndex = (text: string, ranges?: readonly HistoryRange[]): string => {
+  if (!ranges || ranges.length === 0 || !text) return text;
+  const section = `[${HISTORY_INDEX}]\n${ranges.map((r) => `- ${formatHistoryRange(r)}`).join("\n")}`;
+  const { head, brief } = splitSummary(text);
+  const kept = head.split("\n\n").filter((part) => !part.startsWith(`[${HISTORY_INDEX}]`)).filter(Boolean);
+  const newHead = [...kept, section].join("\n\n");
+  return brief ? `${newHead}${SEPARATOR}${brief}` : newHead;
 };
 
 export const compile = (input: CompileInput): string =>

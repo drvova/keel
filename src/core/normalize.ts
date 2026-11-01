@@ -3,7 +3,11 @@ import type { NormalizedBlock } from "../types";
 import { textOf } from "./content";
 import { sanitize } from "./sanitize";
 
-const normalizeOne = (msg: SessionMessageEntry["message"], msgIndex: number | undefined): NormalizedBlock[] => {
+const normalizeOne = (
+  msg: SessionMessageEntry["message"],
+  msgIndex: number | undefined,
+  failedCallIds?: ReadonlySet<string>,
+): NormalizedBlock[] => {
   if (msg.role === "user") {
     const blocks: NormalizedBlock[] = [];
     const text = sanitize(textOf(msg.content));
@@ -57,6 +61,7 @@ const normalizeOne = (msg: SessionMessageEntry["message"], msgIndex: number | un
           name: part.name,
           args: part.arguments,
           sourceIndex: msgIndex,
+          ...(failedCallIds?.has(part.id) ? { failed: true as const } : {}),
         });
       }
     }
@@ -77,7 +82,14 @@ const normalizeOne = (msg: SessionMessageEntry["message"], msgIndex: number | un
 export const normalize = (
   messages: SessionMessageEntry["message"][],
   sourceIndices?: Array<number | undefined>,
-): NormalizedBlock[] =>
-  messages.flatMap((msg, i) => normalizeOne(msg, sourceIndices ? sourceIndices[i] : i));
+): NormalizedBlock[] => {
+  // Calls whose result is an error, so the call itself can say so: the brief
+  // shows calls, not results.
+  const failedCallIds = new Set<string>();
+  for (const msg of messages) {
+    if (msg.role === "toolResult" && msg.isError === true && typeof msg.toolCallId === "string") failedCallIds.add(msg.toolCallId);
+  }
+  return messages.flatMap((msg, i) => normalizeOne(msg, sourceIndices ? sourceIndices[i] : i, failedCallIds));
+};
 
 

@@ -129,18 +129,38 @@ export const ignoredNote = (request: RecallRequest): string =>
 /** Ceiling for one recall result, the 50 KB of Pi's read tool: one long entry
  *  (a base64 image on one line) must not flood the context. */
 export const RECALL_OUTPUT_CHARS = 50 * 1024;
+const MIN_RECALL_OUTPUT_CHARS = 8 * 1024;
 
-const capOutput = (text: string): string => {
-  if (text.length <= RECALL_OUTPUT_CHARS) return text;
+/**
+ * The ceiling for a model's context window: a tenth of it (at ~4 chars per
+ * token), between 8 KB and 50 KB. A large result costs more than its tokens:
+ * accuracy drops with input length alone (arXiv:2510.05381), and on a small
+ * window a 50 KB result can by itself push the session back over its
+ * compaction threshold. Unknown window: 50 KB.
+ */
+export const recallOutputChars = (contextWindow?: number): number =>
+  typeof contextWindow === "number" && contextWindow > 0
+    ? Math.max(MIN_RECALL_OUTPUT_CHARS, Math.min(RECALL_OUTPUT_CHARS, Math.round(contextWindow * 4 * 0.1)))
+    : RECALL_OUTPUT_CHARS;
+
+const kb = (chars: number): string => `${Math.round(chars / 1024)} KB`;
+
+const capOutput = (text: string, max: number): string => {
+  if (text.length <= max) return text;
   // Never split a surrogate pair.
-  const end = /[\uD800-\uDBFF]/.test(text[RECALL_OUTPUT_CHARS - 1]) ? RECALL_OUTPUT_CHARS - 1 : RECALL_OUTPUT_CHARS;
-  return `Warning: output clipped at ${end} of ${text.length} chars (one recall result is capped at 50 KB). ` +
+  const end = /[\uD800-\uDBFF]/.test(text[max - 1]) ? max - 1 : max;
+  return `Warning: output clipped at ${end} of ${text.length} chars (one recall result is capped at ${kb(max)}). ` +
     `Ask for less at once: fewer expand indices, a narrower query, or a line range for file content ('#N:path:offset:limit').\n\n` +
-    `${text.slice(0, end)}\n...[clipped at 50 KB]`;
+    `${text.slice(0, end)}\n...[clipped at ${kb(max)}]`;
 };
 
-export const runRecall = (request: RecallRequest, view: RecallView, hints: RecallPagingHints): string =>
-  capOutput(ignoredNote(request) + runAction(request, view, hints));
+export const runRecall = (
+  request: RecallRequest,
+  view: RecallView,
+  hints: RecallPagingHints,
+  options: { maxChars?: number } = {},
+): string =>
+  capOutput(ignoredNote(request) + runAction(request, view, hints), options.maxChars ?? RECALL_OUTPUT_CHARS);
 
 const runAction = (request: RecallRequest, view: RecallView, hints: RecallPagingHints): string => {
   const { action } = request;

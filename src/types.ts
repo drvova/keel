@@ -15,7 +15,8 @@ export type NormalizedBlock =
   // or [User Messages].
   | { kind: "user"; text: string; sourceIndex?: number; injected?: boolean }
   | { kind: "assistant"; text: string; sourceIndex?: number }
-  | { kind: "tool_call"; name: string; args: Record<string, unknown>; sourceIndex?: number }
+  // `failed`: the call's result came back as an error (toolResult isError).
+  | { kind: "tool_call"; name: string; args: Record<string, unknown>; sourceIndex?: number; failed?: true }
   | { kind: "tool_result"; name: string; text: string; sourceIndex?: number }
   // A command the user ran themselves: Pi/omp `!cmd`, or (lang "python") an omp python cell.
   | { kind: "bash"; command: string; output: string; exitCode: number | undefined; sourceIndex?: number; lang?: "python" };

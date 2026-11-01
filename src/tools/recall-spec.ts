@@ -2,7 +2,7 @@
 // reads, and what a call does. Each host binds it with its own schema:
 // src/tools/recall.ts (Pi, TypeBox) and src/omp/recall-tool.ts (omp, JSON Schema).
 import { normalizeToolParams, parseToolRequest, type RecallToolParams } from "../core/recall-request";
-import { openRecallView, runRecall, type RecallPagingHints } from "../core/recall-run";
+import { openRecallView, recallOutputChars, runRecall, type RecallPagingHints } from "../core/recall-run";
 import type { LineageSessionManagerLike } from "../core/lineage";
 
 export const RECALL_TOOL_NAME = "vcc_recall";
@@ -25,7 +25,7 @@ export const RECALL_TOOL_DESCRIPTION = [
   "  reads edited or retried branches.",
   "",
   "#N is the number shown in summary refs like (#12) and in recall results.",
-  "Only the current session is searchable. One result is capped at 50 KB.",
+  "Only the current session is searchable. One result is capped at 50 KB (less on a small context window).",
 ].join("\n");
 
 export const RECALL_PROMPT_SNIPPET =
@@ -60,17 +60,18 @@ export interface RecallSessionManager extends LineageSessionManagerLike {
 /**
  * One vcc_recall call. `params` must already be normalized (normalizeToolParams):
  * Pi does it in prepareArguments, before its schema check; a host without that
- * hook calls executeRecall with `normalize: true`.
+ * hook calls executeRecall with `normalize: true`. `contextWindow` (the model's)
+ * scales the output ceiling (recallOutputChars).
  */
 export const executeRecall = (
   params: unknown,
   sessionManager: RecallSessionManager,
-  options: { normalize?: boolean } = {},
+  options: { normalize?: boolean; contextWindow?: number } = {},
 ): string => {
   const sessionFile = sessionManager.getSessionFile();
   if (!sessionFile) return "No session file available.";
   const normalized = (options.normalize ? normalizeToolParams(params) : params) as RecallToolParams;
   const request = parseToolRequest(normalized);
   const view = openRecallView(sessionFile, request.scope, sessionManager);
-  return runRecall(request, view, TOOL_PAGING_HINTS);
+  return runRecall(request, view, TOOL_PAGING_HINTS, { maxChars: recallOutputChars(options.contextWindow) });
 };

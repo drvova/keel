@@ -121,7 +121,9 @@ const scoreBlock = (
     else if (READ_TOOL_RE.test(block.name)) add(ranked, 6, "read-tool");
     else add(ranked, 12, "tool-call");
     if (command && WORKFLOW_COMMAND_RE.test(command)) add(ranked, 14, "workflow-command");
-    if (command && isTrivialOnlyBash(command)) add(ranked, -TRIVIAL_BASH_PENALTY, "trivial-bash");
+    // An error state is the fact most worth carrying forward (as nonzero-exit for a user-run command).
+    if (block.failed) add(ranked, 24, "failed-call");
+    else if (command && isTrivialOnlyBash(command)) add(ranked, -TRIVIAL_BASH_PENALTY, "trivial-bash");
   }
 
   if (block.kind === "bash") {
@@ -148,7 +150,7 @@ const scoreBlock = (
 
 const boostAdjacency = (ranked: RankedBlock[]) => {
   const important = ranked
-    .filter((r) => r.score >= 34 || r.reasons.includes("edit-tool") || r.reasons.includes("test-command") || r.reasons.includes("nonzero-exit"))
+    .filter((r) => r.score >= 34 || r.reasons.includes("edit-tool") || r.reasons.includes("test-command") || r.reasons.includes("nonzero-exit") || r.reasons.includes("failed-call"))
     .map((r) => r.index);
 
   for (const idx of important) {

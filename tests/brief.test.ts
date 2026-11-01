@@ -1,5 +1,7 @@
 import { describe, it, expect } from "bun:test";
 import { compileBrief } from "../src/core/brief";
+import { normalize } from "../src/core/normalize";
+import { rankBriefBlocks } from "../src/core/rank";
 import type { NormalizedBlock } from "../src/types";
 
 describe("compileBrief", () => {
@@ -54,7 +56,8 @@ describe("compileBrief", () => {
       { kind: "bash", command: "npm test", output: "FAIL noisy output", exitCode: 1, sourceIndex: 2 },
     ];
     const r = compileBrief(blocks);
-    expect(r).toContain("[user]\n$ npm test (#2)");
+    // exit 1: the line says it failed (the output stays behind vcc_recall).
+    expect(r).toContain("[user]\n$ npm test [failed] (#2)");
     expect(r).not.toContain("FAIL noisy output");
   });
 
@@ -382,5 +385,33 @@ describe("compileBrief", () => {
     expect(r).not.toContain("entries omitted");
     expect(r).toContain("c1");
     expect(r).toContain("c8");
+  });
+});
+
+describe("failed tool calls", () => {
+  it("a call whose result is an error says so, before its ref", () => {
+    const blocks = normalize([
+      { role: "assistant", content: [{ type: "toolCall", id: "t1", name: "bash", arguments: { command: "bun test tests/billing.test.ts" } }] },
+      { role: "toolResult", toolCallId: "t1", toolName: "bash", content: [{ type: "text", text: "1 fail" }], isError: true },
+      { role: "assistant", content: [{ type: "toolCall", id: "t2", name: "bash", arguments: { command: "bun test tests/billing.test.ts" } }] },
+      { role: "toolResult", toolCallId: "t2", toolName: "bash", content: [{ type: "text", text: "12 pass" }], isError: false },
+    ] as any, [10, 11, 12, 13]);
+    const r = compileBrief(blocks);
+    expect(r).toContain('* bash "bun test tests/billing.test.ts" [failed] (#10)');
+    expect(r).toContain('* bash "bun test tests/billing.test.ts" (#12)');
+  });
+
+  it("ranks a failed call above the same call that passed", () => {
+    const blocks = normalize([
+      { role: "assistant", content: [{ type: "toolCall", id: "a", name: "bash", arguments: { command: "ls" } }] },
+      { role: "toolResult", toolCallId: "a", toolName: "bash", content: [{ type: "text", text: "ls: no such dir" }], isError: true },
+      { role: "assistant", content: [{ type: "toolCall", id: "b", name: "bash", arguments: { command: "ls" } }] },
+      { role: "toolResult", toolCallId: "b", toolName: "bash", content: [{ type: "text", text: "src" }], isError: false },
+    ] as any);
+    const ranked = rankBriefBlocks(blocks);
+    const failed = ranked.find((r) => r.block.kind === "tool_call" && r.block.failed)!;
+    const passed = ranked.find((r) => r.block.kind === "tool_call" && !r.block.failed)!;
+    expect(failed.reasons).toContain("failed-call");
+    expect(failed.score).toBeGreaterThan(passed.score);
   });
 });

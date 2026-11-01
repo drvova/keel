@@ -37,7 +37,7 @@ export const registerRecallTool = (pi: ExtensionAPI) => {
     // Runs before pi validates the schema, so repairable mistakes never reach the agent as errors.
     prepareArguments: (args: unknown) => normalizeToolParams(args) as any,
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const text = executeRecall(params, ctx.sessionManager);
+      const text = executeRecall(params, ctx.sessionManager, { contextWindow: (ctx as any).model?.contextWindow });
       return { content: [{ type: "text", text }], details: undefined };
     },
   });

@@ -4,6 +4,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { writeFileSync } from "fs";
 import { compileRanked } from "../core/summarize";
+import { mergeHistoryIndex, rangeOfWindow, readHistoryIndex, unindexedRange } from "../core/history-index";
 import { normalize } from "../core/normalize";
 import { buildGlobalIndexById, loadGlobalIndexById } from "../core/global-indices";
 import { parseKeepAndPrompt, PI_VCC_COMPACT_INSTRUCTION } from "../core/compact-args";
@@ -975,9 +976,26 @@ export const registerCompactionHook = (
     const RANKED_BRIEF_BUDGET_TOKENS = 1100;
     const RANKED_BRIEF_CEILING_TOKENS = 2000;
     const RANKED_BRIEF_TOKENS_PER_BLOCK = 15;
+    // [History Index]: this window's range added to the one the previous pi-vcc
+    // compaction stored. Only a compaction still in context counts: after omp's
+    // /clear (a later reset_boundary) the index starts over, as the summary does.
+    const lastCompactionIdx = lastIndexOfType(branchEntries as any[], "compaction");
+    const previousCompaction = lastCompactionIdx > lastIndexOfType(branchEntries as any[], "reset_boundary")
+      ? (branchEntries as any[])[lastCompactionIdx]
+      : undefined;
+    const windowRange = rangeOfWindow(messages, sourceIndices);
+    const storedIndex = previousCompaction ? readHistoryIndex(previousCompaction.details) : [];
+    const historyIndex = windowRange
+      ? mergeHistoryIndex(
+          storedIndex ?? (windowRange.from > 0 ? [unindexedRange(windowRange.from - 1)] : []),
+          windowRange,
+        )
+      : undefined;
+
     const summary = compileRanked({
       messages,
       sourceIndices,
+      historyIndex,
       previousSummary: preparation.previousSummary,
       fileOps: {
         readFiles: [...preparation.fileOps.read],
@@ -1029,6 +1047,7 @@ export const registerCompactionHook = (
       previousSummaryUsed: Boolean(preparation.previousSummary),
       reason,
       willRetry,
+      ...(historyIndex ? { historyIndex } : {}),
     };
 
     state.lastCompactWasPiVcc = isPiVcc;

@@ -13,7 +13,7 @@ export interface OmpContext {
   ui: { notify: (message: string, type?: OmpNotifyType) => void };
   mode?: "tui" | "rpc" | "json" | "print";
   sessionManager: OmpSessionManager;
-  model?: { provider?: string };
+  model?: { provider?: string; contextWindow?: number };
 }
 
 export interface OmpCommandContext extends OmpContext {

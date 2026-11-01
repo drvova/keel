@@ -91,6 +91,9 @@ On a short session `/pi-vcc` can answer "Nothing to compact yet" whatever `keep:
 - Always run tests before committing
 - Also update the session token refresh logic
 
+[History Index]
+- #0–#16: 2 requests: "Fix the auth bug, users can't log in after password reset" · changed auth/session.ts · 1 failed call
+
 ---
 
 ...(28 earlier lines omitted)
@@ -100,7 +103,7 @@ Fix the auth bug, users can't log in after password reset
 
 [assistant]
 Root cause is a missing token refresh after password reset... (#11)
-* bash "bun test tests/auth.test.ts" (#12)
+* bash "bun test tests/auth.test.ts" [failed] (#12)
 * edit "src/auth/session.ts" (#14)
 * bash "docker compose restart api 2>&1" (#15)
 * bash "bun test tests/auth.test.ts" (#16)
@@ -114,14 +117,15 @@ A section only appears when it has something to say; a session with no git commi
 
 | Section | Contents |
 |---|---|
-| `[Early Session Requests]` | The session's first 3 user messages, as written. Set once; they can be stale later in a long session |
+| `[Early Session Requests]` | The session's first 3 user messages, as written. Kept for the whole session; they can be stale later in a long session |
 | `[Files And Changes]` | Files modified, created or read (capped, paths trimmed to a common root) |
 | `[Commits]` | Last 8 commits made in the session (hash + subject) |
 | `[Tracked Commands]` | Recent runs of only the commands listed in `trackCommands` (off by default) |
 | `[User Messages]` | The 15 newest later user messages, as written (one line each, up to 300 characters) |
-| Brief transcript | The conversation in order, about 120 recent lines, each tool call shortened to one line with a `(#N)` ref |
+| `[History Index]` | One line per compacted range of `#N` entries, back to the start of the session: how many requests, the longest one, the files or directories changed, commits and failed calls. At most 8 lines; older ranges merge into coarser ones |
+| Brief transcript | The conversation in order, about 120 recent lines, each tool call shortened to one line with a `(#N)` ref, and `[failed]` when its result was an error |
 
-On the next compaction, the sections are merged with the previous summary and re-capped, and the transcript rolls forward. `[Early Session Requests]` stays as the first summary set it. None of the sections depend on wording, so they work the same in every language.
+On the next compaction, the sections are merged with the previous summary and re-capped, and the transcript rolls forward. What leaves the other sections is still named in `[History Index]`, so on a long task the agent knows which range to read or what to search for. `[Early Session Requests]` keeps the session's first 3 requests, even when the first compaction saw fewer. None of the sections depend on wording, so they work the same in every language.
 
 ## Recall
 
@@ -145,7 +149,7 @@ vcc_recall({ mode: "touched" })                      // files worked on, with #N
 vcc_recall({ query: "#1253:auth.ts" })               // a file's content from #1253
 ```
 
-Each call does one of these. `page` and `scope` work with all of them, and a param the call cannot use is named in the output instead of dropped silently. One result is capped at 50 KB; a clipped one starts with a warning.
+Each call does one of these. `page` and `scope` work with all of them, and a param the call cannot use is named in the output instead of dropped silently. One result is capped at 50 KB, or a tenth of the model's context window when that is smaller (at least 8 KB); a clipped one starts with a warning. A search word also matches other forms of it (`rounding` finds `rounds`, `failure` finds `FAIL`).
 
 The same search as a slash command, with results shown in the chat and passed to the agent:
 
