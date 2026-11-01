@@ -34,6 +34,16 @@ describe("rangeOfWindow", () => {
     });
   });
 
+  // Seen with a real model: a 500-character first request and a 250-character second one
+  // both clip to 80 characters, and the index quoted the second.
+  it("quotes the longest request by its full length, not its clipped one", () => {
+    const first = "Create a tiny inventory module in this empty directory: src/inventory.py with add_item(name, qty) that adds to an in-memory dict and total() that returns the sum of all quantities, plus tests/test_inventory.py with three plain assert checks you run with python3 (no pytest). Run the tests, then commit with git commit -q -m 'feat: inventory' and show git log --oneline -1. One more rule for the whole project: quantities are integers and never negative, so add_item must raise ValueError for a negative qty.";
+    const second = "Rename total() to total_qty() in src/inventory.py and the tests, run the tests, then fold it into the last commit with git commit -a --amend --no-edit -q and show git log --oneline -1.";
+    const r = rangeOfWindow([{ role: "user", content: first }, { role: "user", content: second }] as any, [0, 1])!;
+    expect(r.asks[0].startsWith("Create a tiny inventory module")).toBe(true);
+    expect(r.asks.every((a) => a.length <= 80)).toBe(true);
+  });
+
   it("has nothing to say without #N refs", () => {
     expect(rangeOfWindow([{ role: "user", content: "hello there" }] as any, [undefined])).toBeUndefined();
   });

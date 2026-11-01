@@ -71,7 +71,8 @@ export const rangeOfWindow = (
     from: Math.min(...known),
     to: Math.max(...known),
     requests: asks.length,
-    asks: longestFirst(asks.map((a) => clip(a, ASK_CHARS))),
+    // Ranked by full length, then clipped: clipped first, every long request ties at ASK_CHARS.
+    asks: longestFirst(asks).map((a) => clip(a, ASK_CHARS)),
     files: changed.slice(0, FILES_KEPT),
     commits: commits.slice(-COMMITS_KEPT),
     commitCount: commits.length,
