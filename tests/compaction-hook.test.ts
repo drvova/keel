@@ -1086,3 +1086,62 @@ describe("compaction hook: trackCommands", () => {
     expect(summaryWith({})).not.toContain("[Tracked Commands]");
   });
 });
+
+// From a sibling omp port's audit: omp's plan-mode "approve and compact" grew a
+// context from 85K to 87K, a two-message prefix replaced by a bigger summary.
+describe("compaction hook: growth guard", () => {
+  afterEach(() => {
+    if (existsSync(CONFIG_PATH)) unlinkSync(CONFIG_PATH);
+  });
+
+  test("summaryGrowth: net growth past a fixed margin or a quarter of the prefix", async () => {
+    const { summaryGrowth } = await import("../src/hooks/compaction");
+    expect(summaryGrowth(400, 0, 10)).toMatchObject({ grows: false, netChars: 390, allowedChars: 500 });
+    expect(summaryGrowth(2_000, 0, 100)).toMatchObject({ grows: true, netChars: 1_900 });
+    // The previous summary is replaced, so only what the new one adds counts.
+    expect(summaryGrowth(9_000, 8_000, 100)).toMatchObject({ grows: true, netChars: 900 });
+    expect(summaryGrowth(9_000, 8_500, 4_000)).toMatchObject({ grows: false });
+    // A big prefix allows a quarter of itself.
+    expect(summaryGrowth(12_000, 0, 10_000)).toMatchObject({ grows: false, allowedChars: 2_500 });
+  });
+
+  const pinned = (n: number) => Array.from({ length: n }, (_, i) => ({
+    id: `p${i}`, type: "custom", customType: "omp-vcc.pin",
+    data: { v: 1, op: "add", id: i + 1, text: `Constraint ${i + 1}: ${"keep the legacy SSO flow untouched until the migration lands. ".repeat(3)}`, by: "user" },
+  }));
+  const tiny = () => [...pinned(5), msg("m1", "user", "ok go"), msg("m2", "assistant", "done"), msg("m3", "user", "next"), msg("m4", "assistant", "fine")];
+
+  test("an automatic pass that would grow the context is cancelled quietly", () => {
+    setConfig({ overrideDefaultCompaction: true });
+    const { pi, invokeBefore, notifyCalls } = createMockOmp();
+    register(pi);
+    expect(invokeBefore(makeEvent(tiny(), undefined, { reason: "threshold" }))).toEqual({ cancel: true });
+    expect(notifyCalls).toEqual([]);
+  });
+
+  test("a manual /compact that would grow it is cancelled and says why; an overflow goes to omp's method", () => {
+    setConfig({ overrideDefaultCompaction: true });
+    const manual = createMockOmp();
+    register(manual.pi);
+    expect(manual.invokeBefore(makeEvent(tiny(), undefined))).toEqual({ cancel: true });
+    expect(manual.notifyCalls[0].msg).toStartWith("omp-vcc: Not compacted: the summary would be");
+    expect(manual.notifyCalls[0].msg).toContain("keep:0 summarizes everything");
+    // Already summarizing everything: no keep:0 hint.
+    const all = createMockOmp();
+    register(all.pi);
+    expect(all.invokeBefore(makeEvent(tiny(), "keep:0"))).toEqual({ cancel: true });
+    expect(all.notifyCalls[0].msg).toStartWith("omp-vcc: Not compacted: the summary would be");
+    expect(all.notifyCalls[0].msg).not.toContain("keep:0");
+    const overflow = createMockOmp();
+    register(overflow.pi);
+    expect(overflow.invokeBefore(makeEvent(tiny(), undefined, { reason: "overflow" }))).toBeUndefined();
+  });
+
+  test("a prefix worth summarizing still compacts", () => {
+    setConfig({ overrideDefaultCompaction: true });
+    const { pi, invokeBefore } = createMockOmp();
+    register(pi);
+    const long = [...pinned(5), msg("m1", "user", "x ".repeat(3_000)), msg("m2", "assistant", "y ".repeat(3_000)), msg("m3", "user", "next"), msg("m4", "assistant", "fine")];
+    expect(invokeBefore(makeEvent(long, undefined, { reason: "threshold" })).compaction).toBeDefined();
+  });
+});

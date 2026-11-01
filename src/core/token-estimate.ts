@@ -94,6 +94,36 @@ export const estimateMessageContentChars = (content: unknown): number => {
   }, 0);
 };
 
+/**
+ * Chars of one message, whatever its shape. Most roles carry `content`; omp's
+ * user-run `!cmd` and python cells, branch and compaction summaries and @file
+ * mentions carry their text in other fields, and measured 0 by content alone:
+ * a 200k-char `!cmd` output in the kept tail was invisible to the tail budget.
+ */
+export const estimateMessageChars = (message: unknown): number => {
+  if (!message || typeof message !== "object") return 0;
+  const m = message as Record<string, unknown>;
+  const len = (v: unknown) => (typeof v === "string" ? v.length : 0);
+  switch (m.role) {
+    case "bashExecution":
+      return len(m.command) + len(m.output);
+    case "pythonExecution":
+      return len(m.code) + len(m.output);
+    case "branchSummary":
+    case "compactionSummary":
+      return len(m.summary);
+    case "fileMention":
+      return Array.isArray(m.files)
+        ? m.files.reduce((sum: number, f: any) => sum + len(f?.path) + len(f?.content) + (f?.image ? IMAGE_CONTENT_CHARS : 0), 0)
+        : 0;
+    default:
+      return estimateMessageContentChars(m.content);
+  }
+};
+
+export const estimateMessageTokens = (message: unknown, charsPerToken = DEFAULT_CHARS_PER_TOKEN): number =>
+  estimateTokensFromChars(estimateMessageChars(message), charsPerToken);
+
 export const estimateMessageContentTokens = (
   content: unknown,
   charsPerToken = DEFAULT_CHARS_PER_TOKEN,

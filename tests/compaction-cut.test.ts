@@ -1,7 +1,7 @@
 import { describe, test, expect } from "bun:test";
 // Blocks the summarizer would actually get (renderedBlocks): the hook's
 // toSummaryMessage, which reads custom messages as user content, then normalize.
-import { applyTailBudget, buildOwnCut, renderedBlocks } from "./support/host";
+import { applyTailBudget, buildOwnCut, renderedBlocks, resolveSmartKeepUserTurns } from "./support/host";
 
 const msg = (id: string, role: "user" | "assistant" | "toolResult", content = "x") => ({
   id,
@@ -386,5 +386,26 @@ describe("buildOwnCut: entries normalize() cannot render", () => {
     if (!r.ok) return;
     expect(r.budgetCut).toBeUndefined();
     expect(renderedBlocks(r.messages).length).toBeGreaterThan(0);
+  });
+});
+
+describe("a user's !cmd output in the kept tail counts", () => {
+  const bash = (id: string, output: string) => ({ id, type: "message", message: { role: "bashExecution", command: "cat build.log", output, exitCode: 0 } });
+  const reply = (id: string, text: string) => ({ id, type: "message", message: { role: "assistant", content: [{ type: "text", text }] } });
+
+  test("an oversized !cmd tail is cut to the token budget", () => {
+    const entries = [msg("u1", "user", "set up the build"), reply("a1", "ok"), msg("u2", "user", "look at the log"), bash("b1", "x".repeat(300_000)), reply("a2", "it fails at step 3")];
+    const cut = buildOwnCut(entries, 1);
+    expect(cut).toMatchObject({ ok: true, firstKeptEntryId: "u2" });
+    expect(applyTailBudget(entries, cut, { charsPerToken: 4 })).toMatchObject({ ok: true, budgetCut: "oversized_tail" });
+  });
+
+  test("smart keep does not grow keep:1 past a large !cmd tail", () => {
+    const entries = [
+      msg("u1", "user", "first request"), reply("a1", "ok"),
+      msg("u2", "user", "second request"), reply("a2", "ok"),
+      msg("u3", "user", "look at the log"), bash("b1", "x".repeat(100_000)), reply("a3", "it fails"),
+    ];
+    expect(resolveSmartKeepUserTurns({ branchEntries: entries, requestedKeepUserTurns: null, explicit: false, smartKeepTail: true, charsPerToken: 4 })).toMatchObject({ keepUserTurns: 1, smartAdjusted: false });
   });
 });

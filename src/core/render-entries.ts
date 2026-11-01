@@ -1,6 +1,6 @@
 import type { Message, ToolCall } from "@oh-my-pi/pi-ai";
 import { clip, textOf } from "./content";
-import { summarizeToolArgs, extractPaths } from "./tool-args";
+import { summarizeToolArgs, extractPaths, PATH_KEYS } from "./tool-args";
 
 export interface RenderedEntry {
   index: number;
@@ -20,6 +20,40 @@ const toolCalls = (content: Message["content"]): string => {
   return toolCallParts(content)
     .map((c) => `${c.name}(${summarizeToolArgs(c.arguments)})`)
     .join(", ");
+};
+
+const indent = (text: string, pad: string): string => text.replace(/^(?=.)/gm, pad);
+
+/** One expanded call's arguments are clipped here, as its paired result is. */
+const FULL_ARGS_CHARS = 4000;
+/** omp's per-call intent line, shown in its UI; not an argument of the call. */
+const NOT_ARGUMENTS = new Set(["i"]);
+
+/**
+ * The arguments the one-line `name(…)` summary leaves out, for the full view.
+ * Search reads every argument, so a hit inside one (a write's content, an
+ * edit's new text) is shown by expand too. String values print as written,
+ * indented; others as JSON.
+ */
+const fullToolArgs = (content: Message["content"], index: number): string => {
+  const blocks = toolCallParts(content).map((c) => {
+    const args = (c.arguments ?? {}) as Record<string, unknown>;
+    const [path] = extractPaths(args);
+    const shown = new Set<string>(path ? PATH_KEYS : typeof args.command === "string" ? ["command"] : typeof args.query === "string" ? ["query"] : []);
+    // A value's later lines sit deeper than its key, so they never read as another argument.
+    const lines = Object.entries(args)
+      .filter(([key, value]) => !shown.has(key) && !NOT_ARGUMENTS.has(key) && value !== undefined)
+      .map(([key, value]) => `${key}: ${(typeof value === "string" ? value.replace(/\s+$/, "") : JSON.stringify(value)).replace(/\n/g, "\n  ")}`);
+    return { name: c.name, lines };
+  }).filter((b) => b.lines.length > 0);
+  // With several calls in one message, each block says whose arguments it holds.
+  const labelled = blocks.length > 1;
+  const text = blocks
+    .map((b) => (labelled ? `  ${b.name}:\n${indent(b.lines.join("\n"), "    ")}` : indent(b.lines.join("\n"), "  ")))
+    .join("\n");
+  return text.length > FULL_ARGS_CHARS
+    ? `${text.slice(0, FULL_ARGS_CHARS)}\n  ...[arguments of #${index} clipped at ${FULL_ARGS_CHARS} of ${text.length} chars]`
+    : text;
 };
 
 const extractFilesFromContent = (content: Message["content"]): string[] => {
@@ -72,7 +106,8 @@ export const renderMessage = (msg: Message, index: number, full = false): Render
   const text = full ? textOf(msg.content) : clip(textOf(msg.content), 300);
   const tools = toolCalls(msg.content);
   const files = extractFilesFromContent(msg.content);
-  const summary = tools ? `${tools}\n${text}` : text;
+  const args = full && tools ? fullToolArgs(msg.content, index) : "";
+  const summary = tools ? [tools, args, text].filter(Boolean).join("\n") : text;
   return { index, role: "assistant", summary, ...(files.length > 0 && { files }) };
 };
 

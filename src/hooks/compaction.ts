@@ -10,7 +10,7 @@ import { normalize } from "../core/normalize";
 import { buildGlobalIndexById, loadGlobalIndexById } from "../core/global-indices";
 import { parseKeepAndPrompt, OMP_VCC_COMPACT_INSTRUCTION } from "../core/compact-args";
 import { loadSettings, type VccSettings } from "../core/settings";
-import { calibrateCharsPerToken, DEFAULT_CHARS_PER_TOKEN, estimateMessageContentChars, estimateMessageContentTokens, estimateTokensFromChars } from "../core/token-estimate";
+import { calibrateCharsPerToken, DEFAULT_CHARS_PER_TOKEN, estimateMessageChars, estimateMessageTokens, estimateTokensFromChars } from "../core/token-estimate";
 import { compactionBudgets } from "../core/window";
 import { modelKey } from "../core/model-limits";
 import { triggerFor, windowOf } from "./window-limits";
@@ -280,6 +280,13 @@ const toLiveMessage = (entry: any): { role: string; content: unknown; [key: stri
   return null;
 };
 
+/** Chars of what stays in context from these entries: every live message, whatever its shape (custom messages and branch summaries included). */
+const keptChars = (entries: any[]): number =>
+  entries.reduce((sum: number, e: any) => {
+    const m = e?.type === "compaction" ? null : toLiveMessage(e);
+    return m ? sum + estimateMessageChars(m) : sum;
+  }, 0);
+
 export type OwnCutCancelReason =
   | "no_live_messages"
   | "too_few_live_messages";
@@ -429,7 +436,7 @@ export const findBudgetCutIndex = (
   let acc = 0;
   let crossed = -1;
   for (let i = live.length - 1; i >= 0; i--) {
-    acc += estimateMessageContentTokens(live[i].message.content, charsPerToken);
+    acc += estimateMessageTokens(live[i].message, charsPerToken);
     if (acc >= maxTokens) {
       crossed = i;
       break;
@@ -503,7 +510,7 @@ export const applyTailBudget = (
   const tailStart = cut.messages.length; // equals the cut index in the live window
   let tailTokens = 0;
   for (let i = tailStart; i < live.length; i++) {
-    tailTokens += estimateMessageContentTokens(live[i].message.content, opts.charsPerToken);
+    tailTokens += estimateMessageTokens(live[i].message, opts.charsPerToken);
   }
   if (tailTokens <= maxTokens * factor) return cut;
   const idx = findBudgetCutIndex(live, maxTokens, opts.charsPerToken);
@@ -555,12 +562,7 @@ const tailTokensForKeep = (
   if (!cut.ok || cut.compactAll) return null;
   const idx = branchEntries.findIndex((e: any) => e.id === cut.firstKeptEntryId);
   if (idx < 0) return null;
-  const kept = branchEntries.slice(idx).filter((e: any) => e.type === "message");
-  const chars = kept.reduce(
-    (sum: number, e: any) => sum + estimateMessageContentChars(e.message?.content),
-    0,
-  );
-  return estimateTokensFromChars(chars, charsPerToken);
+  return estimateTokensFromChars(keptChars(branchEntries.slice(idx)), charsPerToken);
 };
 
 /**
@@ -615,9 +617,33 @@ const measuredOverheadTokens = (branchEntries: any[]): number | undefined => {
     const u = m.role === "assistant" ? m.usage : undefined;
     const prompt = u ? (Number(u.input) || 0) + (Number(u.cacheRead) || 0) + (Number(u.cacheWrite) || 0) : 0;
     if (prompt > 0) return Math.max(0, prompt - estimateTokensFromChars(chars, DEFAULT_CHARS_PER_TOKEN));
-    chars += estimateMessageContentChars(m.content);
+    chars += estimateMessageChars(m);
   }
   return undefined;
+};
+
+/** Growth a summary may add before it is not worth writing: fixed framing, or a share of what it replaces. */
+const GROWTH_MARGIN_CHARS = 500;
+const GROWTH_MARGIN_SHARE = 0.25;
+
+export interface SummaryGrowth {
+  /** What the new summary adds beyond the previous one it replaces, less the messages it summarizes. */
+  netChars: number;
+  allowedChars: number;
+  grows: boolean;
+}
+
+/**
+ * Whether writing this summary would make the context bigger. The new summary
+ * replaces the previous one and the summarized messages; the kept tail is the
+ * same either way. A short prefix (two messages after omp's plan-mode "approve
+ * and compact", a session barely past a low threshold) can be smaller than the
+ * sections and brief that would replace it.
+ */
+export const summaryGrowth = (summaryChars: number, previousSummaryChars: number, prefixChars: number): SummaryGrowth => {
+  const netChars = summaryChars - previousSummaryChars - prefixChars;
+  const allowedChars = Math.max(GROWTH_MARGIN_CHARS, Math.round(prefixChars * GROWTH_MARGIN_SHARE));
+  return { netChars, allowedChars, grows: netChars > allowedChars };
 };
 
 const REASON_MESSAGES: Record<OwnCutCancelReason, string> = {
@@ -658,7 +684,7 @@ export const registerCompactionHook = (
     const calibrationCut = buildOwnCut(host, branchEntries as any[], 0, []);
     const calibrationMessageChars = calibrationCut.ok
       ? calibrationCut.messages.reduce(
-          (sum: number, message: any) => sum + estimateMessageContentChars(message.content),
+          (sum: number, message: any) => sum + estimateMessageChars(message),
           0,
         )
       : 0;
@@ -843,10 +869,7 @@ export const registerCompactionHook = (
     const keptEntries = keptIdx >= 0
       ? (branchEntries as any[]).slice(keptIdx).filter((e: any) => e.type === "message")
       : [];
-    const keptChars = keptEntries.reduce(
-      (sum: number, e: any) => sum + estimateMessageContentChars(e.message?.content),
-      0,
-    );
+    const keptTailChars = keptIdx >= 0 ? keptChars((branchEntries as any[]).slice(keptIdx)) : 0;
     state.lastStats = {
       summarized: agentMessages.length,
       kept: keptEntries.length,
@@ -855,7 +878,7 @@ export const registerCompactionHook = (
       requestedKeepUserTurns: ownCut.requestedKeepUserTurns,
       keepUserTurnsExplicit,
       keepFallbackToCompactAll: ownCut.keepFallbackToCompactAll,
-      keptTokensEst: estimateTokensFromChars(keptChars, tokenEstimate.charsPerToken),
+      keptTokensEst: estimateTokensFromChars(keptTailChars, tokenEstimate.charsPerToken),
       smartKeepAdjusted: smartKeep.smartAdjusted,
       smartFromKeep: smartKeep.fromKeep,
       budgetCut: ownCut.ok ? ownCut.budgetCut : undefined,
@@ -922,6 +945,31 @@ export const registerCompactionHook = (
         briefCharsPerBlock: Math.round(RANKED_BRIEF_TOKENS_PER_BLOCK * tokenEstimate.charsPerToken),
       },
     });
+
+    // Growth guard: a compaction that leaves the context bigger is not written.
+    // Recovering from an overflow, something must shrink, so omp's own method
+    // runs instead; otherwise the pass is cancelled, and a manual one says why
+    // (an automatic one would say so on every turn until the prefix grows).
+    const growth = summaryGrowth(
+      summary.length,
+      typeof preparation.previousSummary === "string" ? preparation.previousSummary.length : 0,
+      ownCut.messages.reduce((sum: number, m: any) => sum + estimateMessageChars(m), 0),
+    );
+    if (growth.grows) {
+      state.pendingFollowUpPrompt = null;
+      state.lastStats = null;
+      dbg(settings, { growthGuard: growth, compaction: { reason, willRetry }, summarized: ownCut.messages.length });
+      if (!fromCommand && (reason === "overflow" || reason === "incomplete" || willRetry)) return undefined;
+      if (reason === "manual") {
+        const more = ownCut.compactAll ? "" : " keep:0 summarizes everything.";
+        const notice = `omp-vcc: Not compacted: the summary would be ${growth.netChars} chars larger than the ${ownCut.messages.length} messages it replaces.${more}`;
+        state.lastCancelNotice = notice;
+        try {
+          ctx?.ui?.notify?.(notice, "warning");
+        } catch {}
+      }
+      return { cancel: true };
+    }
 
     const branchIds = branchEntries.map((e: any) => e.id);
     const cutIdx = branchIds.indexOf(firstKeptEntryId);
