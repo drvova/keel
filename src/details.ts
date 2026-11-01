@@ -18,6 +18,15 @@ export interface VccCompactionDetails {
   willRetry?: boolean;
   /** The [History Index] ranges, carried to the next compaction (core/history-index.ts). */
   historyIndex?: HistoryRange[];
+  /** The window and trigger the budgets were sized from (core/window.ts). */
+  limits?: {
+    contextWindow?: number;
+    windowSource?: "omp" | "provider" | "overflow-error" | "unknown";
+    providerWindow?: number;
+    trigger?: number;
+    maxTailTokens: number;
+    briefCeilingTokens: number;
+  };
 }
 
 /**

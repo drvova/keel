@@ -12,6 +12,7 @@ import {
 import { resolveSession } from "../core/sessions";
 import { sessionDirOf } from "../tools/recall";
 import { tell } from "./compact-feedback";
+import { windowOf } from "../hooks/window-limits";
 
 const scopeArg = (scope: string) => (scope === "all" ? " scope:all" : scope === "project" ? " scope:project" : "");
 
@@ -40,7 +41,7 @@ export const registerVccRecallCommand = (pi: ExtensionAPI) => {
       }
       const request = parseCommandRequest(args);
       const project = projectSessions(sessionDirOf(ctx.sessionManager as any, sessionFile), sessionFile);
-      const maxChars = recallOutputChars((ctx as any).model?.contextWindow);
+      const maxChars = recallOutputChars(windowOf(ctx.model).effective);
       let content: string;
       if (request.session) {
         const target = resolveSession(request.session, project.list());

@@ -75,6 +75,13 @@ export interface VccSettings {
    * Empty by default (feature off).
    */
   trackCommands: string[];
+  /**
+   * When true (default), omp-vcc asks the model's provider for its context
+   * length (`${baseUrl}/models`, OpenAI-compatible APIs, once per base URL, with
+   * omp's credentials for that provider) and sizes compactions by the smaller of
+   * that and omp's window. false: omp's window and overflow errors only.
+   */
+  probeProviderWindow: boolean;
 }
 
 export const DEFAULT_SETTINGS: VccSettings = {
@@ -84,6 +91,7 @@ export const DEFAULT_SETTINGS: VccSettings = {
   skipForProviders: [],
   skipCustomTypes: [],
   trackCommands: [],
+  probeProviderWindow: true,
 };
 
 const readJson = (path: string): Record<string, unknown> | null => {

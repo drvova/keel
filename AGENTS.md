@@ -27,6 +27,7 @@ omp's own docs ship inside its package (`dist/docs-index.generated.txt`: a JSON 
 - `index.ts` (`omp.extensions` in `package.json`): registers everything below, with a fresh compaction state per binding.
 - `src/hooks/compaction.ts`: the compaction hook: which messages are live, where to cut, smart keep-tail, what each message becomes in the summary (`toSummaryMessage`). omp's functions come in through a `CompactionHost`.
 - `src/hooks/omp-host.ts`: that host: omp's `convertToLlm` from `pi.pi`, and the trigger (reason, willRetry) read from `auto_compaction_start`, since omp's `session_before_compact` carries none.
+- `src/core/window.ts` (pure: provider `/models` fields, limits stated in overflow errors, omp's default trigger, the budgets), `src/core/model-limits.ts` (the provider probe and the learned-limits file) and `src/hooks/window-limits.ts` (the effective window, the trigger a compaction sizes for, learning from `message_end`, compacting at `agent_end` when omp's window is too high).
 - `src/core/`: summary pipeline (`normalize` → `filter-noise` → `build-sections` → `brief`/`rank` → `format`, driven by `summarize.ts`), `history-index.ts` (`[History Index]`: built in the hook, stored in the compaction's `details.historyIndex`, rendered by `summarize.ts`), recall (`recall-request.ts` parses the call, `recall-run.ts` runs it, `search-entries.ts` ranks), settings.
 - `src/extract/`: one module per summary section (user messages and early requests, files, commits, tracked commands).
 - `src/core/pins.ts` (pinned notes: `omp-vcc.pin` custom entries replayed along the branch) and `src/core/sessions.ts` (the project's other session files: listing, id resolution, each file's active branch).
@@ -43,7 +44,8 @@ omp's own docs ship inside its package (`dist/docs-index.generated.txt`: a JSON 
 - Sections carried across compactions are merged from structured data or re-capped verbatim, never re-written: rewriting a previous summary is how LLM compactors lose detail compaction after compaction. Keep the summary bounded as the session grows (the long-horizon test checks it).
 - Agents act on recall and summary text (headers, hint lines, `Ignored:` notes). Treat it as an interface: change it on purpose, and update the tests that pin it.
 - Session data written under the pi-vcc name stays readable: `compactor: "pi-vcc"` details, and `pi-vcc-config.json` (copied to `omp-vcc-config.json` once).
-- The smart keep-tail limit (25k) is omp-vcc's own and does not follow omp's `compaction.keepRecentTokens`.
+- The smart keep-tail limit (25k) is omp-vcc's own and does not follow omp's `compaction.keepRecentTokens`; it and the summary budget scale with the trigger (`compactionBudgets`), and must stay the old numbers on a ~128K window.
+- The only network call is the provider probe: `GET <model baseUrl>/models` for OpenAI-compatible APIs, with omp's credentials for that model (`ctx.modelRegistry`), once per base URL per process, in the background. Compaction never waits on it; `probeProviderWindow: false` turns it off.
 - Tests that read settings set `OMP_VCC_CONFIG_PATH` to a temp file, never the user's config. `tests/real-sessions.test.ts` runs only when `~/.omp/agent/sessions` exists.
 - `research/` is git-ignored local data (real sessions, replays). Never commit it or quote session content in commits or PRs.
 - Note user-facing changes in `CHANGELOG.md` under `[Unreleased]`.

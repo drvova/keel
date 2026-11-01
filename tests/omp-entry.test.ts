@@ -1,7 +1,7 @@
 // The omp entry (index.ts) against a fake omp extension API that hands it omp's
 // real convertToLlm. tests/omp-host.test.ts runs the same entry inside a real omp.
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import registerOmp from "../index";
@@ -107,7 +107,7 @@ describe("omp entry: registration", () => {
   test("registers the hook, the commands and tools, and no continue machinery", () => {
     const omp = createOmp();
     expect([...omp.handlers.keys()].sort()).toEqual(
-      ["auto_compaction_end", "auto_compaction_start", "session_before_compact", "session_compact"],
+      ["agent_end", "auto_compaction_end", "auto_compaction_start", "before_agent_start", "message_end", "session_before_compact", "session_compact", "session_start"],
     );
     expect([...omp.commands.keys()].sort()).toEqual(["omp-vcc", "omp-vcc-pin", "omp-vcc-recall", "omp-vcc-unpin"]);
     expect(omp.tools.map((t: any) => t.name)).toEqual(["vcc_recall", "vcc_pin"]);
@@ -306,4 +306,107 @@ describe("omp entry: a turn still running", () => {
     omp.setEntries(running());
     expect(omp.beforeCompact(OMP_VCC_COMPACT_INSTRUCTION).compaction.firstKeptEntryId).toBe("");
   });
+});
+
+describe("omp entry: the model's real window", () => {
+  const limitsFile = () => join(dir, "omp-vcc-models.json");
+  const model = { provider: "electronhub", id: "small-model", api: "openai-completions", contextWindow: 128_000 };
+  const big = () => Array.from({ length: 12 }, (_, i) => [user(`request ${i}: ${"word ".repeat(400)}`), assistant(`done ${i}: ${"word ".repeat(400)}`)]).flat();
+  const overflow = (omp: ReturnType<typeof createOmp>, text: string) =>
+    omp.fire("message_end", { message: { role: "assistant", stopReason: "error", errorMessage: text, content: [] } });
+
+  test("an overflow error that states the limit is learned, and the hook sizes by it", () => {
+    rmSync(limitsFile(), { force: true });
+    const omp = createOmp();
+    omp.ctx.model = model;
+    overflow(omp, "This model's maximum context length is 32768 tokens. However, you requested 40112 tokens.");
+    expect(JSON.parse(readFileSync(limitsFile(), "utf8"))["electronhub/small-model"].contextWindow).toBe(32_768);
+    omp.setEntries(big());
+    const details = omp.beforeCompact().compaction.details;
+    expect(details.limits).toMatchObject({ contextWindow: 32_768, windowSource: "overflow-error", trigger: 16_384 });
+    expect(details.limits.maxTailTokens).toBeLessThan(25_000);
+    rmSync(limitsFile(), { force: true });
+  });
+
+  test("a limit at or above omp's window teaches nothing; a window omp has right keeps the old budgets", () => {
+    rmSync(limitsFile(), { force: true });
+    const omp = createOmp();
+    omp.ctx.model = model;
+    overflow(omp, "maximum context length is 200000 tokens");
+    expect(existsSync(limitsFile())).toBe(false);
+    omp.setEntries(big());
+    expect(omp.beforeCompact().compaction.details.limits).toMatchObject({ contextWindow: 128_000, windowSource: "omp", maxTailTokens: 25_000, briefCeilingTokens: 2_000 });
+  });
+
+  test("past omp-vcc's trigger on a model omp overestimates, a finished run is compacted, once noticed", async () => {
+    recordLimit(32_768);
+    const omp = createOmp();
+    omp.ctx.model = model;
+    omp.ctx.isIdle = () => true;
+    let used = 10_000;
+    omp.ctx.getContextUsage = () => ({ tokens: used, contextWindow: 128_000, percent: used / 1280 });
+    omp.fire("agent_end", { messages: [] });
+    await new Promise((r) => setTimeout(r, 5));
+    expect(omp.compactCalls).toHaveLength(0); // under 16,384: nothing to do yet
+    used = 20_000;
+    omp.fire("agent_end", { messages: [], willContinue: true });
+    await new Promise((r) => setTimeout(r, 5));
+    expect(omp.compactCalls).toHaveLength(0); // omp continues the run itself
+    omp.setEntries(big());
+    let details: any;
+    omp.setCompact(async () => { details = omp.beforeCompact().compaction.details; });
+    omp.fire("agent_end", { messages: [] });
+    omp.fire("agent_end", { messages: [] });
+    await new Promise((r) => setTimeout(r, 5));
+    expect(omp.compactCalls).toHaveLength(1); // two run ends, one compaction
+    expect(details).toMatchObject({ compactor: "omp-vcc", reason: "threshold" });
+    expect(omp.notices.filter((n) => n.msg.includes("holds 32768 tokens (an overflow error said so), not the 128000 omp uses"))).toHaveLength(1);
+    rmSync(limitsFile(), { force: true });
+  });
+
+  test("no compaction of its own with overrideDefaultCompaction off, or when omp's window is right", async () => {
+    writeFileSync(process.env.OMP_VCC_CONFIG_PATH!, JSON.stringify({ overrideDefaultCompaction: false }));
+    recordLimit(32_768);
+    const off = createOmp();
+    off.ctx.model = model;
+    off.ctx.isIdle = () => true;
+    off.ctx.getContextUsage = () => ({ tokens: 30_000, contextWindow: 128_000, percent: 23 });
+    off.fire("agent_end", { messages: [] });
+    rmSync(limitsFile(), { force: true });
+    writeFileSync(process.env.OMP_VCC_CONFIG_PATH!, JSON.stringify({ overrideDefaultCompaction: true }));
+    const right = createOmp();
+    right.ctx.model = model;
+    right.ctx.isIdle = () => true;
+    right.ctx.getContextUsage = () => ({ tokens: 120_000, contextWindow: 128_000, percent: 94 });
+    right.fire("agent_end", { messages: [] });
+    await new Promise((r) => setTimeout(r, 5));
+    expect(off.compactCalls).toHaveLength(0);
+    expect(right.compactCalls).toHaveLength(0); // omp's own trigger handles it
+  });
+
+  test("the provider's /models figure is used when smaller, and recorded when larger", async () => {
+    const { probeProviderWindow, resetProviderProbes, startProviderProbe } = await import("../src/core/model-limits");
+    resetProviderProbes();
+    const registry = { getApiKeyAndHeaders: async () => ({ ok: true, apiKey: "k", headers: {} }) };
+    const listing = (n: number) => async () => ({ ok: true, json: async () => ({ data: [{ id: model.id, context_length: n }] }) });
+    const remote = { ...model, baseUrl: "https://provider.test/v1" };
+    startProviderProbe(remote, registry, listing(65_536));
+    await probeProviderWindow(remote, registry);
+    await new Promise((r) => setTimeout(r, 0));
+    const omp = createOmp();
+    omp.ctx.model = remote;
+    omp.setEntries(big());
+    expect(omp.beforeCompact().compaction.details.limits).toMatchObject({ contextWindow: 65_536, windowSource: "provider", providerWindow: 65_536 });
+    resetProviderProbes();
+    const larger = { ...remote, baseUrl: "https://bigger.test/v1" };
+    startProviderProbe(larger, registry, listing(1_000_000));
+    await probeProviderWindow(larger, registry);
+    await new Promise((r) => setTimeout(r, 0));
+    omp.ctx.model = larger;
+    expect(omp.beforeCompact().compaction.details.limits).toMatchObject({ contextWindow: 128_000, windowSource: "omp", providerWindow: 1_000_000 });
+    resetProviderProbes();
+  });
+
+  const recordLimit = (n: number) =>
+    writeFileSync(limitsFile(), JSON.stringify({ "electronhub/small-model": { contextWindow: n, source: "overflow-error", at: "2026-11-01T00:00:00.000Z" } }));
 });

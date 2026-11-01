@@ -10,7 +10,10 @@ import { normalize } from "../core/normalize";
 import { buildGlobalIndexById, loadGlobalIndexById } from "../core/global-indices";
 import { parseKeepAndPrompt, OMP_VCC_COMPACT_INSTRUCTION } from "../core/compact-args";
 import { loadSettings, type VccSettings } from "../core/settings";
-import { calibrateCharsPerToken, estimateMessageContentChars, estimateMessageContentTokens, estimateTokensFromChars } from "../core/token-estimate";
+import { calibrateCharsPerToken, DEFAULT_CHARS_PER_TOKEN, estimateMessageContentChars, estimateMessageContentTokens, estimateTokensFromChars } from "../core/token-estimate";
+import { compactionBudgets } from "../core/window";
+import { modelKey } from "../core/model-limits";
+import { triggerFor, windowOf } from "./window-limits";
 import { VCC_COMPACTOR, vccDetailsOf, type VccCompactionDetails } from "../details";
 import type { CompactionReason } from "../types";
 
@@ -78,6 +81,12 @@ export interface CompactionState {
   pendingManualInstructions: string | null;
   /** Why the hook last cancelled a compaction, for /omp-vcc to report where omp shows no notifications. */
   lastCancelNotice: string | null;
+  /** omp's trigger as the last threshold pass measured it (its tokensBefore), for this model. */
+  measuredTrigger: { key: string; tokens: number } | null;
+  /** The compaction omp-vcc started itself (window-limits.ts), so the hook records why. */
+  selfTrigger: CompactionTrigger | null;
+  /** The note that omp's window is above the real one was shown. */
+  windowNoticeShown: boolean;
 }
 
 export const createCompactionState = (): CompactionState => ({
@@ -86,6 +95,9 @@ export const createCompactionState = (): CompactionState => ({
   pendingFollowUpPrompt: null,
   pendingManualInstructions: null,
   lastCancelNotice: null,
+  measuredTrigger: null,
+  selfTrigger: null,
+  windowNoticeShown: false,
 });
 
 const formatTokens = (n: number): string => {
@@ -602,7 +614,8 @@ export const registerCompactionHook = (
 ) => {
   pi.on("session_before_compact", (event, ctx) => {
     const { preparation, branchEntries } = event;
-    const { reason, willRetry } = host.compactionTrigger?.() ?? MANUAL_TRIGGER;
+    const hostTrigger = host.compactionTrigger?.();
+    const { reason, willRetry } = state.selfTrigger ?? hostTrigger ?? MANUAL_TRIGGER;
     const customInstructions = event.customInstructions
       ?? (reason === "manual" ? state.pendingManualInstructions ?? undefined : undefined);
     const settings = loadSettings();
@@ -635,6 +648,16 @@ export const registerCompactionHook = (
       preparation.tokensBefore,
     );
 
+    // Budgets from the model's real window and where the next compaction comes
+    // (core/window.ts). The overhead is what the compaction cannot remove: the
+    // provider-counted context less what the messages account for.
+    const window = windowOf(ctx?.model);
+    const trigger = triggerFor(window, state, modelKey(ctx?.model), reason, preparation.tokensBefore);
+    const overheadTokens = preparation.tokensBefore > 0
+      ? Math.max(0, preparation.tokensBefore - estimateTokensFromChars(calibrationMessageChars + calibrationSummaryChars, DEFAULT_CHARS_PER_TOKEN))
+      : 0;
+    const budgets = compactionBudgets(trigger, overheadTokens);
+
     // Smart keep-tail: boost default keep when the tail is small.
     // Explicit keep:N from the user is always respected (resolver no-ops).
     const smartKeep = resolveSmartKeepUserTurns({
@@ -643,6 +666,8 @@ export const registerCompactionHook = (
       explicit: keepUserTurnsExplicit,
       smartKeepTail: settings.smartKeepTail,
       charsPerToken: tokenEstimate.charsPerToken,
+      minTokens: budgets.minTailTokens,
+      maxTokens: budgets.maxTailTokens,
       host,
     });
     let ownCut = buildOwnCut(host, branchEntries as any[], smartKeep.keepUserTurns, settings.skipCustomTypes);
@@ -652,6 +677,7 @@ export const registerCompactionHook = (
       ownCut = applyTailBudget(host, branchEntries as any[], ownCut, {
         charsPerToken: tokenEstimate.charsPerToken,
         skipCustomTypes: settings.skipCustomTypes,
+        maxTokens: budgets.maxTailTokens,
       });
     }
     // An automatic pass on a turn still running (its last message is a tool result:
@@ -828,8 +854,10 @@ export const registerCompactionHook = (
     // Audit (research/audit, 794 sessions, vs shipped master 0.3.18): SMALL/MED
     // unchanged; LARGE bucket paired recall -5.0pp -> -2.3pp (median to parity),
     // long-tail losers 100/369 -> 67/369; fact density stays ~1.4x master.
-    const RANKED_BRIEF_BUDGET_TOKENS = 1100;
-    const RANKED_BRIEF_CEILING_TOKENS = 2000;
+    // Floor and ceiling follow the trigger (core/window.ts): 1100 and 2000 on a
+    // ~128K window, less on a small one, a higher ceiling on a very large one.
+    const RANKED_BRIEF_BUDGET_TOKENS = budgets.briefTokens;
+    const RANKED_BRIEF_CEILING_TOKENS = budgets.briefCeilingTokens;
     const RANKED_BRIEF_TOKENS_PER_BLOCK = 15;
     // [History Index]: this window's range added to the one the previous omp-vcc
     // compaction stored. Only a compaction still in context counts: after omp's
@@ -907,6 +935,15 @@ export const registerCompactionHook = (
       reason,
       willRetry,
       ...(historyIndex ? { historyIndex } : {}),
+      // What the budgets were sized from, for debugging a compaction that kept too much or too little.
+      limits: {
+        ...(window.effective ? { contextWindow: window.effective, windowSource: window.source } : {}),
+        // The provider's own figure when it differs from omp's (e.g. it serves 1M, models.yml says 128K).
+        ...(window.provider && window.provider !== window.omp ? { providerWindow: window.provider } : {}),
+        ...(trigger ? { trigger } : {}),
+        maxTailTokens: budgets.maxTailTokens,
+        briefCeilingTokens: budgets.briefCeilingTokens,
+      },
     };
 
     state.lastCompactFromCommand = fromCommand;
