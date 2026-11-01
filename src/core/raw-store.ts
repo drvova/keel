@@ -11,7 +11,8 @@
 // `<session>.jsonl.vcc-raw` beside it (not a `.jsonl`: omp lists those as
 // sessions), and recall reads the copy for the entries omp rewrote. Nothing in
 // omp's settings needs changing for it.
-import { appendFileSync } from "fs";
+import { appendFileSync, closeSync, existsSync, openSync, readdirSync, readSync } from "fs";
+import { dirname, isAbsolute, join } from "path";
 import { forEachJsonlLine } from "./jsonl";
 
 export const RAW_STORE_SUFFIX = ".vcc-raw";
@@ -91,10 +92,63 @@ export const rawStoreIds = (sessionFile: string): Set<string> => {
   return ids;
 };
 
-/** The kept content of these entries (the first copy of each). */
-export const readRawStore = (sessionFile: string, wanted: Set<string>): Map<string, unknown> => {
-  const found = new Map<string, unknown>();
-  if (wanted.size === 0) return found;
+const HEADER_BYTES = 64 * 1024;
+
+/** The session header's `parentSession`, as a file: a path, or a session id in the same directory. */
+export const parentSessionFile = (sessionFile: string): string | undefined => {
+  let parent: unknown;
+  try {
+    const fd = openSync(sessionFile, "r");
+    try {
+      const buf = Buffer.alloc(HEADER_BYTES);
+      const n = readSync(fd, buf, 0, HEADER_BYTES, 0);
+      // omp writes a title slot line before the header: the header is the first `session` line.
+      for (const line of buf.subarray(0, n).toString("utf8").split("\n").slice(0, 8)) {
+        let record: { type?: unknown; parentSession?: unknown } | undefined;
+        try {
+          record = JSON.parse(line);
+        } catch {
+          continue;
+        }
+        if (record?.type !== "session") continue;
+        parent = record.parentSession;
+        break;
+      }
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    return undefined;
+  }
+  if (typeof parent !== "string" || !parent) return undefined;
+  if (isAbsolute(parent)) return existsSync(parent) ? parent : undefined;
+  // A fork names its parent by session id: omp's files are `<timestamp>_<id>.jsonl`.
+  try {
+    const dir = dirname(sessionFile);
+    const name = readdirSync(dir).find((n) => n.endsWith(`_${parent}.jsonl`));
+    return name ? join(dir, name) : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+/** How far up a fork's parents recall looks for originals. */
+const MAX_PARENTS = 8;
+
+/**
+ * The session and the ones it was forked or branched from, nearest first. A
+ * fork carries its parent's entries (same ids) as they were when it forked, some
+ * already rewritten; their originals are in the parent's store.
+ */
+export const sessionLineage = (sessionFile: string): string[] => {
+  const files = [sessionFile];
+  for (let parent = parentSessionFile(sessionFile); parent && files.length <= MAX_PARENTS && !files.includes(parent); parent = parentSessionFile(parent)) {
+    files.push(parent);
+  }
+  return files;
+};
+
+const readOneStore = (sessionFile: string, wanted: Set<string>, found: Map<string, unknown>): void => {
   try {
     forEachJsonlLine(rawStorePath(sessionFile), (line) => {
       if (line.length === 0 || found.size === wanted.size) return;
@@ -108,6 +162,19 @@ export const readRawStore = (sessionFile: string, wanted: Set<string>): Map<stri
       } catch {}
     });
   } catch {}
+};
+
+/** The kept content of these entries (the first copy of each), from the session's store and then its parents'. */
+export const readRawStore = (sessionFile: string, wanted: Set<string>): Map<string, unknown> => {
+  const found = new Map<string, unknown>();
+  if (wanted.size === 0) return found;
+  readOneStore(sessionFile, wanted, found);
+  if (found.size < wanted.size) {
+    for (const parent of sessionLineage(sessionFile).slice(1)) {
+      readOneStore(parent, wanted, found);
+      if (found.size === wanted.size) break;
+    }
+  }
   return found;
 };
 
@@ -141,4 +208,25 @@ export const withOriginalContent = <M extends { role?: unknown; content?: unknow
     p.type === "text" && keptParts[i]?.type === "text" && keptParts[i].text !== p.text ? { ...p, text: keptParts[i].text } : p,
   );
   return { ...message, content };
+};
+
+/**
+ * These messages with what omp rewrote put back from the kept originals:
+ * `ids[i]` is the entry id of `messages[i]`. Messages omp did not rewrite, and
+ * ones with no original kept, are returned as they are.
+ */
+export const restoreOriginals = <M>(messages: M[], ids: ReadonlyArray<string | undefined>, sessionFile: string | undefined): M[] => {
+  if (!sessionFile) return messages;
+  const wanted = new Set<string>();
+  messages.forEach((m, i) => {
+    const id = ids[i];
+    if (id && wasRewritten(m)) wanted.add(id);
+  });
+  if (wanted.size === 0) return messages;
+  const kept = readRawStore(sessionFile, wanted);
+  if (kept.size === 0) return messages;
+  return messages.map((m, i) => {
+    const id = ids[i];
+    return id && kept.has(id) ? withOriginalContent(m as { role?: unknown; content?: unknown }, kept.get(id)) as M : m;
+  });
 };

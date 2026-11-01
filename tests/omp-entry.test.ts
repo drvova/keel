@@ -108,7 +108,7 @@ describe("omp entry: registration", () => {
   test("registers the hook, the commands and tools, and no continue machinery", () => {
     const omp = createOmp();
     expect([...omp.handlers.keys()].sort()).toEqual(
-      ["agent_end", "auto_compaction_end", "auto_compaction_start", "before_agent_start", "message_end", "session_before_compact", "session_compact", "session_start", "turn_end"],
+      ["agent_end", "auto_compaction_end", "auto_compaction_start", "before_agent_start", "context", "message_end", "session_before_compact", "session_compact", "session_start", "turn_end"],
     );
     expect([...omp.commands.keys()].sort()).toEqual(["omp-vcc", "omp-vcc-pin", "omp-vcc-recall", "omp-vcc-unpin"]);
     expect(omp.tools.map((t: any) => t.name)).toEqual(["vcc_recall", "vcc_pin"]);

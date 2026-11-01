@@ -5,15 +5,17 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs
 import { tmpdir } from "os";
 import { join } from "path";
 import {
+  appendRawStore,
   keptContent,
   MAX_KEPT_CHARS,
   mayBeRewritten,
   rawStorePath,
   readRawStore,
+  sessionLineage,
   wasRewritten,
   withOriginalContent,
 } from "../src/core/raw-store";
-import { captureNewEntries, createRawCaptureState, registerRawCapture } from "../src/hooks/raw-capture";
+import { captureNewEntries, createRawCaptureState, pointPlaceholders, registerRawCapture } from "../src/hooks/raw-capture";
 import { registerRecallTool } from "../src/tools/recall";
 import { listProjectSessions } from "../src/core/sessions";
 
@@ -119,7 +121,7 @@ describe("with omp's own session manager", () => {
   it("is taken on omp's events, and not when keepOriginals is off", () => {
     const handlers = new Map<string, Array<(e: unknown, c: unknown) => void>>();
     registerRawCapture({ on: (name: string, h: any) => handlers.set(name, [...(handlers.get(name) ?? []), h]) } as any);
-    expect([...handlers.keys()].sort()).toEqual(["agent_end", "message_end", "session_start", "turn_end"]);
+    expect([...handlers.keys()].sort()).toEqual(["agent_end", "context", "message_end", "session_start", "turn_end"]);
     const file = join(dir, "events.jsonl");
     const entries: any[] = [{ type: "message", id: "r1", message: { role: "toolResult", toolCallId: "c", content: text("out") } }];
     const ctx = { sessionManager: { getSessionFile: () => file, getEntries: () => entries } };
@@ -129,5 +131,102 @@ describe("with omp's own session manager", () => {
     writeFileSync(process.env.OMP_VCC_CONFIG_PATH!, JSON.stringify({ keepOriginals: true }));
     handlers.get("turn_end")![0]({}, ctx);
     expect([...readRawStore(file, new Set(["r1"])).values()]).toEqual([text("out")]);
+  });
+});
+
+describe("the summary is written from the originals", () => {
+  it("a commit whose git output omp blanked before omp-vcc compacted is still in [Commits]", async () => {
+    writeFileSync(process.env.OMP_VCC_CONFIG_PATH!, JSON.stringify({ overrideDefaultCompaction: true }));
+    const { registerHook } = await import("./support/host");
+    let handler: any;
+    registerHook({ on: (name: string, fn: any) => { if (name === "session_before_compact") handler = fn; } });
+    const file = join(dir, "hook.jsonl");
+    const msg = (id: string, message: Record<string, unknown>) => ({ type: "message", id, message });
+    const entries = [
+      msg("u1", { role: "user", content: "commit the rounding fix please" }),
+      msg("a1", { role: "assistant", content: [{ type: "toolCall", id: "c1", name: "bash", arguments: { command: 'git commit -am "fix: rounding in totals"' } }] }),
+      msg("r1", { role: "toolResult", toolCallId: "c1", toolName: "bash", content: text("[Output truncated - 60 tokens]"), prunedAt: 1, isError: false }),
+      msg("a2", { role: "assistant", content: text("Committed.") }),
+      msg("u2", { role: "user", content: "now update the docs" }),
+      msg("a3", { role: "assistant", content: text("Docs updated.") }),
+    ];
+    const summarize = () => handler({
+      type: "session_before_compact", branchEntries: entries, customInstructions: "keep:1",
+      preparation: { previousSummary: undefined, fileOps: { read: [], written: [], edited: [] }, tokensBefore: 1000 },
+      signal: new AbortController().signal,
+    }, { ui: { notify: () => {} }, sessionManager: { getSessionFile: () => file, getEntries: () => entries, getBranch: () => entries } }).compaction.summary as string;
+
+    expect(summarize()).not.toContain("4f2a9c1");
+    appendRawStore(file, [{ id: "r1", content: text("[main 4f2a9c1] fix: rounding in totals\n 1 file changed, 2 insertions(+)") }]);
+    const summary = summarize();
+    expect(summary).toContain("[Commits]\n- 4f2a9c1: fix: rounding in totals");
+    // The live entry is untouched: the context still holds omp's placeholder.
+    expect((entries[2].message.content as any)[0].text).toBe("[Output truncated - 60 tokens]");
+  });
+});
+
+describe("omp's placeholders point at the original", () => {
+  const entries = [
+    { type: "message", id: "u0", message: { role: "user", content: "look at the log" } },
+    { type: "message", id: "a1", message: { role: "assistant", content: [{ type: "toolCall", id: "c1", name: "bash", arguments: { command: "cat app.log" } }] } },
+    { type: "message", id: "r1", message: { role: "toolResult", toolCallId: "c1", content: text("[Output truncated - 1200 tokens]"), prunedAt: 1 } },
+  ];
+  const sm = { getEntries: () => entries, getBranch: () => entries };
+  const placeholder = (t: string) => ({ role: "toolResult", toolCallId: "c1", toolName: "bash", content: text(t) });
+  const kept = (ids: string[]) => ({ ...createRawCaptureState(), kept: new Set(ids) });
+
+  it("names the recall ref when omp-vcc kept the original, the same text every time", () => {
+    for (const notice of ["[Output truncated - 1200 tokens]", "[Superseded by a newer read of this file]", "[Uneventful result elided]"]) {
+      const messages = [{ role: "user", content: "look at the log" }, placeholder(notice)];
+      const out = pointPlaceholders(messages, kept(["r1"]), sm) as any[];
+      expect(out[1].content).toEqual(text(`${notice} (the original: vcc_recall expand:[2])`));
+      expect(pointPlaceholders(messages, kept(["r1"]), sm)).toEqual(out);
+      // The request's own messages are not changed in place.
+      expect(messages[1].content).toEqual(text(notice));
+    }
+  });
+
+  it("says nothing it cannot back: no original kept, or not omp's placeholder", () => {
+    expect(pointPlaceholders([placeholder("[Output truncated - 1200 tokens]")], kept([]), sm)).toBeUndefined();
+    expect(pointPlaceholders([placeholder("[Output truncated - 1200 tokens]")], kept(["other"]), sm)).toBeUndefined();
+    expect(pointPlaceholders([placeholder("real output that happens to be short")], kept(["r1"]), sm)).toBeUndefined();
+    expect(pointPlaceholders([{ ...placeholder("[Output truncated - 1200 tokens]"), toolCallId: "unknown" }], kept(["r1"]), sm)).toBeUndefined();
+  });
+});
+
+describe("a fork reads its parent's originals", () => {
+  it("what the parent kept before the fork, recall in the fork still finds", async () => {
+    writeFileSync(process.env.OMP_VCC_CONFIG_PATH!, JSON.stringify({ keepOriginals: true }));
+    const omp: any = await import("@oh-my-pi/pi-coding-agent");
+    const sessions = join(dir, "fork-sessions");
+    const sm = omp.SessionManager.create(dir, sessions);
+    const now = Date.now();
+    const usage = { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
+    sm.appendMessage({ role: "user", content: "check the deploy log", timestamp: now });
+    sm.appendMessage({ role: "assistant", content: [{ type: "toolCall", id: "d1", name: "bash", arguments: { command: "cat deploy.log" } }], api: "anthropic-messages", provider: "anthropic", model: "m", stopReason: "toolUse", usage, timestamp: now });
+    sm.appendMessage({ role: "toolResult", toolCallId: "d1", toolName: "bash", content: text("deploy aborted: pelican-7 healthcheck timed out"), isError: false, timestamp: now });
+    sm.appendMessage({ role: "assistant", content: text("The healthcheck timed out."), api: "anthropic-messages", provider: "anthropic", model: "m", stopReason: "stop", usage, timestamp: now });
+    const state = createRawCaptureState();
+    expect(captureNewEntries(state, sm)).toBe(1);
+    const parentFile = sm.getSessionFile();
+
+    const forked = await sm.fork();
+    expect(forked?.newSessionFile).toBe(sm.getSessionFile());
+    // In the fork, omp blanks the result and persists it; the fork has no store of its own.
+    const result = sm.getEntries().find((e: any) => e.message?.role === "toolResult").message;
+    result.content = text("[Output truncated - 40 tokens]");
+    result.prunedAt = Date.now();
+    sm.appendMessage({ role: "user", content: "try again with a longer timeout", timestamp: now });
+    await sm.rewriteEntries();
+    expect(sm.getSessionFile()).not.toBe(parentFile);
+    expect(existsSync(rawStorePath(sm.getSessionFile()))).toBe(false);
+    expect(sessionLineage(sm.getSessionFile())).toEqual([sm.getSessionFile(), parentFile]);
+    // Its capture knows the parent's copy, so nothing is copied twice.
+    expect(captureNewEntries(state, sm)).toBe(0);
+
+    let tool: any;
+    registerRecallTool({ registerTool: (t: any) => { tool = t; } } as any);
+    const found = (await tool.execute("f", { query: "pelican healthcheck" }, undefined, undefined, { sessionManager: sm })).content[0].text;
+    expect(found).toContain("deploy aborted: pelican-7 healthcheck timed out");
   });
 });

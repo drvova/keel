@@ -14,6 +14,7 @@ import { calibrateCharsPerToken, DEFAULT_CHARS_PER_TOKEN, estimateMessageChars, 
 import { compactionBudgets, ompPolicyOf, type OmpCompactionPolicy } from "../core/window";
 import { modelKey } from "../core/model-limits";
 import { triggerFor, windowOf } from "./window-limits";
+import { restoreOriginals } from "../core/raw-store";
 import { VCC_COMPACTOR, vccDetailsOf, type VccCompactionDetails } from "../details";
 import type { CompactionReason } from "../types";
 
@@ -835,6 +836,11 @@ export const registerCompactionHook = (
       agentSelectedIds = pairs.map((p: any) => p.id);
     }
     const firstKeptEntryId = ownCut.firstKeptEntryId;
+    // omp may have blanked or shaken some of these in place since they landed.
+    // The summary is all that will remain of them, so it is written from the
+    // originals omp-vcc kept (core/raw-store.ts); the cut and the budgets above
+    // count what the context holds now.
+    agentMessages = restoreOriginals(agentMessages, agentSelectedIds, (ctx as any)?.sessionManager?.getSessionFile?.());
 
     // ── Session-global indices for summary refs (issue #28) ──────────
     // Recall numbers messages across the whole session file (all windows,

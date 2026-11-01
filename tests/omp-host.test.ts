@@ -203,5 +203,8 @@ describe.skipIf(!ompInstalled)("omp host", () => {
     const expanded = (await recall.execute("x", { expand: [index] }, undefined, undefined)).content[0].text;
     expect(expanded).toContain("export function refresh() {}");
     expect(expanded).not.toContain("[Output truncated");
+    // Before the next request omp hands extensions the messages: its placeholder now says where the original is.
+    const [pointed] = await session.extensionRunner.emitContext([structuredClone(read.message)]);
+    expect(pointed.content).toEqual([{ type: "text", text: `[Output truncated - 400 tokens] (the original: vcc_recall expand:[${index}])` }]);
   });
 });
