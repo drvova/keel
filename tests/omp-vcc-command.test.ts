@@ -10,7 +10,7 @@ type CompactOptions = {
   onError?: (err: Error) => void;
 };
 
-function createHarness(sendUserMessage?: (content: string | unknown[]) => unknown, mode: "tui" | "rpc" | "print" = "rpc") {
+function createHarness(sendUserMessage?: (content: string | unknown[]) => unknown, mode: "tui" | "rpc" | "print" = "rpc", branch: Array<{ type: string }> = []) {
   let handler: ((args: string, ctx: any) => Promise<void>) | undefined;
   const compactCalls: Array<CompactOptions & { instructions: string | null }> = [];
   const notifyCalls: Array<{ msg: string; level: string }> = [];
@@ -31,6 +31,7 @@ function createHarness(sendUserMessage?: (content: string | unknown[]) => unknow
     mode,
     // omp's print and json modes install a no-op UI.
     hasUI: mode !== "print",
+    sessionManager: { getBranch: () => branch },
     // omp's ctx.compact(options): the marker reaches the hook through state, read here
     // while the call is in flight.
     compact: async (options: CompactOptions) => {
@@ -141,7 +142,7 @@ describe("/omp-vcc", () => {
     compactCalls[0].onError?.(new Error("Already compacted"));
 
     expect(userMessages).toHaveLength(0);
-    expect(notifyCalls).toEqual([{ msg: "Nothing to compact", level: "warning" }]);
+    expect(notifyCalls).toEqual([{ msg: "Nothing to compact: the session was just compacted.", level: "warning" }]);
   });
 
   test("explains omp's 'session too small' instead of reporting a failure", async () => {
@@ -173,6 +174,39 @@ describe("/omp-vcc", () => {
     } finally {
       (process.stderr as any).write = write;
     }
+  });
+
+  // Seen with a real model: right after an automatic compaction, /omp-vcc blamed a short session.
+  test("after a compaction, 'nothing to compact' says what is left is what came after it", async () => {
+    const { invoke, compactCalls, notifyCalls } = createHarness(undefined, "rpc", [{ type: "message" }, { type: "compaction" }, { type: "message" }]);
+    await invoke();
+    compactCalls[0].onError?.(new Error("Nothing to compact (session too small)"));
+    expect(notifyCalls[0].msg).toStartWith("Nothing to compact yet: what came after the last compaction still fits");
+    // After omp's /clear the earlier compaction no longer counts.
+    const cleared = createHarness(undefined, "rpc", [{ type: "compaction" }, { type: "reset_boundary" }, { type: "message" }]);
+    await cleared.invoke();
+    cleared.compactCalls[0].onError?.(new Error("Nothing to compact (session too small)"));
+    expect(cleared.notifyCalls[0].msg).toStartWith("Nothing to compact yet: the whole session still fits");
+  });
+
+  test("when omp-vcc's hook cancelled, print mode gets its reason; a UI already showed it", async () => {
+    const written: string[] = [];
+    const write = process.stderr.write;
+    (process.stderr as any).write = (chunk: string) => (written.push(String(chunk)), true);
+    try {
+      const print = createHarness(undefined, "print");
+      await print.invoke();
+      print.state.lastCancelNotice = "omp-vcc: Too few messages to compact";
+      print.compactCalls[0].onError?.(new Error("Compaction cancelled"));
+      expect(written).toEqual(["omp-vcc: Too few messages to compact\n"]);
+    } finally {
+      (process.stderr as any).write = write;
+    }
+    const rpc = createHarness(undefined, "rpc");
+    await rpc.invoke();
+    rpc.state.lastCancelNotice = "omp-vcc: Too few messages to compact";
+    rpc.compactCalls[0].onError?.(new Error("Compaction cancelled"));
+    expect(rpc.notifyCalls).toEqual([]);
   });
 
   test("normalizes huge keep tokens to a safe integer instruction", async () => {

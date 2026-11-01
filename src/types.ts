@@ -5,8 +5,11 @@ export type CompactionReason = "manual" | "threshold" | "overflow" | "idle" | "i
 
 export interface FileOps {
   readFiles?: string[];
+  /** Edited. */
   modifiedFiles?: string[];
   createdFiles?: string[];
+  /** Written whole, new or not (omp's fileOps.written). */
+  writtenFiles?: string[];
 }
 
 export type NormalizedBlock =

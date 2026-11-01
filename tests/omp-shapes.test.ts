@@ -177,7 +177,7 @@ describe("no user anchor, whole window under the tail budget", () => {
   test("a finished turn keeps its final answer and summarizes the rest", () => {
     const entries = [msg("u1", "user", "Run seq 1 20, tell me the last number"), ...callAndResult, msg("f1", "assistant", "20")];
     const cut = applyTailBudget(entries, buildOwnCut(entries, 1));
-    expect(cut).toMatchObject({ ok: true, compactAll: false, firstKeptEntryId: "f1", budgetCut: "no_anchor", selectedIds: ["u1", "a1", "r1"] });
+    expect(cut).toMatchObject({ ok: true, compactAll: false, firstKeptEntryId: "f1", budgetCut: "final_reply", selectedIds: ["u1", "a1", "r1"] });
   });
 
   test("a turn ending in a tool call keeps the old compact-all", () => {

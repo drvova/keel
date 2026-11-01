@@ -609,6 +609,8 @@ describe("applyTailBudget: token-budget tail cut (default path)", () => {
     };
     expect(formatCompactionStats({ ...base, budgetCut: "no_anchor" })).toBe("omp-vcc: kept ~5.0k tok tail (mid-turn cut, no user anchor), summarized 4.");
     expect(formatCompactionStats({ ...base, budgetCut: "oversized_tail" })).toBe("omp-vcc: kept ~5.0k tok tail (mid-turn cut, oversized tail), summarized 4.");
+    // A finished turn whose final reply was kept is not a mid-turn cut (seen with a real model).
+    expect(formatCompactionStats({ ...base, budgetCut: "final_reply" })).toBe("omp-vcc: kept the final reply (~5.0k tok), summarized 4.");
   });
 });
 

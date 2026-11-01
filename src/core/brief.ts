@@ -224,7 +224,37 @@ const TOOL_SUMMARY_FIELDS: Record<string, string> = {
   Glob: "pattern", Grep: "pattern",
 };
 
+/** A recall arg as the agent would write it again: `[1, 25]`, `sessions`. */
+const recallArg = (value: unknown): string =>
+  Array.isArray(value) ? `[${value.join(", ")}]` : clip(String(value).trim(), 40);
+
+/**
+ * omp-vcc's own tools: what was recalled or pinned, not a bare `* vcc_recall`.
+ * A call reading `mode:sessions`, `expand:[1, 25]` or `session:'id'` says which
+ * history the agent already went back to.
+ */
+const vccToolLine = (name: string, args: Record<string, unknown>): string | undefined => {
+  if (name === "vcc_recall") {
+    const parts: string[] = [];
+    if (typeof args.query === "string" && args.query.trim()) parts.push(`"${clip(args.query, 60)}"`);
+    for (const key of ["range", "expand", "mode", "scope", "session"]) {
+      const value = args[key];
+      if (value == null || value === "" || (Array.isArray(value) && value.length === 0)) continue;
+      parts.push(`${key}:${recallArg(value)}`);
+    }
+    return parts.length > 0 ? `* ${name} ${parts.join(" ")}` : `* ${name}`;
+  }
+  if (name === "vcc_pin") {
+    if (typeof args.note === "string" && args.note.trim()) return `* ${name} "${clip(args.note, 60)}"`;
+    if (args.unpin != null && args.unpin !== "") return `* ${name} unpin:${recallArg(args.unpin)}`;
+    return `* ${name}`;
+  }
+  return undefined;
+};
+
 const toolOneLiner = (name: string, args: Record<string, unknown>): string => {
+  const own = vccToolLine(name, args);
+  if (own) return own;
   const field = TOOL_SUMMARY_FIELDS[name];
   if (field && typeof args[field] === "string") {
     return `* ${name} "${args[field] as string}"`;

@@ -210,7 +210,7 @@ const dedupKey = (block: NormalizedBlock): string | undefined => {
 };
 
 export const rankBriefBlocks = (blocks: NormalizedBlock[], options: BriefRankingOptions = {}): RankedBlock[] => {
-  const modifiedFiles = asPathSet(options.fileOps?.modifiedFiles);
+  const modifiedFiles = asPathSet([...(options.fileOps?.modifiedFiles ?? []), ...(options.fileOps?.writtenFiles ?? [])]);
   const readFiles = asPathSet(options.fileOps?.readFiles);
   const ranked = blocks.map((block, index) => scoreBlock(block, index, blocks.length, modifiedFiles, readFiles));
   boostAdjacency(ranked);

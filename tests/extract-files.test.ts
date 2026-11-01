@@ -16,8 +16,25 @@ describe("extractFiles", () => {
     ];
     const r = extractFiles(blocks);
     expect([...r.read].sort()).toEqual(["a.ts", "b.ts"]);
-    expect([...r.modified].sort()).toEqual(["c.ts", "d.ts"]);
+    expect([...r.modified]).toEqual(["d.ts"]);
     expect([...r.created]).toEqual(["c.ts"]);
+  });
+
+  // Seen with a real model: files the agent wrote new were all listed as Modified,
+  // so [Files And Changes] never said which files the session created.
+  it("a write to a path not touched before here creates it; after a read or edit it rewrites it", () => {
+    const blocks: NormalizedBlock[] = [
+      { kind: "tool_call", name: "write", args: { path: "src/money.py" } },
+      { kind: "tool_call", name: "edit", args: { path: "src/money.py" } },
+      { kind: "tool_call", name: "read", args: { path: "README.md" } },
+      { kind: "tool_call", name: "write", args: { path: "README.md" } },
+      { kind: "tool_call", name: "read", args: { path: "notes.md" }, failed: true },
+      { kind: "tool_call", name: "write", args: { path: "notes.md" } },
+      { kind: "tool_call", name: "write", args: { path: "broken.md" }, failed: true },
+    ];
+    const r = extractFiles(blocks, { writtenFiles: ["src/money.py", "README.md", "gen/out.txt"], modifiedFiles: ["src/money.py"] });
+    expect([...r.created]).toEqual(["src/money.py", "notes.md"]);
+    expect([...r.modified]).toEqual(["README.md", "gen/out.txt"]);
   });
 
   it("leaves omp's artifact:// store and other URLs out of the file lists", () => {

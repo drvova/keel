@@ -167,6 +167,28 @@ describe("compile merge of wrapped header sections", () => {
   });
 });
 
+describe("created files across compactions", () => {
+  it("a file created earlier stays Created when edited later; one modified earlier stays Modified when rewritten", () => {
+    const first = compile({
+      messages: [
+        userMsg("start the project"),
+        assistantWithToolCall("write", { path: "src/new.ts", content: "x" }),
+        assistantWithToolCall("edit", { path: "src/old.ts", edits: [] }),
+      ],
+    });
+    expect(sectionOf(first, "Files And Changes")).toBe("- Modified: src/old.ts\n- Created: src/new.ts");
+    const r = compile({
+      previousSummary: first,
+      messages: [
+        userMsg("keep going on it"),
+        assistantWithToolCall("edit", { path: "src/new.ts", edits: [] }),
+        assistantWithToolCall("write", { path: "src/old.ts", content: "y" }),
+      ],
+    });
+    expect(sectionOf(r, "Files And Changes")).toBe("- Modified: src/old.ts\n- Created: src/new.ts");
+  });
+});
+
 describe("compile with trackCommands", () => {
   it("omits Tracked Commands by default even with real trackable commands", () => {
     const r = compile({

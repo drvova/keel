@@ -9,6 +9,26 @@ describe("compileBrief", () => {
     expect(compileBrief([])).toBe("");
   });
 
+  // Seen with a real model: a mode:'sessions' or expand call rendered as a bare `* vcc_recall`.
+  it("vcc_recall and vcc_pin lines say what was recalled or pinned", () => {
+    const call = (name: string, args: Record<string, unknown>, sourceIndex: number): NormalizedBlock => ({ kind: "tool_call", name, args, sourceIndex });
+    const r = compileBrief([
+      call("vcc_recall", { query: "build tag", scope: "project", i: "intent text" }, 1),
+      call("vcc_recall", { mode: "sessions" }, 2),
+      call("vcc_recall", { expand: "[1, 25]" }, 3),
+      call("vcc_recall", { session: "01a19511", range: [28, 34] }, 4),
+      call("vcc_pin", { note: "The deploy host has no Redis" }, 5),
+      call("vcc_pin", { unpin: 2 }, 6),
+    ]);
+    expect(r).toContain(`* vcc_recall "build tag" scope:project (#1)`);
+    expect(r).toContain("* vcc_recall mode:sessions (#2)");
+    expect(r).toContain("* vcc_recall expand:[1, 25] (#3)");
+    expect(r).toContain("* vcc_recall range:[28, 34] session:01a19511 (#4)");
+    expect(r).toContain(`* vcc_pin "The deploy host has no Redis" (#5)`);
+    expect(r).toContain("* vcc_pin unpin:2 (#6)");
+    expect(r).not.toContain("intent text");
+  });
+
   it("renders user and assistant text", () => {
     const blocks: NormalizedBlock[] = [
       { kind: "user", text: "fix auth bug" },

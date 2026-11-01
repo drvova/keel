@@ -1,5 +1,6 @@
 import { describe, it, expect } from "bun:test";
 import { buildSections } from "../src/core/build-sections";
+import { compile } from "../src/core/summarize";
 import type { NormalizedBlock } from "../src/types";
 
 describe("buildSections", () => {
@@ -79,5 +80,28 @@ describe("buildSections", () => {
     const r = buildSections({ blocks });
     const matches = r.briefTranscript.match(/\[assistant\]/g);
     expect(matches?.length).toBe(1);
+  });
+});
+
+// Seen with a real model: the first request, cut at 300 characters, lost the
+// commit message it asked for and read as complete.
+describe("a clipped user message", () => {
+  const long = "Set up a tiny Python project in this directory. Write src/money.py with a function round_cents(x) that rounds a Decimal to 2 places using ROUND_HALF_EVEN, and tests/test_money.py with three plain assert checks you run with python3 (no pytest). Run the tests, then commit everything with the message 'feat: round_cents'. Keep it short.";
+
+  it("ends with … and the #N that vcc_recall expands", () => {
+    const { earlyRequests } = buildSections({ blocks: [{ kind: "user", text: long, sourceIndex: 0 }] });
+    expect(earlyRequests).toHaveLength(1);
+    expect(earlyRequests[0]).toEndWith("with the message… (#0)");
+    expect(earlyRequests[0].length).toBeLessThan(long.length);
+  });
+
+  it("keeps its ref through the summary pipeline (filterNoise rebuilt user blocks without it)", () => {
+    const r = compile({ messages: [{ role: "user", content: long }, { role: "assistant", content: [{ type: "text", text: "ok" }] }] as any, sourceIndices: [0, 1] });
+    expect(r).toContain("with the message… (#0)");
+  });
+
+  it("without a ref ends with … alone, and a message that fits is unchanged", () => {
+    expect(buildSections({ blocks: [{ kind: "user", text: long }] }).earlyRequests[0]).toEndWith("with the message…");
+    expect(buildSections({ blocks: [{ kind: "user", text: "fix the auth bug", sourceIndex: 3 }] }).earlyRequests).toEqual(["fix the auth bug"]);
   });
 });

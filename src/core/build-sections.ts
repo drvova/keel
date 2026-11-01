@@ -30,8 +30,6 @@ export interface BuildSectionsInput {
 
 const formatFileActivity = (blocks: NormalizedBlock[], fileOps?: FileOps): string[] => {
   const act = extractFiles(blocks, fileOps);
-  // Dedup: if already Modified, drop from Created (file existed before)
-  for (const p of act.modified) act.created.delete(p);
   const lines: string[] = [];
   const cap = (set: Set<string>) => capItems([...set], FILES_PER_CATEGORY, ", ");
   if (act.modified.size > 0) lines.push(`Modified: ${cap(act.modified)}`);

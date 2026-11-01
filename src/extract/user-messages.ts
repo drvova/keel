@@ -25,7 +25,7 @@ const wordCount = (text: string): number => {
  * `<local-command-stdout>`) was put there by a tool, and one-word replies
  * ("ok", "好的") say little: both are dropped.
  */
-const userLine = (text: string): string => {
+const userLine = (text: string, sourceIndex?: number): string => {
   const skills: string[] = [];
   const rest = text
     .replace(SKILL_BLOCK_RE, (_, name: string) => {
@@ -35,7 +35,12 @@ const userLine = (text: string): string => {
     .replace(/\s+/g, " ")
     .trim();
   if (rest.startsWith("<") || wordCount(rest) < 2) return "";
-  return clip(skills.length > 0 ? `[skill: ${skills.join(", ")}] ${rest}` : rest, USER_MESSAGE_CHARS);
+  const line = skills.length > 0 ? `[skill: ${skills.join(", ")}] ${rest}` : rest;
+  const clipped = clip(line, USER_MESSAGE_CHARS);
+  if (clipped.length === line.length) return line;
+  // A cut request reads as complete without a mark, and the cut part can be the
+  // constraint that matters: say it goes on, and where vcc_recall reads all of it.
+  return `${clipped.trimEnd()}…${sourceIndex != null ? ` (#${sourceIndex})` : ""}`;
 };
 
 /** The newest `USER_MESSAGES_KEPT` lines, oldest first. A repeated line
@@ -51,7 +56,8 @@ export const keepNewestUserMessages = (lines: string[]): string[] => {
 };
 
 /**
- * What the user wrote, oldest first, verbatim and clipped. Messages the
+ * What the user wrote, oldest first, verbatim and clipped (a clipped one ends
+ * with `… (#N)`). Messages the
  * user did not write (`injected`) are left out. No wording is interpreted, so this works
  * the same in every language.
  */
@@ -59,7 +65,7 @@ export const extractUserMessages = (blocks: NormalizedBlock[]): string[] => {
   const lines: string[] = [];
   for (const b of blocks) {
     if (b.kind !== "user" || b.injected) continue;
-    const line = userLine(b.text);
+    const line = userLine(b.text, b.sourceIndex);
     if (line) lines.push(line);
   }
   return lines;

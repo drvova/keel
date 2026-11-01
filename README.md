@@ -108,13 +108,13 @@ A section only appears when it has something to say; a session with no git commi
 | Section | Contents |
 |---|---|
 | `[Pinned Notes]` | Notes pinned with `/omp-vcc-pin` or `vcc_pin`, verbatim, until unpinned (the newest 20 are shown) |
-| `[Early Session Requests]` | The session's first 3 user messages, as written. Kept for the whole session; they can be stale later in a long session |
-| `[Files And Changes]` | Files modified, created or read (capped, paths trimmed to a common root), including omp's hashline edits |
+| `[Early Session Requests]` | The session's first 3 user messages, as written (one over 300 characters is clipped and ends with `… (#N)`). Kept for the whole session; they can be stale later in a long session |
+| `[Files And Changes]` | Files modified, created (first written in the session) or read (capped, paths trimmed to a common root), including omp's hashline edits |
 | `[Commits]` | Last 8 commits made in the session (hash + subject) |
 | `[Tracked Commands]` | Recent runs of only the commands listed in `trackCommands` (off by default) |
 | `[User Messages]` | The 15 newest later user messages, as written (one line each, up to 300 characters) |
 | `[History Index]` | One line per compacted range of `#N` entries, back to the start of the session: how many requests, the longest one, the files or directories changed, commits and failed calls. At most 8 lines; older ranges merge into coarser ones |
-| Brief transcript | The conversation in order, about 120 recent lines, each tool call shortened to one line with a `(#N)` ref, and `[failed]` when its result was an error. A user's `!cmd` or python cell is one `$ cmd` / `>>> code` line |
+| Brief transcript | The conversation in order, about 120 recent lines with `(#N)` refs, each tool call shortened to one line (`[failed]` when its result was an error; `vcc_recall` and `vcc_pin` calls say what they looked up or pinned). A user's `!cmd` or python cell is one `$ cmd` / `>>> code` line |
 
 On the next compaction, the sections are merged with the previous summary and re-capped, and the transcript rolls forward. What leaves the other sections is still named in `[History Index]`, so on a long task the agent knows which range to read or what to search for. None of the sections depend on wording, so they work the same in every language. omp's host reminders (developer messages), `@file` bodies and text an extension sent on the agent's behalf are not read as the user's words.
 

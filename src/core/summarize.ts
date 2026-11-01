@@ -208,8 +208,14 @@ const mergeFileLines = (prev: string, fresh: string): string => {
   // Newest-last with re-touched files moved to the end, so the capped list
   // follows the files being worked on instead of freezing on the first ones.
   const merged = mergeCategorizedLines(FILE_CATEGORIES, prev, fresh, ",", true);
-  // Dedup: if already in Modified, drop from Created (file existed before)
-  for (const p of merged.Modified) merged.Created.delete(p);
+  // A file in both: created earlier in the session and changed since, it is
+  // still new (Created); changed before a later write, it existed (Modified).
+  const createdBefore = mergeCategorizedLines(FILE_CATEGORIES, prev, "", ",").Created;
+  for (const p of [...merged.Modified]) {
+    if (!merged.Created.has(p)) continue;
+    if (createdBefore.has(p)) merged.Modified.delete(p);
+    else merged.Created.delete(p);
+  }
   return formatCategorizedLines("Files And Changes", merged, FILE_CATEGORIES, ", ", FILES_PER_CATEGORY);
 };
 

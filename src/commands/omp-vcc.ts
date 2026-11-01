@@ -17,6 +17,7 @@ export const registerOmpVccCommand = (pi: ExtensionAPI, state: CompactionState) 
     handler: async (args, ctx) => {
       const { followUpPrompt, keepUserTurns } = parseKeepAndPrompt(args);
       state.lastStats = null;
+      state.lastCancelNotice = null;
       state.pendingManualInstructions = buildVccCustomInstructions(keepUserTurns);
       try {
         await ctx.compact({
@@ -27,7 +28,7 @@ export const registerOmpVccCommand = (pi: ExtensionAPI, state: CompactionState) 
             // The TUI already shows "Compaction cancelled" / "Compaction failed: …";
             // there omp-vcc adds only its hint for a session that is still too short.
             if (ctx.mode === "tui" && !err.message.startsWith("Nothing to compact")) return;
-            reportCompactError(ctx, err);
+            reportCompactError(ctx, err, state.lastCancelNotice);
           },
         });
       } catch {

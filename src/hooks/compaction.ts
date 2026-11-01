@@ -35,7 +35,13 @@ export interface CompactionStats {
   willRetry?: boolean;
 }
 
-export type BudgetCutKind = "no_anchor" | "oversized_tail";
+/**
+ * no_anchor: no user turn to cut at, so a token-budget cut inside the turn.
+ * oversized_tail: the kept user turns were too big, cut inside them.
+ * final_reply: a finished turn with no earlier user turn, small enough to keep
+ * whole: everything but its final reply is summarized.
+ */
+export type BudgetCutKind = "no_anchor" | "oversized_tail" | "final_reply";
 export const OVERSIZED_TAIL_FACTOR = 2.5;
 
 /** What started a compaction, and whether omp retries the turn after it. */
@@ -70,6 +76,8 @@ export interface CompactionState {
    * hook reads it for a manual pass that arrives without instructions.
    */
   pendingManualInstructions: string | null;
+  /** Why the hook last cancelled a compaction, for /omp-vcc to report where omp shows no notifications. */
+  lastCancelNotice: string | null;
 }
 
 export const createCompactionState = (): CompactionState => ({
@@ -77,6 +85,7 @@ export const createCompactionState = (): CompactionState => ({
   lastCompactFromCommand: false,
   pendingFollowUpPrompt: null,
   pendingManualInstructions: null,
+  lastCancelNotice: null,
 });
 
 const formatTokens = (n: number): string => {
@@ -86,6 +95,9 @@ const formatTokens = (n: number): string => {
 
 export const formatCompactionStats = (stats: CompactionStats): string => {
   if (stats.budgetCut) {
+    if (stats.budgetCut === "final_reply") {
+      return `omp-vcc: kept the final reply (~${formatTokens(stats.keptTokensEst)} tok), summarized ${stats.summarized}.`;
+    }
     const reason = stats.budgetCut === "no_anchor" ? "no user anchor" : "oversized tail";
     return `omp-vcc: kept ~${formatTokens(stats.keptTokensEst)} tok tail (mid-turn cut, ${reason}), summarized ${stats.summarized}.`;
   }
@@ -466,7 +478,7 @@ export const applyTailBudget = (
     // reply out of context too, and omp's print mode, which prints the last
     // assistant message, would then have nothing.
     const last = live.length - 1;
-    if (last > 0 && isFinalAnswer(live[last].message) && renders(last)) return budgetResult(last, "no_anchor");
+    if (last > 0 && isFinalAnswer(live[last].message) && renders(last)) return budgetResult(last, "final_reply");
     return cut;
   }
 
@@ -713,6 +725,7 @@ export const registerCompactionHook = (
 
       if (fallbackToCore) return;
 
+      state.lastCancelNotice = REASON_MESSAGES[ownCut.reason];
       try {
         ctx?.ui?.notify?.(REASON_MESSAGES[ownCut.reason], "warning");
       } catch {}
@@ -844,7 +857,8 @@ export const registerCompactionHook = (
       previousSummary: preparation.previousSummary,
       fileOps: {
         readFiles: [...preparation.fileOps.read],
-        modifiedFiles: [...preparation.fileOps.written, ...preparation.fileOps.edited],
+        modifiedFiles: [...preparation.fileOps.edited],
+        writtenFiles: [...preparation.fileOps.written],
       },
       trackCommands: settings.trackCommands,
       ranking: {
