@@ -1,11 +1,7 @@
 import { describe, test, expect } from "bun:test";
-import { applyTailBudget, buildOwnCut } from "../src/hooks/before-compact";
-import { convertToLlm } from "@earendil-works/pi-coding-agent";
-import { normalize } from "../src/core/normalize";
-
-// Blocks the summarizer would actually get: the hook runs convertToLlm before
-// normalize, which turns custom/branchSummary into user content.
-const renderedBlocks = (messages: any[]) => normalize(convertToLlm(messages) as any);
+// Blocks the summarizer would actually get (renderedBlocks): the hook's
+// toSummaryMessage, which reads custom messages as user content, then normalize.
+import { applyTailBudget, buildOwnCut, renderedBlocks } from "./support/host";
 
 const msg = (id: string, role: "user" | "assistant" | "toolResult", content = "x") => ({
   id,
@@ -13,8 +9,8 @@ const msg = (id: string, role: "user" | "assistant" | "toolResult", content = "x
   message: { role, content },
 });
 
-// Pi 1.0 persists the prompt/tool-loadout delta as role:"system" message
-// entries (agent-session _preparePromptAndToolLoadout).
+// A role:"system" message entry (a host's prompt/tool-loadout record), which
+// omp's convertToLlm drops.
 const sys = (id: string, content = "Available tools: read, bash, edit") => ({
   id,
   type: "message",
@@ -247,9 +243,8 @@ describe("buildOwnCut", () => {
 });
 
 describe("buildOwnCut: entries normalize() cannot render", () => {
-  // Pi 1.0 persists the prompt/tool-loadout delta as role:"system" message
-  // entries; extensions inject custom_message / branch_summary entries. None of
-  // those roles has a branch in normalizeOne, so they render no block. If one
+  // A host's role:"system" prompt/tool-loadout entry renders no block, and an
+  // extension's custom_message can be skipped (skipCustomTypes). If one
   // becomes the cut boundary the summarized region carries no renderable
   // content: compile() returns "", the hook stores an empty summary while
   // keeping every message, context never shrinks, and the next agent_end

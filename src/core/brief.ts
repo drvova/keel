@@ -210,6 +210,12 @@ const compressBash = (raw: string): string => {
   return cmd;
 };
 
+/** A python cell as one line: its non-blank lines joined with `; `, capped like a bash command. */
+const compressCode = (raw: string): string => {
+  const cmd = raw.split("\n").map((l) => l.trim()).filter(Boolean).join("; ");
+  return cmd.length > BASH_CAP ? cmd.slice(0, BASH_CAP - 3) + "..." : cmd;
+};
+
 // ── tool summary ──
 
 const TOOL_SUMMARY_FIELDS: Record<string, string> = {
@@ -218,7 +224,37 @@ const TOOL_SUMMARY_FIELDS: Record<string, string> = {
   Glob: "pattern", Grep: "pattern",
 };
 
+/** A recall arg as the agent would write it again: `[1, 25]`, `sessions`. */
+const recallArg = (value: unknown): string =>
+  Array.isArray(value) ? `[${value.join(", ")}]` : clip(String(value).trim(), 40);
+
+/**
+ * omp-vcc's own tools: what was recalled or pinned, not a bare `* vcc_recall`.
+ * A call reading `mode:sessions`, `expand:[1, 25]` or `session:'id'` says which
+ * history the agent already went back to.
+ */
+const vccToolLine = (name: string, args: Record<string, unknown>): string | undefined => {
+  if (name === "vcc_recall") {
+    const parts: string[] = [];
+    if (typeof args.query === "string" && args.query.trim()) parts.push(`"${clip(args.query, 60)}"`);
+    for (const key of ["range", "expand", "mode", "scope", "session"]) {
+      const value = args[key];
+      if (value == null || value === "" || (Array.isArray(value) && value.length === 0)) continue;
+      parts.push(`${key}:${recallArg(value)}`);
+    }
+    return parts.length > 0 ? `* ${name} ${parts.join(" ")}` : `* ${name}`;
+  }
+  if (name === "vcc_pin") {
+    if (typeof args.note === "string" && args.note.trim()) return `* ${name} "${clip(args.note, 60)}"`;
+    if (args.unpin != null && args.unpin !== "") return `* ${name} unpin:${recallArg(args.unpin)}`;
+    return `* ${name}`;
+  }
+  return undefined;
+};
+
 const toolOneLiner = (name: string, args: Record<string, unknown>): string => {
+  const own = vccToolLine(name, args);
+  if (own) return own;
   const field = TOOL_SUMMARY_FIELDS[name];
   if (field && typeof args[field] === "string") {
     return `* ${name} "${args[field] as string}"`;
@@ -281,10 +317,11 @@ export const buildBriefSections = (blocks: NormalizedBlock[]): BriefLine[] => {
         break;
       }
       case "bash": {
-        const cmd = compressBash(b.command);
+        const cmd = b.lang === "python" ? compressCode(b.command) : compressBash(b.command);
         const ref = b.sourceIndex != null ? ` (#${b.sourceIndex})` : "";
         if (cmd) {
-          push("[user]", `$ ${cmd}${ref}`);
+          const failed = b.exitCode != null && b.exitCode !== 0 ? " [failed]" : "";
+          push("[user]", `${b.lang === "python" ? ">>>" : "$"} ${cmd}${failed}${ref}`);
         }
         lastHeader = "[user]";
         break;
@@ -310,7 +347,7 @@ export const buildBriefSections = (blocks: NormalizedBlock[]): BriefLine[] => {
         // Skip malformed tool calls from streaming providers (empty name / fragmented args).
         if (!b.name || b.name.trim() === "") break;
         const ref = b.sourceIndex != null ? ` (#${b.sourceIndex})` : "";
-        const summary = toolOneLiner(b.name, b.args) + ref;
+        const summary = toolOneLiner(b.name, b.args) + (b.failed ? " [failed]" : "") + ref;
         push("[assistant]", summary);
         break;
       }

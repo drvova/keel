@@ -35,9 +35,27 @@ describe("compile", () => {
   it("keeps the early requests and lists later requests as user messages", () => {
     const r = compile({
       messages: [userMsg("New task")],
+      previousSummary: "[Early Session Requests]\n- Original goal\n- Second goal\n- Third goal\n\n---\n\n[user]\nOriginal goal",
+    });
+    expect(r).toContain("[Early Session Requests]\n- Original goal\n- Second goal\n- Third goal\n\n[User Messages]\n- New task\n");
+  });
+
+  it("tops up early requests a first summary had no room for", () => {
+    // A first compaction that kept most turns verbatim summarized one request;
+    // the next window starts with the session's second and third.
+    const r = compile({
+      messages: [userMsg("Second request here"), userMsg("Third request here"), userMsg("Fourth request here")],
       previousSummary: "[Early Session Requests]\n- Original goal\n\n---\n\n[user]\nOriginal goal",
     });
-    expect(r).toContain("[Early Session Requests]\n- Original goal\n\n[User Messages]\n- New task\n");
+    expect(r).toContain("[Early Session Requests]\n- Original goal\n- Second request here\n- Third request here\n\n[User Messages]\n- Fourth request here\n");
+  });
+
+  it("does not top up after an older [Session Goal]: the next requests are long gone", () => {
+    const r = compile({
+      messages: [userMsg("A much later request")],
+      previousSummary: "[Session Goal]\n- Original goal\n\n---\n\n[user]\nOriginal goal",
+    });
+    expect(r).toContain("[Early Session Requests]\n- Original goal\n\n[User Messages]\n- A much later request\n");
   });
 
   it("appends brief transcript on merge", () => {
@@ -137,7 +155,7 @@ describe("compile merge of wrapped header sections", () => {
       "Please migrate the billing service from the legacy cron scheduler to the new queue workers and keep the retry semantics identical for failed invoices";
     const paths = Array.from({ length: 8 }, (_, i) => `src/some/deeply/nested/module-${i}/implementation-${i}.ts`);
     const first = compile({
-      messages: [userMsg("set up the project"), userMsg("add a CI config"), assistantWithToolCall("edit", { path: "a.ts", edits: [] })],
+      messages: [userMsg("set up the project"), userMsg("add a CI config"), userMsg("add a lint step"), assistantWithToolCall("edit", { path: "a.ts", edits: [] })],
     });
     const r = compile({
       previousSummary: first,
@@ -146,6 +164,28 @@ describe("compile merge of wrapped header sections", () => {
     expect(sectionOf(r, "User Messages")).toContain(goal);
     const files = sectionOf(r, "Files And Changes");
     for (let i = 0; i < 8; i++) expect(files).toContain(`implementation-${i}.ts`);
+  });
+});
+
+describe("created files across compactions", () => {
+  it("a file created earlier stays Created when edited later; one modified earlier stays Modified when rewritten", () => {
+    const first = compile({
+      messages: [
+        userMsg("start the project"),
+        assistantWithToolCall("write", { path: "src/new.ts", content: "x" }),
+        assistantWithToolCall("edit", { path: "src/old.ts", edits: [] }),
+      ],
+    });
+    expect(sectionOf(first, "Files And Changes")).toBe("- Modified: src/old.ts\n- Created: src/new.ts");
+    const r = compile({
+      previousSummary: first,
+      messages: [
+        userMsg("keep going on it"),
+        assistantWithToolCall("edit", { path: "src/new.ts", edits: [] }),
+        assistantWithToolCall("write", { path: "src/old.ts", content: "y" }),
+      ],
+    });
+    expect(sectionOf(r, "Files And Changes")).toBe("- Modified: src/old.ts\n- Created: src/new.ts");
   });
 });
 

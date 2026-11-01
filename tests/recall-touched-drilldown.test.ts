@@ -26,7 +26,7 @@ const userMsg = (id: string, content: string) => ({
 
 let dirCount = 0;
 const makeSession = (entries: any[]) => {
-  const dir = mkdtempSync(join(tmpdir(), `pi-vcc-touched-${dirCount++}-`));
+  const dir = mkdtempSync(join(tmpdir(), `omp-vcc-touched-${dirCount++}-`));
   const file = join(dir, "session.jsonl");
   writeFileSync(file, entries.map((e) => JSON.stringify(e)).join("\n") + "\n", "utf8");
   return { dir, file, ids: entries.filter((e) => e.type === "message" && e.message).map((e) => e.id) };

@@ -1,7 +1,7 @@
 {
-  "name": "@sting8k/pi-vcc",
+  "name": "@drvova/omp-vcc",
   "version": "0.11.2",
-  "description": "Algorithmic conversation compactor for pi - transcript-preserving structured summaries, no LLM calls",
+  "description": "Algorithmic conversation compactor for omp (oh-my-pi) - transcript-preserving structured summaries, pinned notes and recall across sessions, no LLM calls",
   "license": "MIT",
   "main": "index.ts",
   "files": [
@@ -10,28 +10,35 @@
     "CHANGELOG.md"
   ],
   "keywords": [
-    "pi-package",
-    "pi-extension",
+    "omp-extension",
+    "oh-my-pi",
+    "omp",
     "vcc",
     "compact",
-    "compaction"
+    "compaction",
+    "recall"
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/sting8k/pi-vcc.git"
+    "url": "git+https://github.com/drvova/pi-vcc.git"
   },
   "scripts": {
     "typecheck": "tsc --ignoreConfig --noEmit --skipLibCheck --module preserve --moduleResolution bundler --target ES2022 --types node index.ts"
   },
   "devDependencies": {
+    "@oh-my-pi/pi-coding-agent": "18.14.2",
     "@types/node": "26.6.5",
     "typescript": "7.0.2"
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": ">=0.74.0 <2.0.0",
-    "typebox": ">=1.1.24 <2.0.0"
+    "@oh-my-pi/pi-coding-agent": ">=18.14.0 <19.0.0"
   },
-  "pi": {
+  "peerDependenciesMeta": {
+    "@oh-my-pi/pi-coding-agent": {
+      "optional": true
+    }
+  },
+  "omp": {
     "extensions": [
       "./index.ts"
     ]

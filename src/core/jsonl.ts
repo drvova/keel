@@ -6,7 +6,7 @@ import { closeSync, openSync, readSync } from "fs";
  * starts (PR #26), so every reader shares this chunked splitter.
  *
  * Calls `onLine` per line (empty lines included; callers skip them). Returns
- * false when the file does not exist — Pi does not create a new session's
+ * false when the file does not exist — omp does not create a new session's
  * JSONL until its first persisted entry — and rethrows other IO errors.
  */
 export const forEachJsonlLine = (file: string, onLine: (line: Buffer) => void): boolean => {

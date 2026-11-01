@@ -1,4 +1,5 @@
-export const PI_VCC_COMPACT_INSTRUCTION = "__pi_vcc__";
+/** What /omp-vcc hands the hook for the manual pass it starts; `keep:N` may follow. */
+export const OMP_VCC_COMPACT_INSTRUCTION = "__omp_vcc__";
 
 const KEEP_TOKEN_RE = /^keep:(\d+)$/;
 
@@ -39,7 +40,7 @@ export const parseKeepAndPrompt = (args?: string): ParsedCompactionArgs => {
   return { followUpPrompt: trimmed, keepUserTurns: null, keepUserTurnsExplicit: false };
 };
 
-export const buildPiVccCustomInstructions = (keepUserTurns: number | null): string => {
-  if (keepUserTurns == null) return PI_VCC_COMPACT_INSTRUCTION;
-  return `${PI_VCC_COMPACT_INSTRUCTION} keep:${keepUserTurns}`;
+export const buildVccCustomInstructions = (keepUserTurns: number | null): string => {
+  if (keepUserTurns == null) return OMP_VCC_COMPACT_INSTRUCTION;
+  return `${OMP_VCC_COMPACT_INSTRUCTION} keep:${keepUserTurns}`;
 };

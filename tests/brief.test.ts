@@ -1,10 +1,32 @@
 import { describe, it, expect } from "bun:test";
 import { compileBrief } from "../src/core/brief";
+import { normalize } from "../src/core/normalize";
+import { rankBriefBlocks } from "../src/core/rank";
 import type { NormalizedBlock } from "../src/types";
 
 describe("compileBrief", () => {
   it("returns empty string for no blocks", () => {
     expect(compileBrief([])).toBe("");
+  });
+
+  // Seen with a real model: a mode:'sessions' or expand call rendered as a bare `* vcc_recall`.
+  it("vcc_recall and vcc_pin lines say what was recalled or pinned", () => {
+    const call = (name: string, args: Record<string, unknown>, sourceIndex: number): NormalizedBlock => ({ kind: "tool_call", name, args, sourceIndex });
+    const r = compileBrief([
+      call("vcc_recall", { query: "build tag", scope: "project", i: "intent text" }, 1),
+      call("vcc_recall", { mode: "sessions" }, 2),
+      call("vcc_recall", { expand: "[1, 25]" }, 3),
+      call("vcc_recall", { session: "01a19511", range: [28, 34] }, 4),
+      call("vcc_pin", { note: "The deploy host has no Redis" }, 5),
+      call("vcc_pin", { unpin: 2 }, 6),
+    ]);
+    expect(r).toContain(`* vcc_recall "build tag" scope:project (#1)`);
+    expect(r).toContain("* vcc_recall mode:sessions (#2)");
+    expect(r).toContain("* vcc_recall expand:[1, 25] (#3)");
+    expect(r).toContain("* vcc_recall range:[28, 34] session:01a19511 (#4)");
+    expect(r).toContain(`* vcc_pin "The deploy host has no Redis" (#5)`);
+    expect(r).toContain("* vcc_pin unpin:2 (#6)");
+    expect(r).not.toContain("intent text");
   });
 
   it("renders user and assistant text", () => {
@@ -54,7 +76,8 @@ describe("compileBrief", () => {
       { kind: "bash", command: "npm test", output: "FAIL noisy output", exitCode: 1, sourceIndex: 2 },
     ];
     const r = compileBrief(blocks);
-    expect(r).toContain("[user]\n$ npm test (#2)");
+    // exit 1: the line says it failed (the output stays behind vcc_recall).
+    expect(r).toContain("[user]\n$ npm test [failed] (#2)");
     expect(r).not.toContain("FAIL noisy output");
   });
 
@@ -382,5 +405,33 @@ describe("compileBrief", () => {
     expect(r).not.toContain("entries omitted");
     expect(r).toContain("c1");
     expect(r).toContain("c8");
+  });
+});
+
+describe("failed tool calls", () => {
+  it("a call whose result is an error says so, before its ref", () => {
+    const blocks = normalize([
+      { role: "assistant", content: [{ type: "toolCall", id: "t1", name: "bash", arguments: { command: "bun test tests/billing.test.ts" } }] },
+      { role: "toolResult", toolCallId: "t1", toolName: "bash", content: [{ type: "text", text: "1 fail" }], isError: true },
+      { role: "assistant", content: [{ type: "toolCall", id: "t2", name: "bash", arguments: { command: "bun test tests/billing.test.ts" } }] },
+      { role: "toolResult", toolCallId: "t2", toolName: "bash", content: [{ type: "text", text: "12 pass" }], isError: false },
+    ] as any, [10, 11, 12, 13]);
+    const r = compileBrief(blocks);
+    expect(r).toContain('* bash "bun test tests/billing.test.ts" [failed] (#10)');
+    expect(r).toContain('* bash "bun test tests/billing.test.ts" (#12)');
+  });
+
+  it("ranks a failed call above the same call that passed", () => {
+    const blocks = normalize([
+      { role: "assistant", content: [{ type: "toolCall", id: "a", name: "bash", arguments: { command: "ls" } }] },
+      { role: "toolResult", toolCallId: "a", toolName: "bash", content: [{ type: "text", text: "ls: no such dir" }], isError: true },
+      { role: "assistant", content: [{ type: "toolCall", id: "b", name: "bash", arguments: { command: "ls" } }] },
+      { role: "toolResult", toolCallId: "b", toolName: "bash", content: [{ type: "text", text: "src" }], isError: false },
+    ] as any);
+    const ranked = rankBriefBlocks(blocks);
+    const failed = ranked.find((r) => r.block.kind === "tool_call" && r.block.failed)!;
+    const passed = ranked.find((r) => r.block.kind === "tool_call" && !r.block.failed)!;
+    expect(failed.reasons).toContain("failed-call");
+    expect(failed.score).toBeGreaterThan(passed.score);
   });
 });

@@ -6,7 +6,7 @@ import { loadAllMessages } from "../src/core/load-messages";
 
 describe("loadAllMessages", () => {
   it("loads all message entries when no lineage filter is provided", () => {
-    const dir = mkdtempSync(join(tmpdir(), "pi-vcc-load-all-"));
+    const dir = mkdtempSync(join(tmpdir(), "omp-vcc-load-all-"));
     const file = join(dir, "session.jsonl");
     try {
       const lines = [
@@ -28,7 +28,7 @@ describe("loadAllMessages", () => {
   });
 
   it("skips system messages but keeps their #N index slot", () => {
-    const dir = mkdtempSync(join(tmpdir(), "pi-vcc-load-system-"));
+    const dir = mkdtempSync(join(tmpdir(), "omp-vcc-load-system-"));
     const file = join(dir, "session.jsonl");
     try {
       const lines = [
@@ -48,7 +48,7 @@ describe("loadAllMessages", () => {
   });
 
   it("loads JSONL incrementally across read-chunk boundaries", () => {
-    const dir = mkdtempSync(join(tmpdir(), "pi-vcc-load-chunked-"));
+    const dir = mkdtempSync(join(tmpdir(), "omp-vcc-load-chunked-"));
     const file = join(dir, "session.jsonl");
     try {
       const largeText = `${"x".repeat(70_000)} unicode: λ`;
@@ -70,7 +70,7 @@ describe("loadAllMessages", () => {
 
   it("treats a not-yet-written session file as empty history instead of throwing ENOENT", () => {
     // Fresh session: pi has not persisted any entry, so the JSONL does not exist.
-    const dir = mkdtempSync(join(tmpdir(), "pi-vcc-load-missing-"));
+    const dir = mkdtempSync(join(tmpdir(), "omp-vcc-load-missing-"));
     try {
       const loaded = loadAllMessages(join(dir, "nope", "session.jsonl"), false);
       expect(loaded.rendered).toEqual([]);
@@ -81,7 +81,7 @@ describe("loadAllMessages", () => {
   });
 
   it("returns empty history for an existing but empty session file", () => {
-    const dir = mkdtempSync(join(tmpdir(), "pi-vcc-load-empty-"));
+    const dir = mkdtempSync(join(tmpdir(), "omp-vcc-load-empty-"));
     const file = join(dir, "session.jsonl");
     try {
       writeFileSync(file, "", "utf8");
@@ -96,7 +96,7 @@ describe("loadAllMessages", () => {
   it("still surfaces read errors that are not 'file does not exist'", () => {
     // A directory is readable-but-not-a-file (EISDIR): a real I/O problem, not
     // an empty history. It must not be swallowed.
-    const dir = mkdtempSync(join(tmpdir(), "pi-vcc-load-eisdir-"));
+    const dir = mkdtempSync(join(tmpdir(), "omp-vcc-load-eisdir-"));
     try {
       expect(() => loadAllMessages(dir, false)).toThrow();
     } finally {
@@ -105,7 +105,7 @@ describe("loadAllMessages", () => {
   });
 
   it("filters messages by allowed lineage entry IDs and preserves original message index", () => {
-    const dir = mkdtempSync(join(tmpdir(), "pi-vcc-load-filter-"));
+    const dir = mkdtempSync(join(tmpdir(), "omp-vcc-load-filter-"));
     const file = join(dir, "session.jsonl");
     try {
       const lines = [

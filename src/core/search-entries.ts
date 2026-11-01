@@ -1,7 +1,7 @@
-import type { Message, ToolCall } from "@earendil-works/pi-ai";
-import type { RenderedEntry } from "./render-entries";
+import type { Message, ToolCall } from "@oh-my-pi/pi-ai";
+import { fileMentionPaths, type RenderedEntry } from "./render-entries";
 import { textOf, isContentBearing, extractToolCallText, extractToolCallArgsText, clip } from "./content";
-import { extractPaths } from "./tool-args";
+import { extractPaths, hashlineEditPaths, isUrlPath } from "./tool-args";
 
 export interface SearchHit extends RenderedEntry {
   /** Context snippet around the first matched term (only when query provided) */
@@ -167,9 +167,30 @@ interface Term {
   global: RegExp;  // same source with "gi", for counting occurrences
 }
 
+// Inflected forms of one word: a query rarely uses the session's own form
+// ("rounding" for "rounds", "failure" for "FAIL"), and literal matching then
+// misses the entry (NoLiMa, arXiv:2502.05167). A plain ASCII word also matches
+// its stem at the start of a word. Suffixes are English; other terms are untouched.
+const SUFFIXES = ["ations", "ation", "ings", "ing", "ures", "ure", "ies", "ers", "er", "ed", "es", "ly", "s"];
+const MIN_STEM = 4;
+
+export const stemOf = (term: string): string | undefined => {
+  if (term.length < MIN_STEM + 1 || !/^[a-z]+$/i.test(term)) return undefined;
+  const lower = term.toLowerCase();
+  for (const suffix of SUFFIXES) {
+    if (!lower.endsWith(suffix)) continue;
+    let stem = lower.slice(0, -suffix.length);
+    // "running" -> "runn" -> "run"
+    if (stem.length > MIN_STEM && stem[stem.length - 1] === stem[stem.length - 2]) stem = stem.slice(0, -1);
+    return stem.length >= MIN_STEM ? stem : undefined;
+  }
+  return undefined;
+};
+
 const compileTerms = (terms: string[]): Term[] =>
   terms.map((term) => {
-    const re = safeRegex(term);
+    const stem = stemOf(term);
+    const re = stem ? new RegExp(`${escapeRegex(term)}|(?<![a-z])${stem}`, "i") : safeRegex(term);
     return { term, re, global: new RegExp(re.source, "gi") };
   });
 
@@ -350,6 +371,10 @@ const fullText = (msg: Message): string => {
   if ((msg as any).role === "bashExecution") {
     return `${(msg as any).command ?? ""} ${(msg as any).output ?? ""}`;
   }
+  if ((msg as any).role === "pythonExecution") {
+    return `${(msg as any).code ?? ""} ${(msg as any).output ?? ""}`;
+  }
+  if ((msg as any).role === "fileMention") return fileMentionPaths(msg).join(" ");
   if (msg.role === "toolResult" && msg.toolName?.toLowerCase() === RECALL_TOOL_NAME) {
     return "";
   }
@@ -373,7 +398,9 @@ export function getFileIndicators(msg: Message): { toolName: string; path: strin
     const args = part.arguments as Record<string, unknown>;
     const drillable = isContentBearing(args);
     // A multi-path edit tool: a script (`code`) edits the listed `paths`, so there is no per-file content.
-    if (!drillable && !(typeof args.code === "string" && Array.isArray(args.paths))) continue;
+    // Likewise omp's hashline edit, whose `input` patches the files named in its section headers.
+    const multiPathEdit = (typeof args.code === "string" && Array.isArray(args.paths)) || hashlineEditPaths(args).length > 0;
+    if (!drillable && !multiPathEdit) continue;
     const totalText = extractToolCallText(args);
     const nonEmpty = totalText.split("\n").filter((l) => l.trim().length > 0);
     for (const path of extractPaths(args)) {
@@ -403,6 +430,7 @@ export function getTouchedFiles(
     const msg = messages[i];
     const indicators = getFileIndicators(msg);
     for (const fm of indicators) {
+      if (isUrlPath(fm.path)) continue;
       const index = rendered[i]?.index ?? i;
       if (!map.has(fm.path)) {
         map.set(fm.path, { path: fm.path, entries: [] });

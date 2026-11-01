@@ -1,4 +1,4 @@
-import type { Message } from "@earendil-works/pi-ai";
+import type { Message } from "@oh-my-pi/pi-ai";
 import type { FileOps } from "../types";
 import { normalize } from "./normalize";
 import { filterNoise } from "./filter-noise";
@@ -7,6 +7,8 @@ import { EARLY_REQUESTS_KEPT, keepNewestUserMessages } from "../extract/user-mes
 import { formatSummary, capBrief, capItems, stripCapMarker, BRIEF_MAX_LINES, FILES_PER_CATEGORY, RECALL_NOTE, wrapLongLines } from "./format";
 import { COMMAND_SEPARATOR, COMMANDS_PER_NAME } from "../extract/tracked-commands";
 import { selectRankedBriefBlocks, type BriefRankingOptions } from "./rank";
+import { formatHistoryRange, type HistoryRange } from "./history-index";
+import { formatPinLines, type PinnedNote } from "./pins";
 
 export interface CompileInput {
   messages: Message[];
@@ -20,8 +22,16 @@ export interface CompileInput {
   sourceIndices?: Array<number | undefined>;
   /** See BuildSectionsInput.trackCommands (core/build-sections.ts) --
    * empty/omitted by default, threaded through from
-   * PiVccSettings.trackCommands by the caller (hooks/before-compact.ts). */
+   * VccSettings.trackCommands by the caller (hooks/compaction.ts). */
   trackCommands?: readonly string[];
+  /**
+   * The history index to show (already merged with the previous one; see
+   * core/history-index.ts). Rendered as the last header section; never merged
+   * from summary text.
+   */
+  historyIndex?: readonly HistoryRange[];
+  /** The pinned notes (core/pins.ts), rendered first; never merged from summary text. */
+  pinnedNotes?: readonly PinnedNote[];
 }
 
 export interface RankedCompileInput extends CompileInput {
@@ -70,9 +80,9 @@ const isClean = (l: string) => l.startsWith("- ") && !l.includes("<skill") && !l
 const unwrapSection = (text: string, header: string) => sectionOf(text, header).replace(/\n[ \t]+(?=\S)/g, " ");
 
 /**
- * The previous summary's early requests, kept as they are: the first summary
- * sets them. An older version's [Session Goal] gives its first real line
- * (not a "- [skill: x]" / "- [Scope change]" marker).
+ * The previous summary's early requests, kept as they are: the first summaries
+ * set them, up to EARLY_REQUESTS_KEPT. An older version's [Session Goal] gives
+ * its first real line (not a "- [skill: x]" / "- [Scope change]" marker).
  */
 const pinnedEarlyRequests = (prev: string): string[] => {
   const early = unwrapSection(prev, EARLY).split("\n").filter(isClean);
@@ -198,8 +208,14 @@ const mergeFileLines = (prev: string, fresh: string): string => {
   // Newest-last with re-touched files moved to the end, so the capped list
   // follows the files being worked on instead of freezing on the first ones.
   const merged = mergeCategorizedLines(FILE_CATEGORIES, prev, fresh, ",", true);
-  // Dedup: if already in Modified, drop from Created (file existed before)
-  for (const p of merged.Modified) merged.Created.delete(p);
+  // A file in both: created earlier in the session and changed since, it is
+  // still new (Created); changed before a later write, it existed (Modified).
+  const createdBefore = mergeCategorizedLines(FILE_CATEGORIES, prev, "", ",").Created;
+  for (const p of [...merged.Modified]) {
+    if (!merged.Created.has(p)) continue;
+    if (createdBefore.has(p)) merged.Modified.delete(p);
+    else merged.Created.delete(p);
+  }
   return formatCategorizedLines("Files And Changes", merged, FILE_CATEGORIES, ", ", FILES_PER_CATEGORY);
 };
 
@@ -254,8 +270,10 @@ const mergeBriefTranscriptWithFreshBudget = (prev: string, fresh: string): strin
 };
 
 const mergePrevious = (prev: string, fresh: string, options: { preserveFreshBrief?: boolean } = {}): string => {
-  // Merge header sections
-  const early = pinnedEarlyRequests(prev);
+  // Merge header sections. Early requests the previous summary still had room
+  // for are topped up from this compaction's first user messages.
+  const early = [...new Set([...pinnedEarlyRequests(prev), ...unwrapSection(fresh, EARLY).split("\n").filter(isClean)])]
+    .slice(0, EARLY_REQUESTS_KEPT);
   const headers = HEADER_NAMES
     .map((header) => {
       if (header === EARLY && early.length > 0) return `[${EARLY}]\n${early.join("\n")}`;
@@ -295,12 +313,45 @@ const compileWithBriefBlocks = (input: CompileInput, options: CompileWithBriefBl
   const prev = input.previousSummary
     ? stripRecallNote(input.previousSummary)
     : undefined;
-  const hasEarlyRequests = prev !== undefined && pinnedEarlyRequests(prev).length > 0;
-  const data = buildSections({ blocks, briefBlocks, fileOps: input.fileOps, trackCommands: input.trackCommands, hasEarlyRequests });
+  // Room left in [Early Session Requests]. Only a summary with that section can
+  // be topped up: after an older [Session Goal], the session's next requests
+  // are long gone, and this window's first ones are not them.
+  const earlyRequestSlots = prev === undefined
+    ? EARLY_REQUESTS_KEPT
+    : sectionOf(prev, EARLY)
+      ? EARLY_REQUESTS_KEPT - pinnedEarlyRequests(prev).length
+      : pinnedEarlyRequests(prev).length > 0 ? 0 : EARLY_REQUESTS_KEPT;
+  const data = buildSections({ blocks, briefBlocks, fileOps: input.fileOps, trackCommands: input.trackCommands, earlyRequestSlots });
   const fresh = formatSummary(data, { capBriefTranscript: options.capFreshBrief ?? true });
-  const merged = prev ? mergePrevious(prev, fresh, { preserveFreshBrief: options.preserveFreshBriefOnMerge }) : fresh;
+  const mergedText = prev ? mergePrevious(prev, fresh, { preserveFreshBrief: options.preserveFreshBriefOnMerge }) : fresh;
+  const merged = withStructuredSections(mergedText, input.pinnedNotes, input.historyIndex);
   if (!merged) return "";
   return wrapLongLines(merged + SEPARATOR + RECALL_NOTE);
+};
+
+const HISTORY_INDEX = "History Index";
+const PINNED_NOTES = "Pinned Notes";
+
+/**
+ * Sections rebuilt from structured data on every compaction, never merged from
+ * the previous summary's text: [Pinned Notes] first (the start of the context
+ * is where a model attends best, arXiv:2307.03172) and [History Index] last in
+ * the header area. Any earlier copy of either is replaced.
+ */
+const withStructuredSections = (
+  text: string,
+  pins?: readonly PinnedNote[],
+  ranges?: readonly HistoryRange[],
+): string => {
+  const pinSection = pins && pins.length > 0 ? `[${PINNED_NOTES}]\n${formatPinLines(pins).map((l) => `- ${l}`).join("\n")}` : "";
+  const indexSection = ranges && ranges.length > 0 ? `[${HISTORY_INDEX}]\n${ranges.map((r) => `- ${formatHistoryRange(r)}`).join("\n")}` : "";
+  if (!pinSection && !indexSection) return text;
+  const { head, brief } = splitSummary(text);
+  const kept = head.split("\n\n")
+    .filter((part) => !part.startsWith(`[${HISTORY_INDEX}]`) && !part.startsWith(`[${PINNED_NOTES}]`))
+    .filter(Boolean);
+  const newHead = [pinSection, ...kept, indexSection].filter(Boolean).join("\n\n");
+  return brief ? `${newHead}${SEPARATOR}${brief}` : newHead;
 };
 
 export const compile = (input: CompileInput): string =>

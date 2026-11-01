@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { invalidExpandIndices } from "../src/tools/recall";
+import { invalidExpandIndices } from "../src/core/recall-run";
 
 describe("invalidExpandIndices", () => {
   it("returns indices that are not in available lineage index set", () => {

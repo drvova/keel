@@ -32,7 +32,8 @@ export const filterNoise = (blocks: NormalizedBlock[]): NormalizedBlock[] => {
       if (isNoiseUserBlock(b.text)) continue;
       const cleaned = cleanUserText(b.text);
       if (!cleaned) continue;
-      out.push({ kind: "user", text: cleaned, ...(b.injected ? { injected: true } : {}) });
+      // Keep sourceIndex: a clipped request names the #N that reads all of it.
+      out.push({ ...b, text: cleaned });
       continue;
     }
     out.push(b);

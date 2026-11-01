@@ -93,7 +93,8 @@ export const formatRecallOutput = (
   const lines = entries.map((e) => {
     const fileSuffix = e.files?.length ? ` files:[${e.files.join(", ")}]` : "";
     const body = query && e.snippet ? e.snippet : e.summary;
-    return `#${e.index} [${e.role}]${fileSuffix} ${body}`;
+    const where = e.session ? `[session ${e.session}] ` : "";
+    return `${where}#${e.index} [${e.role}]${fileSuffix} ${body}`;
   });
 
   return `${header}\n\n${lines.join("\n\n")}`;

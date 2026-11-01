@@ -1,28 +1,61 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { parseCommandRequest } from "../core/recall-request";
-import { openRecallView, runRecall, type RecallPagingHints } from "../core/recall-run";
+import {
+  openRecallView,
+  openSessionView,
+  projectSessions,
+  recallOutputChars,
+  runRecall,
+  sessionHeader,
+  type RecallPagingHints,
+} from "../core/recall-run";
+import { resolveSession } from "../core/sessions";
+import { sessionDirOf } from "../tools/recall";
+import { tell } from "./compact-feedback";
+import { windowOf } from "../hooks/window-limits";
 
-const scopeArg = (scope: string) => (scope === "all" ? " scope:all" : "");
+const scopeArg = (scope: string) => (scope === "all" ? " scope:all" : scope === "project" ? " scope:project" : "");
 
-const COMMAND_PAGING_HINTS: RecallPagingHints = {
-  outOfRange: (query, scope, totalPages, truncated) =>
-    `Use /pi-vcc-recall ${query}${scopeArg(scope)} page:N with N between 1 and ${totalPages}` +
-    (truncated ? "." : ", or refine your query."),
-  nextPage: (query, scope, page) => `\n--- /pi-vcc-recall ${query}${scopeArg(scope)} page:${page} ---`,
+const commandHints = (session?: string): RecallPagingHints => {
+  const at = session ? ` session:${session}` : "";
+  return {
+    outOfRange: (query, scope, totalPages, truncated) =>
+      `Use /omp-vcc-recall ${query}${at}${scopeArg(scope)} page:N with N between 1 and ${totalPages}` +
+      (truncated ? "." : ", or refine your query."),
+    nextPage: (query, scope, page) => `\n--- /omp-vcc-recall ${query}${at}${scopeArg(scope)} page:${page} ---`,
+    otherSessions: (n) =>
+      `This project has ${n} earlier session${n === 1 ? "" : "s"}: add scope:project to search ${n === 1 ? "it" : "them"} too; /omp-vcc-recall sessions lists ${n === 1 ? "it" : "them"}.`,
+  };
 };
 
 export const registerVccRecallCommand = (pi: ExtensionAPI) => {
-  pi.registerCommand("pi-vcc-recall", {
-    description: "Recall earlier parts of this session. Plain keywords work best; add scope:all to reach edited or retried turns.",
+  pi.registerCommand("omp-vcc-recall", {
+    description:
+      "Recall earlier parts of this session. Plain keywords work best; scope:all reaches edited or retried turns, " +
+      "scope:project this project's earlier sessions; 'sessions' lists them, session:<id> reads one.",
     handler: async (args: string, ctx) => {
       const sessionFile = ctx.sessionManager.getSessionFile();
       if (!sessionFile) {
-        ctx.ui.notify("No session file available.", "error");
+        tell(ctx, "No session file available.", "error");
         return;
       }
       const request = parseCommandRequest(args);
-      const view = openRecallView(sessionFile, request.scope, ctx.sessionManager);
-      const content = runRecall(request, view, COMMAND_PAGING_HINTS);
+      const project = projectSessions(sessionDirOf(ctx.sessionManager as any, sessionFile), sessionFile);
+      const maxChars = recallOutputChars(windowOf(ctx.model).effective);
+      let content: string;
+      if (request.session) {
+        const target = resolveSession(request.session, project.list());
+        if ("error" in target) {
+          tell(ctx, target.error, "warning");
+          return;
+        }
+        content = runRecall(request, openSessionView(target, request.scope, project), commandHints(target.short), {
+          maxChars: Math.max(0, maxChars - 300),
+          header: sessionHeader(target),
+        });
+      } else {
+        content = runRecall(request, openRecallView(sessionFile, request.scope, ctx.sessionManager, { project }), commandHints(), { maxChars });
+      }
       pi.sendMessage({ customType: "vcc-recall", content, display: true }, { triggerTurn: true });
     },
   });

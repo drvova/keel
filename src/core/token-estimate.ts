@@ -43,8 +43,8 @@ export const estimateTokensFromChars = (
 ): number => Math.ceil(chars / charsPerToken);
 
 /**
- * Chars attributed to one image part, mirroring pi-agent-core's own
- * estimateTokens heuristic (4800 chars ≈ 1200 tokens at 4 chars/token).
+ * Chars attributed to one image part: the usual agent-harness estimate of
+ * about 1200 tokens per image (4800 chars at 4 chars/token).
  */
 export const IMAGE_CONTENT_CHARS = 4800;
 
@@ -58,11 +58,11 @@ const safeJsonStringify = (value: unknown): string => {
 
 /**
  * Estimate the char length of a message's content (string or content-parts
- * array). Counts every token-bearing part that pi-agent-core's harness
- * estimateTokens counts, so the calibrated chars/token ratio is not deflated:
+ * array). Counts every token-bearing part the host's token estimate counts, so
+ * the calibrated chars/token ratio is not deflated:
  *  - text       → text.length
  *  - thinking   → thinking.length   (opus emits large reasoning blocks)
- *  - toolCall   → name + arguments  (Pi uses `arguments`; `input` kept for compat)
+ *  - toolCall   → name + arguments  (`input` kept for compat)
  *  - image      → IMAGE_CONTENT_CHARS
  *  - toolResult → nested content    (legacy part shape)
  */

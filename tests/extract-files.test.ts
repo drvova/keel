@@ -16,8 +16,34 @@ describe("extractFiles", () => {
     ];
     const r = extractFiles(blocks);
     expect([...r.read].sort()).toEqual(["a.ts", "b.ts"]);
-    expect([...r.modified].sort()).toEqual(["c.ts", "d.ts"]);
+    expect([...r.modified]).toEqual(["d.ts"]);
     expect([...r.created]).toEqual(["c.ts"]);
+  });
+
+  // Seen with a real model: files the agent wrote new were all listed as Modified,
+  // so [Files And Changes] never said which files the session created.
+  it("a write to a path not touched before here creates it; after a read or edit it rewrites it", () => {
+    const blocks: NormalizedBlock[] = [
+      { kind: "tool_call", name: "write", args: { path: "src/money.py" } },
+      { kind: "tool_call", name: "edit", args: { path: "src/money.py" } },
+      { kind: "tool_call", name: "read", args: { path: "README.md" } },
+      { kind: "tool_call", name: "write", args: { path: "README.md" } },
+      { kind: "tool_call", name: "read", args: { path: "notes.md" }, failed: true },
+      { kind: "tool_call", name: "write", args: { path: "notes.md" } },
+      { kind: "tool_call", name: "write", args: { path: "broken.md" }, failed: true },
+    ];
+    const r = extractFiles(blocks, { writtenFiles: ["src/money.py", "README.md", "gen/out.txt"], modifiedFiles: ["src/money.py"] });
+    expect([...r.created]).toEqual(["src/money.py", "notes.md"]);
+    expect([...r.modified]).toEqual(["README.md", "gen/out.txt"]);
+  });
+
+  it("leaves omp's artifact:// store and other URLs out of the file lists", () => {
+    const blocks: NormalizedBlock[] = [
+      { kind: "tool_call", name: "read", args: { path: "src/money.py" } },
+      { kind: "tool_call", name: "read", args: { path: "artifact://0" } },
+    ];
+    const r = extractFiles(blocks, { readFiles: ["artifact://0", "skill://x/SKILL.md"] });
+    expect([...r.read]).toEqual(["src/money.py"]);
   });
 
   it("records modern edit tools as modifications", () => {
@@ -54,16 +80,16 @@ describe("settings defaults", () => {
 });
 
 describe("loadSettings coercion", () => {
-  // PI_VCC_CONFIG_PATH is settings.ts' existing override — point it at a
-  // tmp file so the real ~/.pi/agent/pi-vcc-config.json is never touched.
+  // OMP_VCC_CONFIG_PATH is settings.ts' existing override — point it at a
+  // tmp file so the real ~/.omp/agent/omp-vcc-config.json is never touched.
   const writeConfig = (value: unknown) => {
-    const dir = mkdtempSync(join(tmpdir(), "pi-vcc-cfg-"));
+    const dir = mkdtempSync(join(tmpdir(), "omp-vcc-cfg-"));
     const path = join(dir, "config.json");
     writeFileSync(path, JSON.stringify({ trackCommands: value }));
-    process.env.PI_VCC_CONFIG_PATH = path;
+    process.env.OMP_VCC_CONFIG_PATH = path;
   };
 
-  afterEach(() => delete process.env.PI_VCC_CONFIG_PATH);
+  afterEach(() => delete process.env.OMP_VCC_CONFIG_PATH);
 
   it("malformed trackCommands values coerce fail-closed to string[]", () => {
     for (const bad of ["ssh", 42, [1, " kubectl ", null, "kubectl"], null, { 0: "ssh" }]) {

@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, copyFile, chmod, readdir, stat } from "node:fs/promises
 import { tmpdir } from "node:os";
 import { join, basename } from "node:path";
 
-const SESSION_ROOT = join(process.env.HOME ?? "", ".pi/agent/sessions");
+const SESSION_ROOT = join(process.env.HOME ?? "", ".omp/agent/sessions");
 
 export interface SessionSample {
   source: string;
@@ -32,7 +32,7 @@ const pickLargest = async (limit: number): Promise<string[]> => {
 
 export const prepareSessionSamples = async (limit = 2): Promise<SessionSample[]> => {
   const selected = await pickLargest(limit);
-  const dir = await mkdtemp(join(tmpdir(), "pi-vcc-sessions-"));
+  const dir = await mkdtemp(join(tmpdir(), "omp-vcc-sessions-"));
   await mkdir(dir, { recursive: true });
   const samples: SessionSample[] = [];
   for (const source of selected) {

@@ -2,7 +2,7 @@
 /**
  * Sample compaction benchmark — TEMPLATE, not a turnkey tool.
  *
- * Measures pi-vcc's ranked brief (`compileRanked`) against the plain
+ * Measures omp-vcc's ranked brief (`compileRanked`) against the plain
  * contiguous transcript-tail brief (`compile`) on YOUR OWN sessions, using the
  * scoring documented in benchmarks/README.md: weighted fact recall, weighted
  * fact-density, precision, and size.
@@ -13,10 +13,10 @@
  * families, which encode what "an important fact" means for you.
  *
  * ── Run (from a clone of this repo, with bun) ────────────────────────────────
- *   bun benchmarks/benchmark.ts --sessions=~/.pi/agent/sessions --limit=200
+ *   bun benchmarks/benchmark.ts --sessions=~/.omp/agent/sessions --limit=200
  *
  * Flags (all optional):
- *   --sessions=DIR   dir of *.jsonl session files (recursed). default: ~/.pi/agent/sessions
+ *   --sessions=DIR   dir of *.jsonl session files (recursed). default: ~/.omp/agent/sessions
  *   --limit=N        cap sessions processed. default: all
  *   --max-blocks=N   ranked selection pool size.        default: 80
  *   --recent=N       recent blocks always kept.         default: 16
@@ -25,8 +25,8 @@
  *   --per-block=N    budget slope (chars per block).    default: 60
  *   --out=DIR        where to write csv/json.           default: benchmarks/out
  *
- * Requires the Pi runtime packages (already dependencies of this repo):
- *   @earendil-works/pi-coding-agent, @earendil-works/pi-ai
+ * Requires omp's package (a dev dependency of this repo):
+ *   @oh-my-pi/pi-coding-agent
  *
  * NOTE: this reads your real session transcripts locally and writes only
  * aggregate metrics + session IDs to --out. It makes no network calls.
@@ -35,7 +35,8 @@
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { join, resolve } from "path";
-import { parseSessionEntries, convertToLlm } from "@earendil-works/pi-coding-agent";
+import { convertToLlm } from "@oh-my-pi/pi-coding-agent/session/messages";
+import { parseSessionEntries } from "@oh-my-pi/pi-coding-agent/session/session-loader";
 
 // Both brief builders come from THIS repo's src/ — the comparison is
 // "plain tail (compile) vs ranked (compileRanked)", i.e. the value of ranking.
@@ -62,7 +63,7 @@ const argNum = (name: string, fallback: number): number => {
 };
 const expandHome = (p: string): string => (p.startsWith("~") ? join(homedir(), p.slice(1)) : p);
 
-const SESSIONS_DIR = resolve(expandHome(arg("sessions") ?? "~/.pi/agent/sessions"));
+const SESSIONS_DIR = resolve(expandHome(arg("sessions") ?? "~/.omp/agent/sessions"));
 const OUT_DIR = resolve(expandHome(arg("out") ?? join(import.meta.dir, "out")));
 const LIMIT = argNum("limit", Infinity);
 const MAX_BLOCKS = argNum("max-blocks", 80);

@@ -5,7 +5,7 @@ import { join } from "path";
 import { registerRecallTool } from "../src/tools/recall";
 
 const makeSession = () => {
-  const dir = mkdtempSync(join(tmpdir(), "pi-vcc-recall-scope-"));
+  const dir = mkdtempSync(join(tmpdir(), "omp-vcc-recall-scope-"));
   const file = join(dir, "session.jsonl");
   const lines = [
     JSON.stringify({ type: "message", id: "m1", message: { role: "user", content: `active lineage token ${"x".repeat(350)} full-content-end` } }),

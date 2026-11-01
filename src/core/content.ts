@@ -1,4 +1,4 @@
-import type { Message } from "@earendil-works/pi-ai";
+import type { Message } from "@oh-my-pi/pi-ai";
 import { PATH_KEYS } from "./tool-args";
 
 export const clip = (text: string, max = 200): string => {
@@ -41,9 +41,9 @@ export const firstLine = (text: string, max = 200): string =>
 export const textParts = (content: Message["content"]): string[] => {
   if (!content) return [];
   if (typeof content === "string") return [content];
-  return content
-    .filter((part) => part.type === "text")
-    .map((part) => part.text);
+  return (content as Array<{ type?: string; text?: unknown }>)
+    .filter((part) => part?.type === "text" && typeof part.text === "string")
+    .map((part) => part.text as string);
 };
 
 export const textOf = (content: Message["content"]): string =>

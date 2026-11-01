@@ -1,9 +1,13 @@
-import type { SessionMessageEntry } from "@earendil-works/pi-coding-agent";
+import type { SessionMessageEntry } from "@oh-my-pi/pi-coding-agent";
 import type { NormalizedBlock } from "../types";
 import { textOf } from "./content";
 import { sanitize } from "./sanitize";
 
-const normalizeOne = (msg: SessionMessageEntry["message"], msgIndex: number | undefined): NormalizedBlock[] => {
+const normalizeOne = (
+  msg: SessionMessageEntry["message"],
+  msgIndex: number | undefined,
+  failedCallIds?: ReadonlySet<string>,
+): NormalizedBlock[] => {
   if (msg.role === "user") {
     const blocks: NormalizedBlock[] = [];
     const text = sanitize(textOf(msg.content));
@@ -24,6 +28,12 @@ const normalizeOne = (msg: SessionMessageEntry["message"], msgIndex: number | un
     const out = msg.output ?? "";
     const exit = msg.exitCode;
     return [{ kind: "bash", command: cmd, output: out, exitCode: exit, sourceIndex: msgIndex }];
+  }
+
+  // omp: a python cell the user ran themselves.
+  if ((msg as { role: string }).role === "pythonExecution") {
+    const py = msg as unknown as { code?: string; output?: string; exitCode?: number };
+    return [{ kind: "bash", command: py.code ?? "", output: py.output ?? "", exitCode: py.exitCode, sourceIndex: msgIndex, lang: "python" }];
   }
 
   if (msg.role === "toolResult") {
@@ -51,6 +61,7 @@ const normalizeOne = (msg: SessionMessageEntry["message"], msgIndex: number | un
           name: part.name,
           args: part.arguments,
           sourceIndex: msgIndex,
+          ...(failedCallIds?.has(part.id) ? { failed: true as const } : {}),
         });
       }
     }
@@ -71,7 +82,14 @@ const normalizeOne = (msg: SessionMessageEntry["message"], msgIndex: number | un
 export const normalize = (
   messages: SessionMessageEntry["message"][],
   sourceIndices?: Array<number | undefined>,
-): NormalizedBlock[] =>
-  messages.flatMap((msg, i) => normalizeOne(msg, sourceIndices ? sourceIndices[i] : i));
+): NormalizedBlock[] => {
+  // Calls whose result is an error, so the call itself can say so: the brief
+  // shows calls, not results.
+  const failedCallIds = new Set<string>();
+  for (const msg of messages) {
+    if (msg.role === "toolResult" && msg.isError === true && typeof msg.toolCallId === "string") failedCallIds.add(msg.toolCallId);
+  }
+  return messages.flatMap((msg, i) => normalizeOne(msg, sourceIndices ? sourceIndices[i] : i, failedCallIds));
+};
 
 

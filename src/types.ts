@@ -1,11 +1,15 @@
-import type { Message } from "@earendil-works/pi-ai";
+import type { Message } from "@oh-my-pi/pi-ai";
 
-export type CompactionReason = "manual" | "threshold" | "overflow";
+/** What started a compaction: omp's auto_compaction_start reason, or manual (/compact, /omp-vcc). */
+export type CompactionReason = "manual" | "threshold" | "overflow" | "idle" | "incomplete";
 
 export interface FileOps {
   readFiles?: string[];
+  /** Edited. */
   modifiedFiles?: string[];
   createdFiles?: string[];
+  /** Written whole, new or not (omp's fileOps.written). */
+  writtenFiles?: string[];
 }
 
 export type NormalizedBlock =
@@ -14,6 +18,8 @@ export type NormalizedBlock =
   // or [User Messages].
   | { kind: "user"; text: string; sourceIndex?: number; injected?: boolean }
   | { kind: "assistant"; text: string; sourceIndex?: number }
-  | { kind: "tool_call"; name: string; args: Record<string, unknown>; sourceIndex?: number }
+  // `failed`: the call's result came back as an error (toolResult isError).
+  | { kind: "tool_call"; name: string; args: Record<string, unknown>; sourceIndex?: number; failed?: true }
   | { kind: "tool_result"; name: string; text: string; sourceIndex?: number }
-  | { kind: "bash"; command: string; output: string; exitCode: number | undefined; sourceIndex?: number };
+  // A command the user ran themselves: `!cmd`, or (lang "python") a python cell.
+  | { kind: "bash"; command: string; output: string; exitCode: number | undefined; sourceIndex?: number; lang?: "python" };
