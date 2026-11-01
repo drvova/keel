@@ -6,6 +6,10 @@ on:
   pull_request:
   push:
     branches: [master]
+  # omp releases often: test the newest one weekly even when nothing is pushed.
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
 
 # Minimal token scope: the job only needs to read the checked-out code.
 permissions:
@@ -20,6 +24,12 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        # latest: the omp users update to. minimum: the floor of the peer range
+        # in package.json, read from there so no version is written here.
+        omp: [latest, minimum]
     steps:
       # Actions pinned to commit SHAs so a retagged release cannot swap the
       # code this job runs.
@@ -27,15 +37,24 @@ jobs:
         with:
           persist-credentials: false
 
+      # The newest Bun: omp's engines.bun only rises, so a pinned one would
+      # eventually fail to run the latest omp.
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          # Pinned so the test runner does not drift; omp declares engines.bun >= 1.4.4.
-          bun-version: 1.4.4
+          bun-version: latest
 
-      # --frozen-lockfile: the omp release bun.lock pins (a dev dependency), so
-      # tests/omp-host.test.ts runs omp-vcc inside that omp.
+      # --frozen-lockfile: the compiler and node types bun.lock pins. omp is not
+      # in it: it is installed below, at the version this job tests.
       # --ignore-scripts: dependency postinstall code does not run in CI.
       - run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Install omp (${{ matrix.omp }})
+        run: |
+          if [ "${{ matrix.omp }}" = minimum ]; then
+            export OMP_VERSION=$(bun -e "console.log(require('./package.json').peerDependencies['@oh-my-pi/pi-coding-agent'].match(/\d+\.\d+\.\d+/)[0])")
+          fi
+          bun run setup:omp
+          bun -e "import { VERSION } from '@oh-my-pi/pi-coding-agent'; console.log('omp', VERSION)"
 
       - run: bun run typecheck
 

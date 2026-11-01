@@ -25,7 +25,7 @@
  *   --per-block=N    budget slope (chars per block).    default: 60
  *   --out=DIR        where to write csv/json.           default: benchmarks/out
  *
- * Requires omp's package (a dev dependency of this repo):
+ * Requires omp's package (`bun run setup:omp` installs the latest):
  *   @oh-my-pi/pi-coding-agent
  *
  * NOTE: this reads your real session transcripts locally and writes only
