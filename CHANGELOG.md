@@ -4,6 +4,17 @@ All notable changes to `@sting8k/pi-vcc` are documented in this file.
 
 ## [Unreleased]
 
+### Changes
+
+- **Runs natively on [omp](https://github.com/can1357/oh-my-pi) (oh-my-pi)** — install with `omp install npm:@sting8k/pi-vcc`. omp loads its own entry (`omp.ts`, from `omp.extensions` in `package.json`), which uses omp's extension API directly instead of omp's Pi compatibility layer, and imports neither host package. Pi keeps loading `index.ts` as before. On omp:
+  - `/pi-vcc`, `/compact` and every automatic compaction (threshold, overflow, idle, cut-off reply) go through pi-vcc, as on Pi. Through the compatibility layer, `/pi-vcc keep:N` lost its keep count and its marker, because omp's `ctx.compact()` options have no `customInstructions` (with `overrideDefaultCompaction: false`, omp's own LLM summary ran instead), and in print/RPC mode a failed compaction became an unhandled promise rejection.
+  - The summary records why it ran (`reason` now also takes `idle` and `incomplete`), and pi-vcc steps aside on an overflow it cannot cut, so omp's own method recovers it. pi-vcc never sends its own continue: omp resumes after automatic compactions itself (`compaction.autoContinue`).
+  - `vcc_recall` is always a top-level tool with read-only approval (omp otherwise puts extension tools behind discovery and asks before running them), and still repairs mistyped arguments, which omp would otherwise reject before pi-vcc sees them.
+  - The config file is `pi-vcc-config.json` in omp's agent directory (`~/.omp/agent`, or the profile's).
+- **omp session content is summarized as it is meant** — after `/clear`, the summary covers only what follows it, as omp's own compaction does. A python cell the user ran is one `>>> code (#N)` line, like a `!cmd`. omp's host reminders (developer messages) and the bodies of `@file` mentions are left out. Text an extension sent on the agent's behalf is not read as a user message. In `vcc_recall` these show as `[python]`, `[file]`, `[developer]` and `[custom]` entries instead of empty assistant ones.
+- **omp's edit and read tools are understood** — files changed by omp's hashline `edit` (`[path#TAG]` sections) appear in `[Files And Changes]`, in the transcript and in `mode:"touched"`, and a file read with a line selector (`src/a.ts:50-100`) is listed once, without it.
+- The Pi peer dependencies are now optional, so installing on omp does not pull in Pi. Pi resolves them to its own copies either way.
+
 ## [0.11.2]
 
 ### Fixes

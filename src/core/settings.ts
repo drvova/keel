@@ -1,11 +1,28 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { homedir } from "os";
 import { dirname, join } from "path";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
-export const SETTINGS_PATH_DEFAULT = join(getAgentDir(), "pi-vcc-config.json");
-const settingsPath = (): string => process.env.PI_VCC_CONFIG_PATH ?? SETTINGS_PATH_DEFAULT;
-/** Backwards-compat export. Resolves at access time, not import time. */
-export const SETTINGS_PATH = settingsPath();
+const SETTINGS_FILE = "pi-vcc-config.json";
+
+// The host's agent directory (Pi: ~/.pi/agent, omp: ~/.omp/agent, each with its
+// own overrides), set by the entry point so this module imports no host package.
+let agentDirResolver: (() => string) | undefined;
+
+/** Called once by each entry point with the host's getAgentDir; no argument restores the default. */
+export const setSettingsAgentDir = (resolve?: () => string): void => {
+  agentDirResolver = resolve;
+};
+
+/** Pi's own default, used only if no entry point configured a host. */
+const fallbackAgentDir = (): string => {
+  const env = process.env.PI_CODING_AGENT_DIR;
+  if (env) return env === "~" ? homedir() : env.startsWith("~/") ? join(homedir(), env.slice(2)) : env;
+  return join(homedir(), ".pi", "agent");
+};
+
+/** Resolved at every call: the env override and the host can change between loads. */
+export const settingsPath = (): string =>
+  process.env.PI_VCC_CONFIG_PATH ?? join((agentDirResolver ?? fallbackAgentDir)(), SETTINGS_FILE);
 
 export interface PiVccSettings {
   /**
@@ -109,7 +126,7 @@ export function loadSettings(): PiVccSettings {
 }
 
 /**
- * Ensure the config file (Pi's agent dir, or PI_VCC_CONFIG_PATH) exists with default keys.
+ * Ensure the config file (the host's agent dir, or PI_VCC_CONFIG_PATH) exists with default keys.
  * - File missing → create with full default block.
  * - File exists but invalid JSON → no-op (don't clobber user file).
  * - File exists and valid → fill in missing default keys, preserve existing values.

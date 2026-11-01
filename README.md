@@ -2,7 +2,7 @@
 
 [![npm](https://img.shields.io/npm/v/@sting8k/pi-vcc)](https://www.npmjs.com/package/@sting8k/pi-vcc)
 
-Algorithmic conversation compactor for [Pi](https://github.com/badlogic/pi-mono). No LLM calls: it builds the summary by extraction and formatting.
+Algorithmic conversation compactor for [Pi](https://github.com/badlogic/pi-mono) and [omp](https://github.com/can1357/oh-my-pi) (oh-my-pi). No LLM calls: it builds the summary by extraction and formatting.
 
 Inspired by [VCC](https://github.com/lllyasviel/VCC) (View-oriented Conversation Compiler).
 
@@ -45,6 +45,19 @@ Or try without installing:
 pi -e https://github.com/sting8k/pi-vcc
 ```
 
+### On omp
+
+```bash
+omp install npm:@sting8k/pi-vcc
+```
+
+omp loads pi-vcc's own omp entry, and everything below works the same there. The differences:
+
+- Config is in omp's agent directory (`~/.omp/agent`, or the active profile's).
+- For `/compact` and automatic compactions, pi-vcc stands in for the summary method omp picks from `compaction.methodOrder` (remote, snapcompact, handoff or soft). `shake`, which only trims tool output, still runs when omp reaches it first. On an overflow pi-vcc cannot cut, it steps aside so omp's own method recovers. With `overrideDefaultCompaction: false`, only `/pi-vcc` is handled.
+- While pi-vcc is installed, omp skips its background (speculative) compaction, as it does for any extension that handles compaction. pi-vcc's summary takes milliseconds, so there is no latency to hide.
+- After `/clear`, the summary covers only what follows it.
+
 ## Usage
 
 pi-vcc runs automatically when your context window fills up, or on demand:
@@ -54,7 +67,7 @@ pi-vcc runs automatically when your context window fills up, or on demand:
 
 With the default `keep:1`, a small tail is grown automatically (see `smartKeepTail`). To leave `/compact` and automatic compactions to Pi core, set `overrideDefaultCompaction: false`.
 
-On a short session `/pi-vcc` can answer "Nothing to compact yet" whatever `keep:N` says: Pi stops before any extension runs while the whole session still fits in the recent part it always keeps (`compaction.keepRecentTokens` in Pi's settings).
+On a short session `/pi-vcc` can answer "Nothing to compact yet" whatever `keep:N` says: Pi stops before any extension runs while the whole session still fits in the recent part it always keeps (`compaction.keepRecentTokens` in Pi's settings). omp does the same, with its own `compaction.keepRecentTokens`.
 
 ### Compacted message structure
 
@@ -150,7 +163,7 @@ No step calls a model, and token counts are estimated from the session's own num
 
 ## Config
 
-Config lives at `pi-vcc-config.json` in Pi's agent directory (`~/.pi/agent`, or `$PI_CODING_AGENT_DIR` if set) and is created with these defaults on first load:
+Config lives at `pi-vcc-config.json` in the host's agent directory (Pi: `~/.pi/agent`, or `$PI_CODING_AGENT_DIR` if set; omp: `~/.omp/agent`) and is created with these defaults on first load:
 
 ```json
 {
@@ -166,7 +179,7 @@ Config lives at `pi-vcc-config.json` in Pi's agent directory (`~/.pi/agent`, or 
 
 - **`overrideDefaultCompaction`** *(default `true`)*: pi-vcc handles `/pi-vcc`, `/compact` and automatic compactions. With `false` it only handles `/pi-vcc`. Existing config files keep their value.
 - **`smartKeepTail`** *(default `true`)*: if the `keep:1` tail is under 5k tokens, keep as many turns as fit in 25k. This is pi-vcc's own limit; Pi's `compaction.keepRecentTokens` does not change it. An explicit `keep:N` is always respected.
-- **`continueAfterThresholdCompact`** *(default `true`)*: after an automatic compaction, tell the agent to carry on instead of stopping. Only used on pi < 0.84.4; newer pi resumes on its own. `false` turns it off everywhere.
+- **`continueAfterThresholdCompact`** *(default `true`)*: after an automatic compaction, tell the agent to carry on instead of stopping. Only used on pi < 0.84.4; newer pi and omp resume on their own. `false` turns it off everywhere.
 - **`debug`** *(default `false`)*: write details of each compaction (message counts, cut, sections, token calibration) to `/tmp/pi-vcc-debug.json`.
 - **`skipForProviders`** *(default `[]`)*: providers for which pi-vcc steps aside, so another compaction extension can handle them. Compared case-insensitively with Pi's provider id (see `/model`; Grok is `xai`). Checked on every compaction; `/pi-vcc` always runs.
 - **`skipCustomTypes`** *(default `[]`)*: `customType` values of `custom_message` entries to leave out of the summary, for per-turn boilerplate other extensions inject (skill cards, guidance blocks). Exact, case-sensitive match; look for `"type":"custom_message"` in your session file to find the value. Only the summary input changes, not the cut.

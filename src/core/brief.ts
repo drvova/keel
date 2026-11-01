@@ -210,6 +210,12 @@ const compressBash = (raw: string): string => {
   return cmd;
 };
 
+/** A python cell as one line: its non-blank lines joined with `; `, capped like a bash command. */
+const compressCode = (raw: string): string => {
+  const cmd = raw.split("\n").map((l) => l.trim()).filter(Boolean).join("; ");
+  return cmd.length > BASH_CAP ? cmd.slice(0, BASH_CAP - 3) + "..." : cmd;
+};
+
 // ── tool summary ──
 
 const TOOL_SUMMARY_FIELDS: Record<string, string> = {
@@ -281,10 +287,10 @@ export const buildBriefSections = (blocks: NormalizedBlock[]): BriefLine[] => {
         break;
       }
       case "bash": {
-        const cmd = compressBash(b.command);
+        const cmd = b.lang === "python" ? compressCode(b.command) : compressBash(b.command);
         const ref = b.sourceIndex != null ? ` (#${b.sourceIndex})` : "";
         if (cmd) {
-          push("[user]", `$ ${cmd}${ref}`);
+          push("[user]", `${b.lang === "python" ? ">>>" : "$"} ${cmd}${ref}`);
         }
         lastHeader = "[user]";
         break;

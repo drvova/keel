@@ -24,6 +24,14 @@ const extractFilesFromContent = (content: Message["content"]): string[] => {
   return toolCallParts(content).flatMap((c) => extractPaths(c.arguments));
 };
 
+/** Paths of an omp fileMention message. */
+export const fileMentionPaths = (msg: unknown): string[] => {
+  const files = (msg as { files?: unknown }).files;
+  return Array.isArray(files)
+    ? files.map((f) => (f as { path?: unknown })?.path).filter((p): p is string => typeof p === "string" && p !== "")
+    : [];
+};
+
 export const renderMessage = (msg: Message, index: number, full = false): RenderedEntry => {
   if (msg.role === "user") {
     return { index, role: "user", summary: full ? textOf(msg.content) : clip(textOf(msg.content), 300) };
@@ -41,6 +49,23 @@ export const renderMessage = (msg: Message, index: number, full = false): Render
     const out = (msg as any).output ?? "";
     const text = full ? `$ ${cmd}\n${out}` : clip(`$ ${cmd}\n${out}`, 300);
     return { index, role: "bash", summary: text };
+  }
+  // omp roles. A python cell the user ran: code+output, like bashExecution.
+  if ((msg as any).role === "pythonExecution") {
+    const code = (msg as any).code ?? "";
+    const out = (msg as any).output ?? "";
+    const text = full ? `>>> ${code}\n${out}` : clip(`>>> ${code}\n${out}`, 300);
+    return { index, role: "python", summary: text };
+  }
+  // An @file mention: the paths it inlined (their contents are the files themselves).
+  if ((msg as any).role === "fileMention") {
+    const paths = fileMentionPaths(msg);
+    return { index, role: "file", summary: paths.map((p) => `@${p}`).join(" "), ...(paths.length > 0 && { files: paths }) };
+  }
+  // Host-written instruction turns and extension messages keep their own role.
+  if ((msg as any).role === "developer" || (msg as any).role === "custom") {
+    const text = full ? textOf(msg.content) : clip(textOf(msg.content), 300);
+    return { index, role: (msg as any).role, summary: text };
   }
   const text = full ? textOf(msg.content) : clip(textOf(msg.content), 300);
   const tools = toolCalls(msg.content);

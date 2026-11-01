@@ -1,5 +1,5 @@
 import type { FileOps, NormalizedBlock } from "../types";
-import { extractPaths } from "../core/tool-args";
+import { extractPaths, stripReadSelector } from "../core/tool-args";
 
 interface FileActivity {
   read: Set<string>;
@@ -68,7 +68,7 @@ export const extractFiles = (
   for (const b of blocks) {
     if (b.kind !== "tool_call") continue;
     for (const p of extractPaths(b.args)) {
-      if (matches(FILE_READ_TOOLS, b.name)) act.read.add(p);
+      if (matches(FILE_READ_TOOLS, b.name)) act.read.add(stripReadSelector(p));
       if (matches(FILE_WRITE_TOOLS, b.name)) act.modified.add(p);
       if (matches(FILE_CREATE_TOOLS, b.name)) act.created.add(p);
     }

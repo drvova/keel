@@ -1,6 +1,7 @@
 import type { Message } from "@earendil-works/pi-ai";
 
-export type CompactionReason = "manual" | "threshold" | "overflow";
+/** Pi reports the first three; omp also compacts when idle and after a cut-off ("incomplete") reply. */
+export type CompactionReason = "manual" | "threshold" | "overflow" | "idle" | "incomplete";
 
 export interface FileOps {
   readFiles?: string[];
@@ -16,4 +17,5 @@ export type NormalizedBlock =
   | { kind: "assistant"; text: string; sourceIndex?: number }
   | { kind: "tool_call"; name: string; args: Record<string, unknown>; sourceIndex?: number }
   | { kind: "tool_result"; name: string; text: string; sourceIndex?: number }
-  | { kind: "bash"; command: string; output: string; exitCode: number | undefined; sourceIndex?: number };
+  // A command the user ran themselves: Pi/omp `!cmd`, or (lang "python") an omp python cell.
+  | { kind: "bash"; command: string; output: string; exitCode: number | undefined; sourceIndex?: number; lang?: "python" };

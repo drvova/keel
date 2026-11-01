@@ -26,6 +26,12 @@ const normalizeOne = (msg: SessionMessageEntry["message"], msgIndex: number | un
     return [{ kind: "bash", command: cmd, output: out, exitCode: exit, sourceIndex: msgIndex }];
   }
 
+  // omp: a python cell the user ran themselves.
+  if ((msg as { role: string }).role === "pythonExecution") {
+    const py = msg as unknown as { code?: string; output?: string; exitCode?: number };
+    return [{ kind: "bash", command: py.code ?? "", output: py.output ?? "", exitCode: py.exitCode, sourceIndex: msgIndex, lang: "python" }];
+  }
+
   if (msg.role === "toolResult") {
     return [{
       kind: "tool_result",

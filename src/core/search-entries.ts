@@ -1,7 +1,7 @@
 import type { Message, ToolCall } from "@earendil-works/pi-ai";
-import type { RenderedEntry } from "./render-entries";
+import { fileMentionPaths, type RenderedEntry } from "./render-entries";
 import { textOf, isContentBearing, extractToolCallText, extractToolCallArgsText, clip } from "./content";
-import { extractPaths } from "./tool-args";
+import { extractPaths, hashlineEditPaths } from "./tool-args";
 
 export interface SearchHit extends RenderedEntry {
   /** Context snippet around the first matched term (only when query provided) */
@@ -350,6 +350,10 @@ const fullText = (msg: Message): string => {
   if ((msg as any).role === "bashExecution") {
     return `${(msg as any).command ?? ""} ${(msg as any).output ?? ""}`;
   }
+  if ((msg as any).role === "pythonExecution") {
+    return `${(msg as any).code ?? ""} ${(msg as any).output ?? ""}`;
+  }
+  if ((msg as any).role === "fileMention") return fileMentionPaths(msg).join(" ");
   if (msg.role === "toolResult" && msg.toolName?.toLowerCase() === RECALL_TOOL_NAME) {
     return "";
   }
@@ -373,7 +377,9 @@ export function getFileIndicators(msg: Message): { toolName: string; path: strin
     const args = part.arguments as Record<string, unknown>;
     const drillable = isContentBearing(args);
     // A multi-path edit tool: a script (`code`) edits the listed `paths`, so there is no per-file content.
-    if (!drillable && !(typeof args.code === "string" && Array.isArray(args.paths))) continue;
+    // Likewise omp's hashline edit, whose `input` patches the files named in its section headers.
+    const multiPathEdit = (typeof args.code === "string" && Array.isArray(args.paths)) || hashlineEditPaths(args).length > 0;
+    if (!drillable && !multiPathEdit) continue;
     const totalText = extractToolCallText(args);
     const nonEmpty = totalText.split("\n").filter((l) => l.trim().length > 0);
     for (const path of extractPaths(args)) {
