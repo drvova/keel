@@ -1,5 +1,6 @@
 import type { Message } from "@oh-my-pi/pi-ai";
 import { renderMessage, type RenderedEntry } from "./render-entries";
+import { isObject, readableMessage } from "./content";
 import { forEachJsonlLine } from "./jsonl";
 import { isCountedMessageEntry } from "./global-indices";
 
@@ -31,8 +32,15 @@ export const loadAllMessages = (
     const allowed = (!allowedEntryIds || allowedEntryIds.has(entry.id))
       && entry.message.role !== "system";
     if (allowed) {
-      rendered.push(renderMessage(entry.message, messageIndex, full));
-      rawMessages.push(entry.message);
+      // An entry that still cannot be rendered is left out, not the session:
+      // its #N stays taken, so every other ref still resolves.
+      try {
+        if (!isObject(entry.message)) throw new Error("not a message");
+        const message = readableMessage(entry.message);
+        const view = renderMessage(message, messageIndex, full);
+        rendered.push(view);
+        rawMessages.push(message);
+      } catch {}
     }
     messageIndex++;
   };

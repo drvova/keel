@@ -71,3 +71,19 @@ describe("token estimate", () => {
     expect(estimateMessageContentTokens("abcde")).toBe(2);
   });
 });
+
+// Seen in a sibling omp port's audit: omp's other message shapes carry their
+// text outside `content`, and measured 0, so a huge `!cmd` output was invisible
+// to the tail budget and smart keep.
+describe("estimateMessageChars", () => {
+  test("measures every shape omp writes, not only content", async () => {
+    const { estimateMessageChars } = await import("../src/core/token-estimate");
+    expect(estimateMessageChars({ role: "bashExecution", command: "cat big.log", output: "x".repeat(1000), exitCode: 0 })).toBe(1011);
+    expect(estimateMessageChars({ role: "pythonExecution", code: "print(1)", output: "1" })).toBe(9);
+    expect(estimateMessageChars({ role: "branchSummary", summary: "abc" })).toBe(3);
+    expect(estimateMessageChars({ role: "compactionSummary", summary: "abcd" })).toBe(4);
+    expect(estimateMessageChars({ role: "fileMention", files: [{ path: "a.md", content: "hello" }] })).toBe(9);
+    expect(estimateMessageChars({ role: "user", content: "hi" })).toBe(2);
+    expect(estimateMessageChars(null)).toBe(0);
+  });
+});

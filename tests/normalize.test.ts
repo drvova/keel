@@ -96,3 +96,16 @@ describe("normalize", () => {
 });
 
 
+
+describe("normalize with malformed entries", () => {
+  it("skips what it cannot read instead of throwing out of the compaction", () => {
+    const blocks = normalize([
+      { role: "user", content: [{ type: "text", text: "fix it" }, null, { type: "text" }] },
+      { role: "assistant", content: [null, { type: "toolCall", id: "t", name: null, arguments: null }, { type: "text", text: "ok" }] },
+      { role: "assistant", content: 42 },
+      null,
+    ] as any);
+    expect(blocks.map((b) => b.kind)).toEqual(["user", "tool_call", "assistant"]);
+    expect(blocks[1]).toMatchObject({ name: "unknown", args: {} });
+  });
+});

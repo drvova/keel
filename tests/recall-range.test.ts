@@ -323,3 +323,28 @@ describe("vcc_recall expand pairs only the call's own result", () => {
     expect(await recall(file, { expand: [3] }, ids)).toContain("NEW_RESULT");
   });
 });
+
+// From a sibling omp port's audit: one malformed entry threw out of search and
+// every vcc_recall query failed for the whole session.
+describe("vcc_recall with malformed entries", () => {
+  const entries = [
+    msg("m0", "user", "set up the deploy key rotation"),
+    msg("m1", "assistant", [null, { type: "toolCall", id: "t1", name: null, arguments: null }, { type: "text", text: "rotation scheduled weekly" }]),
+    msg("m2", "user", [{ type: "text", text: "and the vault path" }, null, { type: "text" }]),
+    msg("m3", "assistant", 42),
+    { type: "message", id: "m4", message: "not an object" },
+    msg("m5", "assistant", [{ type: "text", text: "vault path is /srv/vault" }]),
+    msg("m6", "user", "what did we settle on?"),
+  ];
+
+  it("search, expand, range and touched still work, and #N stays put", async () => {
+    const file = writeSession(entries);
+    const ids = entries.map((e) => e.id);
+    const search = await recall(file, { query: "vault path" }, ids);
+    expect(search).toContain("#5 [assistant] vault path is /srv/vault");
+    expect(await recall(file, { query: "rotation weekly" }, ids)).toContain("#1 [assistant]");
+    expect(await recall(file, { expand: [1] }, ids)).toContain("rotation scheduled weekly");
+    expect(await recall(file, { range: [0, 5] }, ids)).toContain("#5 [assistant] vault path is /srv/vault");
+    expect(await recall(file, { mode: "touched" }, ids)).not.toContain("TypeError");
+  });
+});

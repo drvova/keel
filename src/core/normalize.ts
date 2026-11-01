@@ -1,6 +1,6 @@
 import type { SessionMessageEntry } from "@oh-my-pi/pi-coding-agent";
 import type { NormalizedBlock } from "../types";
-import { textOf } from "./content";
+import { isObject, readableMessage, textOf } from "./content";
 import { sanitize } from "./sanitize";
 
 const normalizeOne = (
@@ -86,10 +86,11 @@ export const normalize = (
   // Calls whose result is an error, so the call itself can say so: the brief
   // shows calls, not results.
   const failedCallIds = new Set<string>();
-  for (const msg of messages) {
-    if (msg.role === "toolResult" && msg.isError === true && typeof msg.toolCallId === "string") failedCallIds.add(msg.toolCallId);
+  const readable = messages.map((msg) => (isObject(msg) ? (readableMessage(msg) as typeof msg) : undefined));
+  for (const msg of readable) {
+    if (msg?.role === "toolResult" && msg.isError === true && typeof msg.toolCallId === "string") failedCallIds.add(msg.toolCallId);
   }
-  return messages.flatMap((msg, i) => normalizeOne(msg, sourceIndices ? sourceIndices[i] : i, failedCallIds));
+  return readable.flatMap((msg, i) => (msg ? normalizeOne(msg, sourceIndices ? sourceIndices[i] : i, failedCallIds) : []));
 };
 
 
