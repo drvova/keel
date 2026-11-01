@@ -11,7 +11,7 @@ import { buildGlobalIndexById, loadGlobalIndexById } from "../core/global-indice
 import { parseKeepAndPrompt, OMP_VCC_COMPACT_INSTRUCTION } from "../core/compact-args";
 import { loadSettings, type VccSettings } from "../core/settings";
 import { calibrateCharsPerToken, DEFAULT_CHARS_PER_TOKEN, estimateMessageChars, estimateMessageTokens, estimateTokensFromChars } from "../core/token-estimate";
-import { compactionBudgets } from "../core/window";
+import { compactionBudgets, ompPolicyOf, type OmpCompactionPolicy } from "../core/window";
 import { modelKey } from "../core/model-limits";
 import { triggerFor, windowOf } from "./window-limits";
 import { VCC_COMPACTOR, vccDetailsOf, type VccCompactionDetails } from "../details";
@@ -83,6 +83,8 @@ export interface CompactionState {
   lastCancelNotice: string | null;
   /** omp's trigger as the last threshold pass measured it (its tokensBefore), for this model. */
   measuredTrigger: { key: string; tokens: number } | null;
+  /** omp's compaction policy as the last compaction carried it (preparation.settings), for this model. */
+  ompPolicy: { key: string | undefined; policy: OmpCompactionPolicy } | null;
   /** The compaction omp-vcc started itself (window-limits.ts), so the hook records why. */
   selfTrigger: CompactionTrigger | null;
   /** The note that omp's window is above the real one was shown. */
@@ -96,6 +98,7 @@ export const createCompactionState = (): CompactionState => ({
   pendingManualInstructions: null,
   lastCancelNotice: null,
   measuredTrigger: null,
+  ompPolicy: null,
   selfTrigger: null,
   windowNoticeShown: false,
 });
@@ -714,7 +717,7 @@ export const registerCompactionHook = (
 
     // Budgets from the model's real window and where the next compaction comes (core/window.ts).
     const window = windowOf(ctx?.model);
-    const trigger = triggerFor(window, state, modelKey(ctx?.model), reason, preparation.tokensBefore);
+    const trigger = triggerFor(window, state, modelKey(ctx?.model), reason, preparation.tokensBefore, ompPolicyOf(preparation.settings));
     const budgets = compactionBudgets(trigger, overheadTokens);
 
     // Smart keep-tail: boost default keep when the tail is small.

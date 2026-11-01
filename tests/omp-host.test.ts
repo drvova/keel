@@ -63,7 +63,8 @@ describe.skipIf(!ompInstalled)("omp host", () => {
       agentDir: process.env.PI_CODING_AGENT_DIR,
       sessionManager,
       // Let a short test session compact: omp keeps this much verbatim before any hook runs.
-      settings: omp.Settings.isolated({ "compaction.keepRecentTokens": 1 }),
+      // A threshold of the user's own: omp hands it to the hook, which sizes for it.
+      settings: omp.Settings.isolated({ "compaction.keepRecentTokens": 1, "compaction.thresholdPercent": 60 }),
       model,
       additionalExtensionPaths: [REPO],
       disableExtensionDiscovery: true,
@@ -114,6 +115,8 @@ describe.skipIf(!ompInstalled)("omp host", () => {
     const compaction = latestCompaction();
     expect(compaction.fromExtension).toBe(true);
     expect(compaction.details).toMatchObject({ compactor: "omp-vcc", reason: "manual", willRetry: false });
+    // omp's own trigger for this model under that setting, not omp-vcc's guess of omp's default.
+    expect(compaction.details.limits).toMatchObject({ contextWindow: model.contextWindow, trigger: Math.floor(model.contextWindow * 0.6) });
     expect(compaction.summary).toContain("- Modified: src/auth/session.ts");
     expect(compaction.summary).toContain("- Read: src/auth/session.ts\n");
     expect(compaction.summary).toMatch(/>>> print\(1\+1\) \(#\d+\)/);

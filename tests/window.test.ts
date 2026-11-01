@@ -11,8 +11,12 @@ import {
   effectiveWindow,
   limitFromOverflowError,
   ompDefaultTrigger,
+  ompPolicyOf,
+  ompTrigger,
   RECOVERY_BAND,
 } from "../src/core/window";
+// omp's own function, which omp-vcc ports since omp does not export it to extensions.
+import { resolveThresholdTokens } from "@oh-my-pi/pi-agent-core/compaction";
 import { learnedWindow, probeProviderWindow, recordLearnedWindow, resetProviderProbes } from "../src/core/model-limits";
 import { createCompactionState } from "../src/hooks/compaction";
 import { triggerFor, windowOf } from "../src/hooks/window-limits";
@@ -75,6 +79,39 @@ describe("ompDefaultTrigger", () => {
     expect(ompDefaultTrigger(1_000_000)).toBe(850_000);
     expect(ompDefaultTrigger(32_768)).toBe(16_384);
     expect(ompDefaultTrigger(16_384)).toBe(13_927);
+  });
+});
+
+describe("ompTrigger", () => {
+  it("is where omp compacts: the same as omp's resolveThresholdTokens for every policy and window", () => {
+    const policies: Record<string, unknown>[] = [
+      {},
+      { thresholdPercent: 70 },
+      { thresholdPercent: 0.5 },
+      { thresholdPercent: 120 },
+      { thresholdTokens: 90_000 },
+      { thresholdTokens: 2_000_000 },
+      { reserveTokens: 30_000 },
+      { reserveTokens: 16_384 },
+      { reserveTokens: 500_000 },
+      { baseWindowTokens: 64_000 },
+      { baseWindowTokens: 64_000, thresholdPercent: 50 },
+      { baseWindowTokens: 64_000, thresholdTokens: 90_000 },
+      { thresholdPercent: -1, thresholdTokens: -1 },
+    ];
+    for (const window of [4_096, 16_384, 32_768, 65_536, 128_000, 200_000, 1_000_000]) {
+      for (const p of policies) {
+        const settings = { enabled: true, keepRecentTokens: 20_000, ...p } as any;
+        expect({ window, p, trigger: ompTrigger(window, ompPolicyOf(settings)) }).toEqual({ window, p, trigger: resolveThresholdTokens(window, settings) });
+      }
+    }
+  });
+
+  it("reads only the policy fields from omp's settings", () => {
+    expect(ompPolicyOf({ enabled: false, strategy: "off", thresholdPercent: 80, reserveTokens: 20_000, keepRecentTokens: 9, remoteEndpoint: "x" }))
+      .toEqual({ enabled: false, strategy: "off", thresholdPercent: 80, reserveTokens: 20_000 });
+    expect(ompPolicyOf(undefined)).toBeUndefined();
+    expect(ompPolicyOf({ thresholdTokens: Number.NaN })).toEqual({});
   });
 });
 
@@ -188,10 +225,24 @@ describe("triggerFor", () => {
     expect(triggerFor(windowOf(model), createCompactionState(), "p/m", "overflow", 30_000)).toBe(30_000);
   });
 
+  it("omp's policy, as its compactions carry it, places the trigger, for that model only", () => {
+    const state = createCompactionState();
+    const w = windowOf(model);
+    expect(triggerFor(w, state, "p/m", "threshold", 70_000, { thresholdPercent: 50 })).toBe(64_000);
+    // A later pass without one (a /omp-vcc) keeps it; another model does not.
+    expect(triggerFor(w, state, "p/m", "manual", 40_000)).toBe(64_000);
+    expect(triggerFor(windowOf({ ...model, id: "n" }), state, "p/n", "manual", 40_000)).toBe(108_800);
+    expect(triggerFor(w, createCompactionState(), "p/m", "manual", 40_000, { thresholdTokens: 90_000 })).toBe(90_000);
+    expect(triggerFor(w, createCompactionState(), "p/m", "overflow", 30_000, { thresholdTokens: 90_000 })).toBe(30_000);
+  });
+
   it("when a smaller real window is known, omp's trigger is above it and omp-vcc's own applies", () => {
     recordLearnedWindow("p/m", 32_768);
     const w = windowOf(model);
     expect(w).toMatchObject({ omp: 128_000, learned: 32_768, effective: 32_768, source: "overflow-error" });
     expect(triggerFor(w, createCompactionState(), "p/m", "threshold", 100_000)).toBe(16_384);
+    // The user's own policy, on the real window: 80% of it, and a fixed 90K past it falls back as omp's does.
+    expect(triggerFor(w, createCompactionState(), "p/m", "threshold", 100_000, { thresholdPercent: 80 })).toBe(26_214);
+    expect(triggerFor(w, createCompactionState(), "p/m", "threshold", 100_000, { thresholdTokens: 90_000 })).toBe(16_384);
   });
 });

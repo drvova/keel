@@ -12,8 +12,10 @@
 // before on a typical 128K window, smaller below it, a larger summary far above it.
 //
 // The window itself is the smallest one known: omp's, the provider's /models
-// answer, and a limit an overflow error stated. Pure functions; the IO is in
-// model-limits.ts.
+// answer, and a limit an overflow error stated. The trigger is omp's own: its
+// compaction policy (threshold, reserve, the model's entry) arrives with every
+// compaction, and ompTrigger applies it to that window as omp does. Pure
+// functions; the IO is in model-limits.ts.
 
 /** Clamp `value` to [floor, ceiling], rounded. */
 const clampTokens = (value: number, floor: number, ceiling: number): number =>
@@ -84,17 +86,78 @@ export const effectiveWindow = (...windows: Array<number | undefined>): number |
 };
 
 /**
- * Where omp compacts on `window` with its default policy: the window less a
- * reserve of 15% of it or 16,384 tokens, whichever is larger, and 15% alone when
- * that reserve would not fit (compaction.ts resolveBudgetReserveTokens). A user's
- * threshold moves this; a threshold pass measures the real one (tokensBefore).
+ * omp's compaction policy for the current model, as omp hands it to extensions
+ * in `session_before_compact` (`preparation.settings`, pi-agent-core's
+ * CompactionSettings, with the model's `compaction.modelThresholds` entry
+ * already applied). Only the fields that decide where omp compacts.
  */
-export const ompDefaultTrigger = (window: number): number => {
-  const proportional = Math.max(1, Math.floor(window * 0.15));
-  let reserve = Math.max(proportional, 16_384);
-  if (reserve >= window - proportional) reserve = proportional;
-  return Math.max(1, Math.min(window - 1, window - reserve));
+export interface OmpCompactionPolicy {
+  enabled?: boolean;
+  strategy?: string;
+  /** Compact at this share of the window (1–99). */
+  thresholdPercent?: number;
+  /** Compact at this many tokens; wins over the percentage. */
+  thresholdTokens?: number;
+  /** A model entry's token count, standing in for the window under the percentage or the reserve. */
+  baseWindowTokens?: number;
+  /** Kept free below the window; unset means omp's default, which a small window may override. */
+  reserveTokens?: number;
+}
+
+/** omp's reserve when `reserveTokens` is unset (pi-agent-core DEFAULT_RESERVE_TOKENS). */
+const OMP_DEFAULT_RESERVE_TOKENS = 16_384;
+
+const finitePositive = (value: unknown): number | undefined =>
+  typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
+
+/** The policy fields in omp's `preparation.settings`, or undefined when there are none. */
+export const ompPolicyOf = (settings: unknown): OmpCompactionPolicy | undefined => {
+  if (!isRecord(settings)) return undefined;
+  const policy: OmpCompactionPolicy = {};
+  if (typeof settings.enabled === "boolean") policy.enabled = settings.enabled;
+  if (typeof settings.strategy === "string") policy.strategy = settings.strategy;
+  for (const key of ["thresholdPercent", "thresholdTokens", "baseWindowTokens", "reserveTokens"] as const) {
+    const n = settings[key];
+    if (typeof n === "number" && Number.isFinite(n)) policy[key] = n;
+  }
+  return policy;
 };
+
+/** Whether omp compacts on its own under this policy. */
+export const ompAutoCompacts = (policy: OmpCompactionPolicy | undefined): boolean =>
+  policy?.enabled !== false && policy?.strategy !== "off";
+
+/** The reserve below the window omp keeps (pi-agent-core resolveBudgetReserveTokens). */
+const ompReserve = (window: number, policy: OmpCompactionPolicy): number => {
+  const proportional = Math.max(1, Math.floor(window * 0.15));
+  const reserve = Math.max(Math.floor(window * 0.15), policy.reserveTokens ?? OMP_DEFAULT_RESERVE_TOKENS);
+  const defaulted = policy.reserveTokens === undefined;
+  return (defaulted && reserve >= window - proportional) || reserve >= window ? proportional : reserve;
+};
+
+const ompPromptBudget = (window: number, policy: OmpCompactionPolicy): number =>
+  Math.max(0, Math.min(window - 1, window - ompReserve(window, policy)));
+
+/**
+ * Where omp compacts on `window` under `policy`: pi-agent-core's
+ * resolveThresholdTokens, which omp does not export to extensions. A fixed
+ * token threshold is exact unless it is at or past the window (then the window
+ * less its reserve); otherwise a percentage of the window (or of a model
+ * entry's base), or by default the window less a reserve of 15% or 16,384
+ * tokens, whichever is larger (15% alone when that would not fit).
+ */
+export const ompTrigger = (window: number, policy: OmpCompactionPolicy = {}): number => {
+  const fixed = finitePositive(policy.thresholdTokens);
+  if (fixed) return fixed >= window ? ompPromptBudget(window, policy) : Math.min(window - 1, Math.max(1, fixed));
+  const base = finitePositive(policy.baseWindowTokens);
+  const scaled = base ? Math.min(window, base) : window;
+  const percent = finitePositive(policy.thresholdPercent);
+  if (!percent) return ompPromptBudget(scaled, policy);
+  return Math.floor(scaled * (Math.min(99, Math.max(1, percent)) / 100));
+};
+
+/** Where omp compacts on `window` with its default policy. */
+export const ompDefaultTrigger = (window: number): number => Math.max(1, ompTrigger(window));
 
 /** omp re-compacts unless the result lands at or under this share of the trigger. */
 export const RECOVERY_BAND = 0.8;
