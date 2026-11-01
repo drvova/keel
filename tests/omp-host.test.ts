@@ -6,7 +6,7 @@
 // Runs only where @oh-my-pi/pi-coding-agent is installed (it needs Bun >= 1.4.4):
 //   V=18.14.2; npm install --no-save --ignore-scripts --no-audit --no-fund @oh-my-pi/pi-coding-agent@$V
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join, resolve } from "path";
 
@@ -124,19 +124,6 @@ describe.skipIf(!ompInstalled)("omp host", () => {
     expect(notices.some((n) => n.startsWith("info: omp-vcc: kept 1/3 turns"))).toBe(true);
   });
 
-  test("omp-vcc names omp's settings that work around it, from what omp hands the hook, once", async () => {
-    // omp's defaults: shake, snapcompact, handoff and server compaction in the
-    // method order, and tool-result blanking on.
-    const advice = notices.filter((n) => n.includes("omp's own maintenance still works around omp-vcc"));
-    expect(advice).toHaveLength(1);
-    expect(advice[0]).toStartWith("warning: ");
-    expect(advice[0]).toContain(`omp config set compaction.methodOrder '["soft"]'`);
-    expect(advice[0]).toContain("omp config set compaction.supersedeReads false");
-    expect(advice[0]).toContain("omp config set compaction.dropUseless false");
-    // Off by default: nothing to say about it.
-    expect(advice[0]).not.toContain("experimentalContextManagement");
-  });
-
   test("omp's validator accepts what omp-vcc repairs, and vcc_recall resolves #N refs", async () => {
     const { validateToolArguments }: any = await import("@oh-my-pi/pi-ai/utils/validation" as string);
     const tool = session.getToolByName("vcc_recall");
@@ -197,5 +184,24 @@ describe.skipIf(!ompInstalled)("omp host", () => {
     const found = (await recall.execute("q", { query: "vault staging key revoked", scope: "project" }, undefined, undefined)).content[0].text;
     expect(found).toContain(`[session ${short}] #1 [assistant]`);
     await other.close?.();
+  });
+
+  test("what omp blanks in the session file, vcc_recall still reads, with nothing set in omp", async () => {
+    // omp tells extensions of a finished turn; omp-vcc copies what omp may rewrite from omp's own entries.
+    await session.extensionRunner.emit({ type: "turn_end", turnIndex: 0, message: undefined, toolResults: [] });
+    const file = sessionManager.getSessionFile();
+    expect(existsSync(`${file}.vcc-raw`)).toBe(true);
+    // As omp's prune does: blank the first read's output in place and persist the rewrite.
+    const entries = sessionManager.getEntries().filter((e: any) => e.type === "message");
+    const read = entries.find((e: any) => e.message.role === "toolResult" && e.message.toolCallId === "c1");
+    read.message.content = [{ type: "text", text: "[Output truncated - 400 tokens]" }];
+    read.message.prunedAt = Date.now();
+    await sessionManager.rewriteEntries();
+    expect(readFileSync(file, "utf8")).not.toContain("export function refresh() {}");
+    const recall = session.getToolByName("vcc_recall");
+    const index = entries.indexOf(read);
+    const expanded = (await recall.execute("x", { expand: [index] }, undefined, undefined)).content[0].text;
+    expect(expanded).toContain("export function refresh() {}");
+    expect(expanded).not.toContain("[Output truncated");
   });
 });

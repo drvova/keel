@@ -45,30 +45,12 @@ With the default `keep:1`, a small tail is grown automatically (see `smartKeepTa
 
 How it fits into omp:
 
-- omp-vcc handles `/compact` and every automatic compaction that reaches it. With omp's defaults, some of omp's own context maintenance works around it. omp-vcc does not change omp's settings; the first time a compaction shows one of these, it names them, with the commands that change them:
-
-  ```bash
-  omp config set compaction.methodOrder '["soft"]'
-  ```
-
-  ```bash
-  omp config set compaction.supersedeReads false
-  ```
-
-  ```bash
-  omp config set compaction.dropUseless false
-  ```
-
-  - `compaction.methodOrder`: `soft` is the method that hands each compaction to omp-vcc. `shake` runs before omp-vcc ever sees an overflow, and snapcompact, handoff or server compaction write their own summary whenever omp-vcc steps aside. With `skipForProviders` set, use `'["remote", "soft"]'`, so those providers keep their server compaction.
-  - `compaction.supersedeReads` and `compaction.dropUseless` blank older tool results in the session file, which `vcc_recall` reads.
-  - `compaction.experimentalContextManagement` (notes-backed context windows, off by default) replaces compaction with its own rollover; set it to `false` if you turned it on.
-
-  The same settings are under Context in `/settings`. `"checkOmpSettings": false` hides the notice. On an overflow omp-vcc cannot cut, it steps aside so omp's own method recovers.
+- Nothing needs setting in omp. Every omp method that writes a summary (server compaction, snapcompact, handoff, soft, notes-backed context windows) asks omp-vcc first and stays out of the way when it answers. On an overflow omp-vcc cannot cut (one running turn, nothing before it to summarize), it steps aside so omp's own recovery runs.
 - omp compacts between the tool calls of a turn. When that turn is all that is left in context and fits the tail budget, a threshold or idle pass waits until the turn ends instead of summarizing it away.
 - omp resumes the interrupted run itself after automatic compactions (`compaction.autoContinue`); omp-vcc sends no continue of its own.
 - While omp-vcc is installed, omp skips its background (speculative) compaction, as it does for any extension that handles compaction. omp-vcc's summary takes milliseconds, so there is no latency to hide.
 - After `/clear`, the summary, the history index and the pinned notes cover only what follows it.
-- Two of omp's in-place reductions have no setting and still run. omp shakes large tool output into `artifact://` files when a context is still above its recovery band after compacting, or has nothing to cut (one huge turn); `vcc_recall` then shows the reference, which the agent opens with `read`. And omp blanks old tool output in the live context to `[Output truncated - N tokens]` once that frees 20K tokens beyond the newest 40K of tool output; `vcc_recall` shows the placeholder for those results.
+- Between compactions, omp keeps the live context small by rewriting messages in place: it shakes tool output and large fenced blocks into `artifact://` files (on an overflow, before omp-vcc is asked), and blanks old, superseded or useless tool output in the session file. omp-vcc keeps the original of every message omp may rewrite, in `<session>.jsonl.vcc-raw` beside the session, as it lands, so `vcc_recall` searches and expands what was there (`keepOriginals`).
 - `vcc_recall` and `vcc_pin` are top-level tools with read-only approval: the summary tells the agent to call `vcc_recall` by name.
 
 In print mode (`omp -p "/omp-vcc"`), the commands report on stderr, since omp's print mode shows no notifications; stdout stays the model's.
@@ -211,7 +193,7 @@ Config lives at `omp-vcc-config.json` in omp's agent directory (`~/.omp/agent`, 
   "skipCustomTypes": [],
   "trackCommands": [],
   "probeProviderWindow": true,
-  "checkOmpSettings": true
+  "keepOriginals": true
 }
 ```
 
@@ -221,7 +203,7 @@ Config lives at `omp-vcc-config.json` in omp's agent directory (`~/.omp/agent`, 
 - **`skipForProviders`** *(default `[]`)*: providers for which omp-vcc steps aside, so omp's own method (or another compaction extension) handles them. Compared case-insensitively with omp's provider id (see `/model`). Checked on every compaction; `/omp-vcc` always runs.
 - **`skipCustomTypes`** *(default `[]`)*: `customType` values of `custom_message` entries to leave out of the summary, for per-turn boilerplate other extensions inject (skill cards, guidance blocks). Exact, case-sensitive match; look for `"type":"custom_message"` in your session file to find the value. Only the summary input changes, not the cut.
 - **`probeProviderWindow`** *(default `true`)*: ask the model's provider for its context length (`<baseUrl>/models`, OpenAI-compatible APIs, once per base URL, with omp's credentials for it). `false`: only omp's window and overflow errors (see [The model's context window](#the-models-context-window)).
-- **`checkOmpSettings`** *(default `true`)*: while omp-vcc handles compaction, say once per process which of omp's settings work around it, with the `omp config set` lines that change them (see [Usage](#usage)). omp-vcc never changes omp's settings itself.
+- **`keepOriginals`** *(default `true`)*: keep the original of every message omp may rewrite in place (tool output, long text blocks) in `<session>.jsonl.vcc-raw`, so `vcc_recall` reads what was there after omp blanks or shakes it (see [Usage](#usage)). Text over 1M chars per message is clipped; images are kept without their data. `false`: recall shows omp's placeholders.
 - **`trackCommands`** *(default `[]`)*: commands to remember across compactions, listed in a `[Tracked Commands]` section. Any command or prefix works: `["ssh", "kubectl", "docker"]`, `["psql", "./deploy.sh"]`, or `"gh pr"` (matches `gh pr merge`, not `gh run`). Each entry is the command as written, up to the next shell separator outside quotes, with any `sudo`/`env`/`VAR=` prefix kept; the 10 most recent per command are kept. Only `bash` calls are read, and only `ssh` remote commands are looked into, not `sh -c` or `docker exec`. Empty = off.
 
 ## Coming from pi-vcc

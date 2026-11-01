@@ -14,7 +14,6 @@ import { calibrateCharsPerToken, DEFAULT_CHARS_PER_TOKEN, estimateMessageChars, 
 import { compactionBudgets, ompPolicyOf, type OmpCompactionPolicy } from "../core/window";
 import { modelKey } from "../core/model-limits";
 import { triggerFor, windowOf } from "./window-limits";
-import { checkOmpSettings } from "./omp-settings";
 import { VCC_COMPACTOR, vccDetailsOf, type VccCompactionDetails } from "../details";
 import type { CompactionReason } from "../types";
 
@@ -690,8 +689,6 @@ export const registerCompactionHook = (
     const provider = ctx?.model?.provider;
     if (!fromCommand && typeof provider === "string" &&
         settings.skipForProviders.some((p) => p.toLowerCase() === provider.toLowerCase())) return;
-    // omp's maintenance that works around omp-vcc, named once (hooks/omp-settings.ts).
-    checkOmpSettings(preparation.settings, settings, ctx);
 
     const calibrationCut = buildOwnCut(host, branchEntries as any[], 0, []);
     const calibrationMessageChars = calibrationCut.ok
