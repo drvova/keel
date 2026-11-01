@@ -3,6 +3,7 @@ import { searchEntriesDetailed, getTouchedFiles, type SearchHit } from "./search
 import { formatRecallOutput, formatTouchedOutput, TOUCHED_PAGE_SIZE } from "./format-recall";
 import { getActiveLineageEntryIds, type LineageSessionManagerLike } from "./lineage";
 import { expandEntryFile } from "./drill-down";
+import { EXPAND_DETAIL_CHARS } from "./render-entries";
 import type { RecallScope } from "./recall-scope";
 import type { RecallRequest } from "./recall-request";
 import type { Message } from "@oh-my-pi/pi-ai";
@@ -24,6 +25,8 @@ export interface RecallView {
   /** Set when the view is over one of those earlier sessions instead of the current one. */
   session?: SessionInfo;
   load(full: boolean): LoadedMessages;
+  /** What expand shows of one call's arguments and of its paired result (expandDetailChars). */
+  detailChars: number;
   /** The same session with scope:'all' (itself when already 'all'). */
   widen(): RecallView;
   /**
@@ -49,7 +52,7 @@ export const openRecallView = (
   sessionFile: string,
   scope: RecallScope,
   sessionManager: LineageSessionManagerLike,
-  options: { project?: ProjectSessions; session?: SessionInfo } = {},
+  options: { project?: ProjectSessions; session?: SessionInfo; detailChars?: number } = {},
 ): RecallView => {
   // scope:'project' reads the current session on its current path, like lineage;
   // only its search reaches further.
@@ -62,10 +65,11 @@ export const openRecallView = (
     scope,
     ...(options.project ? { project: options.project } : {}),
     ...(options.session ? { session: options.session } : {}),
+    detailChars: options.detailChars ?? EXPAND_DETAIL_CHARS,
     load(full) {
       let loaded = cache.get(full);
       if (!loaded) {
-        loaded = loadAllMessages(sessionFile, full, lineageEntryIds);
+        loaded = loadAllMessages(sessionFile, full, lineageEntryIds, view.detailChars);
         cache.set(full, loaded);
       }
       return loaded;
@@ -83,12 +87,12 @@ export const openRecallView = (
 };
 
 /** A view over one of the project's earlier sessions, on its own active branch. */
-export const openSessionView = (session: SessionInfo, scope: RecallScope, project?: ProjectSessions): RecallView => {
+export const openSessionView = (session: SessionInfo, scope: RecallScope, project?: ProjectSessions, detailChars?: number): RecallView => {
   const ids = fileBranchIds(session.file);
   // A file without entry ids (an old format) has no branch to follow: read all of it.
   const effective = !ids?.size ? "all" : scope === "project" ? "lineage" : scope;
   const branch = [...(ids ?? [])].map((id) => ({ id }));
-  return openRecallView(session.file, effective, { getBranch: () => branch }, { project, session });
+  return openRecallView(session.file, effective, { getBranch: () => branch }, { project, session, detailChars });
 };
 
 /** "Session 01a194d8 · …" line that opens output read from an earlier session. */
@@ -237,8 +241,12 @@ const runAction = (request: RecallRequest, view: RecallView, hints: RecallPaging
   }
 };
 
-/** Tool output shown with an expanded call, clipped so one expand cannot flood the context. */
-export const PAIRED_RESULT_CHARS = 4000;
+/** Tool output shown with an expanded call under the 50 KB cap, clipped so one expand cannot flood the context. */
+export const PAIRED_RESULT_CHARS = EXPAND_DETAIL_CHARS;
+
+/** What expand shows of one call's arguments and of its result: the same share of a smaller cap (a smaller window) as 4,000 chars of 50 KB. */
+export const expandDetailChars = (maxChars: number = RECALL_OUTPUT_CHARS): number =>
+  Math.max(1, Math.round((maxChars * PAIRED_RESULT_CHARS) / RECALL_OUTPUT_CHARS));
 
 const toolCallIds = (msg: Message | undefined): string[] =>
   msg?.role === "assistant" && Array.isArray(msg.content)
@@ -284,8 +292,9 @@ const runExpand = (indices: number[], view: RecallView): string => {
       ids.delete(r.toolCallId);
       const res = rendered[j];
       if (requested.has(res.index)) continue;
-      const summary = res.summary.length > PAIRED_RESULT_CHARS
-        ? `${res.summary.slice(0, PAIRED_RESULT_CHARS)}\n...[result of #${entry.index} clipped at ${PAIRED_RESULT_CHARS} of ${res.summary.length} chars; expand:[${res.index}] for all of it]`
+      const clipAt = v.detailChars;
+      const summary = res.summary.length > clipAt
+        ? `${res.summary.slice(0, clipAt)}\n...[result of #${entry.index} clipped at ${clipAt} of ${res.summary.length} chars; expand:[${res.index}] for all of it]`
         : res.summary;
       out.push({ ...res, summary });
     }

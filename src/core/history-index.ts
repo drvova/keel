@@ -22,6 +22,7 @@ import { vccDetailsOf } from "../details";
 import { extractFiles } from "../extract/files";
 import { extractCommits } from "../extract/commits";
 import { extractUserMessages } from "../extract/user-messages";
+import { DEFAULT_SUMMARY_LIMITS } from "./window";
 
 export interface HistoryRange {
   /** First and last session-wide `#N` the range covers. */
@@ -41,7 +42,8 @@ export interface HistoryRange {
   failed: number;
 }
 
-export const MAX_RANGES = 8;
+/** Lines on a ~128K window; core/window.ts scales it with the model's window. */
+export const MAX_RANGES = DEFAULT_SUMMARY_LIMITS.historyRanges;
 const ASKS_KEPT = 4;
 const ASKS_SHOWN = 1;
 const ASK_CHARS = 80;
@@ -96,12 +98,12 @@ const saysNothing = (r: HistoryRange): boolean =>
   r.requests === 0 && r.files.length === 0 && r.commitCount === 0 && r.failed === 0;
 
 /**
- * Add this compaction's range and coarsen back to MAX_RANGES. The newest range
+ * Add this compaction's range and coarsen back to `maxRanges`. The newest range
  * never merges, so the work just summarized stays on a line of its own, unless
  * it has nothing to name (say the previous turn's final reply, kept by the last
  * compaction): then it is the end of the range before it, not a line of its own.
  */
-export const mergeHistoryIndex = (previous: HistoryRange[], fresh: HistoryRange | undefined): HistoryRange[] => {
+export const mergeHistoryIndex = (previous: HistoryRange[], fresh: HistoryRange | undefined, maxRanges = MAX_RANGES): HistoryRange[] => {
   const ranges = [...previous];
   const last = ranges[ranges.length - 1];
   if (fresh && last && saysNothing(fresh) && fresh.from <= last.to + 1 && fresh.to > last.to) {
@@ -110,7 +112,7 @@ export const mergeHistoryIndex = (previous: HistoryRange[], fresh: HistoryRange 
   }
   if (fresh) ranges.push(fresh);
   ranges.sort((a, b) => a.from - b.from);
-  while (ranges.length > MAX_RANGES) {
+  while (ranges.length > Math.max(2, maxRanges)) {
     let best = 0;
     let bestSpan = Infinity;
     for (let i = 0; i < ranges.length - 2; i++) {

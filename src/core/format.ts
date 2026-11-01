@@ -1,4 +1,5 @@
 import type { SectionData } from "../sections";
+import { DEFAULT_SUMMARY_LIMITS } from "./window";
 
 const section = (title: string, items: string[]): string => {
   if (items.length === 0) return "";
@@ -17,14 +18,15 @@ export const capItems = (items: readonly string[], limit: number, joinWith: stri
   return `(+${items.length - limit} earlier) ` + items.slice(-limit).join(joinWith);
 };
 
-/** Files listed per Files And Changes category; the newest are kept. */
-export const FILES_PER_CATEGORY = 10;
+/** Files listed per Files And Changes category on a ~128K window; the newest are kept. */
+export const FILES_PER_CATEGORY = DEFAULT_SUMMARY_LIMITS.filesPerCategory;
 
 /** Also strips the trailing "(+N more)" that older versions wrote. */
 export const stripCapMarker = (text: string): string =>
   text.replace(/^\s*\(\+\d+ earlier\)\s*/, "").replace(/\s*\(\+\d+ (?:more|earlier)\)\s*$/, "");
 
-export const BRIEF_MAX_LINES = 120;
+/** Brief transcript lines on a ~128K window. */
+export const BRIEF_MAX_LINES = DEFAULT_SUMMARY_LIMITS.briefLines;
 const TUI_SAFE_LINE_CHARS = 120;
 
 const wrapLine = (line: string, maxChars: number): string[] => {
@@ -53,11 +55,11 @@ const wrapLine = (line: string, maxChars: number): string[] => {
 export const wrapLongLines = (text: string, maxChars = TUI_SAFE_LINE_CHARS): string =>
   text.split("\n").flatMap((line) => wrapLine(line, maxChars)).join("\n");
 
-export const capBrief = (text: string): string => {
+export const capBrief = (text: string, maxLines = BRIEF_MAX_LINES): string => {
   const lines = text.split("\n");
-  if (lines.length <= BRIEF_MAX_LINES) return text;
-  const omitted = lines.length - BRIEF_MAX_LINES;
-  const kept = lines.slice(-BRIEF_MAX_LINES);
+  if (lines.length <= maxLines) return text;
+  const omitted = lines.length - maxLines;
+  const kept = lines.slice(-maxLines);
   // Find first section header to avoid cutting mid-section
   const firstHeader = kept.findIndex((l) => /^\[.+\]/.test(l));
   const clean = firstHeader > 0 ? kept.slice(firstHeader) : kept;
@@ -70,6 +72,8 @@ export const RECALL_NOTE =
 
 export interface FormatSummaryOptions {
   capBriefTranscript?: boolean;
+  /** The brief's line cap (BRIEF_MAX_LINES on a ~128K window). */
+  briefLines?: number;
 }
 
 export const formatSummary = (data: SectionData, options: FormatSummaryOptions = {}): string => {
@@ -87,7 +91,7 @@ export const formatSummary = (data: SectionData, options: FormatSummaryOptions =
     parts.push(headerParts.join("\n\n"));
   }
   if (data.briefTranscript) {
-    parts.push(capBriefTranscript ? capBrief(data.briefTranscript) : data.briefTranscript);
+    parts.push(capBriefTranscript ? capBrief(data.briefTranscript, options.briefLines) : data.briefTranscript);
   }
 
   if (parts.length === 0) return "";

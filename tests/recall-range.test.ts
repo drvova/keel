@@ -19,7 +19,7 @@ const writeSession = (entries: any[]) => {
 const msg = (id: string, role: string, content: unknown, extra: Record<string, unknown> = {}) =>
   ({ type: "message", id, message: { role, content, ...extra } });
 
-const recall = async (file: string, params: Record<string, unknown>, branch?: string[]) => {
+const recall = async (file: string, params: Record<string, unknown>, branch?: string[], model?: { contextWindow: number }) => {
   let tool: any;
   registerRecallTool({ registerTool: (t: any) => { tool = t; } } as any);
   const ids = branch ?? [];
@@ -29,6 +29,7 @@ const recall = async (file: string, params: Record<string, unknown>, branch?: st
       getBranch: () => ids.map((id) => ({ id })),
       getEntries: () => ids.map((id) => ({ id })),
     },
+    ...(model ? { model } : {}),
   });
   return result.content[0].text as string;
 };
@@ -176,6 +177,10 @@ describe("vcc_recall expand pairs a tool call with its result", () => {
     const both = await recall(file, { expand: [4, 5] }, ids);
     expect(both.match(/#5 \[tool_result\]/g)?.length).toBe(1);
     expect(both).not.toContain("clipped");
+
+    // A small window's smaller recall cap clips the paired result at the same share of it.
+    const small = await recall(file, { expand: [1] }, ids, { contextWindow: 16_384 });
+    expect(small).toContain("[result of #1 clipped at 640 of 10007 chars; expand:[3] for all of it]");
 
     const plainResult = await recall(file, { expand: [3] }, ids);
     expect(plainResult).toContain("#3 [tool_result]");
@@ -346,5 +351,21 @@ describe("vcc_recall with malformed entries", () => {
     expect(await recall(file, { expand: [1] }, ids)).toContain("rotation scheduled weekly");
     expect(await recall(file, { range: [0, 5] }, ids)).toContain("#5 [assistant] vault path is /srv/vault");
     expect(await recall(file, { mode: "touched" }, ids)).not.toContain("TypeError");
+  });
+});
+
+describe("vcc_recall expand on a small window", () => {
+  it("clips a call's arguments at the window's share and points a write at the file drill-down", async () => {
+    const entries = [
+      msg("u0", "user", "write the fixture"),
+      msg("a1", "assistant", [{ type: "toolCall", id: "w1", name: "write", arguments: { path: "fixture.json", content: "z".repeat(3_000) } }]),
+    ];
+    const file = writeSession(entries);
+    const ids = entries.map((e) => e.id);
+    const small = await recall(file, { expand: [1] }, ids, { contextWindow: 16_384 });
+    expect(small).toContain("...[arguments of #1 clipped at 640 of 3011 chars; query '#1:fixture.json:full' reads the file content]");
+    // Under the 50 KB cap the 3,000 chars fit whole.
+    expect(await recall(file, { expand: [1] }, ids)).not.toContain("clipped");
+    expect(await recall(file, { query: "#1:fixture.json:full" }, ids)).toContain("z".repeat(3_000));
   });
 });

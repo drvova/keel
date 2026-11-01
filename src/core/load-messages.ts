@@ -13,6 +13,8 @@ export const loadAllMessages = (
   sessionFile: string,
   full: boolean,
   allowedEntryIds?: Set<string>,
+  /** The full view's clip for one call's arguments (render-entries.ts EXPAND_DETAIL_CHARS). */
+  detailChars?: number,
 ): LoadedMessages => {
   const rendered: RenderedEntry[] = [];
   const rawMessages: Message[] = [];
@@ -37,7 +39,7 @@ export const loadAllMessages = (
       try {
         if (!isObject(entry.message)) throw new Error("not a message");
         const message = readableMessage(entry.message);
-        const view = renderMessage(message, messageIndex, full);
+        const view = renderMessage(message, messageIndex, full, detailChars);
         rendered.push(view);
         rawMessages.push(message);
       } catch {}

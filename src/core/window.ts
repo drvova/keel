@@ -6,10 +6,10 @@
 // the context must land inside omp's recovery band (80% of the trigger) or omp
 // treats it as a dead end and starts shaking tool output; a 25k-token kept tail
 // does that on a small window, and a 2k-token summary is needlessly thin on a
-// 1M one. So the tail, the smart-keep trigger and the summary budget are shares
-// of the trigger, clamped like the recall cap (recallOutputChars): the same
-// numbers as before on a typical 128K window, smaller below it, a larger summary
-// ceiling far above it.
+// 1M one. So the tail, the smart-keep trigger, the summary budget, the size of
+// each summary section and the growth a summary may add are shares of the
+// trigger, clamped like the recall cap (recallOutputChars): the same numbers as
+// before on a typical 128K window, smaller below it, a larger summary far above it.
 //
 // The window itself is the smallest one known: omp's, the provider's /models
 // answer, and a limit an overflow error stated. Pure functions; the IO is in
@@ -102,8 +102,42 @@ export const RECOVERY_BAND = 0.8;
 const LANDING_SHARE = 0.6;
 /** The kept tail is at most this share of the trigger. */
 const TAIL_SHARE = 0.25;
-/** A rough allowance for the summary's sections around the brief. */
+/** A rough allowance for the summary's sections around the brief, at full size. */
 const SECTIONS_TOKENS = 600;
+/** omp's trigger on a 128K window: where the fixed numbers were tuned. */
+const REFERENCE_TRIGGER = ompDefaultTrigger(128_000);
+
+/** How many items each summary section keeps. */
+export interface SummaryLimits {
+  /** [User Messages] lines. */
+  userMessages: number;
+  /** Paths per [Files And Changes] category. */
+  filesPerCategory: number;
+  /** [Commits] lines. */
+  commits: number;
+  /** [History Index] lines. */
+  historyRanges: number;
+  /** Brief transcript lines, a merged one included. */
+  briefLines: number;
+}
+
+/** The section sizes from before the window was known; still those of a ~128K window. */
+export const DEFAULT_SUMMARY_LIMITS: SummaryLimits = {
+  userMessages: 15,
+  filesPerCategory: 10,
+  commits: 8,
+  historyRanges: 8,
+  briefLines: 120,
+};
+
+/** Never fewer than these, however small the window. */
+const SUMMARY_LIMIT_FLOORS: SummaryLimits = {
+  userMessages: 4,
+  filesPerCategory: 3,
+  commits: 2,
+  historyRanges: 3,
+  briefLines: 30,
+};
 
 export interface CompactionBudgets {
   /** Largest kept tail (smart keep-tail growth, token-budget cuts). */
@@ -113,6 +147,14 @@ export interface CompactionBudgets {
   /** The ranked brief's floor and ceiling. */
   briefTokens: number;
   briefCeilingTokens: number;
+  /**
+   * Chars a summary may add beyond what it replaces before it is not written
+   * (or a share of the prefix, when larger): its framing, which grows with its sections.
+   */
+  growthMarginChars: number;
+  /** Section sizes; summaryScale of the defaults. */
+  summary: SummaryLimits;
+  summaryScale: number;
 }
 
 /** The fixed values from before the window was known; still the budgets for a ~128K window. */
@@ -121,6 +163,30 @@ export const DEFAULT_BUDGETS: CompactionBudgets = {
   minTailTokens: 5_000,
   briefTokens: 1_100,
   briefCeilingTokens: 2_000,
+  growthMarginChars: 500,
+  summary: { ...DEFAULT_SUMMARY_LIMITS },
+  summaryScale: 1,
+};
+
+/**
+ * How much of each section list a summary keeps, against a ~128K window. Below
+ * it, the square root of the trigger's share (a 32K window keeps about 40%),
+ * never under a quarter: a small window needs the room, but the lists are
+ * where a long task keeps its bearings. Above it, nothing changes until the
+ * brief's ceiling grows (a trigger past 500K), then the lists grow with it.
+ */
+export const summaryScale = (trigger: number, briefCeilingTokens: number): number =>
+  trigger < REFERENCE_TRIGGER
+    ? Math.max(0.25, Math.sqrt(trigger / REFERENCE_TRIGGER))
+    : Math.max(1, briefCeilingTokens / DEFAULT_BUDGETS.briefCeilingTokens);
+
+/** The default section sizes scaled by `scale`, each at or above its floor. */
+export const summaryLimits = (scale: number): SummaryLimits => {
+  const limits = { ...DEFAULT_SUMMARY_LIMITS };
+  for (const key of Object.keys(limits) as Array<keyof SummaryLimits>) {
+    limits[key] = Math.max(SUMMARY_LIMIT_FLOORS[key], Math.round(DEFAULT_SUMMARY_LIMITS[key] * scale));
+  }
+  return limits;
 };
 
 /**
@@ -131,15 +197,19 @@ export const DEFAULT_BUDGETS: CompactionBudgets = {
  */
 export const compactionBudgets = (trigger?: number, overheadTokens = 0): CompactionBudgets => {
   const t = positive(trigger);
-  if (!t) return { ...DEFAULT_BUDGETS };
+  if (!t) return { ...DEFAULT_BUDGETS, summary: { ...DEFAULT_SUMMARY_LIMITS } };
   const briefCeilingTokens = Math.round(Math.min(0.1 * t, clampTokens(0.004 * t, DEFAULT_BUDGETS.briefCeilingTokens, 6_000)));
   const briefTokens = Math.round(Math.min(DEFAULT_BUDGETS.briefTokens, 0.06 * t, briefCeilingTokens));
-  const room = LANDING_SHARE * t - Math.max(0, overheadTokens) - briefCeilingTokens - SECTIONS_TOKENS;
+  const scale = summaryScale(t, briefCeilingTokens);
+  const room = LANDING_SHARE * t - Math.max(0, overheadTokens) - briefCeilingTokens - SECTIONS_TOKENS * scale;
   const maxTailTokens = clampTokens(Math.min(TAIL_SHARE * t, room), 1_000, DEFAULT_BUDGETS.maxTailTokens);
   return {
     maxTailTokens,
     minTailTokens: Math.round(maxTailTokens / 5),
     briefTokens,
     briefCeilingTokens,
+    growthMarginChars: Math.round(DEFAULT_BUDGETS.growthMarginChars * Math.max(1, scale)),
+    summary: summaryLimits(scale),
+    summaryScale: Math.round(scale * 100) / 100,
   };
 };

@@ -1145,3 +1145,31 @@ describe("compaction hook: growth guard", () => {
     expect(invokeBefore(makeEvent(long, undefined, { reason: "threshold" })).compaction).toBeDefined();
   });
 });
+
+describe("compaction hook: section sizes follow the window", () => {
+  afterEach(() => {
+    if (existsSync(CONFIG_PATH)) unlinkSync(CONFIG_PATH);
+  });
+
+  const session = () => Array.from({ length: 24 }, (_, i) => [
+    msg(`u${i}`, "user", `please update module ${i} and keep its public API stable`),
+    msg(`a${i}`, "assistant", `Updated module ${i}. ${"The change keeps every exported name and signature as it was. ".repeat(4)}`),
+  ]).flat();
+  const userLines = (summary: string) => (summary.split("[User Messages]\n")[1] ?? "").split("\n\n")[0].split("\n").filter((l) => l.startsWith("- ")).length;
+
+  test("a small window keeps fewer user messages, and the details say by how much", () => {
+    setConfig({ overrideDefaultCompaction: true });
+    const typical = createMockOmp();
+    register(typical.pi);
+    const big = typical.invokeBefore(makeEvent(session(), "keep:1"));
+    expect(userLines(big.compaction.summary)).toBe(15);
+    expect(big.compaction.details.limits.summaryScale).toBeUndefined();
+
+    const small = createMockOmp();
+    small.ctx.model = { contextWindow: 16_384 };
+    register(small.pi);
+    const out = small.invokeBefore(makeEvent(session(), "keep:1"));
+    expect(userLines(out.compaction.summary)).toBe(5);
+    expect(out.compaction.details.limits).toMatchObject({ contextWindow: 16_384, summaryScale: 0.36 });
+  });
+});

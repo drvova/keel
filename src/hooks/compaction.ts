@@ -622,7 +622,8 @@ const measuredOverheadTokens = (branchEntries: any[]): number | undefined => {
   return undefined;
 };
 
-/** Growth a summary may add before it is not worth writing: fixed framing, or a share of what it replaces. */
+/** Growth a summary may add before it is not worth writing: its framing (the
+ * budgets' growthMarginChars, 500 up to a very large window), or a share of what it replaces. */
 const GROWTH_MARGIN_CHARS = 500;
 const GROWTH_MARGIN_SHARE = 0.25;
 
@@ -640,9 +641,14 @@ export interface SummaryGrowth {
  * and compact", a session barely past a low threshold) can be smaller than the
  * sections and brief that would replace it.
  */
-export const summaryGrowth = (summaryChars: number, previousSummaryChars: number, prefixChars: number): SummaryGrowth => {
+export const summaryGrowth = (
+  summaryChars: number,
+  previousSummaryChars: number,
+  prefixChars: number,
+  marginChars = GROWTH_MARGIN_CHARS,
+): SummaryGrowth => {
   const netChars = summaryChars - previousSummaryChars - prefixChars;
-  const allowedChars = Math.max(GROWTH_MARGIN_CHARS, Math.round(prefixChars * GROWTH_MARGIN_SHARE));
+  const allowedChars = Math.max(marginChars, Math.round(prefixChars * GROWTH_MARGIN_SHARE));
   return { netChars, allowedChars, grows: netChars > allowedChars };
 };
 
@@ -922,6 +928,7 @@ export const registerCompactionHook = (
       ? mergeHistoryIndex(
           storedIndex ?? (windowRange.from > 0 ? [unindexedRange(windowRange.from - 1)] : []),
           windowRange,
+          budgets.summary.historyRanges,
         )
       : undefined;
 
@@ -939,6 +946,7 @@ export const registerCompactionHook = (
         writtenFiles: [...preparation.fileOps.written],
       },
       trackCommands: settings.trackCommands,
+      limits: budgets.summary,
       ranking: {
         maxBriefChars: Math.round(RANKED_BRIEF_BUDGET_TOKENS * tokenEstimate.charsPerToken),
         maxBriefCharsCeiling: Math.round(RANKED_BRIEF_CEILING_TOKENS * tokenEstimate.charsPerToken),
@@ -954,6 +962,7 @@ export const registerCompactionHook = (
       summary.length,
       typeof preparation.previousSummary === "string" ? preparation.previousSummary.length : 0,
       ownCut.messages.reduce((sum: number, m: any) => sum + estimateMessageChars(m), 0),
+      budgets.growthMarginChars,
     );
     if (growth.grows) {
       state.pendingFollowUpPrompt = null;
@@ -1019,6 +1028,7 @@ export const registerCompactionHook = (
         ...(overheadTokens ? { overheadTokens } : {}),
         maxTailTokens: budgets.maxTailTokens,
         briefCeilingTokens: budgets.briefCeilingTokens,
+        ...(budgets.summaryScale !== 1 ? { summaryScale: budgets.summaryScale } : {}),
       },
     };
 
