@@ -6,6 +6,7 @@ import { scaffoldSettings, setSettingsAgentDir } from "./src/core/settings";
 import { createCompactionState, registerCompactionHook } from "./src/hooks/compaction";
 import { createOmpCompactionHost, trackOmpCompactionTrigger } from "./src/hooks/omp-host";
 import { registerWindowTracking } from "./src/hooks/window-limits";
+import { registerOmpSettings } from "./src/hooks/omp-settings";
 import { registerOmpVccCommand } from "./src/commands/omp-vcc";
 import { registerVccRecallCommand } from "./src/commands/vcc-recall";
 import { registerPinCommands } from "./src/commands/pin";
@@ -19,6 +20,7 @@ export default (pi: ExtensionAPI) => {
   const host = createOmpCompactionHost(pi, trackOmpCompactionTrigger(pi));
   registerCompactionHook(pi, host, state);
   registerWindowTracking(pi, state);
+  registerOmpSettings(pi);
   registerOmpVccCommand(pi, state);
   registerVccRecallCommand(pi);
   registerRecallTool(pi);
