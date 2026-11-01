@@ -44,9 +44,13 @@ describe.skipIf(!ompInstalled)("omp host", () => {
 
   beforeAll(async () => {
     work = mkdtempSync(join(tmpdir(), "omp-vcc-omp-host-"));
-    for (const key of ["PI_CODING_AGENT_DIR", "OMP_VCC_CONFIG_PATH"]) savedEnv[key] = process.env[key];
+    for (const key of ["PI_CODING_AGENT_DIR", "OMP_VCC_CONFIG_PATH", "ANTHROPIC_API_KEY"]) savedEnv[key] = process.env[key];
     process.env.PI_CODING_AGENT_DIR = join(work, "agent");
     process.env.OMP_VCC_CONFIG_PATH = join(work, "omp-vcc-config.json");
+    // omp runs an automatic pass only through a method its model can use, which
+    // needs a credential for the model's provider. Nothing is sent with it: the
+    // compaction is omp-vcc's. Without it, CI (no key at all) skipped the idle pass.
+    process.env.ANTHROPIC_API_KEY ??= "omp-vcc-test-not-a-key";
 
     omp = await import("@oh-my-pi/pi-coding-agent");
     const { getBundledModels }: any = await import("@oh-my-pi/pi-catalog/models" as string);
