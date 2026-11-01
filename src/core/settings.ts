@@ -83,15 +83,14 @@ export interface VccSettings {
    */
   probeProviderWindow: boolean;
   /**
-   * When true (default) and omp-vcc handles compaction, omp's own context
-   * maintenance that works around it is turned off for the process, in omp's
-   * runtime settings layer (never written to omp's config): compaction methods
-   * other than the one omp-vcc's hook answers (shake ran before the hook),
-   * notes-backed context rollover, and the blanking of superseded or useless
-   * tool results in the session file, which vcc_recall reads
-   * (hooks/omp-settings.ts). false: omp's settings as configured.
+   * When true (default) and omp-vcc handles compaction, say once per process
+   * which of omp's settings work around it (compaction methods other than the
+   * one that asks omp-vcc, notes-backed context rollover, the blanking of tool
+   * results in the session file vcc_recall reads), with the `omp config set`
+   * lines that change them (hooks/omp-settings.ts). omp-vcc never changes
+   * omp's settings itself.
    */
-  exclusiveCompaction: boolean;
+  checkOmpSettings: boolean;
 }
 
 export const DEFAULT_SETTINGS: VccSettings = {
@@ -102,7 +101,7 @@ export const DEFAULT_SETTINGS: VccSettings = {
   skipCustomTypes: [],
   trackCommands: [],
   probeProviderWindow: true,
-  exclusiveCompaction: true,
+  checkOmpSettings: true,
 };
 
 const readJson = (path: string): Record<string, unknown> | null => {

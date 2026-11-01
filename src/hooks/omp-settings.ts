@@ -1,4 +1,5 @@
-// While omp-vcc compacts, omp's own context maintenance must not work around it.
+// omp's own context maintenance that works around omp-vcc, and how omp-vcc
+// says so.
 //
 // omp walks `compaction.methodOrder` on every automatic pass. Each method but
 // one asks the session_before_compact hook first and stands down when omp-vcc
@@ -8,180 +9,109 @@
 // `compaction.experimentalContextManagement` replaces compaction with a
 // notes-backed rollover. `compaction.supersedeReads` and `compaction.dropUseless`
 // blank tool results in the session file, which vcc_recall reads as the raw
-// history. So while omp-vcc handles compaction, these are set in omp's runtime
-// settings layer: in memory for this process, never written to omp's config,
-// cleared again when omp-vcc stops handling compaction.
+// history.
 //
-// The handles come from omp's settings registry
-// (`@oh-my-pi/pi-coding-agent/config/registry`, `lookup(id)`), which omp's
-// extension docs name for runtime overrides, with `pi.pi.settings` as the
-// scope; omp maps the import onto its own module instance. It is the only
-// package omp-vcc imports at runtime, dynamically and behind a check: an omp
-// without it keeps its settings, and omp-vcc says which ones to change.
+// omp-vcc does not change omp's settings: an extension reaches them only
+// through omp's settings registry, a package import, and omp-vcc imports none at
+// runtime. It reads them where omp hands them over, in every compaction's
+// `preparation.settings` (the model's whole compaction policy), and sees a
+// shake in `auto_compaction_start`. Once per process, it names the settings that
+// work around it, with the `omp config set` lines that change them
+// (omp's settings.md); the user decides.
 //
-// Not covered, as omp has no setting for it: the age-based prune of old tool
-// output (past the newest 40K tool tokens, when it frees 20K) still runs
-// before each threshold check.
+// Not covered by any setting: omp's age-based prune of old tool output (past
+// the newest 40K tool tokens, when it frees 20K) runs before each threshold
+// check, and its dead-end shake when a context stays above the recovery band.
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { loadSettings, type VccSettings } from "../core/settings";
 
-/** What omp-vcc needs of one of omp's setting handles. */
-export interface SettingHandle {
-  get(scope: unknown): unknown;
-  override(scope: unknown, value: unknown): void;
-  clearOverride(scope: unknown): void;
-  isConfigured(scope: unknown): boolean;
-  provenance?(scope: unknown): string;
-}
-
-export type SettingLookup = (id: string) => SettingHandle | undefined;
-
-export interface OmpOverride {
+export interface OmpSettingAdvice {
   id: string;
-  value: unknown;
-  /** Why omp-vcc turns it off, for the notice. */
+  current: unknown;
+  recommended: unknown;
+  /** What it does around omp-vcc, for the notice. */
   why: string;
 }
 
-/** What omp-vcc sets while it compacts. `remote` stays first for the providers omp-vcc defers to (skipForProviders). */
-export const exclusiveOverrides = (settings: Pick<VccSettings, "skipForProviders">): OmpOverride[] => [
+const METHODS_WITHOUT_OMP_VCC = "runs shake before omp-vcc on an overflow, and snapcompact, handoff or server compaction when it steps aside";
+
+/** omp's settings that leave compaction to omp-vcc. `remote` stays for the providers omp-vcc defers to (skipForProviders). */
+export const recommendedOmpSettings = (settings: Pick<VccSettings, "skipForProviders">): Array<Omit<OmpSettingAdvice, "current">> => [
   {
     id: "compaction.methodOrder",
-    value: settings.skipForProviders.length > 0 ? ["remote", "soft"] : ["soft"],
-    why: "every automatic compaction goes to omp-vcc",
+    recommended: settings.skipForProviders.length > 0 ? ["remote", "soft"] : ["soft"],
+    why: METHODS_WITHOUT_OMP_VCC,
   },
-  { id: "compaction.experimentalContextManagement", value: false, why: "its rollover replaces compaction" },
-  { id: "compaction.supersedeReads", value: false, why: "it blanks tool results vcc_recall reads" },
-  { id: "compaction.dropUseless", value: false, why: "it blanks tool results vcc_recall reads" },
+  { id: "compaction.experimentalContextManagement", recommended: false, why: "replaces compaction with a rollover" },
+  { id: "compaction.supersedeReads", recommended: false, why: "blanks older reads in the session file vcc_recall reads" },
+  { id: "compaction.dropUseless", recommended: false, why: "blanks tool results in the session file vcc_recall reads" },
 ];
 
-/** The ids of every setting omp-vcc may override, so a change of settings can release them. */
-const OVERRIDE_IDS = exclusiveOverrides({ skipForProviders: [] }).map((o) => o.id);
-
-const same = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
-
-export interface OverrideOutcome {
-  /** Overrides set now (the value differed). */
-  set: string[];
-  /** Of those, the ones the user had configured themselves, with their value. */
-  replaced: Array<{ id: string; from: unknown }>;
-  /** Overrides released because omp-vcc no longer handles compaction. */
-  cleared: string[];
-}
-
 /**
- * Set (enabled) or release (disabled) omp-vcc's overrides on `scope`. `owned`
- * holds the ids omp-vcc set, so it releases only its own and never a runtime
- * value something else set.
+ * The settings in omp's `preparation.settings` that work around omp-vcc. A
+ * method order works around it when it holds a method besides the recommended
+ * ones; a key omp does not send is not judged.
  */
-export const applyOverrides = (
-  lookup: SettingLookup,
-  scope: unknown,
-  overrides: OmpOverride[] | null,
-  owned: Set<string>,
-): OverrideOutcome => {
-  const outcome: OverrideOutcome = { set: [], replaced: [], cleared: [] };
-  const wanted = new Map((overrides ?? []).map((o) => [o.id, o]));
-  for (const id of OVERRIDE_IDS) {
-    const handle = lookup(id);
-    if (!handle) continue; // an omp without this setting has nothing to turn off
-    const override = wanted.get(id);
-    try {
-      if (!override) {
-        if (owned.delete(id)) {
-          handle.clearOverride(scope);
-          outcome.cleared.push(id);
-        }
-        continue;
-      }
-      const current = handle.get(scope);
-      if (same(current, override.value)) continue;
-      const configured = handle.isConfigured(scope) && handle.provenance?.(scope) !== "runtime";
-      handle.override(scope, override.value);
-      owned.add(id);
-      outcome.set.push(id);
-      if (configured) outcome.replaced.push({ id, from: current });
-    } catch {}
+export const ompSettingsAdvice = (ompSettings: unknown, settings: Pick<VccSettings, "skipForProviders">): OmpSettingAdvice[] => {
+  if (!ompSettings || typeof ompSettings !== "object") return [];
+  const given = ompSettings as Record<string, unknown>;
+  const advice: OmpSettingAdvice[] = [];
+  for (const rec of recommendedOmpSettings(settings)) {
+    const key = rec.id.slice("compaction.".length);
+    if (!(key in given)) continue;
+    const current = given[key];
+    const differs = Array.isArray(rec.recommended)
+      ? Array.isArray(current) && current.some((m) => !(rec.recommended as unknown[]).includes(m))
+      : current === true;
+    if (differs) advice.push({ ...rec, current });
   }
-  return outcome;
+  return advice;
 };
 
-/** omp's settings registry, or undefined when this omp has none an extension can reach. */
-export const loadOmpSettingLookup = async (): Promise<SettingLookup | undefined> => {
-  try {
-    const registry: { lookup?: unknown } = await import("@oh-my-pi/pi-coding-agent/config/registry");
-    return typeof registry.lookup === "function" ? (registry.lookup as SettingLookup) : undefined;
-  } catch {
-    return undefined;
-  }
-};
+/** `omp config set` takes an array as JSON (omp's settings.md, value parsing). */
+const configSetLine = (a: Pick<OmpSettingAdvice, "id" | "recommended">): string =>
+  `omp config set ${a.id} ${Array.isArray(a.recommended) ? `'${JSON.stringify(a.recommended)}'` : String(a.recommended)}`;
 
-// omp's settings are one store for the process, shared by every session's
-// binding (subagents read through to it), so what omp-vcc set is tracked here.
-const owned = new Set<string>();
+export const ompSettingsNotice = (advice: OmpSettingAdvice[]): string =>
+  `omp-vcc: omp's own maintenance still works around omp-vcc: ` +
+  advice.map((a) => `${a.id} ${a.why}`).join("; ") +
+  `. To leave it to omp-vcc, run ${advice.map(configSetLine).join(" and ")}, or change them in /settings (Context). ` +
+  `"checkOmpSettings": false in omp-vcc's config hides this.`;
+
+// One notice per process: omp's settings are one store, shared by every
+// session's binding (subagents included).
 let noticeShown = false;
 
-const describeValue = (value: unknown): string => (Array.isArray(value) ? `[${value.join(", ")}]` : String(value));
-
-const replacedNotice = (replaced: OverrideOutcome["replaced"], overrides: OmpOverride[]): string =>
-  `omp-vcc: compacting for omp in this process, so it turned off ` +
-  replaced
-    .map(({ id, from }) => {
-      const o = overrides.find((x) => x.id === id)!;
-      return `${id} (${describeValue(from)} → ${describeValue(o.value)}: ${o.why})`;
-    })
-    .join(", ") +
-  `. Your omp config is unchanged; "exclusiveCompaction": false in omp-vcc's config keeps it as configured.`;
-
-const unreachableNotice = (overrides: OmpOverride[]): string =>
-  `omp-vcc: this omp does not let it change its settings, so omp's own maintenance still runs around omp-vcc. ` +
-  `For omp-vcc to handle all of it, set ${overrides.map((o) => `${o.id}: ${JSON.stringify(o.value)}`).join(", ")} in omp's config.`;
-
 /**
- * Bring omp's settings in line with omp-vcc's: on every session start, set the
- * overrides while omp-vcc handles compaction (overrideDefaultCompaction and
- * exclusiveCompaction), release them otherwise.
+ * Called by the compaction hook with omp's settings: notify once when, while
+ * omp-vcc handles compaction, they work around it.
  */
-export const registerOmpSettings = (pi: ExtensionAPI, lookupLoader: () => Promise<SettingLookup | undefined> = loadOmpSettingLookup): void => {
-  pi.on("session_start", async (_event, ctx) => {
+export const checkOmpSettings = (ompSettings: unknown, settings: VccSettings, ctx: unknown): void => {
+  if (noticeShown || !settings.overrideDefaultCompaction || !settings.checkOmpSettings) return;
+  const advice = ompSettingsAdvice(ompSettings, settings);
+  if (advice.length === 0) return;
+  noticeShown = true;
+  try {
+    (ctx as { ui?: { notify?: (m: string, l: string) => void } })?.ui?.notify?.(ompSettingsNotice(advice), "warning");
+  } catch {}
+};
+
+/** An automatic shake is omp trimming tool output instead of letting omp-vcc compact. */
+export const registerOmpSettingsCheck = (pi: ExtensionAPI): void => {
+  pi.on("auto_compaction_start", (event, ctx) => {
+    if ((event as { action?: string }).action !== "shake" || noticeShown) return;
     let settings: VccSettings;
     try {
       settings = loadSettings();
     } catch {
       return;
     }
-    let scope: unknown;
-    try {
-      scope = (pi as { pi?: { settings?: unknown } }).pi?.settings;
-      // omp's global settings throw on access until they are initialized.
-      if (scope) void (scope as { getCwd?: () => unknown }).getCwd?.();
-    } catch {
-      scope = undefined;
-    }
-    if (!scope) return; // not a host with omp's settings (tests' fake hosts)
-    const overrides = settings.overrideDefaultCompaction && settings.exclusiveCompaction ? exclusiveOverrides(settings) : null;
-    const lookup = await lookupLoader();
-    if (!lookup) {
-      if (overrides && !noticeShown) {
-        noticeShown = true;
-        try {
-          ctx?.ui?.notify?.(unreachableNotice(overrides), "warning");
-        } catch {}
-      }
-      return;
-    }
-    const outcome = applyOverrides(lookup, scope, overrides, owned);
-    if (overrides && outcome.replaced.length > 0 && !noticeShown) {
-      noticeShown = true;
-      try {
-        ctx?.ui?.notify?.(replacedNotice(outcome.replaced, overrides), "info");
-      } catch {}
-    }
+    // Only the method order is known here, and it holds shake.
+    checkOmpSettings({ methodOrder: ["shake"] }, settings, ctx);
   });
 };
 
-/** Tests: forget what was set and shown. */
-export const resetOmpSettingsState = (): void => {
-  owned.clear();
+/** Tests: show the notice again. */
+export const resetOmpSettingsNotice = (): void => {
   noticeShown = false;
 };

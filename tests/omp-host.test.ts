@@ -30,8 +30,6 @@ describe.skipIf(!ompInstalled)("omp host", () => {
   const notices: string[] = [];
   let model: any;
   let omp: any;
-  let registry: any;
-  let ompSettings: any;
 
   const now = () => Date.now();
   const user = (text: string) => sessionManager.appendMessage({ role: "user", content: text, timestamp: now() });
@@ -60,19 +58,13 @@ describe.skipIf(!ompInstalled)("omp host", () => {
     model = getBundledModels("anthropic")[0];
 
     sessionManager = omp.SessionManager.create(work, join(work, "sessions"));
-    // omp's global settings, as the CLI uses them (omp-vcc's runtime overrides
-    // go there), read from the temp agent dir.
-    registry = await import("@oh-my-pi/pi-coding-agent/config/registry" as string);
-    ompSettings = await omp.Settings.init({ cwd: work, agentDir: process.env.PI_CODING_AGENT_DIR });
-    // Let a short test session compact: omp keeps this much verbatim before any hook runs.
-    registry.lookup("compaction.keepRecentTokens").override(ompSettings, 1);
-    // A threshold of the user's own: omp hands it to the hook, which sizes for it.
-    registry.lookup("compaction.thresholdPercent").override(ompSettings, 60);
     const created = await omp.createAgentSession({
       cwd: work,
       agentDir: process.env.PI_CODING_AGENT_DIR,
       sessionManager,
-      settings: ompSettings,
+      // Let a short test session compact: omp keeps this much verbatim before any hook runs.
+      // A threshold of the user's own: omp hands it to the hook, which sizes for it.
+      settings: omp.Settings.isolated({ "compaction.keepRecentTokens": 1, "compaction.thresholdPercent": 60 }),
       model,
       additionalExtensionPaths: [REPO],
       disableExtensionDiscovery: true,
@@ -102,9 +94,6 @@ describe.skipIf(!ompInstalled)("omp host", () => {
 
   afterAll(async () => {
     await session?.dispose?.();
-    // The global settings would outlive this file in bun's shared test process.
-    const { resetSettingsForTest }: any = await import("@oh-my-pi/pi-coding-agent/config/settings" as string);
-    resetSettingsForTest();
     for (const [key, value] of Object.entries(savedEnv)) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
@@ -121,17 +110,6 @@ describe.skipIf(!ompInstalled)("omp host", () => {
     expect(tool.approval).toBe("read");
   });
 
-  test("while omp-vcc compacts, omp's other maintenance is off in its runtime settings", () => {
-    const value = (id: string) => registry.lookup(id).get(ompSettings);
-    expect(value("compaction.methodOrder")).toEqual(["soft"]);
-    expect(value("compaction.experimentalContextManagement")).toBe(false);
-    expect(value("compaction.supersedeReads")).toBe(false);
-    expect(value("compaction.dropUseless")).toBe(false);
-    expect(registry.lookup("compaction.methodOrder").provenance(ompSettings)).toBe("runtime");
-    // omp's defaults were replaced, not a choice of the user's: no notice.
-    expect(notices.filter((n) => n.includes("turned off"))).toEqual([]);
-  });
-
   test("/omp-vcc keep:1 compacts with omp-vcc through omp's command routing", async () => {
     await session.prompt("/omp-vcc keep:1");
     const compaction = latestCompaction();
@@ -144,6 +122,19 @@ describe.skipIf(!ompInstalled)("omp host", () => {
     expect(compaction.summary).toMatch(/>>> print\(1\+1\) \(#\d+\)/);
     await Bun.sleep(600);
     expect(notices.some((n) => n.startsWith("info: omp-vcc: kept 1/3 turns"))).toBe(true);
+  });
+
+  test("omp-vcc names omp's settings that work around it, from what omp hands the hook, once", async () => {
+    // omp's defaults: shake, snapcompact, handoff and server compaction in the
+    // method order, and tool-result blanking on.
+    const advice = notices.filter((n) => n.includes("omp's own maintenance still works around omp-vcc"));
+    expect(advice).toHaveLength(1);
+    expect(advice[0]).toStartWith("warning: ");
+    expect(advice[0]).toContain(`omp config set compaction.methodOrder '["soft"]'`);
+    expect(advice[0]).toContain("omp config set compaction.supersedeReads false");
+    expect(advice[0]).toContain("omp config set compaction.dropUseless false");
+    // Off by default: nothing to say about it.
+    expect(advice[0]).not.toContain("experimentalContextManagement");
   });
 
   test("omp's validator accepts what omp-vcc repairs, and vcc_recall resolves #N refs", async () => {
