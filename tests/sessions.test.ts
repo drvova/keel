@@ -107,6 +107,28 @@ describe("vcc_recall across sessions", () => {
     expect(executeRecall({ session: "aaaa", scope: "project", query: "release" }, sm(currentBranch))).toContain("Ignored: scope");
   });
 
+  // Seen with a real model: its first searches looked only at the current session,
+  // found nothing, and it took another request to think of the earlier ones.
+  it("a search of this session that finds nothing names the earlier sessions", () => {
+    const hint = "This project has 2 earlier sessions: scope:'project' searches them too; mode:'sessions' lists them.";
+    expect(executeRecall({ query: "rolled back deploy tag" }, sm(currentBranch))).toBe(`No matches for "rolled back deploy tag" in session history.\n${hint}`);
+    // Only the current turn matches: the same note after the in-turn one.
+    expect(executeRecall({ query: "release" }, sm(currentBranch))).toBe(
+      `No earlier matches for "release"; its 1 match is in the current turn, which is already in your context.\n${hint}`,
+    );
+    // scope:'project' (already searched them) or no earlier session: no note.
+    expect(executeRecall({ query: "zzzz qqqq", scope: "project" }, sm(currentBranch))).not.toContain("scope:'project' searches");
+    const alone = mkdtempSync(join(tmpdir(), "omp-vcc-alone-"));
+    try {
+      const file = join(alone, "s.jsonl");
+      write(file, [header("dddd4444-0000-7000-8000-000000000004", "2026-10-04T10:00:00.000Z"), ...currentBranch], 4_000);
+      const out = executeRecall({ query: "rolled back deploy tag" }, { ...sm(currentBranch), getSessionFile: () => file, getSessionDir: () => alone });
+      expect(out).toBe('No matches for "rolled back deploy tag" in session history.');
+    } finally {
+      rmSync(alone, { recursive: true, force: true });
+    }
+  });
+
   it("an unknown session is an error with the way out", () => {
     expect(executeRecall({ session: "ffff", query: "x" }, sm(currentBranch))).toBe("No earlier session of this project starts with 'ffff'. mode:'sessions' lists them.");
   });

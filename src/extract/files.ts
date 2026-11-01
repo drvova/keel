@@ -1,5 +1,5 @@
 import type { FileOps, NormalizedBlock } from "../types";
-import { extractPaths, stripReadSelector } from "../core/tool-args";
+import { extractPaths, isUrlPath, stripReadSelector } from "../core/tool-args";
 
 interface FileActivity {
   read: Set<string>;
@@ -60,14 +60,15 @@ export const extractFiles = (
   fileOps?: FileOps,
 ): FileActivity => {
   const act: FileActivity = {
-    read: new Set(fileOps?.readFiles ?? []),
-    modified: new Set(fileOps?.modifiedFiles ?? []),
-    created: new Set(fileOps?.createdFiles ?? []),
+    read: new Set((fileOps?.readFiles ?? []).filter((p) => !isUrlPath(p))),
+    modified: new Set((fileOps?.modifiedFiles ?? []).filter((p) => !isUrlPath(p))),
+    created: new Set((fileOps?.createdFiles ?? []).filter((p) => !isUrlPath(p))),
   };
 
   for (const b of blocks) {
     if (b.kind !== "tool_call") continue;
     for (const p of extractPaths(b.args)) {
+      if (isUrlPath(p)) continue;
       if (matches(FILE_READ_TOOLS, b.name)) act.read.add(stripReadSelector(p));
       if (matches(FILE_WRITE_TOOLS, b.name)) act.modified.add(p);
       if (matches(FILE_CREATE_TOOLS, b.name)) act.created.add(p);

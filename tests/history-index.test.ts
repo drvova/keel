@@ -59,6 +59,16 @@ describe("mergeHistoryIndex", () => {
     expect(merged[0].failed).toBe(2);
     expect(merged[0].commitCount).toBe(2);
   });
+
+  // Seen with a real model: a compaction kept a turn's final reply, and the next one
+  // summarized that reply alone, which rendered as an empty "#10–#10" line.
+  it("a range that names nothing extends the one before it instead of adding a line", () => {
+    const empty = { from: 10, to: 10, requests: 0, asks: [], files: [], commits: [], commitCount: 0, failed: 0 };
+    expect(mergeHistoryIndex([range(0, 9)], empty)).toEqual([{ ...range(0, 9), to: 10 }]);
+    // Something to name, or no range before it: a line of its own as before.
+    expect(mergeHistoryIndex([range(0, 9)], { ...empty, failed: 1 })).toHaveLength(2);
+    expect(mergeHistoryIndex([], empty)).toEqual([empty]);
+  });
 });
 
 describe("formatHistoryRange", () => {

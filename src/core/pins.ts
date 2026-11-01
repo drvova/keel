@@ -16,6 +16,8 @@ import { clip } from "./content";
 import { isCountedMessageEntry } from "./global-indices";
 
 export const PIN_ENTRY_TYPE = "omp-vcc.pin";
+/** customType of the notice /omp-vcc-pin sends the agent; [Pinned Notes] already says it, so summaries leave it out. */
+export const PIN_NOTICE_TYPE = "omp-vcc-pin";
 /** One note is clipped to this many characters. */
 export const PIN_CHARS = 300;
 /** Notes shown in a summary; past this the newest are shown and the count says so. */

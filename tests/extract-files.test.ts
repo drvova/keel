@@ -20,6 +20,15 @@ describe("extractFiles", () => {
     expect([...r.created]).toEqual(["c.ts"]);
   });
 
+  it("leaves omp's artifact:// store and other URLs out of the file lists", () => {
+    const blocks: NormalizedBlock[] = [
+      { kind: "tool_call", name: "read", args: { path: "src/money.py" } },
+      { kind: "tool_call", name: "read", args: { path: "artifact://0" } },
+    ];
+    const r = extractFiles(blocks, { readFiles: ["artifact://0", "skill://x/SKILL.md"] });
+    expect([...r.read]).toEqual(["src/money.py"]);
+  });
+
   it("records modern edit tools as modifications", () => {
     const blocks: NormalizedBlock[] = [
       { kind: "tool_call", name: "quick_edit", args: { path: "a.ts" } },

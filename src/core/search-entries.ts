@@ -1,7 +1,7 @@
 import type { Message, ToolCall } from "@oh-my-pi/pi-ai";
 import { fileMentionPaths, type RenderedEntry } from "./render-entries";
 import { textOf, isContentBearing, extractToolCallText, extractToolCallArgsText, clip } from "./content";
-import { extractPaths, hashlineEditPaths } from "./tool-args";
+import { extractPaths, hashlineEditPaths, isUrlPath } from "./tool-args";
 
 export interface SearchHit extends RenderedEntry {
   /** Context snippet around the first matched term (only when query provided) */
@@ -430,6 +430,7 @@ export function getTouchedFiles(
     const msg = messages[i];
     const indicators = getFileIndicators(msg);
     for (const fm of indicators) {
+      if (isUrlPath(fm.path)) continue;
       const index = rendered[i]?.index ?? i;
       if (!map.has(fm.path)) {
         map.set(fm.path, { path: fm.path, entries: [] });

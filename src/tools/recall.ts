@@ -66,6 +66,8 @@ export const TOOL_PAGING_HINTS: RecallPagingHints = {
   skipCurrentTurn: true,
   aroundHit: (n, scope) =>
     `\n--- Read around a hit: range:[${Math.max(0, n - 3)}, ${n + 3}]; full text: expand:[${n}]${scope === "all" ? " (with scope:'all')" : ""} ---`,
+  otherSessions: (n) =>
+    `This project has ${n} earlier session${n === 1 ? "" : "s"}: scope:'project' searches ${n === 1 ? "it" : "them"} too; mode:'sessions' lists ${n === 1 ? "it" : "them"}.`,
 };
 
 export interface RecallSessionManager extends LineageSessionManagerLike {

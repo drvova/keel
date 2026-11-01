@@ -11,6 +11,7 @@ import {
 } from "../core/recall-run";
 import { resolveSession } from "../core/sessions";
 import { sessionDirOf } from "../tools/recall";
+import { tell } from "./compact-feedback";
 
 const scopeArg = (scope: string) => (scope === "all" ? " scope:all" : scope === "project" ? " scope:project" : "");
 
@@ -21,6 +22,8 @@ const commandHints = (session?: string): RecallPagingHints => {
       `Use /omp-vcc-recall ${query}${at}${scopeArg(scope)} page:N with N between 1 and ${totalPages}` +
       (truncated ? "." : ", or refine your query."),
     nextPage: (query, scope, page) => `\n--- /omp-vcc-recall ${query}${at}${scopeArg(scope)} page:${page} ---`,
+    otherSessions: (n) =>
+      `This project has ${n} earlier session${n === 1 ? "" : "s"}: add scope:project to search ${n === 1 ? "it" : "them"} too; /omp-vcc-recall sessions lists ${n === 1 ? "it" : "them"}.`,
   };
 };
 
@@ -32,7 +35,7 @@ export const registerVccRecallCommand = (pi: ExtensionAPI) => {
     handler: async (args: string, ctx) => {
       const sessionFile = ctx.sessionManager.getSessionFile();
       if (!sessionFile) {
-        ctx.ui.notify("No session file available.", "error");
+        tell(ctx, "No session file available.", "error");
         return;
       }
       const request = parseCommandRequest(args);
@@ -42,7 +45,7 @@ export const registerVccRecallCommand = (pi: ExtensionAPI) => {
       if (request.session) {
         const target = resolveSession(request.session, project.list());
         if ("error" in target) {
-          ctx.ui.notify(target.error, "warning");
+          tell(ctx, target.error, "warning");
           return;
         }
         content = runRecall(request, openSessionView(target, request.scope, project), commandHints(target.short), {

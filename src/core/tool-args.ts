@@ -35,6 +35,13 @@ export const extractPaths = (args: Record<string, unknown>): string[] => {
 const READ_SELECTOR_PART = "(?:raw|img|conflicts|L?\\d+(?:(?:-|\\.\\.|\\+)L?\\d*)?|-\\d+)";
 const READ_SELECTOR_RE = new RegExp(`:${READ_SELECTOR_PART}(?:[,:]${READ_SELECTOR_PART})*$`);
 
+/**
+ * A path with a URL scheme (omp's `artifact://` store for shaken tool output,
+ * `skill://`, `http://`…) is not a project file: tools read it, but it is left
+ * out of file lists.
+ */
+export const isUrlPath = (path: string): boolean => /^[a-z][a-z0-9+.-]*:\/\//i.test(path);
+
 export const stripReadSelector = (path: string): string => {
   const stripped = path.replace(READ_SELECTOR_RE, "");
   return stripped || path;

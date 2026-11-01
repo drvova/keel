@@ -90,12 +90,23 @@ const mergeTwo = (a: HistoryRange, b: HistoryRange): HistoryRange => ({
   failed: a.failed + b.failed,
 });
 
+/** A range with nothing to name: no request, file, commit or failed call. */
+const saysNothing = (r: HistoryRange): boolean =>
+  r.requests === 0 && r.files.length === 0 && r.commitCount === 0 && r.failed === 0;
+
 /**
  * Add this compaction's range and coarsen back to MAX_RANGES. The newest range
- * never merges, so the work just summarized stays on a line of its own.
+ * never merges, so the work just summarized stays on a line of its own, unless
+ * it has nothing to name (say the previous turn's final reply, kept by the last
+ * compaction): then it is the end of the range before it, not a line of its own.
  */
 export const mergeHistoryIndex = (previous: HistoryRange[], fresh: HistoryRange | undefined): HistoryRange[] => {
   const ranges = [...previous];
+  const last = ranges[ranges.length - 1];
+  if (fresh && last && saysNothing(fresh) && fresh.from <= last.to + 1 && fresh.to > last.to) {
+    ranges[ranges.length - 1] = { ...last, to: fresh.to };
+    return ranges;
+  }
   if (fresh) ranges.push(fresh);
   ranges.sort((a, b) => a.from - b.from);
   while (ranges.length > MAX_RANGES) {

@@ -10,7 +10,7 @@ type CompactOptions = {
   onError?: (err: Error) => void;
 };
 
-function createHarness(sendUserMessage?: (content: string | unknown[]) => unknown, mode: "tui" | "rpc" = "rpc") {
+function createHarness(sendUserMessage?: (content: string | unknown[]) => unknown, mode: "tui" | "rpc" | "print" = "rpc") {
   let handler: ((args: string, ctx: any) => Promise<void>) | undefined;
   const compactCalls: Array<CompactOptions & { instructions: string | null }> = [];
   const notifyCalls: Array<{ msg: string; level: string }> = [];
@@ -29,6 +29,8 @@ function createHarness(sendUserMessage?: (content: string | unknown[]) => unknow
 
   const ctx = {
     mode,
+    // omp's print and json modes install a no-op UI.
+    hasUI: mode !== "print",
     // omp's ctx.compact(options): the marker reaches the hook through state, read here
     // while the call is in flight.
     compact: async (options: CompactOptions) => {
@@ -152,6 +154,25 @@ describe("/omp-vcc", () => {
     expect(notifyCalls[0].level).toBe("warning");
     expect(notifyCalls[0].msg).toContain("compaction.keepRecentTokens in omp settings");
     expect(notifyCalls[0].msg).not.toContain("failed");
+  });
+
+  test("print mode, where omp drops notify: the outcome goes to stderr, stdout stays the model's", async () => {
+    const written: string[] = [];
+    const write = process.stderr.write;
+    (process.stderr as any).write = (chunk: string) => (written.push(String(chunk)), true);
+    try {
+      const { invoke, compactCalls, notifyCalls, state } = createHarness(undefined, "print");
+      await invoke();
+      compactCalls[0].onError?.(new Error("Nothing to compact (session too small)"));
+      await invoke();
+      state.lastStats = { summarized: 4, kept: 2, keptUserTurns: 1, totalUserTurns: 2, requestedKeepUserTurns: 1, keepUserTurnsExplicit: false, keepFallbackToCompactAll: false, keptTokensEst: 120 };
+      compactCalls[1].onComplete?.();
+      expect(notifyCalls).toEqual([]);
+      expect(written[0]).toStartWith("Nothing to compact yet:");
+      expect(written[1]).toBe("omp-vcc: kept 1/2 turns, ~120 tok (summarized 4).\n");
+    } finally {
+      (process.stderr as any).write = write;
+    }
   });
 
   test("normalizes huge keep tokens to a safe integer instruction", async () => {

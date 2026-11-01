@@ -141,6 +141,8 @@ export interface RecallPagingHints {
    * adds no user message, so the last one there belongs to a finished turn.
    */
   skipCurrentTurn?: boolean;
+  /** After a search of this session finds nothing: where the project's earlier sessions are. */
+  otherSessions?(count: number): string;
 }
 
 
@@ -357,6 +359,14 @@ const searchBefore = (view: RecallView, query: string, skip: Set<number> | undef
   return searchEntriesDetailed(rendered.filter((_, i) => keep[i]), rawMessages.filter((_, i) => keep[i]), query);
 };
 
+/** A search of this session found nothing: name the project's earlier sessions, which it did not search. */
+const otherSessionsNote = (view: RecallView, hints: RecallPagingHints): string => {
+  if (!hints.otherSessions || !view.project || view.session || view.scope === "project") return "";
+  let count = 0;
+  try { count = view.project.list().length; } catch {}
+  return count > 0 ? `\n${hints.otherSessions(count)}` : "";
+};
+
 const runSearch = (query: string, page: number, view: RecallView, hints: RecallPagingHints, skip?: Set<number>): string => {
   const { hits, totalBeforeCap, truncated } = searchBefore(view, query, skip);
   if (hits.length === 0 && view.scope === "lineage") {
@@ -369,7 +379,8 @@ const runSearch = (query: string, page: number, view: RecallView, hints: RecallP
     const inTurn = searchEntriesDetailed(view.load(false).rendered, view.load(false).rawMessages, query).hits
       .filter((h) => skip.has(h.index)).length;
     if (inTurn > 0) {
-      return `No earlier matches for "${query}"; its ${inTurn} match${inTurn === 1 ? " is" : "es are"} in the current turn, which is already in your context.`;
+      return `No earlier matches for "${query}"; its ${inTurn} match${inTurn === 1 ? " is" : "es are"} in the current turn, which is already in your context.` +
+        otherSessionsNote(view, hints);
     }
   }
   // Single source of truth for page count: hits.length, the same array
@@ -400,7 +411,8 @@ const runSearch = (query: string, page: number, view: RecallView, hints: RecallP
     : `${hits.length} matches${scopeSuffix}${truncationNote}`;
   const around = pageHits.length > 0 && hints.aroundHit ? hints.aroundHit(pageHits[0].index, view.scope) : "";
   const footer = page < totalPages ? hints.nextPage(query, view.scope, page + 1) : "";
-  return formatRecallOutput(pageHits, query, header) + around + footer;
+  const none = hits.length === 0 ? otherSessionsNote(view, hints) : "";
+  return formatRecallOutput(pageHits, query, header) + around + footer + none;
 };
 
 const WRITES_FILE = /write|edit|patch/i;

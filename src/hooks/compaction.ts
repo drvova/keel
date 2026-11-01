@@ -5,7 +5,7 @@ import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { writeFileSync } from "fs";
 import { compileRanked } from "../core/summarize";
 import { mergeHistoryIndex, rangeOfWindow, readHistoryIndex, unindexedRange } from "../core/history-index";
-import { readPins } from "../core/pins";
+import { PIN_NOTICE_TYPE, readPins } from "../core/pins";
 import { normalize } from "../core/normalize";
 import { buildGlobalIndexById, loadGlobalIndexById } from "../core/global-indices";
 import { parseKeepAndPrompt, OMP_VCC_COMPACT_INSTRUCTION } from "../core/compact-args";
@@ -193,11 +193,13 @@ const toLlmSafe = (message: unknown, host: CompactionHost): any[] => {
  *   requests and [User Messages] read only what the user wrote. omp converts a
  *   custom message to a developer message; it is read back as user content.
  * - omp's developer-role turns (host reminders) and @file mention contents are
- *   host context, not conversation, and are left out.
+ *   host context, not conversation, and are left out, as is the notice
+ *   /omp-vcc-pin sends the agent ([Pinned Notes] carries the note itself).
  */
 export const toSummaryMessage = (message: any, host: CompactionHost): any | null => {
   const role = message?.role;
   if (role === "developer" || role === "fileMention") return null;
+  if (role === "custom" && message.customType === PIN_NOTICE_TYPE) return null;
   const converted = toLlmSafe(message, host);
   if (converted.length === 0) return null;
   if (role === "bashExecution" || role === "pythonExecution") return message;

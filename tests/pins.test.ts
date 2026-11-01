@@ -120,6 +120,21 @@ describe("pinned notes in summaries", () => {
     expect(out.compaction.summary.startsWith("[Pinned Notes]\n- [1] never edit migrations/ (user, #3)\n\n[Early Session Requests]")).toBe(true);
   });
 
+  it("the notice /omp-vcc-pin sends the agent is not repeated in the transcript", () => {
+    const notice = { type: "custom_message", id: "n1", customType: "omp-vcc-pin", content: "The user pinned [1] never edit migrations/ (user, #3). It stays at the top of every summary.", display: true, timestamp: "2026-01-01T00:00:00.000Z" };
+    const s = session([message("m1", "user", "first request here"), message("m2", "assistant", "ok"), notice, message("m3", "user", "second request here"), message("m4", "assistant", "ok")]);
+    addPin(s.host, s.sm, "never edit migrations/", "user");
+    let handler: any;
+    registerHook({ on: (name: string, fn: any) => { if (name === "session_before_compact") handler = fn; } });
+    const out = handler({
+      type: "session_before_compact", branchEntries: s.entries, customInstructions: "__omp_vcc__ keep:1",
+      preparation: { previousSummary: undefined, fileOps: { read: [], written: [], edited: [] }, tokensBefore: 100 },
+      signal: new AbortController().signal,
+    }, { ui: { notify: () => {} }, sessionManager: s.sm });
+    expect(out.compaction.summary).toContain("[Pinned Notes]\n- [1] never edit migrations/");
+    expect(out.compaction.summary).not.toContain("The user pinned");
+  });
+
   it("survive 20 compactions of a long session unchanged", () => {
     const pin = "Sessions are stored in SQLite rather than Redis: the deploy host has no Redis.";
     const r = runLongHorizon({ turns: 120, compactEvery: 6, pins: { 9: pin } });

@@ -10,8 +10,10 @@ const COMMIT_MSG_RE = /git\s+commit[^\n]*?\s-[A-Za-z]*m\s+(?:"((?:[^"\\]|\\.)*)"
 // A file path after -F cannot be read from the transcript, so it is not matched.
 const STDIN_HEREDOC_COMMIT_RE =
   /git\s+commit[^\n]*?(?:\s-[A-Za-z]*F|\s--file)(?:\s+|=)-(?=\s)[^\n]*?<<-?\s*(?:'([^']+)'|"([^"]+)"|([A-Za-z_]\w*))[^\n]*(?:\r?\n|\\n)/;
-// Match short hash from git output: "[branch hash]" or "main hash" or 7-12 hex
-const HASH_RE = /\b([0-9a-f]{7,12})\b/;
+// A line that is only a hash, as `git rev-parse --short HEAD` prints it. It must
+// contain a letter: a bare number on its own line (a count, a random tag) is far
+// more often output of something else.
+const LONE_HASH_LINE_RE = /^\s*([0-9a-f]{7,40})\s*$/;
 
 const cleanMessage = (msg: string): string =>
   msg.replace(/\\"/g, '"').replace(/\\'/g, "'").trim();
@@ -72,30 +74,60 @@ const subjectOf = (seg: string): string => {
   return heredoc === null && /^\$\(cat\s+<</.test(message) ? "" : message;
 };
 
-/** Hash of a lone commit, from the next tool results; the first hash-looking text wins. */
-const hashFromResults = (results: string[]): string | undefined => {
-  for (const text of results) {
-    // Common git commit output: `[branch <hash>] message` or `<branch> <hash>..<hash>`
-    const bracket = text.match(/\[\S+\s+([0-9a-f]{7,12})\]/);
-    if (bracket) return bracket[1];
-    const range = text.match(/\b([0-9a-f]{7,12})\.\.([0-9a-f]{7,12})\b/);
-    if (range) return range[2];
-    const plain = text.match(HASH_RE);
-    if (plain) return plain[1];
+// `[branch <hash>] <subject>` (git commit) or `<hash> [(refs)] <subject>` (git log / git show --oneline).
+const HASH_SUBJECT_LINE_RE = /(?:\[[^\]\s]+(?:\s+\([^)]*\))?\s+([0-9a-f]{7,12})\]|^\s*([0-9a-f]{7,12})(?:\s+\([^)]*\))?)\s+(.*)/;
+// git commit's own report: `[branch <hash>] <subject>`, also `[branch (root-commit) <hash>]`.
+const COMMIT_LINE_RE = /\[[^\]\s]+(?:\s+\([^)]*\))?\s+([0-9a-f]{7,12})\]\s+(.*)/;
+
+const linesOfResults = (results: string[]): string[] => results.flatMap((text) => text.split("\n"));
+
+/** Hash of one commit: only an output line that names its subject counts. */
+const hashForSubject = (results: string[], message: string): string | undefined => {
+  for (const line of linesOfResults(results)) {
+    const m = line.match(HASH_SUBJECT_LINE_RE);
+    if (m && m[3].trim() === message) return m[1] ?? m[2];
   }
   return undefined;
 };
 
-// `[branch <hash>] <subject>` (git commit) or `<hash> [(refs)] <subject>` (git log --oneline).
-const HASH_SUBJECT_LINE_RE = /(?:\[\S+\s+([0-9a-f]{7,12})\]|^\s*([0-9a-f]{7,12})(?:\s+\([^)]*\))?)\s+(.*)/;
+/** git said it made this commit: its `[branch <hash>] <subject>` line. */
+const committedLine = (results: string[], message: string): string | undefined => {
+  for (const line of linesOfResults(results)) {
+    const m = line.match(COMMIT_LINE_RE);
+    if (m && m[2].trim() === message) return m[1];
+  }
+  return undefined;
+};
 
-/** Hash of one of several commits in a command: only an output line that names that commit's subject counts. */
-const hashForSubject = (results: string[], message: string): string | undefined => {
+/**
+ * Hash of a lone commit, from git's own output in the next tool results:
+ * `git commit`'s `[branch <hash>]` line, a push range, a `--oneline` line naming
+ * the subject, or a line that is only a hash. Other hex-looking text (a path, a
+ * printed number) is not a hash.
+ */
+const hashFromResults = (results: string[], message: string): string | undefined => {
   for (const text of results) {
-    for (const line of text.split("\n")) {
-      const m = line.match(HASH_SUBJECT_LINE_RE);
-      if (m && m[3].trim() === message) return m[1] ?? m[2];
-    }
+    const bracket = text.match(/\[[^\]\s]+(?:\s+\([^)]*\))?\s+([0-9a-f]{7,12})\]/);
+    if (bracket) return bracket[1];
+  }
+  const named = hashForSubject(results, message);
+  if (named) return named;
+  for (const text of results) {
+    const range = text.match(/\b([0-9a-f]{7,12})\.\.([0-9a-f]{7,12})\b/);
+    if (range) return range[2];
+  }
+  for (const line of linesOfResults(results)) {
+    const lone = line.match(LONE_HASH_LINE_RE);
+    if (lone && /[a-f]/.test(lone[1])) return lone[1].slice(0, 12);
+  }
+  return undefined;
+};
+
+/** The (hash, subject) an amend reports: git commit's line or a `--oneline` line. */
+const amendedCommit = (results: string[]): { hash: string; message: string } | undefined => {
+  for (const line of linesOfResults(results)) {
+    const m = line.match(HASH_SUBJECT_LINE_RE);
+    if (m && m[3].trim()) return { hash: (m[1] ?? m[2])!, message: m[3].trim() };
   }
   return undefined;
 };
@@ -121,10 +153,32 @@ export const extractCommits = (blocks: NormalizedBlock[]): CommitInfo[] => {
     }
 
     for (const seg of segments) {
+      const amend = /\s--amend\b/.test(seg);
       const message = subjectOf(seg);
+      // A failed command made no commit unless git printed that it did (`git commit … && git push` with
+      // the push failing): `a && git commit` stops at a failing `a`.
+      if (b.failed && !(message ? committedLine(results, message) : amend && amendedCommit(results))) continue;
+      if (amend) {
+        // --amend replaces the commit before it, so that commit's hash (and with -m its subject) is gone.
+        const reported = message ? undefined : amendedCommit(results);
+        const subject = message || reported?.message;
+        const hash = message
+          ? (segments.length === 1 ? hashFromResults(results, message) : hashForSubject(results, message))
+          : reported?.hash;
+        const target = [...commits].reverse().find((c) => (!message && subject ? c.message === subject : true));
+        if (target && subject) {
+          target.message = subject;
+          target.hash = hash;
+        } else if (target) {
+          target.hash = undefined;
+        } else if (subject) {
+          commits.push({ hash, message: subject });
+        }
+        continue;
+      }
       if (!message) continue;
       // With several commits one output cannot be split reliably, so a hash is taken only when its line names this subject.
-      const hash = segments.length === 1 ? hashFromResults(results) : hashForSubject(results, message);
+      const hash = segments.length === 1 ? hashFromResults(results, message) : hashForSubject(results, message);
 
       // One entry per commit: the same message seen hashless (`-q` prints no hash) and hashed is one commit, keep the hashed.
       const dup = commits.find((c) => c.message === message && (!c.hash || !hash || c.hash === hash));

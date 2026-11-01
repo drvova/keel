@@ -53,6 +53,8 @@ How it fits into omp:
 - omp's `shake` can move large tool output out of the session file into an `artifact://` file before omp-vcc runs. `vcc_recall` then shows that reference, which the agent opens with `read`.
 - `vcc_recall` and `vcc_pin` are top-level tools with read-only approval: the summary tells the agent to call `vcc_recall` by name.
 
+In print mode (`omp -p "/omp-vcc"`), the commands report on stderr, since omp's print mode shows no notifications; stdout stays the model's.
+
 On a short session `/omp-vcc` can answer "Nothing to compact yet" whatever `keep:N` says: omp stops before any extension runs while the whole session still fits in the recent part it always keeps (`compaction.keepRecentTokens` in omp's settings).
 
 ### Compacted message structure

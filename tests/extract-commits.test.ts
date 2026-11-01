@@ -178,3 +178,78 @@ describe("extractCommits", () => {
     expect(extractCommits([...hashed, ...other]).map((x) => x.hash)).toEqual(["5416801", "9999999"]);
   });
 });
+
+// Seen with a real model on omp: output that only looks like a hash, a commit in a
+// command that failed before reaching it, and an amend.
+describe("extractCommits: only git's own output names a hash", () => {
+  const call = (command: string, text: string, failed = false): NormalizedBlock[] => [
+    { kind: "tool_call", name: "bash", args: { command }, ...(failed ? { failed: true as const } : {}) },
+    { kind: "tool_result", name: "bash", text },
+  ];
+
+  it("a number printed on its own line is not the hash; the --oneline line naming the subject is", () => {
+    const blocks = call(
+      "python3 t.py && python3 -c 'import random; print(random.randint(1000000, 9999999))' && git add . && git commit -q -m 'feat: parse_amount' && git log --oneline -1",
+      "5 tests passed\n4519687\n2b171a6 feat: parse_amount\n",
+    );
+    expect(extractCommits(blocks)).toEqual([{ hash: "2b171a6", message: "feat: parse_amount" }]);
+  });
+
+  it("hex inside a path is not a hash", () => {
+    const blocks = call(
+      "git commit -q -m 'feat: x'",
+      'File "/tmp/claude-0/proj-915ea5c4-653e/tests/t.py", line 7',
+    );
+    expect(extractCommits(blocks)).toEqual([{ hash: undefined, message: "feat: x" }]);
+  });
+
+  it("a lone hash line (git rev-parse --short HEAD) still counts", () => {
+    expect(extractCommits(call("git commit -q -m 'feat: x' && git rev-parse --short HEAD", "a1b2c3d\n"))).toEqual([
+      { hash: "a1b2c3d", message: "feat: x" },
+    ]);
+  });
+
+  it("a command that failed before its commit made no commit", () => {
+    const blocks = call(
+      "python3 t.py && git commit -q -m 'feat: parse_amount' && git log --oneline -1",
+      "Traceback (most recent call last):\nImportError: cannot import name 'parse_amount'",
+      true,
+    );
+    expect(extractCommits(blocks)).toEqual([]);
+  });
+
+  it("a failed command whose commit git reported still counts (the push after it failed)", () => {
+    const blocks = call("git commit -m 'feat: x' && git push", "[master 5416801] feat: x\n 1 file changed\nerror: failed to push", true);
+    expect(extractCommits(blocks)).toEqual([{ hash: "5416801", message: "feat: x" }]);
+  });
+
+  it("git commit's root-commit line gives the hash", () => {
+    expect(extractCommits(call("git commit -m 'feat: first'", "[master (root-commit) f632bd6] feat: first\n"))).toEqual([
+      { hash: "f632bd6", message: "feat: first" },
+    ]);
+  });
+
+  it("--amend --no-edit moves the commit to the hash git shows for it", () => {
+    const blocks = [
+      ...call("git commit -m 'feat: round_cents'", "[master (root-commit) f632bd6] feat: round_cents\n"),
+      ...call("git commit --amend --no-edit -q && git show --stat --oneline HEAD", "ee298c1 feat: round_cents\n .gitignore | 1 +\n"),
+    ];
+    expect(extractCommits(blocks)).toEqual([{ hash: "ee298c1", message: "feat: round_cents" }]);
+  });
+
+  it("a quiet --amend --no-edit drops the stale hash", () => {
+    const blocks = [
+      ...call("git commit -m 'feat: a'", "[master 5416801] feat: a\n"),
+      ...call("git commit --amend --no-edit -q", ""),
+    ];
+    expect(extractCommits(blocks)).toEqual([{ hash: undefined, message: "feat: a" }]);
+  });
+
+  it("--amend -m rewrites the last commit's subject and hash", () => {
+    const blocks = [
+      ...call("git commit -m 'feat: a'", "[master 5416801] feat: a\n"),
+      ...call("git commit --amend -m 'feat: a, better'", "[master 77aa001] feat: a, better\n"),
+    ];
+    expect(extractCommits(blocks)).toEqual([{ hash: "77aa001", message: "feat: a, better" }]);
+  });
+});
