@@ -20,7 +20,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/drvova/pi-vcc.git"
+    "url": "git+https://github.com/drvova/omp-vcc.git"
   },
   "scripts": {
     "setup:omp": "npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @oh-my-pi/pi-coding-agent@${OMP_VERSION:-latest}",
