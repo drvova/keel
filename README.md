@@ -22,12 +22,6 @@ Size and latency were measured by pi-vcc over 1,884 real sessions (summary chars
 ## Install
 
 ```bash
-omp install npm:@drvova/omp-vcc
-```
-
-Or from GitHub:
-
-```bash
 omp install https://github.com/drvova/omp-vcc
 ```
 
