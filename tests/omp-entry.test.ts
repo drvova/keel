@@ -200,11 +200,11 @@ describe("omp entry: automatic compactions", () => {
     expect(omp.beforeCompact().compaction.details).toMatchObject({ reason: "manual", willRetry: false });
   });
 
-  test("overflow recovery falls back to omp's own method when omp-vcc cannot cut", () => {
+  test("an overflow with one message is summarized by omp-vcc, not handed to snapcompact", () => {
     const omp = createOmp();
     omp.setEntries([user("only one message")]);
-    omp.fire("auto_compaction_start", { reason: "overflow", action: "context-full" });
-    expect(omp.beforeCompact()).toBeUndefined();
+    omp.fire("auto_compaction_start", { reason: "overflow", action: "snapcompact" });
+    expect(omp.beforeCompact().compaction).toMatchObject({ firstKeptEntryId: "", details: { compactor: "omp-vcc", reason: "overflow" } });
     // A manual pass in the same state is cancelled instead.
     expect(omp.beforeCompact()).toEqual({ cancel: true });
   });
@@ -284,11 +284,18 @@ describe("omp entry: a turn still running", () => {
     expect(omp.notices).toEqual([]);
   });
 
-  test("an overflow pass goes to omp's own method", () => {
-    const omp = createOmp();
-    omp.setEntries(running());
-    omp.fire("auto_compaction_start", { reason: "overflow", action: "context-full" });
-    expect(omp.beforeCompact()).toBeUndefined();
+  test("an overflow pass on a running turn is answered by omp-vcc, whatever method omp picked", () => {
+    for (const action of ["snapcompact", "context-full", "remote"]) {
+      const omp = createOmp();
+      const entries = running();
+      omp.setEntries(entries);
+      omp.fire("auto_compaction_start", { reason: "overflow", action });
+      const { compaction } = omp.beforeCompact();
+      expect(compaction.details).toMatchObject({ compactor: "omp-vcc", reason: "overflow", willRetry: true });
+      // Its latest step is kept, the request summarized.
+      expect(compaction.firstKeptEntryId).toBe(entries[1].id);
+      expect(compaction.summary).toContain("Run seq 1 2000");
+    }
   });
 
   test("once the turn has ended, the threshold pass compacts it", () => {
