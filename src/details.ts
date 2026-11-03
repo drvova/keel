@@ -21,8 +21,7 @@ export interface VccCompactionDetails {
   /** The window and trigger the budgets were sized from (core/window.ts). */
   limits?: {
     contextWindow?: number;
-    windowSource?: "omp" | "provider" | "overflow-error" | "unknown";
-    providerWindow?: number;
+    windowSource?: "omp" | "overflow-error" | "unknown";
     trigger?: number;
     /** System prompt and tools, which a compaction cannot remove. */
     overheadTokens?: number;

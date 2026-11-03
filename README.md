@@ -158,12 +158,12 @@ The same search as a slash command, with results shown in the chat and passed to
 
 How much a compaction keeps follows the model's window instead of fixed numbers:
 
-- **The window** is the smallest one known: what omp uses (`contextWindow`, from the provider when omp's `discovery` is configured, else its catalog, `models.yml` or a 128K default), what the provider's own `/models` says (OpenAI-compatible APIs list it as `context_length`, `max_model_len`, `max_input_tokens` or `context_window`, about as often as not), and a limit an overflow error stated ("maximum context length is 32768 tokens"). omp-vcc asks the provider once per base URL, in the background, with omp's credentials for it; learned limits are kept in `omp-vcc-models.json` next to the config, so the next session starts with them.
+- **The window** is what omp uses (`contextWindow`, from the provider when omp's `discovery` is configured, else its catalog, `models.yml` or a 128K default), or a limit an overflow error stated ("maximum context length is 32768 tokens") when that is smaller. omp-vcc makes no network call of its own. Learned limits are kept in `omp-vcc-models.json` next to the config, so the next session starts with them.
 - **The trigger** is where omp compacts, from omp itself: every compaction carries omp's compaction policy for the model (`compaction.thresholdPercent`, `thresholdTokens`, `reserveTokens` and the model's `compaction.modelThresholds` entry), and omp-vcc applies it to the window exactly as omp does (by default the window less a reserve of 15% or 16,384 tokens). When the real window is below omp's, the same policy applies to the real one. With `compaction.enabled` off, omp-vcc does not compact on its own either.
 - **The budgets** are shares of the trigger, clamped like the `vcc_recall` cap: the kept tail (25k on a typical window), the smart keep-tail trigger and the summary size, so that what a compaction keeps lands inside omp's recovery band (80% of the trigger). On a ~128K window they are the numbers they always were; a small window keeps less, a ~1M one allows a larger summary. Each compaction records what it sized from in its details (`limits`).
 - **The summary's sections** scale with it: the user messages, files per category, commits, `[History Index]` lines and brief lines listed under [Compacted message structure](#compacted-message-structure) are those of a ~128K or 200K window. Below that they shrink with the square root of the trigger (a 32K window keeps about 40% of each, never less than a quarter); past a 500K trigger they grow as the brief's ceiling does (1.7× on a 1M window). `[Early Session Requests]` and pinned notes do not scale. On a 120-turn test session, a 32K window's summary is half the size with the same pointers and recall, and a 1M window's holds more of the planted facts.
 - **`vcc_recall`** follows it too: one result's cap (above), and what `expand` shows of a call's arguments and of its paired result, 4,000 chars under the 50 KB cap and the same share of a smaller one.
-- **When omp's window is too high** (the provider or an overflow says less), omp's trigger can never fire before the request overflows, so omp-vcc compacts at the end of a run that is past the trigger of the real window, and says so once. Setting `contextWindow` in omp's `models.yml` makes omp do the same.
+- **When omp's window is too high** (an overflow says less), omp's trigger can never fire before the request overflows, so omp-vcc compacts at the end of a run that is past the trigger of the real window, and says so once. Setting `contextWindow` in omp's `models.yml` makes omp do the same.
 
 ## How it works
 
@@ -186,7 +186,6 @@ Config lives at `omp-vcc-config.json` in omp's agent directory (`~/.omp/agent`, 
   "skipForProviders": [],
   "skipCustomTypes": [],
   "trackCommands": [],
-  "probeProviderWindow": true,
   "keepOriginals": true
 }
 ```
@@ -196,7 +195,6 @@ Config lives at `omp-vcc-config.json` in omp's agent directory (`~/.omp/agent`, 
 - **`debug`** *(default `false`)*: write details of each compaction (message counts, cut, sections, token calibration) to `/tmp/omp-vcc-debug.json`.
 - **`skipForProviders`** *(default `[]`)*: providers for which omp-vcc steps aside, so omp's own method (or another compaction extension) handles them. Compared case-insensitively with omp's provider id (see `/model`). Checked on every compaction; `/omp-vcc` always runs.
 - **`skipCustomTypes`** *(default `[]`)*: `customType` values of `custom_message` entries to leave out of the summary, for per-turn boilerplate other extensions inject (skill cards, guidance blocks). Exact, case-sensitive match; look for `"type":"custom_message"` in your session file to find the value. Only the summary input changes, not the cut.
-- **`probeProviderWindow`** *(default `true`)*: ask the model's provider for its context length (`<baseUrl>/models`, OpenAI-compatible APIs, once per base URL, with omp's credentials for it). `false`: only omp's window and overflow errors (see [The model's context window](#the-models-context-window)).
 - **`keepOriginals`** *(default `true`)*: keep the original of every message omp may rewrite in place (tool output, long text blocks) in `<session>.jsonl.vcc-raw`, so `vcc_recall` reads what was there after omp blanks or shakes it (see [Usage](#usage)). Text over 1M chars per message is clipped; images are kept without their data. `false`: recall shows omp's placeholders.
 - **`trackCommands`** *(default `[]`)*: commands to remember across compactions, listed in a `[Tracked Commands]` section. Any command or prefix works: `["ssh", "kubectl", "docker"]`, `["psql", "./deploy.sh"]`, or `"gh pr"` (matches `gh pr merge`, not `gh run`). Each entry is the command as written, up to the next shell separator outside quotes, with any `sudo`/`env`/`VAR=` prefix kept; the 10 most recent per command are kept. Only `bash` calls are read, and only `ssh` remote commands are looked into, not `sh -c` or `docker exec`. Empty = off.
 

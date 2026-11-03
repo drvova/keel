@@ -1,7 +1,7 @@
 // Limits that follow the model's context window instead of fixed numbers.
 //
-// omp knows a model's window from its provider's /models (when the provider
-// says), its catalog, models.yml or a 128K default, and compacts at a trigger
+// omp knows a model's window from its provider (with discovery configured),
+// its catalog, models.yml or a 128K default, and compacts at a trigger
 // below it (window less a reserve, or the user's threshold). After a compaction
 // the context must land inside omp's recovery band (80% of the trigger) or omp
 // treats it as a dead end and starts shaking tool output; a 25k-token kept tail
@@ -11,8 +11,8 @@
 // trigger, clamped like the recall cap (recallOutputChars): the same numbers as
 // before on a typical 128K window, smaller below it, a larger summary far above it.
 //
-// The window itself is the smallest one known: omp's, the provider's /models
-// answer, and a limit an overflow error stated. The trigger is omp's own: its
+// The window itself is the smaller of omp's and a limit an overflow error
+// stated; omp-vcc makes no network call. The trigger is omp's own: its
 // compaction policy (threshold, reserve, the model's entry) arrives with every
 // compaction, and ompTrigger applies it to that window as omp does. Pure
 // functions; the IO is in model-limits.ts.
@@ -26,28 +26,6 @@ const positive = (value: unknown): number | undefined =>
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
-
-/**
- * The context length in one entry of an OpenAI-compatible `/models` list, as
- * providers spell it: `context_length` (OpenRouter, Electron Hub, Together),
- * `max_model_len` (vLLM), `max_input_tokens`, `context_window` (Groq), or nested
- * under `limits`, `top_provider` or `metadata`. Undefined when it says nothing.
- */
-export const contextLengthOfModelEntry = (entry: unknown): number | undefined => {
-  if (!isRecord(entry)) return undefined;
-  const nested = (key: string) => (isRecord(entry[key]) ? (entry[key] as Record<string, unknown>) : undefined);
-  const candidates = [
-    entry.context_length, entry.max_model_len, entry.max_input_tokens, entry.context_window, entry.max_context_length,
-    nested("limits")?.max_input_tokens, nested("limits")?.context, nested("limits")?.context_window,
-    nested("top_provider")?.context_length,
-    nested("metadata")?.context_window, nested("metadata")?.context_length,
-  ];
-  for (const c of candidates) {
-    const n = positive(typeof c === "string" && /^\d+$/.test(c) ? Number(c) : c);
-    if (n) return n;
-  }
-  return undefined;
-};
 
 // Overflow errors that state the limit. Each captures the limit, not the request size.
 const LIMIT_PATTERNS: RegExp[] = [

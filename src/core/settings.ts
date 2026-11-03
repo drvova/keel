@@ -76,13 +76,6 @@ export interface VccSettings {
    */
   trackCommands: string[];
   /**
-   * When true (default), omp-vcc asks the model's provider for its context
-   * length (`${baseUrl}/models`, OpenAI-compatible APIs, once per base URL, with
-   * omp's credentials for that provider) and sizes compactions by the smaller of
-   * that and omp's window. false: omp's window and overflow errors only.
-   */
-  probeProviderWindow: boolean;
-  /**
    * When true (default), keep the original of every message omp may rewrite in
    * the session file (tool output it blanks or shakes into artifact:// files,
    * long text blocks it shakes) in `<session>.jsonl.vcc-raw`, so vcc_recall
@@ -98,7 +91,6 @@ export const DEFAULT_SETTINGS: VccSettings = {
   skipForProviders: [],
   skipCustomTypes: [],
   trackCommands: [],
-  probeProviderWindow: true,
   keepOriginals: true,
 };
 
