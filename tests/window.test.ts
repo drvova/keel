@@ -5,7 +5,6 @@ import { tmpdir } from "os";
 import { join } from "path";
 import {
   compactionBudgets,
-  contextLengthOfModelEntry,
   DEFAULT_BUDGETS,
   DEFAULT_SUMMARY_LIMITS,
   effectiveWindow,
@@ -17,7 +16,7 @@ import {
 } from "../src/core/window";
 // omp's own function, which omp-vcc ports since omp does not export it to extensions.
 import { resolveThresholdTokens } from "@oh-my-pi/pi-agent-core/compaction";
-import { learnedWindow, probeProviderWindow, recordLearnedWindow, resetProviderProbes } from "../src/core/model-limits";
+import { learnedWindow, recordLearnedWindow } from "../src/core/model-limits";
 import { createCompactionState } from "../src/hooks/compaction";
 import { triggerFor, windowOf } from "../src/hooks/window-limits";
 
@@ -33,26 +32,7 @@ afterAll(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 afterEach(() => {
-  resetProviderProbes();
   rmSync(join(dir, "omp-vcc-models.json"), { force: true });
-});
-
-describe("contextLengthOfModelEntry", () => {
-  it("reads the fields providers use, top-level or nested", () => {
-    // Electron Hub (the real entry for glm-5.3-flash:dev, trimmed).
-    expect(contextLengthOfModelEntry({ id: "glm-5.3-flash:dev", tokens: 1000000, context_length: 1000000, max_model_len: 1000000 })).toBe(1000000);
-    expect(contextLengthOfModelEntry({ id: "m", max_model_len: 32768 })).toBe(32768); // vLLM
-    expect(contextLengthOfModelEntry({ id: "m", context_window: 131072 })).toBe(131072); // Groq
-    expect(contextLengthOfModelEntry({ id: "m", top_provider: { context_length: 200000 } })).toBe(200000);
-    expect(contextLengthOfModelEntry({ id: "m", limits: { max_input_tokens: 400000 } })).toBe(400000);
-    expect(contextLengthOfModelEntry({ id: "m", metadata: { context_window: "65536" } })).toBe(65536);
-  });
-
-  it("says nothing when the entry says nothing", () => {
-    expect(contextLengthOfModelEntry({ id: "whisper-large-v3", object: "model" })).toBeUndefined();
-    expect(contextLengthOfModelEntry({ id: "m", context_length: 0 })).toBeUndefined();
-    expect(contextLengthOfModelEntry(null)).toBeUndefined();
-  });
 });
 
 describe("limitFromOverflowError", () => {
@@ -172,40 +152,6 @@ describe("learned limits", () => {
     expect(learnedWindow("eh/m")).toBe(32_768);
     expect(learnedWindow("eh/other")).toBeUndefined();
     expect(JSON.parse(readFileSync(join(dir, "omp-vcc-models.json"), "utf8"))["eh/m"]).toMatchObject({ contextWindow: 32_768, source: "overflow-error" });
-  });
-});
-
-describe("probeProviderWindow", () => {
-  const model = { provider: "electronhub", id: "glm-5.3-flash:dev", api: "openai-completions", baseUrl: "https://api.electronhub.ai/v1/", contextWindow: 128_000 };
-  const registry = { getApiKeyAndHeaders: async () => ({ ok: true, apiKey: "test-key", headers: { "X-Extra": "1" } }) };
-
-  it("asks {baseUrl}/models once per base URL with omp's credentials", async () => {
-    const calls: Array<{ url: string; headers?: Record<string, string> }> = [];
-    const fetchImpl = async (url: string, init?: { headers?: Record<string, string> }) => {
-      calls.push({ url, headers: init?.headers });
-      return { ok: true, json: async () => ({ data: [{ id: "glm-5.3-flash:dev", context_length: 1_000_000 }, { id: "small", max_model_len: 32_768 }] }) };
-    };
-    expect(await probeProviderWindow(model, registry, fetchImpl)).toBe(1_000_000);
-    expect(await probeProviderWindow({ ...model, id: "small" }, registry, fetchImpl)).toBe(32_768);
-    expect(calls).toHaveLength(1);
-    expect(calls[0].url).toBe("https://api.electronhub.ai/v1/models");
-    expect(calls[0].headers).toEqual({ "X-Extra": "1", Authorization: "Bearer test-key" });
-  });
-
-  it("asks nothing of a non-OpenAI API, and survives a failing or silent provider", async () => {
-    let calls = 0;
-    const failing = async () => { calls++; throw new Error("network down"); };
-    expect(await probeProviderWindow({ ...model, api: "anthropic-messages" }, registry, failing)).toBeUndefined();
-    expect(calls).toBe(0);
-    expect(await probeProviderWindow(model, registry, failing)).toBeUndefined();
-    resetProviderProbes();
-    const silent = async () => ({ ok: true, json: async () => ({ data: [{ id: "glm-5.3-flash:dev" }] }) });
-    expect(await probeProviderWindow(model, registry, silent)).toBeUndefined();
-    resetProviderProbes();
-    const noKey = { getApiKeyAndHeaders: async () => ({ ok: true, apiKey: "N/A", headers: {} }) };
-    let seen: Record<string, string> | undefined;
-    await probeProviderWindow(model, noKey, async (_url, init) => ((seen = init?.headers), { ok: true, json: async () => ({ data: [] }) }));
-    expect(seen).toEqual({});
   });
 });
 

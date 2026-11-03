@@ -1031,8 +1031,6 @@ export const registerCompactionHook = (
       // What the budgets were sized from, for debugging a compaction that kept too much or too little.
       limits: {
         ...(window.effective ? { contextWindow: window.effective, windowSource: window.source } : {}),
-        // The provider's own figure when it differs from omp's (e.g. it serves 1M, models.yml says 128K).
-        ...(window.provider && window.provider !== window.omp ? { providerWindow: window.provider } : {}),
         ...(trigger ? { trigger } : {}),
         ...(overheadTokens ? { overheadTokens } : {}),
         maxTailTokens: budgets.maxTailTokens,

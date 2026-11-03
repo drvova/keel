@@ -1,33 +1,29 @@
 // The model's context window as omp-vcc sizes compactions by, and the cases
 // where omp-vcc compacts on its own because omp's trigger is above the real limit.
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
-import { learnedWindow, modelKey, providerWindow, recordLearnedWindow, startProviderProbe, type ModelLike } from "../core/model-limits";
+import { learnedWindow, modelKey, recordLearnedWindow, type ModelLike } from "../core/model-limits";
 import { loadSettings } from "../core/settings";
 import { effectiveWindow, limitFromOverflowError, ompAutoCompacts, ompTrigger, type OmpCompactionPolicy } from "../core/window";
 import type { CompactionState } from "./compaction";
 
 export interface WindowInfo {
-  /** What omp uses (ctx.model.contextWindow). */
+  /** What omp uses (ctx.model.contextWindow; omp's discovery fills it from the provider). */
   omp?: number;
-  /** What the provider's /models says. */
-  provider?: number;
   /** What an overflow error said, in this or an earlier session. */
   learned?: number;
-  /** The smallest of them. */
+  /** The smaller of them. */
   effective?: number;
-  source: "omp" | "provider" | "overflow-error" | "unknown";
+  source: "omp" | "overflow-error" | "unknown";
 }
 
 export const windowOf = (model: ModelLike | undefined): WindowInfo => {
   const omp = typeof model?.contextWindow === "number" && model.contextWindow > 0 ? model.contextWindow : undefined;
-  const provider = providerWindow(model);
   const learned = learnedWindow(modelKey(model));
-  const effective = effectiveWindow(omp, provider, learned);
+  const effective = effectiveWindow(omp, learned);
   const source = effective === undefined ? "unknown"
     : effective === learned && learned !== omp ? "overflow-error"
-    : effective === provider && provider !== omp ? "provider"
     : "omp";
-  return { omp, provider, learned, effective, source };
+  return { omp, learned, effective, source };
 };
 
 /** omp's window is above the real one, so its trigger cannot fire before an overflow. */
@@ -71,26 +67,14 @@ export const triggerFor = (
   return bounded(measured ?? (w.effective ? ompTrigger(w.effective) : undefined));
 };
 
-const describe = (w: WindowInfo): string =>
-  w.source === "provider" ? "its provider's /models says so"
-  : w.source === "overflow-error" ? "an overflow error said so"
-  : "";
-
 /**
- * Learn limits from overflow errors, ask the provider for the window in the
- * background, and compact when a run ends past omp-vcc's own trigger on a model
- * whose window omp overestimates (omp would only notice at the overflow).
+ * Learn limits from overflow errors, and compact when a run ends past omp-vcc's
+ * own trigger on a model whose window omp overestimates (omp would only notice
+ * at the overflow).
  */
 export const registerWindowTracking = (pi: ExtensionAPI, state: CompactionState): void => {
   // One compaction of omp-vcc's own at a time, per binding.
   let scheduled = false;
-  const probe = (ctx: any) => {
-    try {
-      if (loadSettings().probeProviderWindow) startProviderProbe(ctx?.model, ctx?.modelRegistry);
-    } catch {}
-  };
-  pi.on("session_start", (_event, ctx) => probe(ctx));
-  pi.on("before_agent_start", (_event, ctx) => probe(ctx));
 
   pi.on("message_end", (event, ctx) => {
     const message = event.message as { role?: string; stopReason?: string; errorMessage?: string; errorClassificationMessage?: string };
@@ -123,7 +107,7 @@ export const registerWindowTracking = (pi: ExtensionAPI, state: CompactionState)
       state.windowNoticeShown = true;
       try {
         ctx.ui?.notify?.(
-          `omp-vcc: ${modelKey(ctx.model)} holds ${w.effective} tokens (${describe(w)}), not the ${w.omp} omp uses; ` +
+          `omp-vcc: ${modelKey(ctx.model)} holds ${w.effective} tokens (an overflow error said so), not the ${w.omp} omp uses; ` +
             `omp-vcc compacts at ${trigger}. Set its contextWindow in omp's models.yml to make omp do the same.`,
           "info",
         );

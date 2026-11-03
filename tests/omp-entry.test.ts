@@ -108,7 +108,7 @@ describe("omp entry: registration", () => {
   test("registers the hook, the commands and tools, and no continue machinery", () => {
     const omp = createOmp();
     expect([...omp.handlers.keys()].sort()).toEqual(
-      ["agent_end", "auto_compaction_end", "auto_compaction_start", "before_agent_start", "context", "message_end", "session_before_compact", "session_compact", "session_start", "turn_end"],
+      ["agent_end", "auto_compaction_end", "auto_compaction_start", "context", "message_end", "session_before_compact", "session_compact", "session_start", "turn_end"],
     );
     expect([...omp.commands.keys()].sort()).toEqual(["omp-vcc", "omp-vcc-pin", "omp-vcc-recall", "omp-vcc-unpin"]);
     expect(omp.tools.map((t: any) => t.name)).toEqual(["vcc_recall", "vcc_pin"]);
@@ -409,29 +409,6 @@ describe("omp entry: the model's real window", () => {
     await new Promise((r) => setTimeout(r, 5));
     expect(off.compactCalls).toHaveLength(0);
     expect(right.compactCalls).toHaveLength(0); // omp's own trigger handles it
-  });
-
-  test("the provider's /models figure is used when smaller, and recorded when larger", async () => {
-    const { probeProviderWindow, resetProviderProbes, startProviderProbe } = await import("../src/core/model-limits");
-    resetProviderProbes();
-    const registry = { getApiKeyAndHeaders: async () => ({ ok: true, apiKey: "k", headers: {} }) };
-    const listing = (n: number) => async () => ({ ok: true, json: async () => ({ data: [{ id: model.id, context_length: n }] }) });
-    const remote = { ...model, baseUrl: "https://provider.test/v1" };
-    startProviderProbe(remote, registry, listing(65_536));
-    await probeProviderWindow(remote, registry);
-    await new Promise((r) => setTimeout(r, 0));
-    const omp = createOmp();
-    omp.ctx.model = remote;
-    omp.setEntries(big());
-    expect(omp.beforeCompact().compaction.details.limits).toMatchObject({ contextWindow: 65_536, windowSource: "provider", providerWindow: 65_536 });
-    resetProviderProbes();
-    const larger = { ...remote, baseUrl: "https://bigger.test/v1" };
-    startProviderProbe(larger, registry, listing(1_000_000));
-    await probeProviderWindow(larger, registry);
-    await new Promise((r) => setTimeout(r, 0));
-    omp.ctx.model = larger;
-    expect(omp.beforeCompact().compaction.details.limits).toMatchObject({ contextWindow: 128_000, windowSource: "omp", providerWindow: 1_000_000 });
-    resetProviderProbes();
   });
 
   // Seen live (40K provider): dense text tokenized at ~3 chars/token, so "context less
