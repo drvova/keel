@@ -144,7 +144,7 @@ describe("a turn still running", () => {
     else process.env.OMP_VCC_CONFIG_PATH = prev;
   });
 
-  test("an automatic pass between tool calls is left alone when compact-all is the only cut", async () => {
+  test("a threshold pass between tool calls waits; a recovery pass is answered by omp-vcc", async () => {
     const { mkdtempSync, writeFileSync } = await import("fs");
     const { tmpdir } = await import("os");
     const dir = mkdtempSync(join(tmpdir(), "omp-vcc-running-"));
@@ -164,7 +164,42 @@ describe("a turn still running", () => {
     });
     const ctx = { ui: { notify: () => {} } };
     expect(handler(event("threshold"), ctx)).toEqual({ cancel: true });
-    expect(handler(event("overflow"), ctx)).toBeUndefined();
+    // Recovering, omp-vcc answers itself (omp would run snapcompact, handoff or an
+    // LLM summary otherwise). One step is more than half the turn, so the turn is
+    // summarized whole, the request with it.
+    const recovered = handler(event("overflow"), ctx).compaction;
+    expect(recovered.firstKeptEntryId).toBe("");
+    expect(recovered.summary).toContain("Run the tests");
+  });
+
+  test("a recovery pass on a longer running turn within the tail budget keeps its newest steps, at most half of it", async () => {
+    const { mkdtempSync, writeFileSync } = await import("fs");
+    const { tmpdir } = await import("os");
+    const dir = mkdtempSync(join(tmpdir(), "omp-vcc-running-"));
+    process.env.OMP_VCC_CONFIG_PATH = join(dir, "c.json");
+    writeFileSync(process.env.OMP_VCC_CONFIG_PATH, JSON.stringify({ overrideDefaultCompaction: true }));
+    let handler: any;
+    const hook = registerHook({ on: (name: string, fn: any) => { if (name === "session_before_compact") handler = fn; } });
+    const step = (i: number) => [
+      { id: `a${i}`, type: "message", message: { role: "assistant", content: [{ type: "toolCall", id: `t${i}`, name: "bash", arguments: { command: `cat part${i}.log` } }] } },
+      { id: `r${i}`, type: "message", message: { role: "toolResult", toolCallId: `t${i}`, toolName: "bash", content: [{ type: "text", text: `part ${i}: ${"log line\n".repeat(20)}` }], isError: false } },
+    ];
+    const steps = Array.from({ length: 12 }, (_, i) => i + 1);
+    const entries = [msg("u1", "user", "Find which part of the log has the timeout"), ...steps.flatMap(step)];
+    hook.autoCompactionStart("overflow");
+    const { compaction } = handler({
+      type: "session_before_compact", branchEntries: entries, customInstructions: undefined,
+      preparation: { previousSummary: undefined, fileOps: { read: [], written: [], edited: [] }, tokensBefore: 800 },
+      signal: new AbortController().signal,
+    }, { ui: { notify: () => {} } });
+    // The newest steps are kept, starting at a call (never at a result), no more
+    // than half the turn; the request and the earlier steps are summarized.
+    const kept = entries.findIndex((e) => e.id === compaction.firstKeptEntryId);
+    expect(kept).toBeGreaterThanOrEqual(Math.ceil(entries.length / 2));
+    expect(kept).toBeLessThan(entries.length - 1);
+    expect(entries[kept].message.role).toBe("assistant");
+    expect(compaction.summary).toContain("Find which part of the log has the timeout");
+    expect(compaction.details).toMatchObject({ compactor: "omp-vcc", reason: "overflow" });
   });
 });
 

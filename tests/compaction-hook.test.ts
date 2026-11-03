@@ -152,21 +152,28 @@ describe("compaction hook: cancel paths", () => {
     expect(notifyCalls).toHaveLength(0);
   });
  
-  test("overflow retry ownCut failure falls back to omp's own compaction instead of cancelling", () => {
+  test("an overflow with too few messages to cut summarizes them whole, or says why it cannot help", () => {
     setConfig({ debug: true, overrideDefaultCompaction: true });
     const { pi, invokeBefore, notifyCalls } = createMockOmp();
     register(pi);
 
-    const entries = [msg("m1", "user"), msg("m2", "assistant")];
-    const result = invokeBefore(makeEvent(entries, undefined, { reason: "overflow" }));
+    // A paste far bigger than its summary: summarized whole, its original in recall.
+    const paste = [msg("m1", "user", `Here is the dump: ${"0xdeadbeef ".repeat(4_000)}`), msg("m2", "assistant", "Reading it.")];
+    const whole = invokeBefore(makeEvent(paste, undefined, { reason: "overflow" }));
+    expect(whole.compaction.firstKeptEntryId).toBe("");
+    expect(whole.compaction.details).toMatchObject({ compactor: "omp-vcc", reason: "overflow", willRetry: true });
 
-    expect(result).toBeUndefined();
-    expect(notifyCalls).toHaveLength(0);
+    // Two tiny messages beside long pinned notes: any summary of them is bigger
+    // than they are, and no method of omp's would shrink this context either.
+    const pins = Array.from({ length: 5 }, (_, i) => ({
+      id: `p${i}`, type: "custom", customType: "omp-vcc.pin",
+      data: { v: 1, op: "add", id: i + 1, text: `Constraint ${i + 1}: ${"keep the legacy SSO flow untouched until the migration lands. ".repeat(3)}`, by: "user" },
+    }));
+    const tiny = [...pins, msg("m1", "user"), msg("m2", "assistant")];
+    expect(invokeBefore(makeEvent(tiny, undefined, { reason: "overflow" }))).toEqual({ cancel: true });
+    expect(notifyCalls.at(-1)?.msg).toContain("the context is full of what no compaction removes");
     expect(existsSync(DEBUG_PATH)).toBe(true);
     const snapshot = JSON.parse(readFileSync(DEBUG_PATH, "utf-8"));
-    expect(snapshot.cancelled).toBe(false);
-    expect(snapshot.fallbackToCore).toBe(true);
-    expect(snapshot.reason).toBe("too_few_live_messages");
     expect(snapshot.compaction).toEqual({ reason: "overflow", willRetry: true });
   });
 
@@ -611,6 +618,7 @@ describe("applyTailBudget: token-budget tail cut (default path)", () => {
     expect(formatCompactionStats({ ...base, budgetCut: "oversized_tail" })).toBe("omp-vcc: kept ~5.0k tok tail (mid-turn cut, oversized tail), summarized 4.");
     // A finished turn whose final reply was kept is not a mid-turn cut (seen with a real model).
     expect(formatCompactionStats({ ...base, budgetCut: "final_reply" })).toBe("omp-vcc: kept the final reply (~5.0k tok), summarized 4.");
+    expect(formatCompactionStats({ ...base, budgetCut: "running_turn" })).toBe("omp-vcc: kept the running turn's latest steps (~5.0k tok), summarized 4.");
   });
 });
 
@@ -1119,7 +1127,7 @@ describe("compaction hook: growth guard", () => {
     expect(notifyCalls).toEqual([]);
   });
 
-  test("a manual /compact that would grow it is cancelled and says why; an overflow goes to omp's method", () => {
+  test("a manual /compact that would grow it is cancelled and says why; an overflow writes it for omp's rescue", () => {
     setConfig({ overrideDefaultCompaction: true });
     const manual = createMockOmp();
     register(manual.pi);
@@ -1134,7 +1142,8 @@ describe("compaction hook: growth guard", () => {
     expect(all.notifyCalls[0].msg).not.toContain("keep:0");
     const overflow = createMockOmp();
     register(overflow.pi);
-    expect(overflow.invokeBefore(makeEvent(tiny(), undefined, { reason: "overflow" }))).toBeUndefined();
+    // Recovering, it keeps part of the window, and what overflows is that part: written, and omp's rescue shakes it.
+    expect(overflow.invokeBefore(makeEvent(tiny(), undefined, { reason: "overflow" })).compaction.details).toMatchObject({ compactor: "omp-vcc", reason: "overflow" });
   });
 
   test("a prefix worth summarizing still compacts", () => {

@@ -42,10 +42,12 @@ export interface CompactionStats {
 /**
  * no_anchor: no user turn to cut at, so a token-budget cut inside the turn.
  * oversized_tail: the kept user turns were too big, cut inside them.
+ * running_turn: a recovery pass on a turn still running, with no earlier user
+ *   turn: its newest steps kept, the request and earlier steps summarized.
  * final_reply: a finished turn with no earlier user turn, small enough to keep
  * whole: everything but its final reply is summarized.
  */
-export type BudgetCutKind = "no_anchor" | "oversized_tail" | "final_reply";
+export type BudgetCutKind = "no_anchor" | "oversized_tail" | "final_reply" | "running_turn";
 export const OVERSIZED_TAIL_FACTOR = 2.5;
 
 /** What started a compaction, and whether omp retries the turn after it. */
@@ -113,6 +115,9 @@ export const formatCompactionStats = (stats: CompactionStats): string => {
   if (stats.budgetCut) {
     if (stats.budgetCut === "final_reply") {
       return `omp-vcc: kept the final reply (~${formatTokens(stats.keptTokensEst)} tok), summarized ${stats.summarized}.`;
+    }
+    if (stats.budgetCut === "running_turn") {
+      return `omp-vcc: kept the running turn's latest steps (~${formatTokens(stats.keptTokensEst)} tok), summarized ${stats.summarized}.`;
     }
     const reason = stats.budgetCut === "no_anchor" ? "no user anchor" : "oversized tail";
     return `omp-vcc: kept ~${formatTokens(stats.keptTokensEst)} tok tail (mid-turn cut, ${reason}), summarized ${stats.summarized}.`;
@@ -454,6 +459,72 @@ export const findBudgetCutIndex = (
   return -1;
 };
 
+/** The cut at live index `idx`: everything before it summarized, the rest kept. */
+const cutAt = (live: EntryWithMessage[], idx: number, cut: Extract<OwnCutResult, { ok: true }>, budgetCut: BudgetCutKind): OwnCutResult => ({
+  ok: true,
+  messages: live.slice(0, idx).map((m) => m.message),
+  selectedIds: live.slice(0, idx).map((m) => m.entry.id),
+  firstKeptEntryId: live[idx].entry.id,
+  compactAll: false,
+  keptUserTurns: live.slice(idx).filter((m) => m.message.role === "user").length,
+  totalUserTurns: live.filter((m) => m.message.role === "user").length,
+  requestedKeepUserTurns: cut.requestedKeepUserTurns,
+  keepFallbackToCompactAll: false,
+  budgetCut,
+});
+
+/**
+ * A recovery pass (an overflow, a cut-off reply) on a turn still running whose
+ * live window has no earlier user turn: something must shrink, and summarizing
+ * the whole turn takes away the tool output the agent is working from. Keep the
+ * turn's newest steps, at most half of the window and the tail budget, and
+ * summarize the request and the steps before them (their originals stay in
+ * recall). Undefined when no boundary leaves that: then the whole window is
+ * summarized. What is kept and still too big, omp's own rescue trims after the
+ * compaction commits (it shakes oversized tool output).
+ */
+export const runningTurnCut = (
+  host: CompactionHost,
+  branchEntries: any[],
+  cut: OwnCutResult,
+  opts: { maxTokens?: number; charsPerToken?: number; skipCustomTypes?: readonly string[] } = {},
+): OwnCutResult | undefined => {
+  if (!cut.ok) return undefined;
+  const live = collectLiveMessages(branchEntries);
+  const tokens = live.map((m) => estimateMessageTokens(m.message, opts.charsPerToken));
+  const target = Math.min(opts.maxTokens ?? MAX_SMART_TAIL_TOKENS, tokens.reduce((a, b) => a + b, 0) / 2);
+  let tail = 0;
+  let best = -1;
+  for (let i = live.length - 1; i >= 1; i--) {
+    tail += tokens[i];
+    if (tail > target) break;
+    if (live[i].message.role !== "toolResult") best = i;
+  }
+  if (best < 1 || !prefixHasRenderableContent(live.slice(0, best), opts.skipCustomTypes ?? [], host)) return undefined;
+  return cutAt(live, best, cut, "running_turn");
+};
+
+/**
+ * One or two live messages, summarized whole: on a recovery pass something must
+ * shrink, and a request or reply far too big for the window (a long paste, one
+ * huge result) shrinks to its summary line, its original in recall.
+ */
+export const wholeWindowCut = (host: CompactionHost, branchEntries: any[], skipCustomTypes: readonly string[] = []): OwnCutResult | undefined => {
+  const live = collectLiveMessages(branchEntries);
+  if (live.length === 0 || !prefixHasRenderableContent(live, skipCustomTypes, host)) return undefined;
+  return {
+    ok: true,
+    messages: live.map((e) => e.message),
+    selectedIds: live.map((e) => e.entry.id),
+    firstKeptEntryId: "",
+    compactAll: true,
+    keptUserTurns: 0,
+    totalUserTurns: live.filter((e) => e.message.role === "user").length,
+    requestedKeepUserTurns: 0,
+    keepFallbackToCompactAll: false,
+  };
+};
+
 /** An assistant message that ends a turn: text, and no tool call still waiting for its result. */
 const isFinalAnswer = (message: { role: string; content: unknown }): boolean =>
   message.role === "assistant" &&
@@ -743,27 +814,37 @@ export const registerCompactionHook = (
         maxTokens: budgets.maxTailTokens,
       });
     }
+    // A recovery pass (an overflow, a cut-off reply) must shrink the context.
+    // omp-vcc answers it itself: stepping aside hands it to the method omp picked
+    // (snapcompact, handoff, server compaction, an LLM summary). What is kept and
+    // still too big, omp's rescue shakes after the compaction commits.
+    const recovering = !fromCommand && (reason === "overflow" || reason === "incomplete" || willRetry);
     // An automatic pass on a turn still running (its last message is a tool result:
     // omp compacts between the tool calls of one turn) whose live window has no
     // earlier user turn and fits the tail budget: the only cut left is compact-all,
     // which would summarize away the request and tool output the agent is working
-    // from, to free a few tokens. Leave the turn alone: a recovery pass (overflow,
-    // cut-off reply) goes to the host's own method, a threshold or idle pass waits
-    // until the turn has ended.
+    // from. A threshold or idle pass waits until the turn has ended; a recovery
+    // pass keeps the turn's newest steps and summarizes the rest.
     if (
       ownCut.ok && ownCut.compactAll && ownCut.keepFallbackToCompactAll && !fromCommand
       && ownCut.messages[ownCut.messages.length - 1]?.role === "toolResult"
       && (reason === "threshold" || reason === "idle" || reason === "overflow" || reason === "incomplete")
     ) {
-      state.pendingFollowUpPrompt = null;
-      const toHost = reason === "overflow" || reason === "incomplete" || willRetry;
-      dbg(settings, {
-        deferredRunningTurn: true,
-        fallbackToCore: toHost,
-        compaction: { reason, willRetry },
-        liveMessages: ownCut.messages.length,
-      });
-      return toHost ? undefined : { cancel: true };
+      if (!recovering) {
+        state.pendingFollowUpPrompt = null;
+        dbg(settings, { deferredRunningTurn: true, compaction: { reason, willRetry }, liveMessages: ownCut.messages.length });
+        return { cancel: true };
+      }
+      ownCut = runningTurnCut(host, branchEntries as any[], ownCut, {
+        charsPerToken: tokenEstimate.charsPerToken,
+        skipCustomTypes: settings.skipCustomTypes,
+        maxTokens: budgets.maxTailTokens,
+      }) ?? ownCut;
+      dbg(settings, { runningTurnRecovery: true, compaction: { reason, willRetry }, budgetCut: ownCut.ok ? ownCut.budgetCut : undefined });
+    }
+    // One or two messages too big for the window: summarized whole on a recovery pass.
+    if (!ownCut.ok && recovering && ownCut.reason === "too_few_live_messages") {
+      ownCut = wholeWindowCut(host, branchEntries as any[], settings.skipCustomTypes) ?? ownCut;
     }
     if (!ownCut.ok) {
       const lastComp = [...branchEntries].reverse().find((e) => e.type === "compaction");
@@ -777,7 +858,8 @@ export const registerCompactionHook = (
       const userIndices = liveRoles.reduce<number[]>((acc, r, i) => (r === "user" ? (acc.push(i), acc) : acc), []);
 
       state.pendingFollowUpPrompt = null;
-      const fallbackToCore = !fromCommand && (reason === "overflow" || willRetry);
+      // Nothing live to summarize: no method of omp's can shrink it either.
+      const fallbackToCore = recovering;
       dbg(settings, {
         cancelled: !fallbackToCore,
         fallbackToCore,
@@ -963,21 +1045,32 @@ export const registerCompactionHook = (
       },
     });
 
-    // Growth guard: a compaction that leaves the context bigger is not written.
-    // Recovering from an overflow, something must shrink, so omp's own method
-    // runs instead; otherwise the pass is cancelled, and a manual one says why
-    // (an automatic one would say so on every turn until the prefix grows).
+    // Growth guard: a compaction that leaves the context bigger is not written,
+    // and a manual pass says why (an automatic one would say so on every turn
+    // until the prefix grows). Recovering, it is written when it keeps part of
+    // the window: what overflows is that kept part, and omp's rescue shakes its
+    // oversized tool output once this commits. When even summarizing the whole
+    // window grows the context, what fills it is what no compaction removes.
     const growth = summaryGrowth(
       summary.length,
       typeof preparation.previousSummary === "string" ? preparation.previousSummary.length : 0,
       ownCut.messages.reduce((sum: number, m: any) => sum + estimateMessageChars(m), 0),
       budgets.growthMarginChars,
     );
-    if (growth.grows) {
+    if (growth.grows && recovering && !ownCut.compactAll) {
+      dbg(settings, { growthGuard: growth, writtenForRescue: true, compaction: { reason, willRetry }, summarized: ownCut.messages.length });
+    } else if (growth.grows) {
       state.pendingFollowUpPrompt = null;
       state.lastStats = null;
       dbg(settings, { growthGuard: growth, compaction: { reason, willRetry }, summarized: ownCut.messages.length });
-      if (!fromCommand && (reason === "overflow" || reason === "incomplete" || willRetry)) return undefined;
+      if (recovering) {
+        const notice = `omp-vcc: Not compacted: the ${ownCut.messages.length} messages left are smaller than a summary of them; the context is full of what no compaction removes (the system prompt and tools).`;
+        state.lastCancelNotice = notice;
+        try {
+          ctx?.ui?.notify?.(notice, "warning");
+        } catch {}
+        return { cancel: true };
+      }
       if (reason === "manual") {
         const more = ownCut.compactAll ? "" : " keep:0 summarizes everything.";
         const notice = `omp-vcc: Not compacted: the summary would be ${growth.netChars} chars larger than the ${ownCut.messages.length} messages it replaces.${more}`;
