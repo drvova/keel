@@ -190,9 +190,10 @@ export const selectWorkingSet = (input: WorkingSetInput): WorkingSetItem[] => {
     if (!active.includes(p)) active.push(p);
   };
   for (const c of [...keptCalls].reverse()) if (onFile(c)) c.paths.forEach(add);
-  // A kept turn that has not started yet most likely goes on with the last one.
-  if (keptCalls.length === 0) for (const c of [...allCalls].reverse()) if (c.pos > lastUserPos && (writes(c) || edits(c))) c.paths.forEach(add);
   for (const p of known) if (mentions(request, p)) add(p);
+  // Then the files of the request in progress: read or changed since its message,
+  // most recent first. In real runs these are what the agent read again after a compaction.
+  for (const c of [...allCalls].reverse()) if (c.pos > lastUserPos && onFile(c)) c.paths.forEach(add);
   // Files whose current version the kept tail holds: a read or a write of it is in context already.
   const inContext = new Set(keptCalls.filter((c) => reads(c) || writes(c)).flatMap((c) => c.paths));
   const chosenPaths = new Set<string>();

@@ -212,9 +212,16 @@ export const DEFAULT_BUDGETS: CompactionBudgets = {
   workingSetTokens: 3_800,
 };
 
-/** [Working Set] takes at most this share of the trigger, and nothing when that is under the floor. */
-const WORKING_SET_SHARE = 0.035;
+/**
+ * [Working Set] takes at most this share of the trigger, and nothing when that is
+ * under the floor. A smaller window needs it most: in real runs on a 40K window,
+ * a 3.5% share (about 3k chars) held no whole source file, and the agent read
+ * the files again; 14% holds them. On a ~128K window the cap above binds first.
+ */
+const WORKING_SET_SHARE = 0.14;
 const MIN_WORKING_SET_TOKENS = 400;
+/** The kept tail's floor: the working set takes only the landing room above it. */
+const MIN_TAIL_TOKENS = 1_000;
 
 /**
  * How much of each section list a summary keeps, against a ~128K window. Below
@@ -250,11 +257,14 @@ export const compactionBudgets = (trigger?: number, overheadTokens = 0, withWork
   const briefCeilingTokens = Math.round(Math.min(0.1 * t, clampTokens(0.004 * t, DEFAULT_BUDGETS.briefCeilingTokens, 6_000)));
   const briefTokens = Math.round(Math.min(DEFAULT_BUDGETS.briefTokens, 0.06 * t, briefCeilingTokens));
   const scale = summaryScale(t, briefCeilingTokens);
-  // The same on a ~128K window up to where the brief grows, then with it; a share of a smaller trigger.
-  const wanted = Math.round(Math.min(DEFAULT_BUDGETS.workingSetTokens * Math.max(1, scale), WORKING_SET_SHARE * t));
+  // What a compaction may land with besides the summary: the kept tail and the working set.
+  const landing = LANDING_SHARE * t - Math.max(0, overheadTokens) - briefCeilingTokens - SECTIONS_TOKENS * scale;
+  // The same on a ~128K window up to where the brief grows, then with it; a share of a smaller
+  // trigger, out of the landing room above the tail's floor, so it never pushes a compaction
+  // past where omp expects it to land.
+  const wanted = Math.round(Math.min(DEFAULT_BUDGETS.workingSetTokens * Math.max(1, scale), WORKING_SET_SHARE * t, landing - MIN_TAIL_TOKENS));
   const workingSetTokens = withWorkingSet && wanted >= MIN_WORKING_SET_TOKENS ? wanted : 0;
-  const room = LANDING_SHARE * t - Math.max(0, overheadTokens) - briefCeilingTokens - SECTIONS_TOKENS * scale - workingSetTokens;
-  const maxTailTokens = clampTokens(Math.min(TAIL_SHARE * t, room), 1_000, DEFAULT_BUDGETS.maxTailTokens);
+  const maxTailTokens = clampTokens(Math.min(TAIL_SHARE * t, landing - workingSetTokens), MIN_TAIL_TOKENS, DEFAULT_BUDGETS.maxTailTokens);
   return {
     maxTailTokens,
     minTailTokens: Math.round(maxTailTokens / 5),

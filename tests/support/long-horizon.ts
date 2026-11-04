@@ -56,6 +56,8 @@ export interface LongHorizonResult {
   turns: number;
   compactions: number;
   summaryChars: number[];
+  /** The same without [Working Set], which is sized from the landing room, not the sections. */
+  sectionChars: number[];
   needles: NeedleScore[];
   finalSummary: string;
 }
@@ -197,6 +199,7 @@ export const runLongHorizon = (options: LongHorizonOptions = {}): LongHorizonRes
     const model = options.contextWindow ? { contextWindow: options.contextWindow } : undefined;
     let previousSummary: string | undefined;
     const summaryChars: number[] = [];
+    const sectionChars: number[] = [];
     let compactions = 0;
     for (let t = 0; t < turns; t++) {
       turnFns[t]();
@@ -207,7 +210,11 @@ export const runLongHorizon = (options: LongHorizonOptions = {}): LongHorizonRes
       }
       if ((t + 1) % compactEvery !== 0) continue;
       writeFile();
-      const chars = entries.reduce((sum, e) => sum + JSON.stringify((e as any).message?.content ?? "").length, 0);
+      // What the context holds, as omp counts it for tokensBefore: the previous summary and the
+      // messages from the last compaction's kept entry on, not the compacted history.
+      const lastCompaction = entries.map((e) => e.type).lastIndexOf("compaction");
+      const keptFrom = lastCompaction < 0 ? 0 : Math.max(0, entries.findIndex((e) => e.id === (entries[lastCompaction] as any).firstKeptEntryId));
+      const chars = (previousSummary?.length ?? 0) + entries.slice(keptFrom).reduce((sum, e) => sum + JSON.stringify((e as any).message?.content ?? "").length, 0);
       hook.autoCompactionStart("threshold");
       const out = handler({
         type: "session_before_compact",
@@ -220,6 +227,9 @@ export const runLongHorizon = (options: LongHorizonOptions = {}): LongHorizonRes
       compactions++;
       previousSummary = out.compaction.summary;
       summaryChars.push(previousSummary!.length);
+      const ws = previousSummary!.indexOf("[Working Set]");
+      const wsEnd = ws < 0 ? -1 : previousSummary!.indexOf("\n\n", ws);
+      sectionChars.push(previousSummary!.length - (ws < 0 ? 0 : (wsEnd < 0 ? previousSummary!.length : wsEnd) - ws));
       entries.push({
         type: "compaction", id: `k${compactions}`, parentId: entries[entries.length - 1].id,
         timestamp: new Date(0).toISOString(), summary: previousSummary, firstKeptEntryId: out.compaction.firstKeptEntryId,
@@ -248,7 +258,7 @@ export const runLongHorizon = (options: LongHorizonOptions = {}): LongHorizonRes
       const request = parseToolRequest(params as any);
       return runRecall(request, openRecallView(sessionFile, request.scope, sessionManager), TOOL_PAGING_HINTS);
     }, needles);
-    return { turns, compactions, summaryChars, needles: scores, finalSummary };
+    return { turns, compactions, summaryChars, sectionChars, needles: scores, finalSummary };
   } finally {
     if (previousConfig === undefined) delete process.env.OMP_VCC_CONFIG_PATH;
     else process.env.OMP_VCC_CONFIG_PATH = previousConfig;

@@ -43,8 +43,10 @@ describe("long-horizon session: the summary follows the window", () => {
   const max = (r: typeof small) => Math.max(...r.summaryChars);
   const count = (r: typeof small, key: "inSummary" | "pointed") => r.needles.filter((n) => n[key]).length;
 
-  it("a 32K window gets about half the summary, and keeps every pointer and recall", () => {
-    expect(max(small)).toBeLessThan(max(typical) * 0.6);
+  it("a 32K window gets about half the summary's sections, and keeps every pointer and recall", () => {
+    // [Working Set] is sized from what the compaction may land with, not with the sections.
+    const sections = (r: typeof small) => Math.max(...r.sectionChars);
+    expect(sections(small)).toBeLessThan(sections(typical) * 0.6);
     expect(count(small, "pointed")).toBeGreaterThanOrEqual(count(typical, "pointed"));
     expect(small.needles.filter((n) => n.recallRank == null)).toEqual([]);
     expect(small.needles.filter((n) => n.kind === "constraint" || n.kind === "mid_request").every((n) => n.inSummary)).toBe(true);

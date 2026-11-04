@@ -104,10 +104,24 @@ describe("selectWorkingSet", () => {
       call("r2", "read", { path: "docs/deploy.md" }), result("r2", "read", "deploy notes: the pelican cluster moved to eu-west"),
       call("r3", "read", { path: "README.md" }), result("r3", "read", "a readme about something else entirely"),
       say("Read them."),
+      // A finished request: its files are not the work in progress.
+      user("thanks, that is all for now"), say("Done."),
     ];
     const kept = [user("which region is the pelican cluster in now?")];
     const items = selectWorkingSet({ history: summarized, indices: indices(summarized.length), kept, maxChars: 20_000 });
     expect(items.map((i) => [i.reason, i.index])).toEqual([["relevant", 7]]);
+  });
+
+  it("brings back the files of the request in progress, most recent first", () => {
+    const history = [
+      user("tidy the billing module"),
+      call("r1", "read", { path: "src/billing/totals.ts" }), result("r1", "read", "export const total = 1;\nexport const tax = 2;"),
+      call("r2", "read", { path: "src/billing/format.ts" }), result("r2", "read", "export const fmt = (x: number) => `${x}`;\nexport const pad = 2;"),
+      say("Both read."),
+    ];
+    const kept = [call("b1", "bash", { command: "bun test" })];
+    const items = selectWorkingSet({ history, indices: indices(history.length), kept, maxChars: 20_000 });
+    expect(items.map((i) => [i.reason, i.title])).toEqual([["file", 'read "src/billing/format.ts"'], ["file", 'read "src/billing/totals.ts"']]);
   });
 });
 
@@ -143,13 +157,21 @@ describe("formatWorkingSet", () => {
 });
 
 describe("the budget follows the window", () => {
-  it("3,800 tokens on a typical window and up to a 500K trigger, a share of a smaller one, none on a tiny one", () => {
+  it("3,800 tokens on a typical window and up to a 500K trigger, 14% of a smaller one within the landing room, none on a tiny one", () => {
     expect(compactionBudgets(undefined).workingSetTokens).toBe(3_800);
     expect(compactionBudgets(ompDefaultTrigger(128_000), 8_000).workingSetTokens).toBe(3_800);
     expect(compactionBudgets(ompDefaultTrigger(200_000), 8_000).workingSetTokens).toBe(3_800);
-    expect(compactionBudgets(ompDefaultTrigger(32_768), 8_000).workingSetTokens).toBe(573);
     expect(compactionBudgets(ompDefaultTrigger(1_000_000), 8_000).workingSetTokens).toBe(6_460);
-    expect(compactionBudgets(8_000, 1_000).workingSetTokens).toBe(0);
+    // 14% of a 40K window's trigger, when nothing else is known to take room.
+    expect(compactionBudgets(ompDefaultTrigger(40_000)).workingSetTokens).toBe(3_306);
+    // With omp's system prompt and tools measured: what the landing leaves above the tail's 1,000-token floor.
+    const b40 = compactionBudgets(ompDefaultTrigger(40_000), 8_800);
+    expect([b40.workingSetTokens, b40.maxTailTokens]).toEqual([2_090, 1_000]);
+    // A 32K window's landing room is all the tail's floor: no working set.
+    expect(compactionBudgets(ompDefaultTrigger(32_768), 8_000).workingSetTokens).toBe(0);
+    // A small trigger with little else in context: 14% of it.
+    expect(compactionBudgets(8_000, 1_000).workingSetTokens).toBe(1_120);
+    expect(compactionBudgets(2_000).workingSetTokens).toBe(0);
   });
 
   it("with workingSet off, its room goes to the kept tail", () => {
