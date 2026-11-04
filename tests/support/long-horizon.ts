@@ -125,9 +125,11 @@ const planTurn = (t: number, needle: Needle | undefined): TurnPlan => {
         : `Next: ${verb} ${feature} of ${comp}.`;
   const work = [
     ...(needle?.kind === "tool_value" ? ["first run `bun scripts/dev-server.ts --print-port` to see which port the dev server uses"] : []),
+    // The failure is planted by having the agent see it before it changes anything.
+    ...(needle?.kind === "fixed_error" ? [`first run \`${test}\` before changing anything, and note which test fails`] : []),
     `read ${readPath} and replace \`${comp}Step1(\` with \`${comp}Step1Checked(\` in it`,
     ...(needle?.kind === "fixed_error"
-      ? [`run \`${test}\`; it fails on rounds totals, so replace \`Math.floor(\` with \`Math.ceil(\` in ${file} and run it again`]
+      ? [`replace \`Math.floor(\` with \`Math.ceil(\` in ${file}, which the failing rounds totals test points at`, `run \`${test}\` again`]
       : [`run \`${test}\``]),
     ...(t % 5 === 0 && t > 0 ? [`commit with \`git commit -am "feat(${comp}): ${verb} ${feature}"\``] : []),
   ];
@@ -194,7 +196,7 @@ const createProject = (proj: string, plans: TurnPlan[]) => {
 export const runLongHorizon = async (options: LongHorizonOptions = {}): Promise<LongHorizonResult> => {
   const turns = options.turns ?? 60;
   const compactEvery = options.compactEvery ?? 6;
-  if (!realModel()) throw new Error("long-horizon: set OMP_VCC_LH_API_KEY to a key for DeepSeek V4.1 Flash on OpenScale (tests/support/omp-session.ts)");
+  if (!realModel({ keyFile: true })) throw new Error("long-horizon: set OMP_VCC_LH_API_KEY to a key for DeepSeek V4.1 Flash on OpenScale (tests/support/omp-session.ts)");
   const work = mkdtempSync(join(tmpdir(), "omp-vcc-long-horizon-"));
   let omp: Awaited<ReturnType<typeof openOmpSession>> | undefined;
   try {

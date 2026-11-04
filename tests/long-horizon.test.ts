@@ -13,11 +13,17 @@ import { recallOutputChars, RECALL_OUTPUT_CHARS } from "../src/core/recall-run";
 const PIN = "Sessions are stored in SQLite rather than Redis: the deploy host has no Redis.";
 describe.skipIf(!realModel())("long-horizon session, on a real model in omp", () => {
   const runs: Record<string, LongHorizonResult> = {};
+  // Each run's per-fact table goes to the log: a real model's runs differ, and a failure needs the table to read.
+  const report = (label: string, r: LongHorizonResult) =>
+    console.log([
+      `${label}: ${r.compactions} compactions (${r.byOmpVcc} by omp-vcc), summary chars max ${Math.max(...r.summaryChars)} (sections ${Math.max(...r.sectionChars)})`,
+      ...r.needles.map((n) => `  ${n.kind.padEnd(13)} turn ${String(n.turn).padStart(3)}  summary ${n.inSummary ? "yes" : "no "}  pointer ${n.pointed ? "yes" : "no "}  recall ${n.recallRank ?? "-"}`),
+    ].join("\n"));
   beforeAll(async () => {
-    runs.r60 = await runLongHorizon({ turns: 60, compactEvery: 6 });
-    runs.r120 = await runLongHorizon({ turns: 120, compactEvery: 6, pins: { 9: PIN } });
-    runs.small = await runLongHorizon({ turns: 60, compactEvery: 6, contextWindow: 32_768 });
-    runs.large = await runLongHorizon({ turns: 60, compactEvery: 6, contextWindow: 1_000_000 });
+    report("60 turns, 128K", (runs.r60 = await runLongHorizon({ turns: 60, compactEvery: 6 })));
+    report("120 turns, 128K", (runs.r120 = await runLongHorizon({ turns: 120, compactEvery: 6, pins: { 9: PIN } })));
+    report("60 turns, 32K", (runs.small = await runLongHorizon({ turns: 60, compactEvery: 6, contextWindow: 32_768 })));
+    report("60 turns, 1M", (runs.large = await runLongHorizon({ turns: 60, compactEvery: 6, contextWindow: 1_000_000 })));
   }, 4 * 60 * 60_000);
   const count = (r: LongHorizonResult, key: "inSummary" | "pointed") => r.needles.filter((n) => n[key]).length;
 
@@ -48,7 +54,7 @@ describe.skipIf(!realModel())("long-horizon session, on a real model in omp", ()
 
   it("the summary stays bounded as compactions double", () => {
     expect(Math.max(...runs.r120.summaryChars)).toBeLessThan(Math.max(...runs.r60.summaryChars) * 1.15);
-    expect(Math.max(...runs.r120.sectionChars)).toBeLessThan(10_000);
+    expect(Math.max(...runs.r120.sectionChars)).toBeLessThan(Math.max(...runs.r60.sectionChars) * 1.15);
   });
 
   it("a note pinned at turn 9 leads the summary after every compaction", () => {
@@ -71,7 +77,8 @@ describe.skipIf(!realModel())("long-horizon session, on a real model in omp", ()
   it("a 1M window keeps at least as many facts in the summary itself, its sections still bounded", () => {
     const { large, r60: typical } = runs;
     expect(count(large, "inSummary")).toBeGreaterThanOrEqual(count(typical, "inSummary"));
-    expect(Math.max(...large.sectionChars)).toBeLessThan(16_000);
+    // The sections grow with the brief's ceiling past a 500K trigger (1.7x on a 1M window), not beyond.
+    expect(Math.max(...large.sectionChars)).toBeLessThan(Math.max(...typical.sectionChars) * 2);
   });
 });
 

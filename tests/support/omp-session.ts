@@ -23,9 +23,13 @@ const loadKeyFile = () => {
   }
 };
 
-/** The real model a session runs on; undefined without a key for it (OMP_VCC_LH_API_KEY, or KEY_FILE). */
-export const realModel = (): { baseUrl: string; model: string; api: string } | undefined => {
-  loadKeyFile();
+/**
+ * The real model a session runs on; undefined without a key for it. The tests
+ * take the key from the environment only, so a plain `bun test` never starts
+ * hours of model turns; the benchmark scripts also read KEY_FILE (`keyFile`).
+ */
+export const realModel = (options: { keyFile?: boolean } = {}): { baseUrl: string; model: string; api: string } | undefined => {
+  if (options.keyFile) loadKeyFile();
   if (!process.env.OMP_VCC_LH_API_KEY) return undefined;
   return {
     baseUrl: process.env.OMP_VCC_LH_BASE_URL || LONG_HORIZON_MODEL.baseUrl,
@@ -53,7 +57,7 @@ export interface OmpSession {
 }
 
 export const openOmpSession = async (options: OmpSessionOptions): Promise<OmpSession> => {
-  const provider = realModel();
+  const provider = realModel({ keyFile: true });
   if (!provider) throw new Error(`set OMP_VCC_LH_API_KEY, or put it in ${KEY_FILE}, to a key for DeepSeek V4.1 Flash on OpenScale`);
   const saved = ["PI_CODING_AGENT_DIR", "OMP_VCC_CONFIG_PATH"].map((k) => [k, process.env[k]] as const);
   const restore = () => {
