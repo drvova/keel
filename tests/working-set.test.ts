@@ -1,0 +1,158 @@
+// [Working Set]: what the next step needs, brought back at a compaction
+// (src/core/working-set.ts).
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
+import { formatWorkingSet, selectWorkingSet } from "../src/core/working-set";
+import { compactionBudgets, ompDefaultTrigger } from "../src/core/window";
+import { registerHook } from "./support/host";
+
+let dir: string;
+const prev = process.env.OMP_VCC_CONFIG_PATH;
+beforeAll(() => {
+  dir = mkdtempSync(join(tmpdir(), "omp-vcc-working-set-"));
+  process.env.OMP_VCC_CONFIG_PATH = join(dir, "omp-vcc-config.json");
+  writeFileSync(process.env.OMP_VCC_CONFIG_PATH, JSON.stringify({ overrideDefaultCompaction: true }));
+});
+afterAll(() => {
+  if (prev === undefined) delete process.env.OMP_VCC_CONFIG_PATH;
+  else process.env.OMP_VCC_CONFIG_PATH = prev;
+  rmSync(dir, { recursive: true, force: true });
+});
+
+const text = (t: string) => [{ type: "text", text: t }];
+const user = (t: string) => ({ role: "user", content: t });
+const call = (id: string, name: string, args: Record<string, unknown>) => ({ role: "assistant", content: [{ type: "toolCall", id, name, arguments: args }] });
+const result = (id: string, name: string, t: string, isError = false) => ({ role: "toolResult", toolCallId: id, toolName: name, content: text(t), isError });
+const say = (t: string) => ({ role: "assistant", content: text(t) });
+
+const FILE = Array.from({ length: 60 }, (_, i) => (i === 41 ? "export const roundTotal = (x: number) => Math.floor(x * 100) / 100;" : `export const helper${i} = () => ${i};`)).join("\n");
+const FAILURE = `${"bun test v1.4\n".repeat(30)}FAIL tests/billing.test.ts > rounds totals\nexpected 10.01, received 10.00`;
+
+/** A task in progress: read the file, the test failed, the file was edited. */
+const work = () => [
+  user("Fix the rounding bug in src/billing/totals.ts; tests/billing.test.ts fails"),
+  call("c1", "read", { path: "src/billing/totals.ts" }),
+  result("c1", "read", FILE),
+  call("c2", "bash", { command: "bun test tests/billing.test.ts" }),
+  result("c2", "bash", FAILURE, true),
+  call("c3", "edit", { path: "src/billing/totals.ts", oldText: "Math.floor", newText: "Math.round" }),
+  result("c3", "edit", "ok"),
+  say("I changed floor to round."),
+];
+
+describe("selectWorkingSet", () => {
+  const indices = (n: number) => Array.from({ length: n }, (_, i) => i);
+
+  it("brings back the file the kept turn edits, by its latest version, and the failure nothing fixed", () => {
+    const summarized = work();
+    const kept = [user("still failing, keep going"), call("c4", "edit", { path: "src/billing/totals.ts", oldText: "a", newText: "b" })];
+    const items = selectWorkingSet({ summarized, indices: indices(summarized.length), kept, maxChars: 20_000 });
+    expect(items.map((i) => [i.reason, i.index, i.title, i.note])).toEqual([
+      ["file", 2, 'read "src/billing/totals.ts"', "the latest version, edited after at #5"],
+      ["failure", 4, 'bash "bun test tests/billing.test.ts" [failed]', "its end"],
+    ]);
+  });
+
+  it("leaves out what the kept turn already holds and a failure a later run fixed", () => {
+    const summarized = [...work(), call("c5", "bash", { command: "bun test tests/billing.test.ts" }), result("c5", "bash", "1 pass")];
+    const kept = [user("now tidy it up"), call("c6", "read", { path: "src/billing/totals.ts" })];
+    expect(selectWorkingSet({ summarized, indices: indices(summarized.length), kept, maxChars: 20_000 })).toEqual([]);
+  });
+
+  it("before the kept turn starts, goes on from the last summarized turn; with a tiny budget, nothing", () => {
+    const summarized = work();
+    const kept = [user("ok, continue")];
+    const items = selectWorkingSet({ summarized, indices: indices(summarized.length), kept, maxChars: 20_000 });
+    expect(items.map((i) => i.index)).toEqual([2, 4]);
+    expect(selectWorkingSet({ summarized, indices: indices(summarized.length), kept, maxChars: 100 })).toEqual([]);
+  });
+
+  it("ranks the rest by the latest request, a file's latest read only", () => {
+    const summarized = [
+      user("look around"),
+      call("r1", "read", { path: "docs/deploy.md" }), result("r1", "read", "old deploy notes: pelican staging cluster"),
+      call("r2", "read", { path: "docs/deploy.md" }), result("r2", "read", "deploy notes: the pelican cluster moved to eu-west"),
+      call("r3", "read", { path: "README.md" }), result("r3", "read", "a readme about something else entirely"),
+      say("Read them."),
+    ];
+    const kept = [user("which region is the pelican cluster in now?")];
+    const items = selectWorkingSet({ summarized, indices: indices(summarized.length), kept, maxChars: 20_000 });
+    expect(items.map((i) => [i.reason, i.index])).toEqual([["relevant", 4]]);
+  });
+});
+
+describe("formatWorkingSet", () => {
+  it("fits the budget, has no blank line, indents what it quotes, and says where the rest is", () => {
+    const items = selectWorkingSet({ summarized: work(), indices: Array.from({ length: 8 }, (_, i) => i), kept: [user("go on")], maxChars: 2_000 });
+    const lines = formatWorkingSet(items, 2_000);
+    expect(lines.reduce((n, l) => n + l.length + 1, 0)).toBeLessThanOrEqual(2_000);
+    expect(lines.some((l) => l.trim() === "")).toBe(false);
+    expect(lines.filter((l) => !l.startsWith("    ")).every((l) => l.startsWith("- #"))).toBe(true);
+    expect(lines).toContain("    …[48 more lines: vcc_recall expand:[2]]".replace("48", String(60 - (lines.indexOf(lines.find((l) => l.startsWith("    …"))!) - 1))));
+    // A failure is quoted by its end, where the error is.
+    expect(lines.at(-1)).toBe("    expected 10.01, received 10.00");
+  });
+});
+
+describe("the budget follows the window", () => {
+  it("3,800 tokens on a typical window and up to a 500K trigger, a share of a smaller one, none on a tiny one", () => {
+    expect(compactionBudgets(undefined).workingSetTokens).toBe(3_800);
+    expect(compactionBudgets(ompDefaultTrigger(128_000), 8_000).workingSetTokens).toBe(3_800);
+    expect(compactionBudgets(ompDefaultTrigger(200_000), 8_000).workingSetTokens).toBe(3_800);
+    expect(compactionBudgets(ompDefaultTrigger(32_768), 8_000).workingSetTokens).toBe(573);
+    expect(compactionBudgets(ompDefaultTrigger(1_000_000), 8_000).workingSetTokens).toBe(6_460);
+    expect(compactionBudgets(8_000, 1_000).workingSetTokens).toBe(0);
+  });
+});
+
+describe("in the compaction hook", () => {
+  const entries = (messages: Record<string, unknown>[]) => messages.map((message, i) => ({ type: "message", id: `e${i}`, message }));
+  const compact = (branch: any[], previousSummary?: string) => {
+    let handler: any;
+    registerHook({ on: (name: string, fn: any) => { if (name === "session_before_compact") handler = fn; } });
+    return handler({
+      type: "session_before_compact", branchEntries: branch, customInstructions: "keep:1",
+      preparation: { previousSummary, fileOps: { read: [], written: [], edited: [] }, tokensBefore: 4_000 },
+      signal: new AbortController().signal,
+    }, { ui: { notify: () => {} }, sessionManager: { getEntries: () => branch, getBranch: () => branch } }).compaction;
+  };
+
+  it("brings the file and the failure back, after [History Index], and replaces them at the next compaction", () => {
+    // Earlier work in the same window, so the compaction removes enough for the set to fit in half of it.
+    const earlier = [user("Set up the build"), call("c0", "bash", { command: "cat build.log" }), result("c0", "bash", "compiling module\n".repeat(600)), say("Built.")];
+    const first = entries([...earlier, ...work(), user("still failing, keep going"), call("c4", "edit", { path: "src/billing/totals.ts", oldText: "a", newText: "b" }), result("c4", "edit", "ok")]);
+    const one = compact(first);
+    const summary = one.summary as string;
+    expect(summary).toContain('[Working Set]\n- #6 read "src/billing/totals.ts", the latest version, edited after at #9:');
+    expect(summary).toContain("    export const roundTotal = (x: number) => Math.floor(x * 100) / 100;");
+    expect(summary).toContain('- #8 bash "bun test tests/billing.test.ts" [failed], its end:');
+    expect(summary.indexOf("[Working Set]")).toBeGreaterThan(summary.indexOf("[History Index]"));
+    expect(summary.indexOf("[Working Set]")).toBeLessThan(summary.indexOf("\n---\n"));
+    expect(one.details.workingSet).toEqual([6, 8]);
+
+    // The work goes on: a fresh read, the test passes, a new request.
+    const second = entries([
+      ...first.map((e) => e.message),
+      call("c5", "read", { path: "src/billing/totals.ts" }), result("c5", "read", FILE.replace("Math.floor", "Math.round")),
+      call("c6", "bash", { command: "bun test tests/billing.test.ts" }), result("c6", "bash", "1 pass"),
+      say("Fixed: totals round now."),
+      user("ok, continue"),
+    ]);
+    const two = compact(second, summary);
+    expect(two.details.workingSet).toEqual([16]);
+    expect(two.summary.match(/\[Working Set\]/g)).toHaveLength(1);
+    expect(two.summary).toContain("    export const roundTotal = (x: number) => Math.round(x * 100) / 100;");
+    expect(two.summary).not.toContain("[failed], its end:");
+  });
+
+  it("is left out with workingSet off", () => {
+    writeFileSync(process.env.OMP_VCC_CONFIG_PATH!, JSON.stringify({ overrideDefaultCompaction: true, workingSet: false }));
+    const branch = entries([user("Set up the build"), call("c0", "bash", { command: "cat build.log" }), result("c0", "bash", "compiling module\n".repeat(600)), say("Built."), ...work(), user("still failing"), call("c4", "edit", { path: "src/billing/totals.ts", oldText: "a", newText: "b" })]);
+    const out = compact(branch);
+    expect(out.summary).not.toContain("[Working Set]");
+    expect(out.details.workingSet).toBeUndefined();
+    writeFileSync(process.env.OMP_VCC_CONFIG_PATH!, JSON.stringify({ overrideDefaultCompaction: true }));
+  });
+});

@@ -15,6 +15,7 @@ import { compactionBudgets, ompPolicyOf, type OmpCompactionPolicy } from "../cor
 import { modelKey } from "../core/model-limits";
 import { triggerFor, windowOf } from "./window-limits";
 import { restoreOriginals } from "../core/raw-store";
+import { formatWorkingSet, selectWorkingSet, type WorkingSetItem } from "../core/working-set";
 import { VCC_COMPACTOR, vccDetailsOf, type VccCompactionDetails } from "../details";
 import type { CompactionReason } from "../types";
 
@@ -697,6 +698,9 @@ const measuredOverheadTokens = (branchEntries: any[]): number | undefined => {
   return undefined;
 };
 
+/** [Working Set] brings back at most this share of what a compaction removes. */
+const WORKING_SET_SHARE_OF_REMOVED = 0.5;
+
 /** Growth a summary may add before it is not worth writing: its framing (the
  * budgets' growthMarginChars, 500 up to a very large window), or a share of what it replaces. */
 const GROWTH_MARGIN_CHARS = 500;
@@ -1025,11 +1029,32 @@ export const registerCompactionHook = (
 
     const pinnedNotes = readPins(branchEntries as any[]);
 
+    // [Working Set]: what the next step likely needs, brought back from the
+    // originals with the compaction (core/working-set.ts), so the agent does not
+    // spend its next requests fetching it again.
+    let workingSet: { items: WorkingSetItem[]; lines: string[] } | undefined;
+    if (settings.workingSet && budgets.workingSetTokens > 0) {
+      const keptAt = firstKeptEntryId ? (branchEntries as any[]).findIndex((e: any) => e.id === firstKeptEntryId) : -1;
+      const kept = keptAt >= 0 ? (branchEntries as any[]).slice(keptAt).map(toLiveMessage).filter(Boolean) : [];
+      // Never more than half of what this compaction removes, so it always frees room.
+      const removedChars = ownCut.messages.reduce((sum: number, m: any) => sum + estimateMessageChars(m), 0);
+      const maxChars = Math.round(Math.min(budgets.workingSetTokens * tokenEstimate.charsPerToken, removedChars * WORKING_SET_SHARE_OF_REMOVED));
+      const items = selectWorkingSet({
+        summarized: agentMessages,
+        indices: agentSelectedIds.map((id: string) => globalIndexById?.get(id)),
+        kept,
+        maxChars,
+      });
+      const lines = formatWorkingSet(items, maxChars);
+      if (lines.length > 0) workingSet = { items, lines };
+    }
+
     const summary = compileRanked({
       messages,
       sourceIndices,
       historyIndex,
       pinnedNotes,
+      workingSet: workingSet?.lines,
       previousSummary: preparation.previousSummary,
       fileOps: {
         readFiles: [...preparation.fileOps.read],
@@ -1121,6 +1146,8 @@ export const registerCompactionHook = (
       reason,
       willRetry,
       ...(historyIndex ? { historyIndex } : {}),
+      // The #N of what [Working Set] brought back.
+      ...(workingSet ? { workingSet: workingSet.items.filter((i) => workingSet!.lines.some((l) => l.startsWith(`- #${i.index} `))).map((i) => i.index) } : {}),
       // What the budgets were sized from, for debugging a compaction that kept too much or too little.
       limits: {
         ...(window.effective ? { contextWindow: window.effective, windowSource: window.source } : {}),
@@ -1129,6 +1156,7 @@ export const registerCompactionHook = (
         maxTailTokens: budgets.maxTailTokens,
         briefCeilingTokens: budgets.briefCeilingTokens,
         ...(budgets.summaryScale !== 1 ? { summaryScale: budgets.summaryScale } : {}),
+        workingSetTokens: budgets.workingSetTokens,
       },
     };
 
