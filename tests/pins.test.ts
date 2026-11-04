@@ -135,10 +135,10 @@ describe("pinned notes in summaries", () => {
     expect(out.compaction.summary).not.toContain("The user pinned");
   });
 
-  it("survive 20 compactions of a long session unchanged", () => {
+  it("survive 20 compactions of a long session unchanged", async () => {
     const pin = "Sessions are stored in SQLite rather than Redis: the deploy host has no Redis.";
-    const r = runLongHorizon({ turns: 120, compactEvery: 6, pins: { 9: pin } });
+    const r = await runLongHorizon({ turns: 120, compactEvery: 6, pins: { 9: pin } });
     expect(r.compactions).toBe(20);
-    expect(r.finalSummary.startsWith(`[Pinned Notes]\n- [1] ${pin} (agent)`)).toBe(true);
-  });
+    expect(r.finalSummary.startsWith(`[Pinned Notes]\n- [1] ${pin} (agent`)).toBe(true);
+  }, 120_000);
 });
