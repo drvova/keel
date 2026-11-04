@@ -58,6 +58,8 @@ export interface WorkingSetItem {
   text: string;
   /** Errors come last in a failed call's output: excerpt its end. */
   fromEnd: boolean;
+  /** Shown whole or not at all (a file: part of one came back, the agent read it again anyway). */
+  whole?: boolean;
 }
 
 interface Call {
@@ -132,7 +134,12 @@ const mentions = (text: string, path: string): boolean => {
 };
 /** A read of part of a file: a line selector, or an offset or limit. */
 const ranged = (call: Call): boolean =>
-  (call.rawPath !== undefined && call.rawPath !== call.paths[0]) || call.args.offset !== undefined || call.args.limit !== undefined;
+  (call.rawPath !== undefined && /:\d/.test(call.rawPath.slice(call.paths[0]?.length ?? 0))) || call.args.offset !== undefined || call.args.limit !== undefined;
+/** What an excerpt of this text costs, as formatWorkingSet counts it: each line clipped at 300 chars, plus its indent. */
+const excerptChars = (text: string): number =>
+  text.split("\n").filter((l) => l.trim() !== "").reduce((n, l) => n + Math.min(l.length, 301) + 5, 0);
+/** Room for an item's head line (`- #N read "path", note:`) when sizing its body. */
+const HEAD_ALLOWANCE = 200;
 /** Below this many lines, what a call showed of a file says too little to bring back (`ok`, `Successfully replaced`). */
 const MIN_VIEW_LINES = 2;
 const lineCount = (text: string): number => text.split("\n").filter((l) => l.trim() !== "").length;
@@ -210,22 +217,34 @@ export const selectWorkingSet = (input: WorkingSetInput): WorkingSetItem[] => {
     const views = after
       .map((c) => ({ call: c, r: resultOf(c) }))
       .filter((v): v is { call: Call; r: Result } => !!v.r && v.r.index !== undefined && !used.has(v.r.index) && lineCount(v.r.text) >= MIN_VIEW_LINES);
-    const newest = views.at(-1);
-    const index = base?.index ?? newest?.r.index;
-    if (index === undefined || used.has(index) || (!base && !newest)) continue;
-    const shown = new Set(views.map((v) => v.call));
+    // A file comes back whole, or as the lines shown of it since, never as its
+    // first lines: in real runs, after part of a file came back, the agent read it
+    // again anyway. The lines shown since come first, newest first, while they fit.
+    let left = Math.min(input.maxChars, Math.max(MIN_ITEM_CHARS, Math.round(input.maxChars * MAX_ITEM_SHARE))) - HEAD_ALLOWANCE;
+    const shownViews: Array<{ call: Call; r: Result; part: string }> = [];
+    for (const v of [...views].reverse()) {
+      const part = `[#${v.r.index} ${titleOf(v.call)}]\n${v.r.text}`;
+      if (excerptChars(part) > left) break;
+      shownViews.push({ ...v, part });
+      left -= excerptChars(part);
+    }
+    const basePart = base && (shownViews.length > 0 ? `[#${base.index} ${titleOf(base.call)}]\n${base.text}` : base.text);
+    const withBase = !!basePart && excerptChars(basePart) <= left;
+    if (!withBase && shownViews.length === 0) continue;
+    const index = withBase ? base!.index : shownViews[0].r.index;
+    if (index === undefined || used.has(index)) continue;
+    const shown = new Set(shownViews.map((v) => v.call));
     const later = after.filter((c) => edits(c) && !shown.has(c)).map((c) => input.indices[c.pos]).filter((n): n is number => n !== undefined);
     const keptEdits = keptCalls.some((c) => c.paths.includes(path) && edits(c));
-    const parts = [...views].reverse().map((v) => `[#${v.r.index} ${titleOf(v.call)}]\n${v.r.text}`);
-    if (base) parts.push(views.length > 0 ? `[#${base.index} ${titleOf(base.call)}]\n${base.text}` : base.text);
     const note = [
-      "the latest version",
-      ...(views.length > 0 ? ["newest first"] : []),
+      withBase ? "the latest version" : "its latest lines",
+      ...(shownViews.length > 0 ? ["newest first"] : []),
       ...(later.length > 0 ? [`edited after at ${later.map((n) => `#${n}`).join(", ")}`] : keptEdits ? ["edited after in context"] : []),
     ].join(", ");
-    items.push({ index, reason: "file", title: titleOf(base?.call ?? newest!.call), note, text: parts.join("\n"), fromEnd: false });
+    const text = [...shownViews.map((v) => v.part), ...(withBase ? [basePart!] : [])].join("\n");
+    items.push({ index, reason: "file", title: titleOf(withBase ? base!.call : shownViews[0].call), note, text, fromEnd: false, whole: true });
     used.add(index);
-    for (const v of views) used.add(v.r.index!);
+    for (const v of shownViews) used.add(v.r.index!);
     chosenPaths.add(path);
   }
 
@@ -303,9 +322,11 @@ export const formatWorkingSet = (items: readonly WorkingSetItem[], maxChars: num
     const room = Math.min(left - head.length, Math.max(MIN_ITEM_CHARS, Math.round(maxChars * MAX_ITEM_SHARE)));
     if (room < MIN_ITEM_CHARS) break;
     const { lines: body, omitted } = excerpt(item.text, room, item.fromEnd);
-    if (body.length === 0) continue;
-    const more = omitted > 0 ? `    …[${omitted} more lines: vcc_recall expand:[${item.index}]]` : "";
-    const block = [head, ...body.map((l) => `    ${l}`), ...(more ? [more] : [])];
+    if (body.length === 0 || (item.whole && omitted > 0)) continue;
+    // Where the rest is: after the excerpt, or before it when the excerpt is the end.
+    const more = omitted > 0 ? `    …[${omitted} ${item.fromEnd ? "earlier" : "more"} lines: vcc_recall expand:[${item.index}]]` : "";
+    const quoted = body.map((l) => `    ${l}`);
+    const block = [head, ...(more && item.fromEnd ? [more] : []), ...quoted, ...(more && !item.fromEnd ? [more] : [])];
     lines.push(...block);
     left -= block.reduce((n, l) => n + l.length + 1, 0);
   }

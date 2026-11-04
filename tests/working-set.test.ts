@@ -88,6 +88,10 @@ describe("selectWorkingSet", () => {
     expect(lines[3]).toBe('[#4 edit "src/billing/totals.ts"]');
     expect(lines[7]).toBe('[#2 read "src/billing/totals.ts"]');
     expect(lines[8]).toBe("export const helper0 = () => 0;");
+    // Too big to come back whole: only the lines shown of it since.
+    const [small] = selectWorkingSet({ history, indices: indices(history.length), kept, maxChars: 1_500 });
+    expect([small.index, small.title, small.note]).toEqual([6, 'read "src/billing/totals.ts:40-41"', "its latest lines, newest first, edited after in context"]);
+    expect(small.text.split("\n").filter((l) => l.startsWith("[#"))).toEqual(['[#6 read "src/billing/totals.ts:40-41"]', '[#4 edit "src/billing/totals.ts"]']);
   });
 
   it("ranks the rest by the latest request, a file's latest read only", () => {
@@ -108,15 +112,33 @@ describe("selectWorkingSet", () => {
 });
 
 describe("formatWorkingSet", () => {
-  it("fits the budget, has no blank line, indents what it quotes, and says where the rest is", () => {
-    const items = selectWorkingSet({ history: work(), indices: Array.from({ length: 8 }, (_, i) => i), kept: [user("go on")], maxChars: 2_000 });
-    const lines = formatWorkingSet(items, 2_000);
-    expect(lines.reduce((n, l) => n + l.length + 1, 0)).toBeLessThanOrEqual(2_000);
+  const all = (n: number) => Array.from({ length: n }, (_, i) => i);
+  const shape = (lines: string[], max: number) => {
+    expect(lines.reduce((n, l) => n + l.length + 1, 0)).toBeLessThanOrEqual(max);
     expect(lines.some((l) => l.trim() === "")).toBe(false);
     expect(lines.filter((l) => !l.startsWith("    ")).every((l) => l.startsWith("- #"))).toBe(true);
-    expect(lines).toContain("    …[48 more lines: vcc_recall expand:[2]]".replace("48", String(60 - (lines.indexOf(lines.find((l) => l.startsWith("    …"))!) - 1))));
-    // A failure is quoted by its end, where the error is.
-    expect(lines.at(-1)).toBe("    expected 10.01, received 10.00");
+  };
+
+  it("fits the budget, has no blank line, and brings a file back whole or not at all", () => {
+    const tight = formatWorkingSet(selectWorkingSet({ history: work(), indices: all(8), kept: [user("go on")], maxChars: 2_000 }), 2_000);
+    shape(tight, 2_000);
+    // The 60-line file does not fit whole in 2,000 chars: the failure has the room.
+    expect(tight.some((l) => l.startsWith("- #2 "))).toBe(false);
+    expect(tight[0]).toBe('- #4 bash "bun test tests/billing.test.ts" [failed], its end:');
+    expect(tight.at(-1)).toBe("    expected 10.01, received 10.00");
+    const roomy = formatWorkingSet(selectWorkingSet({ history: work(), indices: all(8), kept: [user("go on")], maxChars: 20_000 }), 20_000);
+    shape(roomy, 20_000);
+    expect(roomy).toContain("    export const roundTotal = (x: number) => Math.floor(x * 100) / 100;");
+    expect(roomy.some((l) => l.includes("vcc_recall expand:[2]"))).toBe(false);
+  });
+
+  it("quotes a long failure by its end, after where the earlier lines are", () => {
+    const history = [user("run the tests"), call("t1", "bash", { command: "bun test" }), result("t1", "bash", `${"log line\n".repeat(300)}expected 1, received 2`, true)];
+    const lines = formatWorkingSet(selectWorkingSet({ history, indices: all(3), kept: [user("fix it")], maxChars: 2_000 }), 2_000);
+    shape(lines, 2_000);
+    expect(lines[0]).toBe('- #2 bash "bun test" [failed], its end:');
+    expect(lines[1]).toMatch(/^    …\[\d+ earlier lines: vcc_recall expand:\[2\]\]$/);
+    expect(lines.at(-1)).toBe("    expected 1, received 2");
   });
 });
 
