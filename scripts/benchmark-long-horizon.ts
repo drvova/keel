@@ -1,10 +1,9 @@
 /**
  * Long-horizon benchmark: a coding session with planted facts, worked through by
  * a real model in omp with omp-vcc loaded (tests/support/long-horizon.ts), scored
- * at the end. Set the model as for the tests:
+ * at the end. It runs on DeepSeek V4.1 Flash on OpenScale, as the tests do:
  *
- *   OMP_VCC_LH_BASE_URL=… OMP_VCC_LH_API_KEY=… OMP_VCC_LH_MODEL=… \
- *     bun run scripts/benchmark-long-horizon.ts [turns] [compactEvery] [contextWindow]
+ *   OMP_VCC_LH_API_KEY=… bun run scripts/benchmark-long-horizon.ts [turns] [compactEvery] [contextWindow]
  *
  * omp's idle pass runs every `compactEvery` turns, and omp compacts on its own
  * when the context passes its trigger. The window omp is told defaults to 128K;

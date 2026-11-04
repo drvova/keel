@@ -6,8 +6,9 @@
 //
 // Nothing here stands in for omp or for a model. The model is a real provider,
 // set up as a user sets one up in omp (a `models.yml` provider whose key omp reads
-// from the environment): OMP_VCC_LH_BASE_URL, OMP_VCC_LH_API_KEY and
-// OMP_VCC_LH_MODEL (OMP_VCC_LH_API, default `openai-completions`). Each turn is a
+// from the environment): DeepSeek V4.1 Flash on OpenScale, run when
+// OMP_VCC_LH_API_KEY holds a key for it. OMP_VCC_LH_BASE_URL, OMP_VCC_LH_MODEL
+// and OMP_VCC_LH_API (`openai-completions`) point it elsewhere. Each turn is a
 // request telling the agent what to do; omp's agent loop runs it with the agent's
 // own calls to omp's real tools, on a real project in a real git repository with
 // real tests (`bun test`: each turn's pass once its edit is made, and turn 25's
@@ -41,12 +42,17 @@ export interface Needle {
   index?: number;
 }
 
-/** The real model the session runs on, from the environment; undefined when none is set. */
+/** The model the long-horizon sessions run on: DeepSeek V4.1 Flash, on OpenScale's OpenAI-compatible API. */
+export const LONG_HORIZON_MODEL = { baseUrl: "https://api.openscale.so/v1", model: "deepseek/deepseek-v4.1-flash", api: "openai-completions" };
+
+/** The real model the session runs on; undefined without a key for it (OMP_VCC_LH_API_KEY). */
 export const realModel = (): { baseUrl: string; model: string; api: string } | undefined => {
-  const baseUrl = process.env.OMP_VCC_LH_BASE_URL;
-  const model = process.env.OMP_VCC_LH_MODEL;
-  if (!baseUrl || !model || !process.env.OMP_VCC_LH_API_KEY) return undefined;
-  return { baseUrl, model, api: process.env.OMP_VCC_LH_API ?? "openai-completions" };
+  if (!process.env.OMP_VCC_LH_API_KEY) return undefined;
+  return {
+    baseUrl: process.env.OMP_VCC_LH_BASE_URL || LONG_HORIZON_MODEL.baseUrl,
+    model: process.env.OMP_VCC_LH_MODEL || LONG_HORIZON_MODEL.model,
+    api: process.env.OMP_VCC_LH_API || LONG_HORIZON_MODEL.api,
+  };
 };
 
 export interface LongHorizonOptions {
@@ -204,7 +210,7 @@ export const runLongHorizon = async (options: LongHorizonOptions = {}): Promise<
   const turns = options.turns ?? 60;
   const compactEvery = options.compactEvery ?? 6;
   const provider = realModel();
-  if (!provider) throw new Error("long-horizon: set OMP_VCC_LH_BASE_URL, OMP_VCC_LH_API_KEY and OMP_VCC_LH_MODEL to run it on a real model");
+  if (!provider) throw new Error("long-horizon: set OMP_VCC_LH_API_KEY to a key for DeepSeek V4.1 Flash on OpenScale (tests/support/long-horizon.ts)");
   const work = mkdtempSync(join(tmpdir(), "omp-vcc-long-horizon-"));
   const saved = ["PI_CODING_AGENT_DIR", "OMP_VCC_CONFIG_PATH"].map((k) => [k, process.env[k]] as const);
   let session: any;
