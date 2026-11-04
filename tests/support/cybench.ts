@@ -8,41 +8,53 @@
 // the agent still knows it, and how many tool calls it takes to get it back.
 //
 // The tasks are fetched from Cybench's repository at a pinned commit into
-// research/cybench (git-ignored), and set up by each task's own init script; the
-// agent never sees a task's metadata or solution. omp runs everything: the agent
+// research/cybench (git-ignored); each task's files are copied out as its own
+// init script would copy them, without running it, and the agent never sees a
+// task's metadata, solution or flag file. omp runs everything: the agent
 // loop, the tools, the context counting, every compaction (tests/support/omp-session.ts).
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
-import { join, resolve } from "path";
+import { basename, join, resolve } from "path";
 import { openOmpSession, textOf } from "./omp-session";
 
 export const CYBENCH_REPO = "https://github.com/andyzorigin/cybench.git";
 export const CYBENCH_COMMIT = "ca483c6443f17a20ba7d6bac3d274859a1721e51";
 const CACHE = resolve(import.meta.dir, "../../research/cybench");
 
-/** The tasks that need only their files (no server, no Docker), easiest first. */
-export const CYBENCH_TASKS = [
-  "hackthebox/cyber-apocalypse-2024/reversing/[Very Easy] LootStash",
-  "hackthebox/cyber-apocalypse-2024/forensics/[Very Easy] Urgent",
-  "hackthebox/cyber-apocalypse-2024/crypto/[Very Easy] Dynastic",
-  "hackthebox/cyber-apocalypse-2024/reversing/[Very Easy] PackedAway",
-  "hackthebox/cyber-apocalypse-2024/forensics/[Very Easy] It Has Begun",
-  "hackthebox/cyber-apocalypse-2024/crypto/[Very Easy] Makeshift",
-  "hackthebox/cyber-apocalypse-2024/reversing/[Very Easy] BoxCutter",
-  "hackthebox/cyber-apocalypse-2024/crypto/[Very Easy] Primary Knowledge",
-  "hackthebox/cyber-apocalypse-2024/reversing/[Easy] Crushing",
-  "hackthebox/cyber-apocalypse-2024/hw/Maze [Very Easy]",
-  "hackthebox/cyber-apocalypse-2024/crypto/[Medium] Partial Tenacity",
-  "hackthebox/cyber-apocalypse-2024/forensics/[Medium] Data Siege",
-  "project-sekai-ctf/sekaictf-2022/reverse/matrix-lab-2",
-  "project-sekai-ctf/sekaictf-2023/reverse/guardians-of-the-kernel",
-  "project-sekai-ctf/sekaictf-2022/crypto/diffecient",
-  "hackthebox/cyber-apocalypse-2024/crypto/[Hard] Permuted",
-  "hackthebox/cyber-apocalypse-2024/reversing/[Hard] FlecksOfGold",
+/**
+ * The tasks that need only their files (no server, no Docker), easiest first, and
+ * the files each hands the agent: what the task's own init_script.sh copies, taken
+ * here without running it. Never metadata/, solution/ or a flag file.
+ */
+interface TaskSpec {
+  path: string;
+  /** Files or directories copied from the task's directory, by their name in it. */
+  copy?: string[];
+  /** A zip in the task's directory, and the entries of it the agent gets (all when omitted). */
+  unzip?: { zip: string; take?: string[] };
+}
+export const CYBENCH_TASKS: TaskSpec[] = [
+  { path: "hackthebox/cyber-apocalypse-2024/reversing/[Very Easy] LootStash", unzip: { zip: "release/rev_lootstash.zip", take: ["rev_lootstash/stash"] } },
+  { path: "hackthebox/cyber-apocalypse-2024/forensics/[Very Easy] Urgent", copy: ["release/forensics_urgent.zip"] },
+  { path: "hackthebox/cyber-apocalypse-2024/crypto/[Very Easy] Dynastic", copy: ["challenge/output.txt", "challenge/source.py"] },
+  { path: "hackthebox/cyber-apocalypse-2024/reversing/[Very Easy] PackedAway", unzip: { zip: "release/rev_packedaway.zip", take: ["rev_packedaway/packed"] } },
+  { path: "hackthebox/cyber-apocalypse-2024/forensics/[Very Easy] It Has Begun", unzip: { zip: "release/forensics_it_has_begun.zip" } },
+  { path: "hackthebox/cyber-apocalypse-2024/crypto/[Very Easy] Makeshift", copy: ["challenge/output.txt", "challenge/source.py"] },
+  { path: "hackthebox/cyber-apocalypse-2024/reversing/[Very Easy] BoxCutter", unzip: { zip: "release/rev_boxcutter.zip", take: ["rev_boxcutter/cutter"] } },
+  { path: "hackthebox/cyber-apocalypse-2024/crypto/[Very Easy] Primary Knowledge", copy: ["challenge/output.txt", "challenge/source.py"] },
+  { path: "hackthebox/cyber-apocalypse-2024/reversing/[Easy] Crushing", unzip: { zip: "release/rev_crushing.zip", take: ["rev_crushing/crush", "rev_crushing/message.txt.cz"] } },
+  { path: "hackthebox/cyber-apocalypse-2024/hw/Maze [Very Easy]", copy: ["challenge/fs"] },
+  { path: "hackthebox/cyber-apocalypse-2024/crypto/[Medium] Partial Tenacity", copy: ["challenge/output.txt", "challenge/source.py"] },
+  { path: "hackthebox/cyber-apocalypse-2024/forensics/[Medium] Data Siege", copy: ["capture.pcap"] },
+  { path: "project-sekai-ctf/sekaictf-2022/reverse/matrix-lab-2", copy: ["challenge/Matrix_Lab_2.exe", "challenge/pyinstxtractor.py"] },
+  { path: "project-sekai-ctf/sekaictf-2023/reverse/guardians-of-the-kernel", copy: ["dist/initramfs.cpio.gz", "dist/bzImage"] },
+  { path: "project-sekai-ctf/sekaictf-2022/crypto/diffecient", copy: ["challenge/app/diffecient.py"] },
+  { path: "hackthebox/cyber-apocalypse-2024/crypto/[Hard] Permuted", copy: ["challenge/output.txt", "challenge/source.py"] },
+  { path: "hackthebox/cyber-apocalypse-2024/reversing/[Hard] FlecksOfGold", copy: ["release/rev_flecksofgold/flecks"] },
 ];
 
 interface Subtask { question: string; answer: string; answer_format?: string }
-interface Task { path: string; name: string; dir: string; prompt: string; subtasks: Subtask[]; difficulty: number }
+interface Task { spec: TaskSpec; path: string; name: string; dir: string; prompt: string; subtasks: Subtask[]; difficulty: number }
 
 export interface CybenchOptions {
   /** How many of CYBENCH_TASKS to run, from the start (default all). */
@@ -93,7 +105,7 @@ export const fetchCybench = (dir = CACHE): string => {
   git(dir, "fetch", "-q", "--depth", "1", "--filter=blob:none", "origin", CYBENCH_COMMIT);
   git(dir, "sparse-checkout", "init", "--no-cone");
   // Sparse patterns are gitignore globs: brackets in the task names are literal.
-  const patterns = ["/LICENSE", ...CYBENCH_TASKS.map((t) => `/benchmark/${t.replace(/[[\]]/g, (c) => `\\${c}`)}/`)].join("\n");
+  const patterns = ["/LICENSE", ...CYBENCH_TASKS.map((t) => `/benchmark/${t.path.replace(/[[\]]/g, (c) => `\\${c}`)}/`)].join("\n");
   writeFileSync(join(dir, ".git", "info", "sparse-checkout"), patterns + "\n");
   git(dir, "checkout", "-q", CYBENCH_COMMIT);
   writeFileSync(marker, CYBENCH_COMMIT + "\n");
@@ -102,9 +114,11 @@ export const fetchCybench = (dir = CACHE): string => {
 
 const slug = (path: string, i: number) => `${String(i + 1).padStart(2, "0")}-${path.split("/").at(-1)!.replace(/\[[^\]]*\]/g, "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`;
 
-const loadTask = (root: string, path: string, i: number): Task => {
+const loadTask = (root: string, spec: TaskSpec, i: number): Task => {
+  const path = spec.path;
   const meta = JSON.parse(readFileSync(join(root, "benchmark", path, "metadata", "metadata.json"), "utf8"));
   return {
+    spec,
     path,
     name: path.split("/").at(-1)!,
     dir: slug(path, i),
@@ -114,11 +128,22 @@ const loadTask = (root: string, path: string, i: number): Task => {
   };
 };
 
-/** The task's files in `into`, as its own init script puts them (TMP_DIR, the hard prompt). */
-const setUpTask = (root: string, task: Task, into: string) => {
+/** The task's files in `into`, flat, as its init script would leave them; nothing of the task is run. */
+const setUpTask = (root: string, task: Task, into: string, scratch: string) => {
+  const from = join(root, "benchmark", task.path);
   mkdirSync(into, { recursive: true });
-  const r = Bun.spawnSync(["bash", "init_script.sh", into, "false"], { cwd: join(root, "benchmark", task.path), stdout: "pipe", stderr: "pipe" });
-  if (r.exitCode !== 0) throw new Error(`${task.name} init_script.sh: ${r.stderr.toString().slice(0, 400)}`);
+  for (const name of task.spec.copy ?? []) {
+    if (!existsSync(join(from, name))) throw new Error(`${task.name}: no ${name}`);
+    cpSync(join(from, name), join(into, basename(name)), { recursive: true });
+  }
+  if (task.spec.unzip) {
+    const out = mkdtempSync(join(scratch, "unzip-"));
+    const r = Bun.spawnSync(["unzip", "-q", "-o", join(from, task.spec.unzip.zip), "-d", out], { stdout: "pipe", stderr: "pipe" });
+    if (r.exitCode !== 0) throw new Error(`${task.name}: unzip ${task.spec.unzip.zip}: ${r.stderr.toString().slice(0, 300)}`);
+    const take = task.spec.unzip.take ?? readdirSync(out);
+    for (const name of take) cpSync(join(out, name), join(into, basename(name)), { recursive: true });
+    rmSync(out, { recursive: true, force: true });
+  }
 };
 
 /** Cybench compares answers case-insensitively, as written; quotes and code marks around them do not count. */
@@ -147,7 +172,7 @@ export const runCybench = async (options: CybenchOptions = {}): Promise<CybenchR
   let omp: Awaited<ReturnType<typeof openOmpSession>> | undefined;
   try {
     const proj = join(work, "ctf");
-    for (const task of tasks) setUpTask(root, task, join(proj, task.dir));
+    for (const task of tasks) setUpTask(root, task, join(proj, task.dir), work);
     omp = await openOmpSession({ work, cwd: proj, contextWindow: options.contextWindow, config: options.config });
     const { session, sessionManager } = omp;
     const ask = async (task: Task, text: string, subtask: Subtask): Promise<AnswerScore> => {
