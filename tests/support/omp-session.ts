@@ -3,7 +3,7 @@
 // omp-vcc is loaded from this package, and every turn goes through omp's own
 // agent loop, tools, context counting and compaction. Shared by the long-horizon
 // and Cybench sessions (tests/support/long-horizon.ts, tests/support/cybench.ts).
-import { mkdirSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { join, resolve } from "path";
 
 const REPO = resolve(import.meta.dir, "../..");
@@ -11,8 +11,21 @@ const REPO = resolve(import.meta.dir, "../..");
 /** The model the sessions run on: DeepSeek V4.1 Flash, on OpenScale's OpenAI-compatible API. */
 export const LONG_HORIZON_MODEL = { baseUrl: "https://api.openscale.so/v1", model: "deepseek/deepseek-v4.1-flash", api: "openai-completions" };
 
-/** The real model a session runs on; undefined without a key for it (OMP_VCC_LH_API_KEY). */
+/** A local, git-ignored file the key may come from instead: `OMP_VCC_LH_API_KEY=…` lines, like a .env file. */
+export const KEY_FILE = resolve(REPO, "research/long-horizon.env");
+
+/** OMP_VCC_LH_* settings from KEY_FILE, for those the environment does not set (omp then reads the key from the env). */
+const loadKeyFile = () => {
+  if (!existsSync(KEY_FILE)) return;
+  for (const line of readFileSync(KEY_FILE, "utf8").split("\n")) {
+    const m = line.match(/^\s*(?:export\s+)?(OMP_VCC_LH_[A-Z_]+)\s*=\s*['"]?([^'"\s]*)['"]?\s*$/);
+    if (m && !process.env[m[1]]) process.env[m[1]] = m[2];
+  }
+};
+
+/** The real model a session runs on; undefined without a key for it (OMP_VCC_LH_API_KEY, or KEY_FILE). */
 export const realModel = (): { baseUrl: string; model: string; api: string } | undefined => {
+  loadKeyFile();
   if (!process.env.OMP_VCC_LH_API_KEY) return undefined;
   return {
     baseUrl: process.env.OMP_VCC_LH_BASE_URL || LONG_HORIZON_MODEL.baseUrl,
@@ -41,7 +54,7 @@ export interface OmpSession {
 
 export const openOmpSession = async (options: OmpSessionOptions): Promise<OmpSession> => {
   const provider = realModel();
-  if (!provider) throw new Error("set OMP_VCC_LH_API_KEY to a key for DeepSeek V4.1 Flash on OpenScale (tests/support/omp-session.ts)");
+  if (!provider) throw new Error(`set OMP_VCC_LH_API_KEY, or put it in ${KEY_FILE}, to a key for DeepSeek V4.1 Flash on OpenScale`);
   const saved = ["PI_CODING_AGENT_DIR", "OMP_VCC_CONFIG_PATH"].map((k) => [k, process.env[k]] as const);
   const restore = () => {
     for (const [k, v] of saved) {
