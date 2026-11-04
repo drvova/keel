@@ -217,6 +217,22 @@ Config lives at `omp-vcc-config.json` in omp's agent directory (`~/.omp/agent`, 
 
 Benchmarks comparing the ranked brief with the pi-vcc 0.3.18 baseline (recall, fact density, precision, size) are in [`benchmarks/README.md`](./benchmarks/README.md).
 
+### On a real model
+
+DeepSeek V4.1 Flash working in omp, with omp told a smaller window than the model's so it compacts during the session.
+
+![Cybench, first attempt: questions answered right per task, omp-vcc against omp's own compaction](./benchmarks/images/cybench-first-attempt.png)
+
+[Cybench](https://arxiv.org/abs/2408.08926)'s capture-the-flag tasks (binaries to reverse, a pcap, emails, crypto), answering each task's own questions, all in one session on a 64K window: 42 of 45 right with omp-vcc, 41 of 45 with omp's own compaction. One run each, stopped after 13 of the 17 tasks (`scripts/benchmark-cybench.ts`).
+
+![Working set on and off: runs finished, files read again and requests over 8 runs on a 40K window](./benchmarks/images/working-set-40k.png)
+
+A five-step coding task, 4 runs with `[Working Set]` and 4 without, on a 40K window: every run with it finished every step and test, one without did. Files read again and requests were about level; with 4 runs a side, runs differ a lot.
+
+![Cybench, three compactors: answers right, asked again and right, and tool calls to answer again](./benchmarks/images/cybench-runs.png)
+
+All 17 Cybench tasks with omp-vcc, omp-vcc without `[Working Set]` and omp's own compaction, with earlier answers asked again tasks later; runs in progress.
+
 ## Research
 
 The long-horizon work (history index, failure markers, pinned notes, recall across sessions, limits that follow the window, kept originals, the working set) started from these papers. `scripts/benchmark-long-horizon.ts` measures the result.
