@@ -3,21 +3,36 @@
  * works through Cybench's file-only CTF tasks back to back, answering each task's
  * own subtask questions, then is asked again what it found tasks ago.
  *
- *   OMP_VCC_LH_API_KEY=… bun run scripts/benchmark-cybench.ts [tasks] [contextWindow] [vcc|vcc-no-ws|omp]
+ *   OMP_VCC_LH_API_KEY=… bun run scripts/benchmark-cybench.ts [tasks] [contextWindow] [vcc|vcc-no-ws|omp] [--detach]
  *
  * tasks: how many of the 17 (default all); contextWindow: what omp is told
  * (default 128000); the compactor: omp-vcc (default), omp-vcc without
- * [Working Set], or omp's own compaction. Expect an hour or more for all tasks.
+ * [Working Set], or omp's own compaction. Expect two to three hours for all
+ * tasks; --detach runs it in a process of its own, logging to research/.
  *
  * Columns: answered right while working on the task; asked again at the end
  * (right / asked), and the tool calls it took to answer again (0 = from what the
  * context still held).
  */
+import { spawn } from "child_process";
+import { openSync } from "fs";
+import { resolve } from "path";
 import { CYBENCH_TASKS, runCybench } from "../tests/support/cybench";
 
-const tasks = process.argv[2] && process.argv[2] !== "all" ? Number(process.argv[2]) : CYBENCH_TASKS.length;
-const contextWindow = Number(process.argv[3] ?? 128_000);
-const mode = process.argv[4] ?? "vcc";
+const args = process.argv.slice(2).filter((a) => a !== "--detach");
+const tasks = args[0] && args[0] !== "all" ? Number(args[0]) : CYBENCH_TASKS.length;
+const contextWindow = Number(args[1] ?? 128_000);
+const mode = args[2] ?? "vcc";
+
+// --detach: run in a process of its own, logging to research/, and return at once (a run takes hours).
+if (process.argv.includes("--detach")) {
+  const log = resolve(import.meta.dir, `../research/cybench-${mode}-${Math.round(contextWindow / 1000)}k-${tasks}.txt`);
+  const fd = openSync(log, "a");
+  const child = spawn(process.execPath, ["run", import.meta.path, ...args], { detached: true, stdio: ["ignore", fd, fd], cwd: resolve(import.meta.dir, "..") });
+  child.unref();
+  console.log(`running in the background (pid ${child.pid}), logging to ${log}`);
+  process.exit(0);
+}
 const config = mode === "omp" ? { overrideDefaultCompaction: false } : mode === "vcc-no-ws" ? { workingSet: false } : {};
 
 const started = Date.now();
