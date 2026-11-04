@@ -21,11 +21,12 @@
 // scripts/benchmark-long-horizon.ts.
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
-import { dirname, join, resolve } from "path";
+import { dirname, join } from "path";
 import { buildGlobalIndexById } from "../../src/core/global-indices";
 import { restoreOriginals } from "../../src/core/raw-store";
+import { openOmpSession, realModel, textOf } from "./omp-session";
 
-const REPO = resolve(import.meta.dir, "../..");
+export { LONG_HORIZON_MODEL, realModel } from "./omp-session";
 
 export type NeedleKind = "constraint" | "decision" | "tool_value" | "early_file" | "early_commit" | "fixed_error" | "mid_request";
 
@@ -41,19 +42,6 @@ export interface Needle {
   /** Session-wide #N of the entry holding the fact (found after the run). */
   index?: number;
 }
-
-/** The model the long-horizon sessions run on: DeepSeek V4.1 Flash, on OpenScale's OpenAI-compatible API. */
-export const LONG_HORIZON_MODEL = { baseUrl: "https://api.openscale.so/v1", model: "deepseek/deepseek-v4.1-flash", api: "openai-completions" };
-
-/** The real model the session runs on; undefined without a key for it (OMP_VCC_LH_API_KEY). */
-export const realModel = (): { baseUrl: string; model: string; api: string } | undefined => {
-  if (!process.env.OMP_VCC_LH_API_KEY) return undefined;
-  return {
-    baseUrl: process.env.OMP_VCC_LH_BASE_URL || LONG_HORIZON_MODEL.baseUrl,
-    model: process.env.OMP_VCC_LH_MODEL || LONG_HORIZON_MODEL.model,
-    api: process.env.OMP_VCC_LH_API || LONG_HORIZON_MODEL.api,
-  };
-};
 
 export interface LongHorizonOptions {
   turns?: number;
@@ -185,9 +173,6 @@ const run = (cwd: string, ...cmd: string[]) => {
   if (r.exitCode !== 0) throw new Error(`${cmd.join(" ")}: ${r.stderr.toString()}`);
 };
 
-const textOf = (m: any): string =>
-  typeof m?.content === "string" ? m.content : Array.isArray(m?.content) ? m.content.map((p: any) => (p?.type === "text" ? p.text : "")).join("\n") : "";
-
 /** The project the session works on: every module it will touch, committed, and the scripts its commands run. */
 const createProject = (proj: string, plans: TurnPlan[]) => {
   const write = (path: string, content: string) => {
@@ -209,62 +194,17 @@ const createProject = (proj: string, plans: TurnPlan[]) => {
 export const runLongHorizon = async (options: LongHorizonOptions = {}): Promise<LongHorizonResult> => {
   const turns = options.turns ?? 60;
   const compactEvery = options.compactEvery ?? 6;
-  const provider = realModel();
-  if (!provider) throw new Error("long-horizon: set OMP_VCC_LH_API_KEY to a key for DeepSeek V4.1 Flash on OpenScale (tests/support/long-horizon.ts)");
+  if (!realModel()) throw new Error("long-horizon: set OMP_VCC_LH_API_KEY to a key for DeepSeek V4.1 Flash on OpenScale (tests/support/omp-session.ts)");
   const work = mkdtempSync(join(tmpdir(), "omp-vcc-long-horizon-"));
-  const saved = ["PI_CODING_AGENT_DIR", "OMP_VCC_CONFIG_PATH"].map((k) => [k, process.env[k]] as const);
-  let session: any;
+  let omp: Awaited<ReturnType<typeof openOmpSession>> | undefined;
   try {
     const needles = NEEDLES(turns).map((n) => ({ ...n }));
     const byTurn = new Map(needles.map((n) => [n.turn, n]));
     const plans = Array.from({ length: turns }, (_, t) => planTurn(t, byTurn.get(t)));
     const proj = join(work, "proj");
     createProject(proj, plans);
-
-    const agentDir = join(work, "agent");
-    mkdirSync(agentDir, { recursive: true });
-    process.env.PI_CODING_AGENT_DIR = agentDir;
-    process.env.OMP_VCC_CONFIG_PATH = join(work, "omp-vcc-config.json");
-    writeFileSync(process.env.OMP_VCC_CONFIG_PATH, JSON.stringify({ overrideDefaultCompaction: true, ...options.config }));
-    // The provider as a user configures it: omp reads the key from the named environment variable.
-    writeFileSync(join(agentDir, "models.yml"), [
-      "providers:",
-      "  long-horizon:",
-      `    baseUrl: ${JSON.stringify(provider.baseUrl)}`,
-      "    apiKey: OMP_VCC_LH_API_KEY",
-      `    api: ${provider.api}`,
-      "    models:",
-      `      - id: ${JSON.stringify(provider.model)}`,
-      "        name: long-horizon model",
-      `        api: ${provider.api}`,
-      "        reasoning: false",
-      "        input: [text]",
-      // The window omp is told: its trigger, and so omp-vcc's budgets, follow it.
-      `        contextWindow: ${options.contextWindow ?? 128_000}`,
-      "        maxTokens: 8192",
-      "        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }",
-      "",
-    ].join("\n"));
-
-    const omp: any = await import("@oh-my-pi/pi-coding-agent");
-    const { initializeExtensions }: any = await import("@oh-my-pi/pi-coding-agent/modes/runtime-init" as string);
-    const sessionManager = omp.SessionManager.create(proj, join(work, "sessions"));
-    session = (await omp.createAgentSession({
-      cwd: proj,
-      agentDir,
-      sessionManager,
-      // omp keeps this much verbatim before asking any hook: let every pass reach omp-vcc.
-      settings: omp.Settings.isolated({ "compaction.keepRecentTokens": 1 }),
-      modelPattern: `long-horizon/${provider.model}`,
-      thinkingLevel: "off",
-      additionalExtensionPaths: [REPO],
-      disableExtensionDiscovery: true,
-      enableMCP: false,
-      enableLsp: false,
-      hasUI: false,
-    })).session;
-    if (session.model?.provider !== "long-horizon") throw new Error(`long-horizon: omp picked ${session.model?.provider}/${session.model?.id}, not the configured model`);
-    await initializeExtensions(session, { reportSendError: () => {}, reportRuntimeError: () => {}, mode: "rpc", uiContext: new Proxy({}, { get: () => () => undefined }) });
+    omp = await openOmpSession({ work, cwd: proj, contextWindow: options.contextWindow, config: options.config });
+    const { session, sessionManager } = omp;
 
     for (let t = 0; t < turns; t++) {
       const plan = plans[t];
@@ -342,11 +282,7 @@ export const runLongHorizon = async (options: LongHorizonOptions = {}): Promise<
       finalSummary,
     };
   } finally {
-    await session?.dispose?.();
-    for (const [k, v] of saved) {
-      if (v === undefined) delete process.env[k];
-      else process.env[k] = v;
-    }
+    await omp?.close();
     rmSync(work, { recursive: true, force: true });
   }
 };
