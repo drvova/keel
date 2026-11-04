@@ -11,13 +11,17 @@
 //   1. the latest version of each file the work is on (touched in the kept
 //      tail, named in the latest request, or, when the kept tail has made no
 //      call yet, changed in the last summarized turn), unless the kept tail
-//      already holds a read or write of it;
+//      already holds a read or write of it: what showed it last, newest first
+//      (omp's edit result is the changed lines with their numbers, a range read
+//      the lines it asked for), then its last whole read or write;
 //   2. the latest failed call no later call of the same tool and argument
 //      fixed, by its end, where errors are;
 //   3. the results recall ranks highest for the latest request, a file's
 //      latest read only, none of a file the kept tail reads or writes.
 //
-// Within a budget from compactionBudgets, and never more than half of what the
+// It reads everything out of context once the compaction lands, not only what
+// this one summarizes: in real sessions most files read again after a
+// compaction were read before an earlier one. Within a budget from compactionBudgets, and never more than half of what the
 // compaction removes, so it always frees room. It is rebuilt from the messages at
 // every compaction and never carried (the merge with the previous summary
 // keeps only the sections it knows), so it stays bounded and is never
@@ -30,8 +34,11 @@ import { searchEntriesDetailed } from "./search-entries";
 import { extractPaths, isUrlPath, stripReadSelector } from "./tool-args";
 
 export interface WorkingSetInput {
-  /** What this compaction summarizes, the originals of what omp rewrote put back. */
-  summarized: readonly unknown[];
+  /**
+   * Everything out of context once this compaction lands (what it summarizes and
+   * what earlier ones did, since /clear), the originals of what omp rewrote put back.
+   */
+  history: readonly unknown[];
   /** The session-wide #N of each, where known. */
   indices: ReadonlyArray<number | undefined>;
   /** What stays in context after it. */
@@ -58,6 +65,8 @@ interface Call {
   name: string;
   args: Record<string, unknown>;
   paths: string[];
+  /** The path as the call gave it, a read's line selector kept (`src/a.ts:50-100`). */
+  rawPath?: string;
   pos: number;
 }
 
@@ -74,6 +83,8 @@ const MIN_ITEM_CHARS = 400;
 /** One item takes at most this share of the budget, so a big file leaves room for the failure. */
 const MAX_ITEM_SHARE = 0.6;
 const MAX_RELEVANT = 3;
+/** Recall ranks the newest this many results, so a long session costs a compaction no more than this. */
+const MAX_RELEVANT_CANDIDATES = 400;
 
 const asRecord = (v: unknown): Record<string, any> => (v && typeof v === "object" ? (v as Record<string, any>) : {});
 
@@ -83,11 +94,13 @@ const callsOf = (message: Record<string, any>, pos: number): Call[] =>
         .filter((p: any) => p?.type === "toolCall" && typeof p.id === "string")
         .map((p: any) => {
           const args = asRecord(p.arguments);
+          const raw = extractPaths(args).filter((x) => !isUrlPath(x));
           return {
             id: p.id,
             name: typeof p.name === "string" ? p.name : "tool",
             args,
-            paths: extractPaths(args).map(stripReadSelector).filter((x) => !isUrlPath(x)),
+            paths: raw.map(stripReadSelector),
+            rawPath: raw[0],
             pos,
           };
         })
@@ -99,7 +112,7 @@ const primaryArg = (call: Call): string =>
 
 const titleOf = (call: Call | undefined): string => {
   if (!call) return "tool result";
-  const arg = primaryArg(call);
+  const arg = call.rawPath ?? primaryArg(call);
   return arg ? `${call.name} ${JSON.stringify(arg.length > 80 ? `${arg.slice(0, 80)}…` : arg)}` : call.name;
 };
 
@@ -107,6 +120,22 @@ const titleOf = (call: Call | undefined): string => {
 const writes = (call: Call): boolean => call.paths.length === 1 && typeof call.args.content === "string";
 /** A call that changes part of a file. */
 const edits = (call: Call): boolean => !writes(call) && (isContentBearing(call.args) || typeof call.args.input === "string");
+/** A call that shows a file: the read tool on one path (omp's and Pi's are `read`); not a search over a directory. */
+const reads = (call: Call): boolean => call.name === "read" && call.paths.length === 1;
+/** A call on a file: a read, a write or an edit. */
+const onFile = (call: Call): boolean => reads(call) || writes(call) || edits(call);
+/** The request names this path as a whole token, not as part of a longer one (`src/a.ts` in `src/a.tsx`), and a path names a file, not `.`. */
+const mentions = (text: string, path: string): boolean => {
+  if (!/[A-Za-z]/.test(path)) return false;
+  const esc = path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?:^|[^\\w./-])${esc}(?![\\w/-]|\\.\\w)`).test(text);
+};
+/** A read of part of a file: a line selector, or an offset or limit. */
+const ranged = (call: Call): boolean =>
+  (call.rawPath !== undefined && call.rawPath !== call.paths[0]) || call.args.offset !== undefined || call.args.limit !== undefined;
+/** Below this many lines, what a call showed of a file says too little to bring back (`ok`, `Successfully replaced`). */
+const MIN_VIEW_LINES = 2;
+const lineCount = (text: string): number => text.split("\n").filter((l) => l.trim() !== "").length;
 
 const lastUserText = (messages: readonly unknown[]): string | undefined => {
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -123,7 +152,7 @@ export const selectWorkingSet = (input: WorkingSetInput): WorkingSetItem[] => {
   if (!(input.maxChars >= MIN_ITEM_CHARS)) return [];
   const calls = new Map<string, Call>();
   const results: Result[] = [];
-  input.summarized.forEach((raw, pos) => {
+  input.history.forEach((raw, pos) => {
     const m = asRecord(raw);
     for (const c of callsOf(m, pos)) calls.set(c.id, c);
     if (m.role === "toolResult") {
@@ -138,45 +167,65 @@ export const selectWorkingSet = (input: WorkingSetInput): WorkingSetItem[] => {
     const r = asRecord(m);
     if (r.role === "toolResult" && typeof r.toolCallId === "string") keptResults.set(r.toolCallId, r.isError === true);
   }
-  const request = lastUserText(input.kept) ?? lastUserText(input.summarized) ?? "";
+  const request = lastUserText(input.kept) ?? lastUserText(input.history) ?? "";
   const items: WorkingSetItem[] = [];
   const used = new Set<number>();
 
   // 1. Files the work is on, most recently touched first.
   const lastUserPos = (() => {
-    for (let i = input.summarized.length - 1; i >= 0; i--) if (asRecord(input.summarized[i]).role === "user") return i;
+    for (let i = input.history.length - 1; i >= 0; i--) if (asRecord(input.history[i]).role === "user") return i;
     return -1;
   })();
   const allCalls = [...calls.values()];
-  const known = new Set(allCalls.flatMap((c) => c.paths));
+  const known = new Set(allCalls.filter(onFile).flatMap((c) => c.paths));
   const active: string[] = [];
   const add = (p: string) => {
     if (!active.includes(p)) active.push(p);
   };
-  for (const c of [...keptCalls].reverse()) c.paths.forEach(add);
+  for (const c of [...keptCalls].reverse()) if (onFile(c)) c.paths.forEach(add);
   // A kept turn that has not started yet most likely goes on with the last one.
   if (keptCalls.length === 0) for (const c of [...allCalls].reverse()) if (c.pos > lastUserPos && (writes(c) || edits(c))) c.paths.forEach(add);
-  for (const p of known) if (request.includes(p)) add(p);
+  for (const p of known) if (mentions(request, p)) add(p);
   // Files whose current version the kept tail holds: a read or a write of it is in context already.
-  const inContext = new Set(keptCalls.filter((c) => !edits(c)).flatMap((c) => c.paths));
+  const inContext = new Set(keptCalls.filter((c) => reads(c) || writes(c)).flatMap((c) => c.paths));
   const chosenPaths = new Set<string>();
   for (const path of active) {
     if (inContext.has(path)) continue;
     const touching = allCalls.filter((c) => c.paths.includes(path)).sort((a, b) => a.pos - b.pos);
+    const resultOf = (c: Call): Result | undefined => {
+      const r = results.find((x) => x.call === c);
+      return r && !r.isError && r.text.trim() ? r : undefined;
+    };
+    // Its last whole view: a write's content, or the result of a read of all of it.
     let base: { call: Call; text: string; index: number | undefined } | undefined;
     for (const c of touching) {
       if (writes(c)) base = { call: c, text: String(c.args.content), index: input.indices[c.pos] };
-      else if (!edits(c)) {
-        const r = results.find((x) => x.call === c);
-        if (r && !r.isError && r.text.trim()) base = { call: c, text: r.text, index: r.index };
+      else if (reads(c) && !ranged(c)) {
+        const r = resultOf(c);
+        if (r) base = { call: c, text: r.text, index: r.index };
       }
     }
-    if (!base || base.index === undefined || used.has(base.index)) continue;
-    const later = touching.filter((c) => c.pos > base!.call.pos && edits(c)).map((c) => input.indices[c.pos]).filter((n): n is number => n !== undefined);
+    // What showed it after that: omp's edit results (the changed lines, numbered) and range reads.
+    const after = touching.filter((c) => c.pos > (base?.call.pos ?? -1) && (edits(c) || (reads(c) && ranged(c))));
+    const views = after
+      .map((c) => ({ call: c, r: resultOf(c) }))
+      .filter((v): v is { call: Call; r: Result } => !!v.r && v.r.index !== undefined && !used.has(v.r.index) && lineCount(v.r.text) >= MIN_VIEW_LINES);
+    const newest = views.at(-1);
+    const index = base?.index ?? newest?.r.index;
+    if (index === undefined || used.has(index) || (!base && !newest)) continue;
+    const shown = new Set(views.map((v) => v.call));
+    const later = after.filter((c) => edits(c) && !shown.has(c)).map((c) => input.indices[c.pos]).filter((n): n is number => n !== undefined);
     const keptEdits = keptCalls.some((c) => c.paths.includes(path) && edits(c));
-    const edited = later.length > 0 ? `, edited after at ${later.map((n) => `#${n}`).join(", ")}` : keptEdits ? ", edited after in context" : "";
-    items.push({ index: base.index, reason: "file", title: titleOf(base.call), note: `the latest version${edited}`, text: base.text, fromEnd: false });
-    used.add(base.index);
+    const parts = [...views].reverse().map((v) => `[#${v.r.index} ${titleOf(v.call)}]\n${v.r.text}`);
+    if (base) parts.push(views.length > 0 ? `[#${base.index} ${titleOf(base.call)}]\n${base.text}` : base.text);
+    const note = [
+      "the latest version",
+      ...(views.length > 0 ? ["newest first"] : []),
+      ...(later.length > 0 ? [`edited after at ${later.map((n) => `#${n}`).join(", ")}`] : keptEdits ? ["edited after in context"] : []),
+    ].join(", ");
+    items.push({ index, reason: "file", title: titleOf(base?.call ?? newest!.call), note, text: parts.join("\n"), fromEnd: false });
+    used.add(index);
+    for (const v of views) used.add(v.r.index!);
     chosenPaths.add(path);
   }
 
@@ -199,14 +248,16 @@ export const selectWorkingSet = (input: WorkingSetInput): WorkingSetItem[] => {
   if (request.trim()) {
     const entries: RenderedEntry[] = [];
     const msgs: Message[] = [];
-    // A file's latest read in the summarized part, by position.
+    // A file's latest read, by position.
     const latestRead = new Map<string, number>();
-    for (const r of results) if (r.call && !edits(r.call) && !writes(r.call)) for (const p of r.call.paths) latestRead.set(p, r.pos);
-    for (const r of results) {
+    for (const r of results) if (r.call && reads(r.call)) for (const p of r.call.paths) latestRead.set(p, r.pos);
+    for (const r of results.slice(-MAX_RELEVANT_CANDIDATES)) {
       if (r.index === undefined || used.has(r.index) || r.isError || !r.text.trim()) continue;
+      // An edit's or a write's result is the agent's own change: a file's changes are rule 1's.
+      if (r.call && (edits(r.call) || writes(r.call))) continue;
       const paths = r.call?.paths ?? [];
       if (paths.some((p) => inContext.has(p) || chosenPaths.has(p) || latestRead.get(p) !== r.pos)) continue;
-      const m = input.summarized[r.pos] as Message;
+      const m = input.history[r.pos] as Message;
       entries.push(renderMessage(m, r.index));
       msgs.push(m);
     }

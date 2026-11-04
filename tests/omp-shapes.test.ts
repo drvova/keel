@@ -9,6 +9,7 @@ import { extractPaths, hashlineEditPaths, stripReadSelector } from "../src/core/
 import { extractFiles } from "../src/extract/files";
 import { renderMessage } from "../src/core/render-entries";
 import { getTouchedFiles } from "../src/core/search-entries";
+import { extractToolCallText, isContentBearing } from "../src/core/content";
 import { setSettingsAgentDir, settingsPath } from "../src/core/settings";
 
 const msg = (id: string, role: "user" | "assistant", content = `text of ${id}`) => ({
@@ -100,6 +101,17 @@ describe("omp tool shapes", () => {
     const touched = getTouchedFiles([edit], [{ index: 7, role: "assistant", summary: "" }]);
     expect(touched.map((t) => t.path).sort()).toEqual(["lib/util.py", "src/auth/session.ts"]);
     expect(touched[0].entries).toEqual([{ index: 7, toolName: "edit", drillable: false }]);
+  });
+});
+
+describe("omp's replace edit (old_string/new_string)", () => {
+  const edit: any = { role: "assistant", content: [{ type: "toolCall", id: "t", name: "edit", arguments: { path: "src/money.ts", old_string: "floor + 1 : floor", new_string: "floor : floor + 1" } }] };
+
+  test("is a change: listed and drillable in mode:'touched', its text searchable", () => {
+    expect(isContentBearing(edit.content[0].arguments)).toBe(true);
+    expect(extractToolCallText(edit.content[0].arguments)).toBe("floor + 1 : floor\nfloor : floor + 1\n");
+    const touched = getTouchedFiles([edit], [{ index: 4, role: "assistant", summary: "" }]);
+    expect(touched[0].entries).toEqual([{ index: 4, toolName: "edit" }]);
   });
 });
 

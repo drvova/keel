@@ -48,7 +48,7 @@ describe("selectWorkingSet", () => {
   it("brings back the file the kept turn edits, by its latest version, and the failure nothing fixed", () => {
     const summarized = work();
     const kept = [user("still failing, keep going"), call("c4", "edit", { path: "src/billing/totals.ts", oldText: "a", newText: "b" })];
-    const items = selectWorkingSet({ summarized, indices: indices(summarized.length), kept, maxChars: 20_000 });
+    const items = selectWorkingSet({ history: summarized, indices: indices(summarized.length), kept, maxChars: 20_000 });
     expect(items.map((i) => [i.reason, i.index, i.title, i.note])).toEqual([
       ["file", 2, 'read "src/billing/totals.ts"', "the latest version, edited after at #5"],
       ["failure", 4, 'bash "bun test tests/billing.test.ts" [failed]', "its end"],
@@ -58,19 +58,43 @@ describe("selectWorkingSet", () => {
   it("leaves out what the kept turn already holds and a failure a later run fixed", () => {
     const summarized = [...work(), call("c5", "bash", { command: "bun test tests/billing.test.ts" }), result("c5", "bash", "1 pass")];
     const kept = [user("now tidy it up"), call("c6", "read", { path: "src/billing/totals.ts" })];
-    expect(selectWorkingSet({ summarized, indices: indices(summarized.length), kept, maxChars: 20_000 })).toEqual([]);
+    expect(selectWorkingSet({ history: summarized, indices: indices(summarized.length), kept, maxChars: 20_000 })).toEqual([]);
   });
 
   it("before the kept turn starts, goes on from the last summarized turn; with a tiny budget, nothing", () => {
     const summarized = work();
     const kept = [user("ok, continue")];
-    const items = selectWorkingSet({ summarized, indices: indices(summarized.length), kept, maxChars: 20_000 });
+    const items = selectWorkingSet({ history: summarized, indices: indices(summarized.length), kept, maxChars: 20_000 });
     expect(items.map((i) => i.index)).toEqual([2, 4]);
-    expect(selectWorkingSet({ summarized, indices: indices(summarized.length), kept, maxChars: 100 })).toEqual([]);
+    expect(selectWorkingSet({ history: summarized, indices: indices(summarized.length), kept, maxChars: 100 })).toEqual([]);
+  });
+
+  it("shows what omp's edit and a range read showed of the file first, newest first, then its last whole read", () => {
+    const EDITED = "[src/billing/totals.ts]\n41:export const roundTotal = (x: number) => Math.round(x * 100) / 100;\n42:export const helper42 = () => 42;";
+    const history = [
+      user("Fix the rounding in src/billing/totals.ts"),
+      call("r1", "read", { path: "src/billing/totals.ts" }), result("r1", "read", FILE),
+      call("e1", "edit", { path: "src/billing/totals.ts", old_string: "Math.floor", new_string: "Math.round" }), result("e1", "edit", EDITED),
+      call("r2", "read", { path: "src/billing/totals.ts:40-41" }), result("r2", "read", "export const helper40 = () => 40;\nexport const roundTotal = (x: number) => Math.round(x * 100) / 100;"),
+      say("Done."),
+    ];
+    // The kept turn edits it again: omp's replace edit (old_string/new_string) is a change, not a read of it.
+    const kept = [user("now round to cents"), call("e2", "edit", { path: "src/billing/totals.ts", old_string: "100", new_string: "1000" })];
+    const [item, ...rest] = selectWorkingSet({ history, indices: indices(history.length), kept, maxChars: 20_000 });
+    expect(rest).toEqual([]);
+    expect([item.reason, item.index, item.title, item.note]).toEqual(["file", 2, 'read "src/billing/totals.ts"', "the latest version, newest first, edited after in context"]);
+    const lines = item.text.split("\n");
+    expect(lines[0]).toBe('[#6 read "src/billing/totals.ts:40-41"]');
+    expect(lines[3]).toBe('[#4 edit "src/billing/totals.ts"]');
+    expect(lines[7]).toBe('[#2 read "src/billing/totals.ts"]');
+    expect(lines[8]).toBe("export const helper0 = () => 0;");
   });
 
   it("ranks the rest by the latest request, a file's latest read only", () => {
     const summarized = [
+      // An edit's result is the agent's own change, not something to look up.
+      user("note the cluster down"),
+      call("e1", "edit", { path: "notes.md", old_string: "a", new_string: "the pelican cluster region" }), result("e1", "edit", "[notes.md]\n1:the pelican cluster region\n2:moved"),
       user("look around"),
       call("r1", "read", { path: "docs/deploy.md" }), result("r1", "read", "old deploy notes: pelican staging cluster"),
       call("r2", "read", { path: "docs/deploy.md" }), result("r2", "read", "deploy notes: the pelican cluster moved to eu-west"),
@@ -78,14 +102,14 @@ describe("selectWorkingSet", () => {
       say("Read them."),
     ];
     const kept = [user("which region is the pelican cluster in now?")];
-    const items = selectWorkingSet({ summarized, indices: indices(summarized.length), kept, maxChars: 20_000 });
-    expect(items.map((i) => [i.reason, i.index])).toEqual([["relevant", 4]]);
+    const items = selectWorkingSet({ history: summarized, indices: indices(summarized.length), kept, maxChars: 20_000 });
+    expect(items.map((i) => [i.reason, i.index])).toEqual([["relevant", 7]]);
   });
 });
 
 describe("formatWorkingSet", () => {
   it("fits the budget, has no blank line, indents what it quotes, and says where the rest is", () => {
-    const items = selectWorkingSet({ summarized: work(), indices: Array.from({ length: 8 }, (_, i) => i), kept: [user("go on")], maxChars: 2_000 });
+    const items = selectWorkingSet({ history: work(), indices: Array.from({ length: 8 }, (_, i) => i), kept: [user("go on")], maxChars: 2_000 });
     const lines = formatWorkingSet(items, 2_000);
     expect(lines.reduce((n, l) => n + l.length + 1, 0)).toBeLessThanOrEqual(2_000);
     expect(lines.some((l) => l.trim() === "")).toBe(false);
@@ -104,6 +128,16 @@ describe("the budget follows the window", () => {
     expect(compactionBudgets(ompDefaultTrigger(32_768), 8_000).workingSetTokens).toBe(573);
     expect(compactionBudgets(ompDefaultTrigger(1_000_000), 8_000).workingSetTokens).toBe(6_460);
     expect(compactionBudgets(8_000, 1_000).workingSetTokens).toBe(0);
+  });
+
+  it("with workingSet off, its room goes to the kept tail", () => {
+    const on = compactionBudgets(ompDefaultTrigger(40_000), 8_800);
+    const off = compactionBudgets(ompDefaultTrigger(40_000), 8_800, false);
+    expect(off.workingSetTokens).toBe(0);
+    expect(off.maxTailTokens).toBe(on.maxTailTokens + on.workingSetTokens);
+    // On a typical window the tail is at its cap either way.
+    expect(compactionBudgets(ompDefaultTrigger(128_000), 8_000, false).maxTailTokens).toBe(25_000);
+    expect(compactionBudgets(undefined, 0, false).workingSetTokens).toBe(0);
   });
 });
 
@@ -145,6 +179,22 @@ describe("in the compaction hook", () => {
     expect(two.summary.match(/\[Working Set\]/g)).toHaveLength(1);
     expect(two.summary).toContain("    export const roundTotal = (x: number) => Math.round(x * 100) / 100;");
     expect(two.summary).not.toContain("[failed], its end:");
+  });
+
+  it("brings back a file read before an earlier compaction", () => {
+    const earlier = [user("Set up the build"), call("c0", "bash", { command: "cat build.log" }), result("c0", "bash", "compiling module\n".repeat(600)), say("Built.")];
+    const first = entries([...earlier, ...work(), user("still failing, keep going"), call("c4", "edit", { path: "src/billing/totals.ts", oldText: "a", newText: "b" }), result("c4", "edit", "ok")]);
+    const summary = compact(first).summary as string;
+    // Other work since, enough to compact again, then a request that names the file.
+    const second = entries([
+      ...first.map((e) => e.message),
+      say("Now the deploy."), user("Check the deploy logs"),
+      call("d1", "bash", { command: "cat deploy.log" }), result("d1", "bash", "deploying service\n".repeat(600)), say("Deployed."),
+      user("back to src/billing/totals.ts: add a test for roundTotal"),
+    ]);
+    const two = compact(second, summary);
+    expect(two.details.workingSet).toContain(6);
+    expect(two.summary).toContain('- #6 read "src/billing/totals.ts", the latest version');
   });
 
   it("is left out with workingSet off", () => {

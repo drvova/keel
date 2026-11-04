@@ -14,7 +14,7 @@
  * - Inline queries like "check #42:auth.ts" are NOT drill-down — the ^ anchor
  *   requires the entire query to be the drill-down pattern.
  */
-import { isContentBearing } from "./content";
+import { isContentBearing, newTextOf, oldTextOf } from "./content";
 import { extractPath } from "./tool-args";
 import { loadAllMessages } from "./load-messages";
 
@@ -48,15 +48,14 @@ function findContentBearingCalls(content: unknown[]): ContentBearingCall[] {
     const entry: ContentBearingCall = { name: (part as any).name ?? "", path };
     if (typeof args.content === "string") entry.content = args.content;
     if (Array.isArray(args.edits)) {
-      entry.edits = args.edits.filter(
-        (e: unknown): e is { oldText?: string; newText?: string } =>
-          e !== null && typeof e === "object",
-      );
+      entry.edits = args.edits
+        .filter((e: unknown): e is Record<string, unknown> => e !== null && typeof e === "object")
+        .map((e: Record<string, unknown>) => ({ oldText: oldTextOf(e), newText: newTextOf(e) }));
     }
-    if (typeof args.oldText === "string" && !Array.isArray(args.edits))
-      entry.oldText = args.oldText;
-    if (typeof args.newText === "string" && !Array.isArray(args.edits))
-      entry.newText = args.newText;
+    if (!Array.isArray(args.edits)) {
+      entry.oldText = oldTextOf(args);
+      entry.newText = newTextOf(args);
+    }
     results.push(entry);
   }
   return results;

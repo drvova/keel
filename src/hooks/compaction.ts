@@ -794,7 +794,7 @@ export const registerCompactionHook = (
     // Budgets from the model's real window and where the next compaction comes (core/window.ts).
     const window = windowOf(ctx?.model);
     const trigger = triggerFor(window, state, modelKey(ctx?.model), reason, preparation.tokensBefore, ompPolicyOf(preparation.settings));
-    const budgets = compactionBudgets(trigger, overheadTokens);
+    const budgets = compactionBudgets(trigger, overheadTokens, settings.workingSet);
 
     // Smart keep-tail: boost default keep when the tail is small.
     // Explicit keep:N from the user is always respected (resolver no-ops).
@@ -1034,14 +1034,24 @@ export const registerCompactionHook = (
     // spend its next requests fetching it again.
     let workingSet: { items: WorkingSetItem[]; lines: string[] } | undefined;
     if (settings.workingSet && budgets.workingSetTokens > 0) {
-      const keptAt = firstKeptEntryId ? (branchEntries as any[]).findIndex((e: any) => e.id === firstKeptEntryId) : -1;
-      const kept = keptAt >= 0 ? (branchEntries as any[]).slice(keptAt).map(toLiveMessage).filter(Boolean) : [];
+      const all = branchEntries as any[];
+      const keptAt = firstKeptEntryId ? all.findIndex((e: any) => e.id === firstKeptEntryId) : -1;
+      const kept = keptAt >= 0 ? all.slice(keptAt).map(toLiveMessage).filter(Boolean) : [];
+      // Everything out of context once this lands, since /clear: what this
+      // compaction summarizes and what earlier ones did, from the originals.
+      const past = all
+        .slice(lastIndexOfType(all, "reset_boundary") + 1, keptAt >= 0 ? keptAt : all.length)
+        .filter((e: any) => e?.type !== "compaction")
+        .map((e: any) => ({ id: e.id as string, m: toLiveMessage(e) }))
+        .filter((x: any) => x.m);
+      const pastIds = past.map((x: any) => x.id);
+      const history = restoreOriginals(past.map((x: any) => x.m), pastIds, (ctx as any)?.sessionManager?.getSessionFile?.());
       // Never more than half of what this compaction removes, so it always frees room.
       const removedChars = ownCut.messages.reduce((sum: number, m: any) => sum + estimateMessageChars(m), 0);
       const maxChars = Math.round(Math.min(budgets.workingSetTokens * tokenEstimate.charsPerToken, removedChars * WORKING_SET_SHARE_OF_REMOVED));
       const items = selectWorkingSet({
-        summarized: agentMessages,
-        indices: agentSelectedIds.map((id: string) => globalIndexById?.get(id)),
+        history,
+        indices: pastIds.map((id: string) => globalIndexById?.get(id)),
         kept,
         maxChars,
       });

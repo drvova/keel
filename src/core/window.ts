@@ -241,17 +241,18 @@ export const summaryLimits = (scale: number): SummaryLimits => {
  * Budgets for a compaction that runs at `trigger` tokens, with `overheadTokens`
  * of context the compaction cannot remove (system prompt, tool schemas):
  * what is kept plus the summary lands at or under LANDING_SHARE of the trigger.
- * Unknown trigger: the defaults.
+ * Unknown trigger: the defaults. Without a working set (the `workingSet`
+ * setting off), its room goes to the kept tail.
  */
-export const compactionBudgets = (trigger?: number, overheadTokens = 0): CompactionBudgets => {
+export const compactionBudgets = (trigger?: number, overheadTokens = 0, withWorkingSet = true): CompactionBudgets => {
   const t = positive(trigger);
-  if (!t) return { ...DEFAULT_BUDGETS, summary: { ...DEFAULT_SUMMARY_LIMITS } };
+  if (!t) return { ...DEFAULT_BUDGETS, summary: { ...DEFAULT_SUMMARY_LIMITS }, workingSetTokens: withWorkingSet ? DEFAULT_BUDGETS.workingSetTokens : 0 };
   const briefCeilingTokens = Math.round(Math.min(0.1 * t, clampTokens(0.004 * t, DEFAULT_BUDGETS.briefCeilingTokens, 6_000)));
   const briefTokens = Math.round(Math.min(DEFAULT_BUDGETS.briefTokens, 0.06 * t, briefCeilingTokens));
   const scale = summaryScale(t, briefCeilingTokens);
   // The same on a ~128K window up to where the brief grows, then with it; a share of a smaller trigger.
   const wanted = Math.round(Math.min(DEFAULT_BUDGETS.workingSetTokens * Math.max(1, scale), WORKING_SET_SHARE * t));
-  const workingSetTokens = wanted >= MIN_WORKING_SET_TOKENS ? wanted : 0;
+  const workingSetTokens = withWorkingSet && wanted >= MIN_WORKING_SET_TOKENS ? wanted : 0;
   const room = LANDING_SHARE * t - Math.max(0, overheadTokens) - briefCeilingTokens - SECTIONS_TOKENS * scale - workingSetTokens;
   const maxTailTokens = clampTokens(Math.min(TAIL_SHARE * t, room), 1_000, DEFAULT_BUDGETS.maxTailTokens);
   return {
