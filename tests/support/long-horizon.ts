@@ -1,21 +1,24 @@
-// A long coding session with planted facts at known depths, run by omp itself,
-// then scored: which facts the final summary still carries, whether it points at
-// where each one lives (an exact `(#N)` ref, or a [History Index] range that
-// names it), and whether vcc_recall finds each one with a reworded query.
+// A long coding session with planted facts at known depths, run by omp with a
+// real model, then scored: which facts the final summary still carries, whether
+// it points at where each one lives (an exact `(#N)` ref, or a [History Index]
+// range that names it), and whether vcc_recall finds each one with a reworded
+// query.
 //
-// Nothing here stands in for omp. omp's agent loop runs every turn against omp's
-// own mock provider (@oh-my-pi/pi-ai/providers/mock), scripted to make the
-// session's tool calls and to report usage for the request omp actually built
-// (its system prompt, its tool schemas, the context). omp's real read, edit and
-// bash tools run on a real project in a real git repository, whose
-// `scripts/test` prints the turn's planned test results (so a failing test can be
-// planted) and `scripts/dev-server` a port. omp counts the context, runs its threshold checks and its idle
-// maintenance (every `compactEvery` turns), prepares each compaction and commits
-// it; omp-vcc is loaded from this package as omp loads it for a user. Recall
-// runs through the session's own vcc_recall tool. Used by
-// tests/long-horizon.test.ts, tests/pins.test.ts and
+// Nothing here stands in for omp or for a model. The model is a real provider,
+// set up as a user sets one up in omp (a `models.yml` provider whose key omp reads
+// from the environment): OMP_VCC_LH_BASE_URL, OMP_VCC_LH_API_KEY and
+// OMP_VCC_LH_MODEL (OMP_VCC_LH_API, default `openai-completions`). Each turn is a
+// request telling the agent what to do; omp's agent loop runs it with the agent's
+// own calls to omp's real tools, on a real project in a real git repository with
+// real tests (`bun test`: each turn's pass once its edit is made, and turn 25's
+// fails on rounding until the agent fixes it) and a dev-server script that prints
+// its port. omp counts the context from the
+// provider's usage, runs its threshold checks and its idle maintenance (every
+// `compactEvery` turns), prepares each compaction and commits it; omp-vcc is
+// loaded from this package as omp loads it for a user. Recall runs through the
+// session's own vcc_recall tool. Used by tests/long-horizon.test.ts and
 // scripts/benchmark-long-horizon.ts.
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { dirname, join, resolve } from "path";
 import { buildGlobalIndexById } from "../../src/core/global-indices";
@@ -37,6 +40,14 @@ export interface Needle {
   /** Session-wide #N of the entry holding the fact (found after the run). */
   index?: number;
 }
+
+/** The real model the session runs on, from the environment; undefined when none is set. */
+export const realModel = (): { baseUrl: string; model: string; api: string } | undefined => {
+  const baseUrl = process.env.OMP_VCC_LH_BASE_URL;
+  const model = process.env.OMP_VCC_LH_MODEL;
+  if (!baseUrl || !model || !process.env.OMP_VCC_LH_API_KEY) return undefined;
+  return { baseUrl, model, api: process.env.OMP_VCC_LH_API ?? "openai-completions" };
+};
 
 export interface LongHorizonOptions {
   turns?: number;
@@ -89,19 +100,12 @@ export const NEEDLES = (turns: number): Needle[] => [
   { kind: "mid_request", turn: Math.floor(turns / 2), key: "rate limit of 40 requests per minute", query: "webhook rate limit", topic: "webhook" },
 ];
 
-type Part = { type: "text"; text: string } | { type: "toolCall"; name: string; arguments: Record<string, unknown> };
-interface Step { content: Part[] }
 interface TurnPlan {
+  /** The request: what the agent is asked to do this turn. */
   user: string;
-  /** Files written before the turn (each turn edits a fresh copy, so its edit applies). */
+  /** Files written before the turn: the module it edits (a fresh copy, so its edit applies) and its tests. */
   files: Record<string, string>;
-  /** What `scripts/test <file>` prints this turn, in call order, by test file. */
-  tests: Record<string, Array<{ out: string; code: number }>>;
-  steps: Step[];
 }
-
-const text = (t: string): Part => ({ type: "text", text: t });
-const call = (name: string, args: Record<string, unknown>): Part => ({ type: "toolCall", name, arguments: args });
 
 const moduleText = (comp: string, feature: string, t: number, withTotal: boolean): string =>
   [
@@ -110,7 +114,7 @@ const moduleText = (comp: string, feature: string, t: number, withTotal: boolean
     ...(withTotal ? ["export const total = (cents: number) => Math.floor(cents);"] : []),
   ].join("\n") + "\n";
 
-/** What turn `t` does: the request, the files it works on, and the agent's steps. */
+/** What turn `t` asks of the agent, and the files and test results it will find. */
 const planTurn = (t: number, needle: Needle | undefined): TurnPlan => {
   const comp = COMPONENTS[t % COMPONENTS.length];
   const verb = VERBS[(t * 3) % VERBS.length];
@@ -118,38 +122,40 @@ const planTurn = (t: number, needle: Needle | undefined): TurnPlan => {
   const file = `src/${comp}/${feature.split(" ")[1]}.ts`;
   const readPath = needle?.kind === "early_file" ? "src/legacy/exporter.ts" : file;
   const testFile = `tests/${comp}.test.ts`;
-  const testArgs = `./scripts/test ${testFile}`;
-  const pass = { out: "12 pass\n0 fail\nRan 12 tests across 1 file.", code: 0 };
-  const user =
+  const test = `bun test ${testFile}`;
+  const lead =
     needle?.kind === "constraint"
       ? `Before you start on ${comp}: never edit anything under migrations/ — those files are generated. Now ${verb} ${feature} of ${comp}.`
       : needle?.kind === "mid_request"
         ? `For webhook delivery we need a rate limit of 40 requests per minute per tenant. Please ${verb} ${feature} of ${comp} with that in mind.`
         : `Next: ${verb} ${feature} of ${comp}.`;
-  const steps: Step[] = [
-    { content: [text(`Looking at ${readPath}.`), call("read", { path: readPath })] },
-    { content: [call("edit", { path: readPath, old_string: `${comp}Step1(`, new_string: `${comp}Step1Checked(` })] },
+  const work = [
+    ...(needle?.kind === "tool_value" ? ["first run `bun scripts/dev-server.ts --print-port` to see which port the dev server uses"] : []),
+    `read ${readPath} and replace \`${comp}Step1(\` with \`${comp}Step1Checked(\` in it`,
+    ...(needle?.kind === "fixed_error"
+      ? [`run \`${test}\`; it fails on rounds totals, so replace \`Math.floor(\` with \`Math.ceil(\` in ${file} and run it again`]
+      : [`run \`${test}\``]),
+    ...(t % 5 === 0 && t > 0 ? [`commit with \`git commit -am "feat(${comp}): ${verb} ${feature}"\``] : []),
   ];
-  const tests: TurnPlan["tests"] = { [comp]: [] };
-  if (needle?.kind === "tool_value") steps.push({ content: [call("bash", { command: "./scripts/dev-server --print-port" })] });
-  if (needle?.kind === "fixed_error") {
-    steps.push({ content: [call("bash", { command: testArgs })] });
-    tests[comp].push({ out: `FAIL tests/${comp}.test.ts > rounds totals: expected 1050, got 1049\n1 fail`, code: 1 });
-    steps.push({ content: [text("Switching the total to Math.ceil."), call("edit", { path: file, old_string: "Math.floor(", new_string: "Math.ceil(" })] });
-  }
-  steps.push({ content: [call("bash", { command: testArgs })] });
-  tests[comp].push(pass);
-  if (t % 5 === 0 && t > 0) steps.push({ content: [call("bash", { command: `git commit -am "feat(${comp}): ${verb} ${feature}"` })] });
-  steps.push({
-    content: [
-      text(
-        needle?.kind === "decision"
-          ? `Decision: sessions are stored in SQLite rather than Redis, because the deploy host has no Redis. ${comp} is done.`
-          : `Done: ${verb} ${feature} of ${comp}; tests pass.`,
-      ),
-    ],
-  });
-  return { user, files: { [readPath]: moduleText(comp, feature, t, needle?.kind === "fixed_error") }, tests, steps };
+  const reply =
+    needle?.kind === "decision"
+      ? `Decision: sessions are stored in SQLite rather than Redis, because the deploy host has no Redis. ${comp} is done.`
+      : `Done: ${verb} ${feature} of ${comp}; tests pass.`;
+  const user = `${lead} Steps: ${work.join("; then ")}. Do only that, then reply with this one line: ${reply}`;
+  // The tests pass once the edit is made; turn 25's also check the total, which rounds down until it is fixed.
+  const fn = `${comp}Step1Checked`;
+  const tests = [
+    'import { describe, expect, it } from "bun:test";',
+    `import * as mod from "../${readPath.replace(/\.ts$/, "")}";`,
+    "",
+    `describe("${comp}", () => {`,
+    `  it("has ${fn}", () => expect(typeof (mod as any).${fn}).toBe("function"));`,
+    ...Array.from({ length: 11 }, (_, i) => `  it("keeps ${comp}Step${i + 2}", () => expect(typeof (mod as any).${comp}Step${i + 2}).toBe("function"));`),
+    ...(needle?.kind === "fixed_error" ? ['  it("rounds totals", () => expect((mod as any).total(1049.5)).toBe(1050));'] : []),
+    "});",
+    "",
+  ].join("\n");
+  return { user, files: { [readPath]: moduleText(comp, feature, t, needle?.kind === "fixed_error"), [testFile]: tests } };
 };
 
 /** The summary wraps long lines; compare with whitespace collapsed. */
@@ -173,12 +179,6 @@ const run = (cwd: string, ...cmd: string[]) => {
   if (r.exitCode !== 0) throw new Error(`${cmd.join(" ")}: ${r.stderr.toString()}`);
 };
 
-/** A message as a provider receives it: its role, text, and tool calls with their arguments. */
-const requestChars = (m: any): number => {
-  const parts = typeof m?.content === "string" ? [{ type: "text", text: m.content }] : Array.isArray(m?.content) ? m.content : [];
-  return 16 + String(m?.role ?? "").length + parts.reduce((n: number, p: any) => n + (p?.type === "text" ? String(p.text ?? "").length : p?.type === "toolCall" ? String(p.name ?? "").length + JSON.stringify(p.arguments ?? {}).length : p?.type === "thinking" ? String(p.thinking ?? "").length : 0), 0);
-};
-
 const textOf = (m: any): string =>
   typeof m?.content === "string" ? m.content : Array.isArray(m?.content) ? m.content.map((p: any) => (p?.type === "text" ? p.text : "")).join("\n") : "";
 
@@ -189,20 +189,8 @@ const createProject = (proj: string, plans: TurnPlan[]) => {
     writeFileSync(join(proj, path), content);
   };
   for (const plan of plans) for (const [path, content] of Object.entries(plan.files)) write(path, content);
-  // The project's own scripts, plain sh: what omp's bash runs is the project's, as it would be.
-  write("scripts/dev-server", '#!/bin/sh\n[ "$1" = "--print-port" ] && echo "dev server listening on port 48213"\n');
-  write("scripts/test", [
-    "#!/bin/sh",
-    "# Prints the next planned result for this test file (.plan/<name>/<n>.out, exit code in <n>.code).",
-    'dir=".plan/$(basename "$1" .test.ts)"',
-    'n=$(ls "$dir" 2>/dev/null | grep "\\.out$" | sort -n | head -1)',
-    '[ -z "$n" ] && { echo "no planned result for $1" >&2; exit 127; }',
-    'cat "$dir/$n"; code=$(cat "$dir/${n%.out}.code"); rm -f "$dir/$n" "$dir/${n%.out}.code"; exit "$code"',
-    "",
-  ].join("\n"));
-  chmodSync(join(proj, "scripts/dev-server"), 0o755);
-  chmodSync(join(proj, "scripts/test"), 0o755);
-  write(".gitignore", ".plan/\n");
+  write("scripts/dev-server.ts", 'const PORT = 48213;\nif (process.argv.includes("--print-port")) console.log(`dev server listening on port ${PORT}`);\n');
+  write("package.json", '{ "name": "billing-suite", "private": true, "type": "module" }\n');
   write("migrations/001_init.sql", "-- generated\n");
   run(proj, "git", "init", "-q", "-b", "main");
   run(proj, "git", "config", "user.name", "omp-vcc test");
@@ -215,8 +203,10 @@ const createProject = (proj: string, plans: TurnPlan[]) => {
 export const runLongHorizon = async (options: LongHorizonOptions = {}): Promise<LongHorizonResult> => {
   const turns = options.turns ?? 60;
   const compactEvery = options.compactEvery ?? 6;
+  const provider = realModel();
+  if (!provider) throw new Error("long-horizon: set OMP_VCC_LH_BASE_URL, OMP_VCC_LH_API_KEY and OMP_VCC_LH_MODEL to run it on a real model");
   const work = mkdtempSync(join(tmpdir(), "omp-vcc-long-horizon-"));
-  const saved = ["PI_CODING_AGENT_DIR", "OMP_VCC_CONFIG_PATH", "ANTHROPIC_API_KEY"].map((k) => [k, process.env[k]] as const);
+  const saved = ["PI_CODING_AGENT_DIR", "OMP_VCC_CONFIG_PATH"].map((k) => [k, process.env[k]] as const);
   let session: any;
   try {
     const needles = NEEDLES(turns).map((n) => ({ ...n }));
@@ -225,69 +215,55 @@ export const runLongHorizon = async (options: LongHorizonOptions = {}): Promise<
     const proj = join(work, "proj");
     createProject(proj, plans);
 
-    process.env.PI_CODING_AGENT_DIR = join(work, "agent");
+    const agentDir = join(work, "agent");
+    mkdirSync(agentDir, { recursive: true });
+    process.env.PI_CODING_AGENT_DIR = agentDir;
     process.env.OMP_VCC_CONFIG_PATH = join(work, "omp-vcc-config.json");
     writeFileSync(process.env.OMP_VCC_CONFIG_PATH, JSON.stringify({ overrideDefaultCompaction: true, ...options.config }));
-    // omp runs an automatic pass only through a method it can use, which needs a
-    // credential for the provider of the model its summary methods fall back to.
-    // Nothing is sent with it: every summary is omp-vcc's (as in tests/omp-host.test.ts).
-    process.env.ANTHROPIC_API_KEY ??= "omp-vcc-test-not-a-key";
+    // The provider as a user configures it: omp reads the key from the named environment variable.
+    writeFileSync(join(agentDir, "models.yml"), [
+      "providers:",
+      "  long-horizon:",
+      `    baseUrl: ${JSON.stringify(provider.baseUrl)}`,
+      "    apiKey: OMP_VCC_LH_API_KEY",
+      `    api: ${provider.api}`,
+      "    models:",
+      `      - id: ${JSON.stringify(provider.model)}`,
+      "        name: long-horizon model",
+      `        api: ${provider.api}`,
+      "        reasoning: false",
+      "        input: [text]",
+      // The window omp is told: its trigger, and so omp-vcc's budgets, follow it.
+      `        contextWindow: ${options.contextWindow ?? 128_000}`,
+      "        maxTokens: 8192",
+      "        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }",
+      "",
+    ].join("\n"));
+
     const omp: any = await import("@oh-my-pi/pi-coding-agent");
-    const mock: any = await import("@oh-my-pi/pi-ai/providers/mock" as string);
     const { initializeExtensions }: any = await import("@oh-my-pi/pi-coding-agent/modes/runtime-init" as string);
-    mock.registerMockApi();
-    const script: Step[] = [];
-    const model = mock.createMockModel({
-      // omp's keyless provider: no credential to look up, and nothing is sent anywhere.
-      provider: "local",
-      contextWindow: options.contextWindow ?? 128_000,
-      handler: (ctx: any) => {
-        // A side request (no tools offered) is not the agent's turn.
-        if (!ctx.tools?.length) return { content: ["ok"] };
-        // What a provider tokenizes: the system prompt, each tool's name, description and
-        // schema, and each message's text and tool calls (not omp's bookkeeping fields).
-        const tools = ctx.tools.map((t: any) => ({ name: t.name, description: t.description, parameters: t.parameters }));
-        const promptChars = (ctx.systemPrompt?.length ?? 0) + JSON.stringify(tools).length + ctx.messages.reduce((n: number, m: any) => n + requestChars(m), 0);
-        const step = script.shift();
-        if (!step) throw new Error("long-horizon: omp asked for more turns than the plan has");
-        return { content: step.content, usage: { input: Math.ceil(promptChars / 4), output: 40 } };
-      },
-    });
     const sessionManager = omp.SessionManager.create(proj, join(work, "sessions"));
     session = (await omp.createAgentSession({
       cwd: proj,
-      agentDir: process.env.PI_CODING_AGENT_DIR,
+      agentDir,
       sessionManager,
-      settings: omp.Settings.isolated({
-        // omp keeps this much verbatim before asking any hook: let every pass reach omp-vcc.
-        "compaction.keepRecentTokens": 1,
-        // omp's replace edit (old_string/new_string), as omp picks for many models.
-        "edit.mode": "replace",
-      }),
-      model,
+      // omp keeps this much verbatim before asking any hook: let every pass reach omp-vcc.
+      settings: omp.Settings.isolated({ "compaction.keepRecentTokens": 1 }),
+      modelPattern: `long-horizon/${provider.model}`,
+      thinkingLevel: "off",
       additionalExtensionPaths: [REPO],
       disableExtensionDiscovery: true,
       enableMCP: false,
       enableLsp: false,
       hasUI: false,
     })).session;
+    if (session.model?.provider !== "long-horizon") throw new Error(`long-horizon: omp picked ${session.model?.provider}/${session.model?.id}, not the configured model`);
     await initializeExtensions(session, { reportSendError: () => {}, reportRuntimeError: () => {}, mode: "rpc", uiContext: new Proxy({}, { get: () => () => undefined }) });
 
     for (let t = 0; t < turns; t++) {
       const plan = plans[t];
       for (const [path, content] of Object.entries(plan.files)) writeFileSync(join(proj, path), content);
-      for (const [name, results] of Object.entries(plan.tests)) {
-        const dir = join(proj, ".plan", name);
-        rmSync(dir, { recursive: true, force: true });
-        mkdirSync(dir, { recursive: true });
-        results.forEach((r, i) => {
-          writeFileSync(join(dir, `${i + 1}.out`), r.out + "\n");
-          writeFileSync(join(dir, `${i + 1}.code`), String(r.code));
-        });
-      }
-      script.push(...plan.steps);
       await session.prompt(plan.user);
-      if (script.length > 0) throw new Error(`long-horizon: turn ${t} ended with ${script.length} steps left`);
       const pin = options.pins?.[t];
       if (pin) await session.getToolByName("vcc_pin").execute("pin", { note: pin }, undefined, undefined);
       if ((t + 1) % compactEvery === 0) await session.runIdleCompaction();
@@ -327,8 +303,8 @@ export const runLongHorizon = async (options: LongHorizonOptions = {}): Promise<
         if (needle.kind === "decision") return m.role === "assistant" && textOf(m).includes(needle.key);
         if (needle.kind === "tool_value") return m.role === "toolResult" && textOf(m).includes(needle.key);
         if (needle.kind === "fixed_error") return m.role === "toolResult" && m.isError === true && textOf(m).includes(needle.key);
-        // early_file: the edit of the file.
-        return m.role === "assistant" && Array.isArray(m.content) && m.content.some((p: any) => p?.type === "toolCall" && p.name === "edit" && p.arguments?.path === needle.key);
+        // early_file: the edit of the file (however the agent spelled its path).
+        return m.role === "assistant" && Array.isArray(m.content) && m.content.some((p: any) => p?.type === "toolCall" && p.name === "edit" && JSON.stringify(p.arguments ?? {}).includes(needle.key));
       });
     }
 

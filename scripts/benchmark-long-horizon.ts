@@ -1,14 +1,16 @@
 /**
- * Long-horizon benchmark: one synthetic coding session with planted facts, run
- * by omp itself (its agent loop on its mock provider, its real tools, its own
- * compaction maintenance: tests/support/long-horizon.ts), scored at the end.
+ * Long-horizon benchmark: a coding session with planted facts, worked through by
+ * a real model in omp with omp-vcc loaded (tests/support/long-horizon.ts), scored
+ * at the end. Set the model as for the tests:
  *
- *   bun run scripts/benchmark-long-horizon.ts [turns] [compactEvery] [contextWindow]
+ *   OMP_VCC_LH_BASE_URL=… OMP_VCC_LH_API_KEY=… OMP_VCC_LH_MODEL=… \
+ *     bun run scripts/benchmark-long-horizon.ts [turns] [compactEvery] [contextWindow]
  *
  * omp's idle pass runs every `compactEvery` turns, and omp compacts on its own
- * when the context passes its trigger. The window defaults to 128K; the budgets
- * and section sizes follow omp's trigger on it (core/window.ts). `all` runs 32K,
- * 128K and 1M.
+ * when the context passes its trigger. The window omp is told defaults to 128K;
+ * the budgets and section sizes follow omp's trigger on it (core/window.ts).
+ * `all` runs 32K, 128K and 1M. Each turn is a model turn: expect minutes per
+ * 10 turns.
  *
  * Columns: summary = the fact's text is in the final summary; pointer = the
  * summary has its exact (#N) ref or a [History Index] range naming it; recall =

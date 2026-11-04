@@ -6,7 +6,6 @@ import { nextPinId, PIN_CHARS, PIN_ENTRY_TYPE, readPins } from "../src/core/pins
 import { addPin, executePin, removePin } from "../src/tools/pin";
 import { registerPinCommands } from "../src/commands/pin";
 import { registerHook } from "./support/host";
-import { runLongHorizon } from "./support/long-horizon";
 
 /** A session whose branch is an array; appendEntry adds to it, as the hosts do. */
 const session = (initial: any[] = []) => {
@@ -134,11 +133,4 @@ describe("pinned notes in summaries", () => {
     expect(out.compaction.summary).toContain("[Pinned Notes]\n- [1] never edit migrations/");
     expect(out.compaction.summary).not.toContain("The user pinned");
   });
-
-  it("survive 20 compactions of a long session unchanged", async () => {
-    const pin = "Sessions are stored in SQLite rather than Redis: the deploy host has no Redis.";
-    const r = await runLongHorizon({ turns: 120, compactEvery: 6, pins: { 9: pin } });
-    expect(r.compactions).toBe(20);
-    expect(r.finalSummary.startsWith(`[Pinned Notes]\n- [1] ${pin} (agent`)).toBe(true);
-  }, 120_000);
 });
