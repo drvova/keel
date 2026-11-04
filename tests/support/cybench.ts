@@ -3,9 +3,10 @@
 // file-only capture-the-flag tasks back to back (binaries to reverse, a pcap and
 // emails to dissect, crypto to break), answering each task's own subtask
 // questions in Cybench's guided mode. The questions and answers are Cybench's,
-// not ours. Then a late round asks again what was found tasks ago (each flag,
-// and an earlier finding), to see what the compactions in between kept: whether
-// the agent still knows it, and how many tool calls it takes to get it back.
+// not ours. After each task, the flag of the task four back is asked again, and
+// at the end what was found and not asked yet (each flag, and an earlier
+// finding): what the compactions in between kept, whether the agent still knows
+// it, and how many tool calls it takes to get it back.
 //
 // The tasks are fetched from Cybench's repository at a pinned commit into
 // research/cybench (git-ignored); each task's files are copied out as its own
@@ -63,7 +64,9 @@ export interface CybenchOptions {
   contextWindow?: number;
   /** omp-vcc settings: `{ workingSet: false }`, or `{ overrideDefaultCompaction: false }` for omp's own compaction. */
   config?: Record<string, unknown>;
-  /** Ask again, at the end, what was found in earlier tasks (default true). */
+  /** After each task, ask again for the flag of the task this many tasks back (default 4; 0: none). */
+  recallLag?: number;
+  /** Ask again, at the end, what was found in earlier tasks and not asked yet (default true). */
   lateRecall?: boolean;
   /** Progress lines, one per answer. */
   log?: (line: string) => void;
@@ -71,6 +74,8 @@ export interface CybenchOptions {
 
 export interface AnswerScore {
   task: string;
+  /** For a question asked again: how many tasks were worked on since it was answered. */
+  distance?: number;
   question: string;
   expected: string;
   given: string | null;
@@ -175,14 +180,28 @@ export const runCybench = async (options: CybenchOptions = {}): Promise<CybenchR
     for (const task of tasks) setUpTask(root, task, join(proj, task.dir), work);
     omp = await openOmpSession({ work, cwd: proj, contextWindow: options.contextWindow, config: options.config });
     const { session, sessionManager } = omp;
-    const ask = async (task: Task, text: string, subtask: Subtask): Promise<AnswerScore> => {
+    const ask = async (task: Task, text: string, subtask: Subtask, distance?: number): Promise<AnswerScore> => {
       await session.prompt(text);
       const { reply, toolCalls } = lastTurn(sessionManager);
       const given = lastAnswer(reply);
-      const score = { task: task.name, question: subtask.question, expected: subtask.answer, given, correct: given !== null && normalize(given) === normalize(subtask.answer), toolCalls };
-      options.log?.(`${score.correct ? "ok " : "-- "} ${task.name}: ${subtask.question.slice(0, 70)} -> ${given ?? "(no answer)"} (${toolCalls} calls)`);
+      const score: AnswerScore = { task: task.name, ...(distance !== undefined ? { distance } : {}), question: subtask.question, expected: subtask.answer, given, correct: given !== null && normalize(given) === normalize(subtask.answer), toolCalls };
+      const compactions = sessionManager.getBranch().filter((e: any) => e.type === "compaction").length;
+      options.log?.(`${distance !== undefined ? `recall(${distance} tasks later) ` : ""}${score.correct ? "ok " : "-- "} ${task.name}: ${subtask.question.slice(0, 70)} -> ${given ?? "(no answer)"} (${toolCalls} calls, ${compactions} compactions so far)`);
       return score;
     };
+    const recall: AnswerScore[] = [];
+    const asked = new Set<string>();
+    const askAgain = async (j: number, k: number, now: number) => {
+      const task = tasks[j];
+      const subtask = task.subtasks[k];
+      const key = `${j}:${k}`;
+      const before = answers.find((a) => a.task === task.name && a.question === subtask.question);
+      if (asked.has(key) || !before?.correct) return;
+      asked.add(key);
+      const format = subtask.answer_format ? ` (answer format: ${subtask.answer_format})` : "";
+      recall.push(await ask(task, `Back to challenge ${j + 1} (./${task.dir}/), which you worked on earlier: ${subtask.question}${format} Answer from what you found then. End with a line "Answer: <your answer>".`, subtask, now - j));
+    };
+    const lag = options.recallLag ?? 4;
 
     const answers: AnswerScore[] = [];
     for (const [i, task] of tasks.entries()) {
@@ -193,21 +212,13 @@ export const runCybench = async (options: CybenchOptions = {}): Promise<CybenchR
         const format = subtask.answer_format ? ` (answer format: ${subtask.answer_format})` : "";
         answers.push(await ask(task, `${head}Challenge ${i + 1}, question ${k + 1} of ${task.subtasks.length}: ${subtask.question}${format}`, subtask));
       }
+      // The flag of the task `lag` tasks back, asked again while the run goes on.
+      if (lag > 0 && i - lag >= 0) await askAgain(i - lag, tasks[i - lag].subtasks.length - 1, i);
     }
 
-    // What was found tasks ago, asked again: each task's last answer (its flag) and its first, where they were right.
-    const recall: AnswerScore[] = [];
+    // At the end, what was found and not asked again yet: each task's flag and its first answer, where they were right.
     if (options.lateRecall !== false) {
-      for (const [i, task] of tasks.entries()) {
-        const picks = [...new Set([task.subtasks.length - 1, 0])];
-        for (const k of picks) {
-          const subtask = task.subtasks[k];
-          const before = answers.find((a) => a.task === task.name && a.question === subtask.question);
-          if (!before?.correct) continue;
-          const format = subtask.answer_format ? ` (answer format: ${subtask.answer_format})` : "";
-          recall.push(await ask(task, `Back to challenge ${i + 1} (./${task.dir}/), which you worked on earlier: ${subtask.question}${format} Answer from what you found then. End with a line "Answer: <your answer>".`, subtask));
-        }
-      }
+      for (const [j, task] of tasks.entries()) for (const k of new Set([task.subtasks.length - 1, 0])) await askAgain(j, k, tasks.length);
     }
 
     await sessionManager.flush?.();
