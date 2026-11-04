@@ -3,12 +3,14 @@
  * works through Cybench's file-only CTF tasks back to back, answering each task's
  * own subtask questions, then is asked again what it found tasks ago.
  *
- *   OMP_VCC_LH_API_KEY=… bun run scripts/benchmark-cybench.ts [tasks] [contextWindow] [vcc|vcc-no-ws|omp] [--detach]
+ *   OMP_VCC_LH_API_KEY=… bun run scripts/benchmark-cybench.ts [tasks] [contextWindow] [vcc|vcc-no-ws|omp] [--detach] [--max-requests=15]
  *
  * tasks: how many of the 17 (default all); contextWindow: what omp is told
  * (default 128000); the compactor: omp-vcc (default), omp-vcc without
  * [Working Set], or omp's own compaction. Expect two to three hours for all
  * tasks; --detach runs it in a process of its own, logging to research/.
+ * --max-requests caps the model requests one question may take (default 15,
+ * Cybench's own iteration cap per subtask); past it the question is unanswered.
  *
  * Columns: answered right while working on the task; asked again at the end
  * (right / asked), and the tool calls it took to answer again (0 = from what the
@@ -19,7 +21,9 @@ import { openSync } from "fs";
 import { resolve } from "path";
 import { CYBENCH_TASKS, runCybench } from "../tests/support/cybench";
 
-const args = process.argv.slice(2).filter((a) => a !== "--detach");
+const args = process.argv.slice(2).filter((a) => a !== "--detach" && !a.startsWith("--max-requests="));
+const capArg = process.argv.find((a) => a.startsWith("--max-requests="));
+const maxRequests = capArg ? Number(capArg.split("=")[1]) : undefined;
 const tasks = args[0] && args[0] !== "all" ? Number(args[0]) : CYBENCH_TASKS.length;
 const contextWindow = Number(args[1] ?? 128_000);
 const mode = args[2] ?? "vcc";
@@ -28,7 +32,7 @@ const mode = args[2] ?? "vcc";
 if (process.argv.includes("--detach")) {
   const log = resolve(import.meta.dir, `../research/cybench-${mode}-${Math.round(contextWindow / 1000)}k-${tasks}.txt`);
   const fd = openSync(log, "a");
-  const child = spawn(process.execPath, ["run", import.meta.path, ...args], { detached: true, stdio: ["ignore", fd, fd], cwd: resolve(import.meta.dir, "..") });
+  const child = spawn(process.execPath, ["run", import.meta.path, ...args, ...(capArg ? [capArg] : [])], { detached: true, stdio: ["ignore", fd, fd], cwd: resolve(import.meta.dir, "..") });
   child.unref();
   console.log(`running in the background (pid ${child.pid}), logging to ${log}`);
   process.exit(0);
@@ -36,7 +40,7 @@ if (process.argv.includes("--detach")) {
 const config = mode === "omp" ? { overrideDefaultCompaction: false } : mode === "vcc-no-ws" ? { workingSet: false } : {};
 
 const started = Date.now();
-const r = await runCybench({ tasks, contextWindow, config, log: (l) => console.log(`  ${l}`) });
+const r = await runCybench({ tasks, contextWindow, config, maxRequests, log: (l) => console.log(`  ${l}`) });
 const minutes = Math.round((Date.now() - started) / 60_000);
 
 const byTask = new Map<string, { right: number; total: number; again: number; asked: number; calls: number }>();

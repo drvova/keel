@@ -64,6 +64,11 @@ export interface CybenchOptions {
   contextWindow?: number;
   /** omp-vcc settings: `{ workingSet: false }`, or `{ overrideDefaultCompaction: false }` for omp's own compaction. */
   config?: Record<string, unknown>;
+  /**
+   * Model requests one question may take before its turn is stopped and the question
+   * counts as unanswered (default 15, Cybench's own iteration cap per subtask, `--max_iterations`).
+   */
+  maxRequests?: number;
   /** After each task, ask again for the flag of the task this many tasks back (default 4; 0: none). */
   recallLag?: number;
   /** Ask again, at the end, what was found in earlier tasks and not asked yet (default true). */
@@ -82,6 +87,8 @@ export interface AnswerScore {
   correct: boolean;
   /** Tool calls the agent made for this answer. */
   toolCalls: number;
+  /** The turn was stopped at the request cap before it answered. */
+  stopped?: boolean;
 }
 
 export interface CybenchResult {
@@ -159,12 +166,9 @@ const lastAnswer = (text: string): string | null => {
   return m ? m[1] : null;
 };
 
-/** The agent's final reply for the latest request, and the tool calls it made since that request. */
-const lastTurn = (sessionManager: any): { reply: string; toolCalls: number } => {
-  const branch = sessionManager.getBranch().filter((e: any) => e.type === "message");
-  let i = branch.length - 1;
-  while (i >= 0 && branch[i].message.role !== "user") i--;
-  const turn = branch.slice(i + 1).map((e: any) => e.message);
+/** The agent's final reply for a question, and the tool calls it made: what the branch gained since `from`. */
+const turnSince = (sessionManager: any, from: number): { reply: string; toolCalls: number } => {
+  const turn = sessionManager.getBranch().slice(from).filter((e: any) => e.type === "message" && e.message.role === "assistant").map((e: any) => e.message);
   const toolCalls = turn.filter((m: any) => m.role === "assistant").reduce((n: number, m: any) => n + (Array.isArray(m.content) ? m.content.filter((p: any) => p?.type === "toolCall").length : 0), 0);
   const reply = [...turn].reverse().find((m: any) => m.role === "assistant" && textOf(m).trim());
   return { reply: reply ? textOf(reply) : "", toolCalls };
@@ -180,13 +184,32 @@ export const runCybench = async (options: CybenchOptions = {}): Promise<CybenchR
     for (const task of tasks) setUpTask(root, task, join(proj, task.dir), work);
     omp = await openOmpSession({ work, cwd: proj, contextWindow: options.contextWindow, config: options.config });
     const { session, sessionManager } = omp;
+    const maxRequests = options.maxRequests ?? 15;
     const ask = async (task: Task, text: string, subtask: Subtask, distance?: number): Promise<AnswerScore> => {
-      await session.prompt(text);
-      const { reply, toolCalls } = lastTurn(sessionManager);
+      // Cybench's iteration cap: stop the turn after maxRequests model responses.
+      let requests = 0;
+      let stopped = false;
+      const off = session.subscribe((ev: any) => {
+        if (ev?.type !== "message_end" || ev.message?.role !== "assistant" || stopped) return;
+        if (++requests >= maxRequests) {
+          stopped = true;
+          // Outside omp's own event dispatch: an abort from inside it never lets prompt() return.
+          setTimeout(() => void session.abort(), 0);
+        }
+      });
+      // Read only what this question added: a turn stopped early may not have its request in the branch yet.
+      const from = sessionManager.getBranch().length;
+      try {
+        await session.prompt(text);
+      } finally {
+        off();
+      }
+      await sessionManager.flush?.();
+      const { reply, toolCalls } = turnSince(sessionManager, from);
       const given = lastAnswer(reply);
-      const score: AnswerScore = { task: task.name, ...(distance !== undefined ? { distance } : {}), question: subtask.question, expected: subtask.answer, given, correct: given !== null && normalize(given) === normalize(subtask.answer), toolCalls };
+      const score: AnswerScore = { task: task.name, ...(distance !== undefined ? { distance } : {}), question: subtask.question, expected: subtask.answer, given, correct: given !== null && normalize(given) === normalize(subtask.answer), toolCalls, ...(stopped && given === null ? { stopped: true } : {}) };
       const compactions = sessionManager.getBranch().filter((e: any) => e.type === "compaction").length;
-      options.log?.(`${distance !== undefined ? `recall(${distance} tasks later) ` : ""}${score.correct ? "ok " : "-- "} ${task.name}: ${subtask.question.slice(0, 70)} -> ${given ?? "(no answer)"} (${toolCalls} calls, ${compactions} compactions so far)`);
+      options.log?.(`${distance !== undefined ? `recall(${distance} tasks later) ` : ""}${score.correct ? "ok " : "-- "} ${task.name}: ${subtask.question.slice(0, 70)} -> ${given ?? (score.stopped ? `(stopped at ${maxRequests} requests)` : "(no answer)")} (${toolCalls} calls, ${compactions} compactions so far)`);
       return score;
     };
     const recall: AnswerScore[] = [];
