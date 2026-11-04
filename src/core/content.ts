@@ -77,6 +77,13 @@ export const textParts = (content: Message["content"]): string[] => {
 export const textOf = (content: Message["content"]): string =>
   textParts(content).join("\n");
 
+/** A replace edit's old text: `oldText`, or omp's `old_string`. */
+export const oldTextOf = (o: Record<string, unknown>): string | undefined =>
+  typeof o.oldText === "string" ? o.oldText : typeof o.old_string === "string" ? o.old_string : undefined;
+/** A replace edit's new text: `newText`, or omp's `new_string`. */
+export const newTextOf = (o: Record<string, unknown>): string | undefined =>
+  typeof o.newText === "string" ? o.newText : typeof o.new_string === "string" ? o.new_string : undefined;
+
 /**
  * Check if tool call arguments contain content-bearing data.
  *
@@ -101,17 +108,11 @@ export const isContentBearing = (args: Record<string, unknown>): boolean => {
     args.edits.every((e) => typeof e === "object" && e !== null)
   )
     return true;
-  // oldText/newText without edits are content-bearing
+  // oldText/newText (omp: old_string/new_string) without edits are content-bearing
+  if (args.edits === undefined && (oldTextOf(args) ?? "").length > 0) return true;
   if (
-    typeof args.oldText === "string" &&
-    args.oldText.length > 0 &&
-    args.edits === undefined
-  )
-    return true;
-  if (
-    typeof args.newText === "string" &&
-    args.newText.length > 0 &&
-    args.edits === undefined
+    args.edits === undefined &&
+    (newTextOf(args) ?? "").length > 0
   )
     return true;
   return false;
@@ -130,15 +131,19 @@ export const extractToolCallText = (args: Record<string, unknown>): string => {
   if (Array.isArray(args.edits)) {
     for (const edit of args.edits) {
       if (edit && typeof edit === "object") {
-        if (typeof edit.oldText === "string") text += edit.oldText + "\n";
-        if (typeof edit.newText === "string") text += edit.newText + "\n";
+        const oldText = oldTextOf(edit);
+        const newText = newTextOf(edit);
+        if (oldText !== undefined) text += oldText + "\n";
+        if (newText !== undefined) text += newText + "\n";
       }
     }
   }
-  if (typeof args.oldText === "string" && !Array.isArray(args.edits))
-    text += args.oldText + "\n";
-  if (typeof args.newText === "string" && !Array.isArray(args.edits))
-    text += args.newText + "\n";
+  if (!Array.isArray(args.edits)) {
+    const oldText = oldTextOf(args);
+    const newText = newTextOf(args);
+    if (oldText !== undefined) text += oldText + "\n";
+    if (newText !== undefined) text += newText + "\n";
+  }
   return text;
 };
 

@@ -440,7 +440,9 @@ describe("omp entry: the model's real window", () => {
     const limits = out.compaction.details.limits;
     expect(limits.overheadTokens).toBeGreaterThan(8_300);
     expect(limits.overheadTokens).toBeLessThan(8_400);
-    expect(limits.maxTailTokens).toBeGreaterThan(3_000); // was the 1,000 floor
+    // Was the 1,000 floor. [Working Set] takes its share of the same room.
+    expect(limits.workingSetTokens).toBeGreaterThan(0);
+    expect(limits.maxTailTokens + limits.workingSetTokens).toBeGreaterThan(3_000);
     rmSync(limitsFile(), { force: true });
   });
 

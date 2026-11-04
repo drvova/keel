@@ -33,6 +33,8 @@ export interface CompileInput {
   historyIndex?: readonly HistoryRange[];
   /** The pinned notes (core/pins.ts), rendered first; never merged from summary text. */
   pinnedNotes?: readonly PinnedNote[];
+  /** [Working Set] lines (core/working-set.ts), rendered last in the header area; never merged from summary text. */
+  workingSet?: readonly string[];
   /** How many items each section keeps (core/window.ts: they follow the model's window). */
   limits?: SummaryLimits;
 }
@@ -327,33 +329,37 @@ const compileWithBriefBlocks = (input: CompileInput, options: CompileWithBriefBl
   const data = buildSections({ blocks, briefBlocks, fileOps: input.fileOps, trackCommands: input.trackCommands, earlyRequestSlots, limits });
   const fresh = formatSummary(data, { capBriefTranscript: options.capFreshBrief ?? true, briefLines: limits.briefLines });
   const mergedText = prev ? mergePrevious(prev, fresh, limits, { preserveFreshBrief: options.preserveFreshBriefOnMerge }) : fresh;
-  const merged = withStructuredSections(mergedText, input.pinnedNotes, input.historyIndex);
+  const merged = withStructuredSections(mergedText, input.pinnedNotes, input.historyIndex, input.workingSet);
   if (!merged) return "";
   return wrapLongLines(merged + SEPARATOR + RECALL_NOTE);
 };
 
 const HISTORY_INDEX = "History Index";
 const PINNED_NOTES = "Pinned Notes";
+const WORKING_SET = "Working Set";
 
 /**
  * Sections rebuilt from structured data on every compaction, never merged from
  * the previous summary's text: [Pinned Notes] first (the start of the context
- * is where a model attends best, arXiv:2307.03172) and [History Index] last in
- * the header area. Any earlier copy of either is replaced.
+ * is where a model attends best, arXiv:2307.03172), [History Index] and then
+ * [Working Set] last in the header area, next to the brief and the kept
+ * turns. Any earlier copy of them is replaced.
  */
 const withStructuredSections = (
   text: string,
   pins?: readonly PinnedNote[],
   ranges?: readonly HistoryRange[],
+  workingSet?: readonly string[],
 ): string => {
   const pinSection = pins && pins.length > 0 ? `[${PINNED_NOTES}]\n${formatPinLines(pins).map((l) => `- ${l}`).join("\n")}` : "";
   const indexSection = ranges && ranges.length > 0 ? `[${HISTORY_INDEX}]\n${ranges.map((r) => `- ${formatHistoryRange(r)}`).join("\n")}` : "";
-  if (!pinSection && !indexSection) return text;
+  const workingSection = workingSet && workingSet.length > 0 ? `[${WORKING_SET}]\n${workingSet.join("\n")}` : "";
+  if (!pinSection && !indexSection && !workingSection) return text;
   const { head, brief } = splitSummary(text);
   const kept = head.split("\n\n")
-    .filter((part) => !part.startsWith(`[${HISTORY_INDEX}]`) && !part.startsWith(`[${PINNED_NOTES}]`))
+    .filter((part) => ![HISTORY_INDEX, PINNED_NOTES, WORKING_SET].some((name) => part.startsWith(`[${name}]`)))
     .filter(Boolean);
-  const newHead = [pinSection, ...kept, indexSection].filter(Boolean).join("\n\n");
+  const newHead = [pinSection, ...kept, indexSection, workingSection].filter(Boolean).join("\n\n");
   return brief ? `${newHead}${SEPARATOR}${brief}` : newHead;
 };
 

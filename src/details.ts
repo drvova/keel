@@ -18,6 +18,8 @@ export interface VccCompactionDetails {
   willRetry?: boolean;
   /** The [History Index] ranges, carried to the next compaction (core/history-index.ts). */
   historyIndex?: HistoryRange[];
+  /** The #N of the entries [Working Set] brought back (core/working-set.ts). */
+  workingSet?: number[];
   /** The window and trigger the budgets were sized from (core/window.ts). */
   limits?: {
     contextWindow?: number;
@@ -29,6 +31,8 @@ export interface VccCompactionDetails {
     briefCeilingTokens: number;
     /** Section sizes against a ~128K window's, when they differ (core/window.ts summaryScale). */
     summaryScale?: number;
+    /** What [Working Set] could bring back. */
+    workingSetTokens?: number;
   };
 }
 

@@ -82,6 +82,14 @@ export interface VccSettings {
    * reads what was there (core/raw-store.ts, hooks/raw-capture.ts).
    */
   keepOriginals: boolean;
+  /**
+   * When true (default), each compaction brings back in a [Working Set]
+   * section what the next step likely needs, from the originals: the latest
+   * version of the files the work is on, the latest unresolved failure, the
+   * results most relevant to the latest request (core/working-set.ts), within
+   * a share of the window.
+   */
+  workingSet: boolean;
 }
 
 export const DEFAULT_SETTINGS: VccSettings = {
@@ -92,6 +100,7 @@ export const DEFAULT_SETTINGS: VccSettings = {
   skipCustomTypes: [],
   trackCommands: [],
   keepOriginals: true,
+  workingSet: true,
 };
 
 const readJson = (path: string): Record<string, unknown> | null => {

@@ -10,12 +10,12 @@ A fork of [pi-vcc](https://github.com/sting8k/pi-vcc) by [@sting8k](https://gith
 |---|---|---|
 | **Method** | LLM-generated summary | Algorithmic extraction, no LLM |
 | **Determinism** | Non-deterministic, can hallucinate | Same input, same output |
-| **Size reduction** | Varies | 97.6% median, 89% at p10 |
+| **Size reduction** | Varies | 97.6% median, 89% at p10 (measured before `[Working Set]`, which adds up to 3,800 tokens) |
 | **Compaction latency** | Waits for an LLM call | 1 ms median, 11 ms p90, 348 ms worst |
 | **Cost** | Burns tokens on the summarization call | None |
 | **History after compaction** | Gone, the agent only sees the summary | Searchable with `vcc_recall`, across the project's sessions |
 | **Repeated compactions** | Each rewrite risks losing more | Sections merge and stay capped |
-| **Structure** | Free-form prose | Up to 7 sections + a brief transcript |
+| **Structure** | Free-form prose | Up to 8 sections + a brief transcript |
 
 Size and latency were measured by pi-vcc over 1,884 real sessions (summary chars vs the summarized conversation); the summary pipeline is the same. How much of a session's facts survive is measured in [`benchmarks/README.md`](./benchmarks/README.md), and over a long task by `scripts/benchmark-long-horizon.ts`.
 
@@ -78,6 +78,12 @@ On a short session `/omp-vcc` can answer "Nothing to compact yet" whatever `keep
 [History Index]
 - #0–#16: 2 requests: "Fix the auth bug, users can't log in after password reset" · changed auth/session.ts · 1 failed call
 
+[Working Set]
+- #9 read "src/auth/session.ts", the latest version, edited after at #14:
+    import { signToken } from "./tokens";
+    export async function refreshSession(userId: string) {
+    …[86 more lines: vcc_recall expand:[9]]
+
 ---
 
 ...(28 earlier lines omitted)
@@ -108,9 +114,10 @@ A section only appears when it has something to say; a session with no git commi
 | `[Tracked Commands]` | Recent runs of only the commands listed in `trackCommands` (off by default) |
 | `[User Messages]` | The 15 newest later user messages on a typical window, as written (one line each, up to 300 characters) |
 | `[History Index]` | One line per compacted range of `#N` entries, back to the start of the session: how many requests, the longest one, the files or directories changed, commits and failed calls. At most 8 lines on a typical window; older ranges merge into coarser ones |
+| `[Working Set]` | What the next step works from, brought back from the original history so the agent does not fetch it again: the latest version of each file the work is on, from anywhere in the session since `/clear` (unless the kept messages already hold it): what showed it last first, newest first (omp's edit results are the changed lines with their numbers, a range read the lines it asked for), then its last whole read; a file comes back whole or as those lines, never as its first lines, the output of the latest failed call no later run of it fixed (its end, where the error is), and up to 3 results `vcc_recall` ranks highest for the latest request. Each excerpt ends with the `vcc_recall expand` that shows the rest. Up to 3,800 tokens on a typical window, and never more than half of what the compaction removes |
 | Brief transcript | The conversation in order with `(#N)` refs: its highest-signal lines within a token budget (1,100–2,000 tokens and 120 lines on a typical window), not only the latest ones; each tool call shortened to one line (`[failed]` when its result was an error; `vcc_recall` and `vcc_pin` calls say what they looked up or pinned). A user's `!cmd` or python cell is one `$ cmd` / `>>> code` line |
 
-On the next compaction, the sections are merged with the previous summary and re-capped, and the transcript rolls forward. What leaves the other sections is still named in `[History Index]`, so on a long task the agent knows which range to read or what to search for. None of the sections depend on wording, so they work the same in every language. omp's host reminders (developer messages), `@file` bodies and text an extension sent on the agent's behalf are not read as the user's words.
+On the next compaction, the sections are merged with the previous summary and re-capped, and the transcript rolls forward; `[Working Set]` is chosen again from the messages, never carried. What leaves the other sections is still named in `[History Index]`, so on a long task the agent knows which range to read or what to search for. None of the sections depend on wording, so they work the same in every language. omp's host reminders (developer messages), `@file` bodies and text an extension sent on the agent's behalf are not read as the user's words.
 
 ## Recall
 
@@ -161,7 +168,7 @@ How much a compaction keeps follows the model's window instead of fixed numbers:
 - **The window** is what omp uses (`contextWindow`, from the provider when omp's `discovery` is configured, else its catalog, `models.yml` or a 128K default), or a limit an overflow error stated ("maximum context length is 32768 tokens") when that is smaller. omp-vcc makes no network call of its own. Learned limits are kept in `omp-vcc-models.json` next to the config, so the next session starts with them.
 - **The trigger** is where omp compacts, from omp itself: every compaction carries omp's compaction policy for the model (`compaction.thresholdPercent`, `thresholdTokens`, `reserveTokens` and the model's `compaction.modelThresholds` entry), and omp-vcc applies it to the window exactly as omp does (by default the window less a reserve of 15% or 16,384 tokens). When the real window is below omp's, the same policy applies to the real one. With `compaction.enabled` off, omp-vcc does not compact on its own either.
 - **The budgets** are shares of the trigger, clamped like the `vcc_recall` cap: the kept tail (25k on a typical window), the smart keep-tail trigger and the summary size, so that what a compaction keeps lands inside omp's recovery band (80% of the trigger). On a ~128K window they are the numbers they always were; a small window keeps less, a ~1M one allows a larger summary. Each compaction records what it sized from in its details (`limits`).
-- **The summary's sections** scale with it: the user messages, files per category, commits, `[History Index]` lines and brief lines listed under [Compacted message structure](#compacted-message-structure) are those of a ~128K or 200K window. Below that they shrink with the square root of the trigger (a 32K window keeps about 40% of each, never less than a quarter); past a 500K trigger they grow as the brief's ceiling does (1.7× on a 1M window). `[Early Session Requests]` and pinned notes do not scale. On a 120-turn test session, a 32K window's summary is half the size with the same pointers and recall, and a 1M window's holds more of the planted facts.
+- **The summary's sections** scale with it: the user messages, files per category, commits, `[History Index]` lines and brief lines listed under [Compacted message structure](#compacted-message-structure) are those of a ~128K or 200K window. Below that they shrink with the square root of the trigger (a 32K window keeps about 40% of each, never less than a quarter); past a 500K trigger they grow as the brief's ceiling does (1.7× on a 1M window). `[Early Session Requests]` and pinned notes do not scale. `[Working Set]` takes up to 3,800 tokens of the kept tail's room; on a smaller window, 14% of the trigger, out of what the compaction may land with above the kept tail's 1,000-token floor (2,090 on a 40K window with omp's system prompt and tools, none on a 32K one); past a 500K trigger it grows with the sections (6,460 on a 1M window). On a 120-turn test session, a 32K window's summary is half the size with the same pointers and recall, and a 1M window's holds more of the planted facts.
 - **`vcc_recall`** follows it too: one result's cap (above), and what `expand` shows of a call's arguments and of its paired result, 4,000 chars under the 50 KB cap and the same share of a smaller one.
 - **When omp's window is too high** (an overflow says less), omp's trigger can never fire before the request overflows, so omp-vcc compacts at the end of a run that is past the trigger of the real window, and says so once. Setting `contextWindow` in omp's `models.yml` makes omp do the same.
 
@@ -169,7 +176,7 @@ How much a compaction keeps follows the model's window instead of fixed numbers:
 
 1. Pick the cut: everything before the kept tail is summarized, the tail stays as is.
 2. Convert each message with omp's own `convertToLlm`, normalize it into uniform blocks and drop noise.
-3. Extract the sections and the brief transcript, and format them.
+3. Extract the sections and the brief transcript, pick the working set from the originals, and format them.
 4. If there is a previous summary, merge into it; the history index is carried in the compaction's details.
 
 No step calls a model, and token counts are estimated from the session's own numbers. The extension imports no package at runtime: it gets omp's functions from the extension API.
@@ -186,7 +193,8 @@ Config lives at `omp-vcc-config.json` in omp's agent directory (`~/.omp/agent`, 
   "skipForProviders": [],
   "skipCustomTypes": [],
   "trackCommands": [],
-  "keepOriginals": true
+  "keepOriginals": true,
+  "workingSet": true
 }
 ```
 
@@ -196,6 +204,7 @@ Config lives at `omp-vcc-config.json` in omp's agent directory (`~/.omp/agent`, 
 - **`skipForProviders`** *(default `[]`)*: providers for which omp-vcc steps aside, so omp's own method (or another compaction extension) handles them. Compared case-insensitively with omp's provider id (see `/model`). Checked on every compaction; `/omp-vcc` always runs.
 - **`skipCustomTypes`** *(default `[]`)*: `customType` values of `custom_message` entries to leave out of the summary, for per-turn boilerplate other extensions inject (skill cards, guidance blocks). Exact, case-sensitive match; look for `"type":"custom_message"` in your session file to find the value. Only the summary input changes, not the cut.
 - **`keepOriginals`** *(default `true`)*: keep the original of every message omp may rewrite in place (tool output, long text blocks) in `<session>.jsonl.vcc-raw`, so `vcc_recall` reads what was there after omp blanks or shakes it (see [Usage](#usage)). Text over 1M chars per message is clipped; images are kept without their data. `false`: recall shows omp's placeholders.
+- **`workingSet`** *(default `true`)*: bring back what the next step works from with each compaction, as `[Working Set]` (see [Compacted message structure](#compacted-message-structure)). `false`: the summary says what happened, the agent fetches what it needs with `vcc_recall`, and the kept tail gets the working set's room.
 - **`trackCommands`** *(default `[]`)*: commands to remember across compactions, listed in a `[Tracked Commands]` section. Any command or prefix works: `["ssh", "kubectl", "docker"]`, `["psql", "./deploy.sh"]`, or `"gh pr"` (matches `gh pr merge`, not `gh run`). Each entry is the command as written, up to the next shell separator outside quotes, with any `sudo`/`env`/`VAR=` prefix kept; the 10 most recent per command are kept. Only `bash` calls are read, and only `ssh` remote commands are looked into, not `sh -c` or `docker exec`. Empty = off.
 
 ## Coming from pi-vcc
@@ -210,7 +219,7 @@ Benchmarks comparing the ranked brief with the pi-vcc 0.3.18 baseline (recall, f
 
 ## Research
 
-The long-horizon work (history index, failure markers, pinned notes, recall across sessions, limits that follow the window, kept originals) started from these papers. `scripts/benchmark-long-horizon.ts` measures the result.
+The long-horizon work (history index, failure markers, pinned notes, recall across sessions, limits that follow the window, kept originals, the working set) started from these papers. `scripts/benchmark-long-horizon.ts` measures the result.
 
 | Paper | What omp-vcc does with it |
 |---|---|
@@ -224,10 +233,11 @@ The long-horizon work (history index, failure markers, pinned notes, recall acro
 | [Context Length Alone Hurts LLM Performance Despite Perfect Retrieval](https://arxiv.org/abs/2510.05381), Du et al., 2025 | Accuracy drops with input length alone: one recall result is capped at a tenth of the model's window, and the other limits follow the window too. |
 | [Lost in the Middle](https://arxiv.org/abs/2307.03172), Liu et al., 2023 | Models attend best to the start of the context: `[Pinned Notes]` is the first section. |
 | [Masking Stale Observations Helps Search Agents — Until It Doesn't](https://arxiv.org/abs/2606.00408), Zhang et al., 2026 | A masked observation keeps which tool ran with what arguments, and the page stays reachable by its id, so the agent can open it again. omp's placeholders for blanked tool output name the recall ref of the original omp-vcc kept. |
-| [Beyond Compaction: Structured Context Eviction](https://arxiv.org/abs/2606.11213), Semenov et al., 2026 | Evicting content the agent still needs makes it re-explore what it had already read. omp-vcc keeps what omp evicts in place, and writes the summary from it. |
+| [Beyond Compaction: Structured Context Eviction](https://arxiv.org/abs/2606.11213), Semenov et al., 2026 | Evicting content the agent still needs makes it re-explore what it had already read. omp-vcc keeps what omp evicts in place, writes the summary from it, and brings back the files and the failure the next step works from (`[Working Set]`). |
 | [Context as an Environment](https://arxiv.org/abs/2608.21690), Lin et al., 2026 | Evicted spans stay recoverable through landmarks tied to exact log addresses: the kept original of each rewritten entry, by its `#N`. |
+| [TRACER](https://arxiv.org/abs/2608.29363), Lin et al., 2026 | Counts the tool calls an agent makes again after compression as a cost of it: `[Working Set]` brings their results back with the compaction. |
 
-Also read for this work: [LLMs Get Lost In Multi-Turn Conversation](https://arxiv.org/abs/2505.06120) (Laban et al., 2025), [Evaluating Goal Drift in Language Model Agents](https://arxiv.org/abs/2505.02709) (Arike et al., 2025), [Generative Agents](https://arxiv.org/abs/2304.03442) (Park et al., 2023), [Recursively Summarizing Enables Long-Term Dialogue Memory in Large Language Models](https://arxiv.org/abs/2308.15022) (Wang et al., 2023) [Slipstream](https://arxiv.org/abs/2605.08580) (Chen et al., 2026) and [TRACER](https://arxiv.org/abs/2608.29363) (Lin et al., 2026), which counts tool calls made again after compression as a cost of it.
+Also read for this work: [LLMs Get Lost In Multi-Turn Conversation](https://arxiv.org/abs/2505.06120) (Laban et al., 2025), [Evaluating Goal Drift in Language Model Agents](https://arxiv.org/abs/2505.02709) (Arike et al., 2025), [Generative Agents](https://arxiv.org/abs/2304.03442) (Park et al., 2023), [Recursively Summarizing Enables Long-Term Dialogue Memory in Large Language Models](https://arxiv.org/abs/2308.15022) (Wang et al., 2023) and [Slipstream](https://arxiv.org/abs/2605.08580) (Chen et al., 2026).
 
 ## Acknowledgments
 

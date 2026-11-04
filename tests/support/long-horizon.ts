@@ -1,47 +1,60 @@
-// A long synthetic coding session with planted facts at known depths, compacted
-// many times through the real hook (on omp's convertToLlm), then scored: which facts the final summary
-// still carries, whether it points at where each one lives (an exact `(#N)` ref,
-// or a [History Index] range that names it), and whether vcc_recall finds each
-// one with a reworded query. Used by tests/long-horizon.test.ts and
-// scripts/benchmark-long-horizon.ts. Deterministic: no clock, no randomness.
-import { mkdtempSync, rmSync, writeFileSync } from "fs";
+// A long coding session with planted facts at known depths, run by omp with a
+// real model, then scored: which facts the final summary still carries, whether
+// it points at where each one lives (an exact `(#N)` ref, or a [History Index]
+// range that names it), and whether vcc_recall finds each one with a reworded
+// query.
+//
+// Nothing here stands in for omp or for a model. The model is a real provider,
+// set up as a user sets one up in omp (a `models.yml` provider whose key omp reads
+// from the environment): DeepSeek V4.1 Flash on OpenScale, run when
+// OMP_VCC_LH_API_KEY holds a key for it. OMP_VCC_LH_BASE_URL, OMP_VCC_LH_MODEL
+// and OMP_VCC_LH_API (`openai-completions`) point it elsewhere. Each turn is a
+// request telling the agent what to do; omp's agent loop runs it with the agent's
+// own calls to omp's real tools, on a real project in a real git repository with
+// real tests (`bun test`: each turn's pass once its edit is made, and turn 25's
+// fails on rounding until the agent fixes it) and a dev-server script that prints
+// its port. omp counts the context from the
+// provider's usage, runs its threshold checks and its idle maintenance (every
+// `compactEvery` turns), prepares each compaction and commits it; omp-vcc is
+// loaded from this package as omp loads it for a user. Recall runs through the
+// session's own vcc_recall tool. Used by tests/long-horizon.test.ts and
+// scripts/benchmark-long-horizon.ts.
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
-import { join } from "path";
-import { registerHook } from "./host";
-import { parseToolRequest } from "../../src/core/recall-request";
-import { openRecallView, runRecall } from "../../src/core/recall-run";
-import { TOOL_PAGING_HINTS } from "../../src/tools/recall";
-import { PIN_ENTRY_TYPE } from "../../src/core/pins";
+import { dirname, join } from "path";
+import { buildGlobalIndexById } from "../../src/core/global-indices";
+import { restoreOriginals } from "../../src/core/raw-store";
+import { openOmpSession, realModel, textOf } from "./omp-session";
+
+export { LONG_HORIZON_MODEL, realModel } from "./omp-session";
 
 export type NeedleKind = "constraint" | "decision" | "tool_value" | "early_file" | "early_commit" | "fixed_error" | "mid_request";
 
 export interface Needle {
   kind: NeedleKind;
   turn: number;
-  /** Text that shows the fact is in the summary. */
+  /** Text that shows the fact is in the summary (a commit's: its hash, known once git made it). */
   key: string;
   /** How an agent might ask for it later: shares some words with the fact, not its phrasing. */
   query: string;
   /** A component word the fact belongs to, used to check index ranges. */
   topic: string;
-  /** Session-wide #N of the entry holding the fact (set while generating). */
+  /** Session-wide #N of the entry holding the fact (found after the run). */
   index?: number;
 }
 
 export interface LongHorizonOptions {
   turns?: number;
+  /** omp's idle maintenance runs after every this many turns. */
   compactEvery?: number;
-  /** Pin a note (an omp-vcc custom entry, as vcc_pin writes) at the end of these turns. */
+  /** Pin a note with the vcc_pin tool at the end of these turns. */
   pins?: Record<number, string>;
-  /**
-   * The model's context window: each compaction sizes its budgets and sections
-   * for omp's default trigger on it (core/window.ts). The model has no id, so
-   * no learned limit or measured trigger applies. Omitted: no model, the ~128K
-   * defaults.
-   */
+  /** The model's context window (default 128K): omp's trigger, and so the budgets, follow it. */
   contextWindow?: number;
+  /** omp-vcc settings for the run, over `overrideDefaultCompaction: true` (e.g. `{ workingSet: false }`). */
+  config?: Record<string, unknown>;
   /** Runs before the temp session is removed: extra queries for debugging. */
-  inspect?: (recall: (params: Record<string, unknown>) => string, needles: Needle[]) => void;
+  inspect?: (recall: (params: Record<string, unknown>) => Promise<string>, needles: Needle[]) => Promise<void> | void;
 }
 
 export interface NeedleScore {
@@ -54,8 +67,13 @@ export interface NeedleScore {
 
 export interface LongHorizonResult {
   turns: number;
+  /** Compactions omp committed: its idle passes, and any threshold pass it decided on. */
   compactions: number;
+  /** Of those, the ones omp-vcc wrote (all of them, when it works). */
+  byOmpVcc: number;
   summaryChars: number[];
+  /** The same without [Working Set], which is sized from the landing room, not the sections. */
+  sectionChars: number[];
   needles: NeedleScore[];
   finalSummary: string;
 }
@@ -64,15 +82,11 @@ const COMPONENTS = ["auth", "billing", "search", "cache", "upload", "notify", "r
 const VERBS = ["add retries to", "add metrics to", "clean up", "add validation to", "speed up", "add logging to", "fix pagination in", "add tests for"];
 const FEATURES = ["the client", "the handler", "the worker", "the scheduler", "the parser", "the serializer"];
 
-const hash = (n: number): string => ((n * 2654435761) >>> 0).toString(16).padStart(8, "0").slice(0, 7);
-
-const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
-
 /** Planted facts, by turn. Early ones have to survive many compactions. */
 export const NEEDLES = (turns: number): Needle[] => [
   { kind: "constraint", turn: 2, key: "never edit anything under migrations/", query: "migrations directory rule", topic: "migrations" },
   { kind: "early_file", turn: 4, key: "src/legacy/exporter.ts", query: "legacy exporter changes", topic: "legacy" },
-  { kind: "early_commit", turn: 5, key: hash(5), query: `commit for the ${COMPONENTS[5]} work`, topic: COMPONENTS[5] },
+  { kind: "early_commit", turn: 5, key: "", query: `commit for the ${COMPONENTS[5]} work`, topic: COMPONENTS[5] },
   { kind: "decision", turn: 9, key: "SQLite rather than Redis", query: "why sqlite for sessions", topic: "sessions" },
   { kind: "tool_value", turn: 14, key: "48213", query: "dev server port", topic: "server" },
   // Turn 25 is a billing turn (COMPONENTS[25 % 12]).
@@ -80,85 +94,66 @@ export const NEEDLES = (turns: number): Needle[] => [
   { kind: "mid_request", turn: Math.floor(turns / 2), key: "rate limit of 40 requests per minute", query: "webhook rate limit", topic: "webhook" },
 ];
 
-interface Entry { type: string; id: string; [key: string]: unknown }
+interface TurnPlan {
+  /** The request: what the agent is asked to do this turn. */
+  user: string;
+  /** Files written before the turn: the module it edits (a fresh copy, so its edit applies) and its tests. */
+  files: Record<string, string>;
+}
 
-/**
- * The session's turns, one function per turn that writes its messages through
- * `push` (which returns the message's session-wide #N). The harness below
- * pushes into an entry list; tests/omp-host.test.ts pushes into a real omp session.
- */
-export const generateTurns = (turns: number, needles: Needle[], push: (message: Record<string, unknown>) => number) => {
-  const user = (text: string) => push({ role: "user", content: text });
-  const assistant = (content: unknown[], stopReason = "toolUse") => push({ role: "assistant", content, api: "anthropic-messages", provider: "anthropic", model: "test", usage, stopReason });
-  const call = (callId: string, name: string, args: Record<string, unknown>, text?: string) =>
-    assistant([...(text ? [{ type: "text", text }] : []), { type: "toolCall", id: callId, name, arguments: args }]);
-  const result = (callId: string, name: string, text: string, isError = false) =>
-    push({ role: "toolResult", toolCallId: callId, toolName: name, content: [{ type: "text", text }], isError });
+const moduleText = (comp: string, feature: string, t: number, withTotal: boolean): string =>
+  [
+    `// ${comp}: ${feature}, revision ${t}`,
+    ...Array.from({ length: 60 }, (_, i) => `export function ${comp}Step${i}(input: ${comp}Input) { return ${feature.split(" ")[1]}(input, ${i}); }`),
+    ...(withTotal ? ["export const total = (cents: number) => Math.floor(cents);"] : []),
+  ].join("\n") + "\n";
 
-  const byTurn = new Map(needles.map((n) => [n.turn, n]));
-  const turnFns: Array<() => void> = [];
-  for (let t = 0; t < turns; t++) {
-    const comp = COMPONENTS[t % COMPONENTS.length];
-    const verb = VERBS[(t * 3) % VERBS.length];
-    const feature = FEATURES[(t * 5) % FEATURES.length];
-    const file = `src/${comp}/${feature.split(" ")[1]}.ts`;
-    const needle = byTurn.get(t);
-    turnFns.push(() => {
-      const c = `c${t}`;
-      if (needle?.kind === "constraint") {
-        needle.index = user(`Before you start on ${comp}: never edit anything under migrations/ — those files are generated. Now ${verb} ${feature} of ${comp}.`);
-      } else if (needle?.kind === "mid_request") {
-        needle.index = user(`For webhook delivery we need a rate limit of 40 requests per minute per tenant. Please ${verb} ${feature} of ${comp} with that in mind.`);
-      } else {
-        user(`Next: ${verb} ${feature} of ${comp}.`);
-      }
-      const readPath = needle?.kind === "early_file" ? "src/legacy/exporter.ts" : file;
-      call(`${c}r`, "read", { path: readPath }, `Looking at ${readPath}.`);
-      result(`${c}r`, "read", Array.from({ length: 60 }, (_, i) => `export function ${comp}Step${i}(input: ${comp}Input) { return ${feature.split(" ")[1]}(input, ${i}); }`).join("\n"));
-      const editIndex = call(`${c}e`, "edit", { path: readPath, oldText: `${comp}Step1(`, newText: `${comp}Step1Checked(` });
-      if (needle?.kind === "early_file") needle.index = editIndex;
-      result(`${c}e`, "edit", "Applied 1 edit.");
-      if (needle?.kind === "tool_value") {
-        call(`${c}p`, "bash", { command: "node scripts/dev-server.js --print-port" });
-        needle.index = result(`${c}p`, "bash", "dev server listening on port 48213");
-      }
-      if (needle?.kind === "fixed_error") {
-        call(`${c}t`, "bash", { command: `bun test tests/${comp}.test.ts` });
-        needle.index = result(`${c}t`, "bash", `FAIL tests/${comp}.test.ts > rounds totals: expected 1050, got 1049\n1 fail`, true);
-        call(`${c}f`, "edit", { path: file, oldText: "Math.floor(", newText: "Math.ceil(" }, "Switching the total to Math.ceil.");
-        result(`${c}f`, "edit", "Applied 1 edit.");
-      }
-      call(`${c}v`, "bash", { command: `bun test tests/${comp}.test.ts` });
-      result(`${c}v`, "bash", `12 pass\n0 fail\nRan 12 tests across 1 file.`);
-      if (t % 5 === 0 && t > 0) {
-        call(`${c}g`, "bash", { command: `git commit -am "feat(${comp}): ${verb} ${feature}"` });
-        const commitIndex = result(`${c}g`, "bash", `[main ${hash(t)}] feat(${comp}): ${verb} ${feature}\n 1 file changed`);
-        if (needle?.kind === "early_commit") needle.index = commitIndex;
-      }
-      const text = needle?.kind === "decision"
-        ? `Decision: sessions are stored in SQLite rather than Redis, because the deploy host has no Redis. ${comp} is done.`
-        : `Done: ${verb} ${feature} of ${comp}; tests pass.`;
-      const finalIndex = assistant([{ type: "text", text }], "stop");
-      if (needle?.kind === "decision") needle.index = finalIndex;
-    });
-  }
-  return turnFns;
-};
-
-const buildSession = (turns: number, needles: Needle[]) => {
-  const entries: Entry[] = [];
-  let id = 0;
-  let messageIndex = 0;
-  const push = (message: Record<string, unknown>): number => {
-    const entry: Entry = { type: "message", id: `e${++id}`, parentId: id > 1 ? `e${id - 1}` : null, timestamp: new Date(1_700_000_000_000 + id * 1000).toISOString(), message: { timestamp: 1_700_000_000_000 + id * 1000, ...message } };
-    entries.push(entry);
-    return messageIndex++;
-  };
-  return { entries, turnFns: generateTurns(turns, needles, push) };
+/** What turn `t` asks of the agent, and the files and test results it will find. */
+const planTurn = (t: number, needle: Needle | undefined): TurnPlan => {
+  const comp = COMPONENTS[t % COMPONENTS.length];
+  const verb = VERBS[(t * 3) % VERBS.length];
+  const feature = FEATURES[(t * 5) % FEATURES.length];
+  const file = `src/${comp}/${feature.split(" ")[1]}.ts`;
+  const readPath = needle?.kind === "early_file" ? "src/legacy/exporter.ts" : file;
+  const testFile = `tests/${comp}.test.ts`;
+  const test = `bun test ${testFile}`;
+  const lead =
+    needle?.kind === "constraint"
+      ? `Before you start on ${comp}: never edit anything under migrations/ — those files are generated. Now ${verb} ${feature} of ${comp}.`
+      : needle?.kind === "mid_request"
+        ? `For webhook delivery we need a rate limit of 40 requests per minute per tenant. Please ${verb} ${feature} of ${comp} with that in mind.`
+        : `Next: ${verb} ${feature} of ${comp}.`;
+  const work = [
+    ...(needle?.kind === "tool_value" ? ["first run `bun scripts/dev-server.ts --print-port` to see which port the dev server uses"] : []),
+    `read ${readPath} and replace \`${comp}Step1(\` with \`${comp}Step1Checked(\` in it`,
+    ...(needle?.kind === "fixed_error"
+      ? [`run \`${test}\`; it fails on rounds totals, so replace \`Math.floor(\` with \`Math.ceil(\` in ${file} and run it again`]
+      : [`run \`${test}\``]),
+    ...(t % 5 === 0 && t > 0 ? [`commit with \`git commit -am "feat(${comp}): ${verb} ${feature}"\``] : []),
+  ];
+  const reply =
+    needle?.kind === "decision"
+      ? `Decision: sessions are stored in SQLite rather than Redis, because the deploy host has no Redis. ${comp} is done.`
+      : `Done: ${verb} ${feature} of ${comp}; tests pass.`;
+  const user = `${lead} Steps: ${work.join("; then ")}. Do only that, then reply with this one line: ${reply}`;
+  // The tests pass once the edit is made; turn 25's also check the total, which rounds down until it is fixed.
+  const fn = `${comp}Step1Checked`;
+  const tests = [
+    'import { describe, expect, it } from "bun:test";',
+    `import * as mod from "../${readPath.replace(/\.ts$/, "")}";`,
+    "",
+    `describe("${comp}", () => {`,
+    `  it("has ${fn}", () => expect(typeof (mod as any).${fn}).toBe("function"));`,
+    ...Array.from({ length: 11 }, (_, i) => `  it("keeps ${comp}Step${i + 2}", () => expect(typeof (mod as any).${comp}Step${i + 2}).toBe("function"));`),
+    ...(needle?.kind === "fixed_error" ? ['  it("rounds totals", () => expect((mod as any).total(1049.5)).toBe(1050));'] : []),
+    "});",
+    "",
+  ].join("\n");
+  return { user, files: { [readPath]: moduleText(comp, feature, t, needle?.kind === "fixed_error"), [testFile]: tests } };
 };
 
 /** The summary wraps long lines; compare with whitespace collapsed. */
-const flat = (text: string): string => text.replace(/\s+/g, " ");
+const flat = (s: string): string => s.replace(/\s+/g, " ");
 
 const pointsAt = (summary: string, needle: Needle): boolean => {
   if (needle.index == null) return false;
@@ -173,85 +168,121 @@ const pointsAt = (summary: string, needle: Needle): boolean => {
   return false;
 };
 
-export const runLongHorizon = (options: LongHorizonOptions = {}): LongHorizonResult => {
+const run = (cwd: string, ...cmd: string[]) => {
+  const r = Bun.spawnSync(cmd, { cwd, stdout: "pipe", stderr: "pipe" });
+  if (r.exitCode !== 0) throw new Error(`${cmd.join(" ")}: ${r.stderr.toString()}`);
+};
+
+/** The project the session works on: every module it will touch, committed, and the scripts its commands run. */
+const createProject = (proj: string, plans: TurnPlan[]) => {
+  const write = (path: string, content: string) => {
+    mkdirSync(dirname(join(proj, path)), { recursive: true });
+    writeFileSync(join(proj, path), content);
+  };
+  for (const plan of plans) for (const [path, content] of Object.entries(plan.files)) write(path, content);
+  write("scripts/dev-server.ts", 'const PORT = 48213;\nif (process.argv.includes("--print-port")) console.log(`dev server listening on port ${PORT}`);\n');
+  write("package.json", '{ "name": "billing-suite", "private": true, "type": "module" }\n');
+  write("migrations/001_init.sql", "-- generated\n");
+  run(proj, "git", "init", "-q", "-b", "main");
+  run(proj, "git", "config", "user.name", "omp-vcc test");
+  run(proj, "git", "config", "user.email", "test@omp-vcc.invalid");
+  run(proj, "git", "config", "commit.gpgsign", "false");
+  run(proj, "git", "add", "-A");
+  run(proj, "git", "commit", "-q", "-m", "init");
+};
+
+export const runLongHorizon = async (options: LongHorizonOptions = {}): Promise<LongHorizonResult> => {
   const turns = options.turns ?? 60;
   const compactEvery = options.compactEvery ?? 6;
-  const dir = mkdtempSync(join(tmpdir(), "omp-vcc-long-horizon-"));
-  const previousConfig = process.env.OMP_VCC_CONFIG_PATH;
-  process.env.OMP_VCC_CONFIG_PATH = join(dir, "config.json");
-  writeFileSync(process.env.OMP_VCC_CONFIG_PATH, JSON.stringify({ overrideDefaultCompaction: true }));
-  const sessionFile = join(dir, "session.jsonl");
+  if (!realModel()) throw new Error("long-horizon: set OMP_VCC_LH_API_KEY to a key for DeepSeek V4.1 Flash on OpenScale (tests/support/omp-session.ts)");
+  const work = mkdtempSync(join(tmpdir(), "omp-vcc-long-horizon-"));
+  let omp: Awaited<ReturnType<typeof openOmpSession>> | undefined;
   try {
     const needles = NEEDLES(turns).map((n) => ({ ...n }));
-    const { entries, turnFns } = buildSession(turns, needles);
-    let handler: any;
-    const hook = registerHook({ on: (name: string, fn: any) => { if (name === "session_before_compact") handler = fn; } });
-    const sessionManager = {
-      getEntries: () => entries,
-      getBranch: () => entries,
-      getSessionFile: () => sessionFile,
-    };
-    const writeFile = () =>
-      writeFileSync(sessionFile, [JSON.stringify({ type: "session", version: 3, id: "s", timestamp: new Date(0).toISOString(), cwd: dir }), ...entries.map((e) => JSON.stringify(e))].join("\n") + "\n");
+    const byTurn = new Map(needles.map((n) => [n.turn, n]));
+    const plans = Array.from({ length: turns }, (_, t) => planTurn(t, byTurn.get(t)));
+    const proj = join(work, "proj");
+    createProject(proj, plans);
+    omp = await openOmpSession({ work, cwd: proj, contextWindow: options.contextWindow, config: options.config });
+    const { session, sessionManager } = omp;
 
-    const model = options.contextWindow ? { contextWindow: options.contextWindow } : undefined;
-    let previousSummary: string | undefined;
-    const summaryChars: number[] = [];
-    let compactions = 0;
     for (let t = 0; t < turns; t++) {
-      turnFns[t]();
+      const plan = plans[t];
+      for (const [path, content] of Object.entries(plan.files)) writeFileSync(join(proj, path), content);
+      await session.prompt(plan.user);
       const pin = options.pins?.[t];
-      if (pin) {
-        const id = entries.filter((e) => e.type === "custom").length + 1;
-        entries.push({ type: "custom", id: `p${id}`, parentId: entries[entries.length - 1].id, customType: PIN_ENTRY_TYPE, data: { v: 1, op: "add", id, text: pin, by: "agent" } });
+      if (pin) await session.getToolByName("vcc_pin").execute("pin", { note: pin }, undefined, undefined);
+      if ((t + 1) % compactEvery === 0) await session.runIdleCompaction();
+    }
+    await sessionManager.flush?.();
+
+    const compactionEntries = sessionManager.getBranch().filter((e: any) => e.type === "compaction");
+    const summaryChars = compactionEntries.map((e: any) => e.summary.length);
+    const sectionChars = compactionEntries.map((e: any) => {
+      const s: string = e.summary;
+      const ws = s.indexOf("[Working Set]");
+      if (ws < 0) return s.length;
+      const end = s.indexOf("\n\n", ws);
+      return s.length - ((end < 0 ? s.length : end) - ws);
+    });
+    const finalSummary: string = compactionEntries.at(-1)?.summary ?? "";
+
+    // Where each fact landed, by omp-vcc's own #N, in the originals of what omp rewrote in place.
+    const entries = sessionManager.getEntries();
+    const indexById = buildGlobalIndexById(entries);
+    const stored = entries.filter((e: any) => e.type === "message" && e.message);
+    const originals = restoreOriginals(stored.map((e: any) => e.message), stored.map((e: any) => e.id), sessionManager.getSessionFile());
+    const messages = stored.map((e: any, i: number) => ({ id: e.id, message: originals[i] }));
+    const at = (pred: (m: any) => boolean): number | undefined => {
+      const e = messages.find((x: any) => pred(x.message));
+      return e ? indexById.get(e.id) : undefined;
+    };
+    for (const needle of needles) {
+      if (needle.kind === "early_commit") {
+        const commit = messages.find((x: any) => x.message.role === "toolResult" && textOf(x.message).includes(`feat(${COMPONENTS[needle.turn % COMPONENTS.length]}):`));
+        needle.key = textOf(commit?.message).match(/\[main ([0-9a-f]{7,})\]/)?.[1] ?? "(no commit)";
+        needle.index = commit ? indexById.get(commit.id) : undefined;
+        continue;
       }
-      if ((t + 1) % compactEvery !== 0) continue;
-      writeFile();
-      const chars = entries.reduce((sum, e) => sum + JSON.stringify((e as any).message?.content ?? "").length, 0);
-      hook.autoCompactionStart("threshold");
-      const out = handler({
-        type: "session_before_compact",
-        preparation: { previousSummary, fileOps: { read: [], written: [], edited: [] }, tokensBefore: Math.round(chars / 4) },
-        branchEntries: entries,
-        customInstructions: undefined,
-        signal: new AbortController().signal,
-      }, { sessionManager, ui: { notify: () => {} }, ...(model ? { model } : {}) });
-      if (!out?.compaction) continue;
-      compactions++;
-      previousSummary = out.compaction.summary;
-      summaryChars.push(previousSummary!.length);
-      entries.push({
-        type: "compaction", id: `k${compactions}`, parentId: entries[entries.length - 1].id,
-        timestamp: new Date(0).toISOString(), summary: previousSummary, firstKeptEntryId: out.compaction.firstKeptEntryId,
-        tokensBefore: out.compaction.tokensBefore, details: out.compaction.details,
+      needle.index = at((m) => {
+        if (needle.kind === "constraint" || needle.kind === "mid_request") return m.role === "user" && textOf(m).includes(needle.key);
+        if (needle.kind === "decision") return m.role === "assistant" && textOf(m).includes(needle.key);
+        if (needle.kind === "tool_value") return m.role === "toolResult" && textOf(m).includes(needle.key);
+        if (needle.kind === "fixed_error") return m.role === "toolResult" && m.isError === true && textOf(m).includes(needle.key);
+        // early_file: the edit of the file (however the agent spelled its path).
+        return m.role === "assistant" && Array.isArray(m.content) && m.content.some((p: any) => p?.type === "toolCall" && p.name === "edit" && JSON.stringify(p.arguments ?? {}).includes(needle.key));
       });
     }
-    writeFile();
-    const finalSummary = previousSummary ?? "";
-    const scores: NeedleScore[] = needles.map((needle) => {
-      const request = parseToolRequest({ query: needle.query });
-      const view = openRecallView(sessionFile, request.scope, sessionManager);
-      const text = runRecall(request, view, TOOL_PAGING_HINTS);
-      const hits = [...text.matchAll(/^#(\d+) \[/gm)].map((m) => Number(m[1]));
+
+    const recallTool = session.getToolByName("vcc_recall");
+    const recall = async (params: Record<string, unknown>): Promise<string> =>
+      (await recallTool.execute("q", params, undefined, undefined)).content.map((p: any) => p.text ?? "").join("\n");
+    const scores: NeedleScore[] = [];
+    for (const needle of needles) {
+      const hits = [...(await recall({ query: needle.query })).matchAll(/^#(\d+) \[/gm)].map((m) => Number(m[1]));
       // A hit on the entry or its neighbour counts: a tool call and its result
       // are adjacent, and recall shows the hit's surroundings on request.
       const rank = needle.index == null ? -1 : hits.findIndex((h) => Math.abs(h - needle.index!) <= 1);
-      return {
+      scores.push({
         kind: needle.kind,
         turn: needle.turn,
         inSummary: flat(finalSummary).includes(flat(needle.key)),
         pointed: pointsAt(finalSummary, needle),
         recallRank: rank >= 0 ? rank + 1 : null,
-      };
-    });
-    options.inspect?.((params) => {
-      const request = parseToolRequest(params as any);
-      return runRecall(request, openRecallView(sessionFile, request.scope, sessionManager), TOOL_PAGING_HINTS);
-    }, needles);
-    return { turns, compactions, summaryChars, needles: scores, finalSummary };
+      });
+    }
+    await options.inspect?.(recall, needles);
+    return {
+      turns,
+      compactions: compactionEntries.length,
+      byOmpVcc: compactionEntries.filter((e: any) => e.details?.compactor === "omp-vcc").length,
+      summaryChars,
+      sectionChars,
+      needles: scores,
+      finalSummary,
+    };
   } finally {
-    if (previousConfig === undefined) delete process.env.OMP_VCC_CONFIG_PATH;
-    else process.env.OMP_VCC_CONFIG_PATH = previousConfig;
-    rmSync(dir, { recursive: true, force: true });
+    await omp?.close();
+    rmSync(work, { recursive: true, force: true });
   }
 };
