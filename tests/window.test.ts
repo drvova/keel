@@ -1,5 +1,6 @@
 // Limits that follow the model's context window (src/core/window.ts, model-limits.ts, hooks/window-limits.ts).
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test";
+import { assertRealPi, piInstalled } from "./support/pi";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -225,17 +226,11 @@ describe("Pi's trigger rule", () => {
   });
 });
 
-const piInstalled = (() => {
-  try {
-    Bun.resolveSync("@earendil-works/pi-coding-agent", import.meta.dir);
-    return true;
-  } catch {
-    return false;
-  }
-})();
 
-describe.skipIf(!piInstalled)("piTrigger against Pi's own shouldCompact", () => {
+
+describe.skipIf(!piInstalled())("piTrigger against Pi's own shouldCompact", () => {
   it("is the largest context Pi does not compact at", async () => {
+    assertRealPi();
     const { shouldCompact }: any = await import("@earendil-works/pi-coding-agent");
     for (const window of [32_768, 128_000, 200_000, 1_000_000]) {
       for (const reserveTokens of [0, 8_000, 16_384, 50_000]) {

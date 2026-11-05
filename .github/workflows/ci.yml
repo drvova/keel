@@ -95,4 +95,5 @@ jobs:
           check index.ts ""
           check pi.ts "@earendil-works/pi-coding-agent"
 
-      - run: bun test
+      # Each file in a fresh module registry: omp answers Pi's package names once it is loaded (tests/support/pi.ts).
+      - run: bun run test

@@ -6,23 +6,17 @@
 //
 // Runs only where @earendil-works/pi-coding-agent is installed (`bun run setup:pi`).
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { assertRealPi, piInstalled } from "./support/pi";
 import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
-import { join, resolve } from "path";
+import { dirname, join, resolve } from "path";
 
-const piInstalled = (() => {
-  try {
-    Bun.resolveSync("@earendil-works/pi-coding-agent", import.meta.dir);
-    return true;
-  } catch {
-    return false;
-  }
-})();
+
 
 const REPO = resolve(import.meta.dir, "..");
 const RESERVE = 20_000;
 
-describe.skipIf(!piInstalled)("Pi host", () => {
+describe.skipIf(!piInstalled())("Pi host", () => {
   let work: string;
   const savedEnv: Record<string, string | undefined> = {};
   let pi: any;
@@ -45,6 +39,7 @@ describe.skipIf(!piInstalled)("Pi host", () => {
   const agentTool = (name: string) => session.agent.state.tools.find((t: any) => t.name === name);
 
   beforeAll(async () => {
+    assertRealPi();
     work = mkdtempSync(join(tmpdir(), "omp-vcc-pi-host-"));
     for (const key of ["PI_CODING_AGENT_DIR", "OMP_VCC_CONFIG_PATH"]) savedEnv[key] = process.env[key];
     process.env.PI_CODING_AGENT_DIR = join(work, "agent");
@@ -125,7 +120,9 @@ describe.skipIf(!piInstalled)("Pi host", () => {
   });
 
   test("Pi's validator accepts vcc_recall's arguments, and vcc_recall resolves #N refs", async () => {
-    const { validateToolArguments }: any = await import("@earendil-works/pi-ai/utils/validation" as string);
+    // Pi's own copy of its validator: npm may nest pi-ai under Pi's package instead of hoisting it.
+    const piDir = dirname(Bun.resolveSync("@earendil-works/pi-coding-agent/package.json", import.meta.dir));
+    const { validateToolArguments }: any = await import(Bun.resolveSync("@earendil-works/pi-ai/utils/validation", piDir));
     const definition = session.getToolDefinition("vcc_recall");
     for (const args of [{ expand: "#3" }, { range: "0-2" }, { range: [5] }, { mode: "all" }, { scope: "ALL" }]) {
       expect(validateToolArguments(definition, { type: "toolCall", id: "v", name: "vcc_recall", arguments: args })).toEqual(args);

@@ -2,6 +2,7 @@
 // checked against Pi's own projection where Pi is installed.
 import { describe, expect, test } from "bun:test";
 import { applyContextEdits } from "../src/core/context-edits";
+import { assertRealPi, piInstalled } from "./support/pi";
 
 const msg = (id: string, message: any) => ({ type: "message", id, parentId: null, timestamp: "2026-11-06T00:00:00.000Z", message });
 const edit = (id: string, targetId: string, replacement: any) => ({ type: "context_edit", id, parentId: null, timestamp: "2026-11-06T00:00:00.000Z", targetId, replacement });
@@ -51,16 +52,8 @@ describe("applyContextEdits", () => {
     expect(out.find((e) => e.id === "x1").message.content).toBeUndefined();
   });
 
-  const piInstalled = (() => {
-    try {
-      Bun.resolveSync("@earendil-works/pi-coding-agent", import.meta.dir);
-      return true;
-    } catch {
-      return false;
-    }
-  })();
-
-  test.skipIf(!piInstalled)("matches Pi's own buildSessionProjection on the messages it yields", async () => {
+  test.skipIf(!piInstalled())("matches Pi's own buildSessionProjection on the messages it yields", async () => {
+    assertRealPi();
     const pi: any = await import("@earendil-works/pi-coding-agent");
     let parent: string | null = null;
     const linked = [

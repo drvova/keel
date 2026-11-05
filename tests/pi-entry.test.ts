@@ -2,20 +2,14 @@
 // and getAgentDir from Pi's own package, so these run where Pi is installed
 // (`bun run setup:pi`); tests/pi-host.test.ts runs the same entry inside a real Pi.
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { assertRealPi, piInstalled } from "./support/pi";
 import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { recordLearnedWindow } from "../src/core/model-limits";
 import { setSettingsAgentDir } from "../src/core/settings";
 
-const piInstalled = (() => {
-  try {
-    Bun.resolveSync("@earendil-works/pi-coding-agent", import.meta.dir);
-    return true;
-  } catch {
-    return false;
-  }
-})();
+
 
 let dir: string;
 const saved: Record<string, string | undefined> = {};
@@ -108,7 +102,8 @@ const conversation = () => [
   user("Third request: write tests"), assistant("Tests written."),
 ];
 
-describe.skipIf(!piInstalled)("Pi entry", () => {
+describe.skipIf(!piInstalled())("Pi entry", () => {
+  beforeAll(assertRealPi);
   test("registers the hook on Pi's events, the /pi-vcc commands and the tools, and nothing of omp's", async () => {
     const pi = await createPi();
     // No raw capture (Pi rewrites nothing in place) and no omp trigger tracking.

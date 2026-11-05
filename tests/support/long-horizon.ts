@@ -1,5 +1,5 @@
-// A long coding session with planted facts at known depths, run by omp with a
-// real model, then scored: which facts the final summary still carries, whether
+// A long coding session with planted facts at known depths, run by omp (or Pi,
+// with OMP_VCC_LH_HOST=pi or `host: "pi"`) with a real model, then scored: which facts the final summary still carries, whether
 // it points at where each one lives (an exact `(#N)` ref, or a [History Index]
 // range that names it), and whether vcc_recall finds each one with a reworded
 // query.
@@ -16,17 +16,20 @@
 // its port. omp counts the context from the
 // provider's usage, runs its threshold checks and its idle maintenance (every
 // `compactEvery` turns), prepares each compaction and commits it; omp-vcc is
-// loaded from this package as omp loads it for a user. Recall runs through the
-// session's own vcc_recall tool. Used by tests/long-horizon.test.ts and
+// loaded from this package as omp loads it for a user. On Pi the same turns go
+// through Pi's agent loop, tools and threshold check (a `models.json` provider),
+// and since Pi has no idle maintenance, Pi's own /compact runs every
+// `compactEvery` turns instead (tests/support/host-session.ts). Recall runs
+// through the session's own vcc_recall tool. Used by tests/long-horizon.test.ts and
 // scripts/benchmark-long-horizon.ts.
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { dirname, join } from "path";
 import { buildGlobalIndexById } from "../../src/core/global-indices";
 import { restoreOriginals } from "../../src/core/raw-store";
-import { openOmpSession, realModel, textOf } from "./omp-session";
+import { openHostSession, realModel, textOf, type Host, type HostSession } from "./host-session";
 
-export { LONG_HORIZON_MODEL, realModel } from "./omp-session";
+export { LONG_HORIZON_MODEL, realModel } from "./host-session";
 
 export type NeedleKind = "constraint" | "decision" | "tool_value" | "early_file" | "early_commit" | "fixed_error" | "mid_request";
 
@@ -44,8 +47,10 @@ export interface Needle {
 }
 
 export interface LongHorizonOptions {
+  /** The host the session runs in: OMP_VCC_LH_HOST, omp by default. */
+  host?: Host;
   turns?: number;
-  /** omp's idle maintenance runs after every this many turns. */
+  /** omp's idle maintenance (Pi's /compact) runs after every this many turns. */
   compactEvery?: number;
   /** Pin a note with the vcc_pin tool at the end of these turns. */
   pins?: Record<number, string>;
@@ -66,8 +71,9 @@ export interface NeedleScore {
 }
 
 export interface LongHorizonResult {
+  host: Host;
   turns: number;
-  /** Compactions omp committed: its idle passes, and any threshold pass it decided on. */
+  /** Compactions the host committed: its periodic passes (omp's idle pass, Pi's /compact), and any threshold pass it decided on. */
   compactions: number;
   /** Of those, the ones omp-vcc wrote (all of them, when it works). */
   byOmpVcc: number;
@@ -196,25 +202,26 @@ const createProject = (proj: string, plans: TurnPlan[]) => {
 export const runLongHorizon = async (options: LongHorizonOptions = {}): Promise<LongHorizonResult> => {
   const turns = options.turns ?? 60;
   const compactEvery = options.compactEvery ?? 6;
-  if (!realModel({ keyFile: true })) throw new Error("long-horizon: set OMP_VCC_LH_API_KEY to a key for DeepSeek V4.1 Flash on OpenScale (tests/support/omp-session.ts)");
+  if (!realModel({ keyFile: true })) throw new Error("long-horizon: set OMP_VCC_LH_API_KEY to a key for DeepSeek V4.1 Flash on OpenScale (tests/support/host-session.ts)");
   const work = mkdtempSync(join(tmpdir(), "omp-vcc-long-horizon-"));
-  let omp: Awaited<ReturnType<typeof openOmpSession>> | undefined;
+  let hostSession: HostSession | undefined;
   try {
     const needles = NEEDLES(turns).map((n) => ({ ...n }));
     const byTurn = new Map(needles.map((n) => [n.turn, n]));
     const plans = Array.from({ length: turns }, (_, t) => planTurn(t, byTurn.get(t)));
     const proj = join(work, "proj");
     createProject(proj, plans);
-    omp = await openOmpSession({ work, cwd: proj, contextWindow: options.contextWindow, config: options.config });
-    const { session, sessionManager } = omp;
+    hostSession = await openHostSession({ host: options.host, work, cwd: proj, contextWindow: options.contextWindow, config: options.config });
+    const { session, sessionManager } = hostSession;
 
     for (let t = 0; t < turns; t++) {
       const plan = plans[t];
       for (const [path, content] of Object.entries(plan.files)) writeFileSync(join(proj, path), content);
       await session.prompt(plan.user);
       const pin = options.pins?.[t];
-      if (pin) await session.getToolByName("vcc_pin").execute("pin", { note: pin }, undefined, undefined);
-      if ((t + 1) % compactEvery === 0) await session.runIdleCompaction();
+      if (pin) await hostSession.tool("vcc_pin").execute("pin", { note: pin }, undefined, undefined);
+      // omp's idle pass; on Pi, which has none, Pi's /compact.
+      if ((t + 1) % compactEvery === 0) await hostSession.periodicCompaction();
     }
     await sessionManager.flush?.();
 
@@ -256,7 +263,7 @@ export const runLongHorizon = async (options: LongHorizonOptions = {}): Promise<
       });
     }
 
-    const recallTool = session.getToolByName("vcc_recall");
+    const recallTool = hostSession.tool("vcc_recall");
     const recall = async (params: Record<string, unknown>): Promise<string> =>
       (await recallTool.execute("q", params, undefined, undefined)).content.map((p: any) => p.text ?? "").join("\n");
     const scores: NeedleScore[] = [];
@@ -275,6 +282,7 @@ export const runLongHorizon = async (options: LongHorizonOptions = {}): Promise<
     }
     await options.inspect?.(recall, needles);
     return {
+      host: hostSession.host,
       turns,
       compactions: compactionEntries.length,
       byOmpVcc: compactionEntries.filter((e: any) => e.details?.compactor === "omp-vcc").length,
@@ -284,7 +292,7 @@ export const runLongHorizon = async (options: LongHorizonOptions = {}): Promise<
       finalSummary,
     };
   } finally {
-    await omp?.close();
+    await hostSession?.close();
     rmSync(work, { recursive: true, force: true });
   }
 };

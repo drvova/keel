@@ -2,7 +2,9 @@ import { mkdir, mkdtemp, copyFile, chmod, readdir, stat } from "node:fs/promises
 import { tmpdir } from "node:os";
 import { join, basename } from "node:path";
 
-const SESSION_ROOT = join(process.env.HOME ?? "", ".omp/agent/sessions");
+/** Where each host keeps its session files. */
+export const sessionRoot = (host: "omp" | "pi"): string =>
+  join(process.env.HOME ?? "", host === "pi" ? ".pi/agent/sessions" : ".omp/agent/sessions");
 
 export interface SessionSample {
   source: string;
@@ -22,16 +24,16 @@ const walk = async (dir: string): Promise<string[]> => {
   return out;
 };
 
-const pickLargest = async (limit: number): Promise<string[]> => {
-  const files = await walk(SESSION_ROOT);
+const pickLargest = async (limit: number, root: string): Promise<string[]> => {
+  const files = await walk(root);
   const sized = await Promise.all(
     files.map(async (file) => ({ file, size: (await stat(file)).size })),
   );
   return sized.sort((a, b) => b.size - a.size).slice(0, limit).map((x) => x.file);
 };
 
-export const prepareSessionSamples = async (limit = 2): Promise<SessionSample[]> => {
-  const selected = await pickLargest(limit);
+export const prepareSessionSamples = async (limit = 2, host: "omp" | "pi" = "omp"): Promise<SessionSample[]> => {
+  const selected = await pickLargest(limit, sessionRoot(host));
   const dir = await mkdtemp(join(tmpdir(), "omp-vcc-sessions-"));
   await mkdir(dir, { recursive: true });
   const samples: SessionSample[] = [];
