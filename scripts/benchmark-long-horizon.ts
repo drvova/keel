@@ -1,12 +1,13 @@
 /**
  * Long-horizon benchmark: a coding session with planted facts, worked through by
- * a real model in omp with omp-vcc loaded (tests/support/long-horizon.ts), scored
- * at the end. It runs on DeepSeek V4.1 Flash on OpenScale, as the tests do:
+ * a real model in omp (or Pi) with omp-vcc loaded (tests/support/long-horizon.ts),
+ * scored at the end. It runs on DeepSeek V4.1 Flash on OpenScale, as the tests do:
  *
- *   OMP_VCC_LH_API_KEY=… bun run scripts/benchmark-long-horizon.ts [turns] [compactEvery] [contextWindow]
+ *   OMP_VCC_LH_API_KEY=… bun run scripts/benchmark-long-horizon.ts [turns] [compactEvery] [contextWindow] [--host=omp|pi]
  *
- * omp's idle pass runs every `compactEvery` turns, and omp compacts on its own
- * when the context passes its trigger. The window omp is told defaults to 128K;
+ * omp's idle pass (on Pi, which has none, Pi's /compact) runs every
+ * `compactEvery` turns, and the host compacts on its own when the context passes
+ * its trigger. The window omp is told defaults to 128K;
  * the budgets and section sizes follow omp's trigger on it (core/window.ts).
  * `all` runs 32K, 128K and 1M. Each turn is a model turn: expect minutes per
  * 10 turns.
@@ -17,15 +18,18 @@
  */
 import { runLongHorizon } from "../tests/support/long-horizon";
 
-const turns = Number(process.argv[2] ?? 60);
-const every = Number(process.argv[3] ?? 6);
-const windowArg = process.argv[4];
+const hostArg = process.argv.find((a) => a.startsWith("--host="));
+if (hostArg) process.env.OMP_VCC_LH_HOST = hostArg.split("=")[1];
+const argv = process.argv.filter((a) => !a.startsWith("--host="));
+const turns = Number(argv[2] ?? 60);
+const every = Number(argv[3] ?? 6);
+const windowArg = argv[4];
 const windows: Array<number | undefined> = windowArg === "all" ? [32_768, 128_000, 1_000_000] : [windowArg ? Number(windowArg) : undefined];
 
 for (const contextWindow of windows) for (const t of [turns, turns * 2]) {
   const r = await runLongHorizon({ turns: t, compactEvery: every, contextWindow });
   const label = contextWindow ? `, ${Math.round(contextWindow / 1000)}K window` : "";
-  console.log(`\n${t} turns, omp's idle pass every ${every}${label} -> ${r.compactions} compactions (${r.byOmpVcc} by omp-vcc); summary chars first/max/last: ${r.summaryChars[0]}/${Math.max(...r.summaryChars)}/${r.summaryChars.at(-1)}`);
+  console.log(`\n${t} turns in ${r.host}, ${r.host === "pi" ? "Pi's /compact" : "omp's idle pass"} every ${every}${label} -> ${r.compactions} compactions (${r.byOmpVcc} by omp-vcc); summary chars first/max/last: ${r.summaryChars[0]}/${Math.max(...r.summaryChars)}/${r.summaryChars.at(-1)}`);
   console.log("kind          turn  summary  pointer  recall");
   for (const n of r.needles) {
     console.log(`${n.kind.padEnd(13)} ${String(n.turn).padStart(4)}  ${(n.inSummary ? "yes" : "no").padEnd(7)}  ${(n.pointed ? "yes" : "no").padEnd(7)}  ${n.recallRank ?? "-"}`);

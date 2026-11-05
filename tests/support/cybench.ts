@@ -1,5 +1,5 @@
 // Cybench (Zhang et al., ICLR 2025, arXiv:2408.08926; Apache-2.0) as one long
-// session: a real model in omp, with omp-vcc loaded, works through Cybench's
+// session: a real model in omp or Pi, with omp-vcc loaded, works through Cybench's
 // file-only capture-the-flag tasks back to back (binaries to reverse, a pcap and
 // emails to dissect, crypto to break), answering each task's own subtask
 // questions in Cybench's guided mode. The questions and answers are Cybench's,
@@ -11,12 +11,12 @@
 // The tasks are fetched from Cybench's repository at a pinned commit into
 // research/cybench (git-ignored); each task's files are copied out as its own
 // init script would copy them, without running it, and the agent never sees a
-// task's metadata, solution or flag file. omp runs everything: the agent
-// loop, the tools, the context counting, every compaction (tests/support/omp-session.ts).
+// task's metadata, solution or flag file. The host runs everything: the agent
+// loop, the tools, the context counting, every compaction (tests/support/host-session.ts).
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { basename, join, resolve } from "path";
-import { openOmpSession, textOf } from "./omp-session";
+import { openHostSession, textOf, type Host, type HostSession } from "./host-session";
 
 export const CYBENCH_REPO = "https://github.com/andyzorigin/cybench.git";
 export const CYBENCH_COMMIT = "ca483c6443f17a20ba7d6bac3d274859a1721e51";
@@ -58,11 +58,13 @@ interface Subtask { question: string; answer: string; answer_format?: string }
 interface Task { spec: TaskSpec; path: string; name: string; dir: string; prompt: string; subtasks: Subtask[]; difficulty: number }
 
 export interface CybenchOptions {
+  /** The host the session runs in: OMP_VCC_LH_HOST, omp by default. */
+  host?: Host;
   /** How many of CYBENCH_TASKS to run, from the start (default all). */
   tasks?: number;
-  /** The window omp is told (default 128K). */
+  /** The window the host is told (default 128K). */
   contextWindow?: number;
-  /** omp-vcc settings: `{ workingSet: false }`, or `{ overrideDefaultCompaction: false }` for omp's own compaction. */
+  /** omp-vcc settings: `{ workingSet: false }`, or `{ overrideDefaultCompaction: false }` for the host's own compaction. */
   config?: Record<string, unknown>;
   /**
    * Model requests one question may take before its turn is stopped and the question
@@ -92,6 +94,7 @@ export interface AnswerScore {
 }
 
 export interface CybenchResult {
+  host: Host;
   answers: AnswerScore[];
   /** The late round: a question asked again, tasks after it was answered right. */
   recall: AnswerScore[];
@@ -178,11 +181,11 @@ export const runCybench = async (options: CybenchOptions = {}): Promise<CybenchR
   const root = fetchCybench();
   const tasks = CYBENCH_TASKS.slice(0, options.tasks ?? CYBENCH_TASKS.length).map((p, i) => loadTask(root, p, i));
   const work = mkdtempSync(join(tmpdir(), "omp-vcc-cybench-"));
-  let omp: Awaited<ReturnType<typeof openOmpSession>> | undefined;
+  let omp: HostSession | undefined;
   try {
     const proj = join(work, "ctf");
     for (const task of tasks) setUpTask(root, task, join(proj, task.dir), work);
-    omp = await openOmpSession({ work, cwd: proj, contextWindow: options.contextWindow, config: options.config });
+    omp = await openHostSession({ host: options.host, work, cwd: proj, contextWindow: options.contextWindow, config: options.config });
     const { session, sessionManager } = omp;
     const maxRequests = options.maxRequests ?? 15;
     const ask = async (task: Task, text: string, subtask: Subtask, distance?: number): Promise<AnswerScore> => {
@@ -251,6 +254,7 @@ export const runCybench = async (options: CybenchOptions = {}): Promise<CybenchR
     const compactions = branch.filter((e: any) => e.type === "compaction");
     const assistants = branch.filter((e: any) => e.type === "message" && e.message.role === "assistant" && e.message.usage);
     return {
+      host: omp.host,
       answers,
       recall,
       compactions: compactions.length,

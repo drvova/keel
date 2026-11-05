@@ -1,5 +1,6 @@
-// /omp-vcc-pin and /omp-vcc-unpin.
+// /omp-vcc-pin and /omp-vcc-unpin (/pi-vcc-pin and /pi-vcc-unpin on Pi).
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+import { OMP_HOST, type HostProfile } from "../host";
 import { PIN_NOTICE_TYPE } from "../core/pins";
 import { addPin, listPins, removePin } from "../tools/pin";
 import { tell } from "./compact-feedback";
@@ -11,8 +12,8 @@ const noteForAgent = (pi: ExtensionAPI, content: string) => {
   } catch {}
 };
 
-export const registerPinCommands = (pi: ExtensionAPI) => {
-  pi.registerCommand("omp-vcc-pin", {
+export const registerPinCommands = (pi: ExtensionAPI, host: HostProfile = OMP_HOST) => {
+  pi.registerCommand(`${host.command}-pin`, {
     description: "Pin a note that stays at the top of every omp-vcc summary. No text lists the pinned notes.",
     handler: async (args: string, ctx) => {
       if (!args.trim()) {
@@ -25,7 +26,7 @@ export const registerPinCommands = (pi: ExtensionAPI) => {
     },
   });
 
-  pi.registerCommand("omp-vcc-unpin", {
+  pi.registerCommand(`${host.command}-unpin`, {
     description: "Unpin an omp-vcc note by its [N].",
     handler: async (args: string, ctx) => {
       const result = removePin(pi, ctx.sessionManager, args.trim());

@@ -6,7 +6,7 @@ on:
   pull_request:
   push:
     branches: [master]
-  # omp releases often: test the newest one weekly even when nothing is pushed.
+  # omp and Pi release often: test the newest of each weekly even when nothing is pushed.
   schedule:
     - cron: "17 6 * * 1"
   workflow_dispatch:
@@ -27,9 +27,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # latest: the omp users update to. minimum: the floor of the peer range
-        # in package.json, read from there so no version is written here.
-        omp: [latest, minimum]
+        # latest: the host users update to. minimum: the floor of its peer range
+        # in package.json, read from there so no version is written here. Both
+        # hosts are installed in every job (each entry's types read both); the
+        # one at its floor is the one the job is about.
+        include:
+          - { omp: latest, pi: latest }
+          - { omp: minimum, pi: latest }
+          - { omp: latest, pi: minimum }
     steps:
       # Actions pinned to commit SHAs so a retagged release cannot swap the
       # code this job runs.
@@ -43,8 +48,8 @@ jobs:
         with:
           bun-version: latest
 
-      # --frozen-lockfile: the compiler and node types bun.lock pins. omp is not
-      # in it: it is installed below, at the version this job tests.
+      # --frozen-lockfile: the compiler and node types bun.lock pins. The hosts
+      # are not in it: they are installed below, at the versions this job tests.
       # --ignore-scripts: dependency postinstall code does not run in CI.
       - run: bun install --frozen-lockfile --ignore-scripts
 
@@ -54,21 +59,41 @@ jobs:
             export OMP_VERSION=$(bun -e "console.log(require('./package.json').peerDependencies['@oh-my-pi/pi-coding-agent'].match(/\d+\.\d+\.\d+/)[0])")
           fi
           bun run setup:omp
+
+      - name: Install Pi (${{ matrix.pi }})
+        run: |
+          if [ "${{ matrix.pi }}" = minimum ]; then
+            export PI_VERSION=$(bun -e "console.log(require('./package.json').peerDependencies['@earendil-works/pi-coding-agent'].match(/\d+\.\d+\.\d+/)[0])")
+          fi
+          bun run setup:pi
+
+      # Both hosts load after both installs (one npm install must not prune the other).
+      - name: Host versions
+        run: |
           bun -e "import { VERSION } from '@oh-my-pi/pi-coding-agent'; console.log('omp', VERSION)"
+          bun -e "import { VERSION } from '@earendil-works/pi-coding-agent'; console.log('pi', VERSION)"
 
       - run: bun run typecheck
 
-      # The extension imports no package at runtime, omp's included: it gets
-      # omp's functions from pi.pi. Fail if a bundle with packages left external
-      # imports anything, statically or dynamically, but node builtins.
-      - name: Runtime imports are node builtins only
+      # The shared code imports no package at runtime, omp's included: the omp
+      # entry gets omp's functions from pi.pi, and the Pi entry imports only Pi's
+      # own package, which Pi's loader resolves to the running Pi. Fail if a
+      # bundle with packages left external imports anything else, statically or
+      # dynamically, but node builtins.
+      - name: Runtime imports are node builtins (and Pi's own package in pi.ts)
         run: |
-          bun build index.ts --target bun --packages external > /tmp/bundle.js
-          bun -e '
-            const allowed = (p) => /^(node:)?(fs|path|os)$/.test(p);
-            const found = new Bun.Transpiler({ loader: "js" }).scanImports(await Bun.file("/tmp/bundle.js").text());
-            const bad = [...new Set(found.map((i) => i.path).filter((p) => !allowed(p)))];
-            if (bad.length) { console.error("omp-vcc must not import packages at runtime:", bad.join(", ")); process.exit(1); }
-          '
+          check() {
+            bun build "$1" --target bun --packages external > /tmp/bundle.js
+            ALLOWED="$2" bun -e '
+              const extra = (process.env.ALLOWED ?? "").split(",").filter(Boolean);
+              const allowed = (p) => /^(node:)?(fs|path|os)$/.test(p) || extra.includes(p);
+              const found = new Bun.Transpiler({ loader: "js" }).scanImports(await Bun.file("/tmp/bundle.js").text());
+              const bad = [...new Set(found.map((i) => i.path).filter((p) => !allowed(p)))];
+              if (bad.length) { console.error("omp-vcc must not import packages at runtime:", bad.join(", ")); process.exit(1); }
+            '
+          }
+          check index.ts ""
+          check pi.ts "@earendil-works/pi-coding-agent"
 
-      - run: bun test
+      # Each file in a fresh module registry: omp answers Pi's package names once it is loaded (tests/support/pi.ts).
+      - run: bun run test

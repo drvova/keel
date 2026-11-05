@@ -1,5 +1,6 @@
 // Limits that follow the model's context window (src/core/window.ts, model-limits.ts, hooks/window-limits.ts).
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test";
+import { assertRealPi, piInstalled } from "./support/pi";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -13,6 +14,9 @@ import {
   ompPolicyOf,
   ompTrigger,
   RECOVERY_BAND,
+  piPolicyOf,
+  piTrigger,
+  PI_TRIGGER_RULE,
 } from "../src/core/window";
 // omp's own function, which omp-vcc ports since omp does not export it to extensions.
 import { resolveThresholdTokens } from "@oh-my-pi/pi-agent-core/compaction";
@@ -185,10 +189,57 @@ describe("triggerFor", () => {
   it("when a smaller real window is known, omp's trigger is above it and omp-vcc's own applies", () => {
     recordLearnedWindow("p/m", 32_768);
     const w = windowOf(model);
-    expect(w).toMatchObject({ omp: 128_000, learned: 32_768, effective: 32_768, source: "overflow-error" });
+    expect(w).toMatchObject({ host: 128_000, learned: 32_768, effective: 32_768, source: "overflow-error" });
     expect(triggerFor(w, createCompactionState(), "p/m", "threshold", 100_000)).toBe(16_384);
     // The user's own policy, on the real window: 80% of it, and a fixed 90K past it falls back as omp's does.
     expect(triggerFor(w, createCompactionState(), "p/m", "threshold", 100_000, { thresholdPercent: 80 })).toBe(26_214);
     expect(triggerFor(w, createCompactionState(), "p/m", "threshold", 100_000, { thresholdTokens: 90_000 })).toBe(16_384);
+  });
+});
+
+describe("Pi's trigger rule", () => {
+  it("is Pi's shouldCompact: the window less reserveTokens, 16,384 by default", () => {
+    expect(piTrigger(200_000)).toBe(183_616);
+    expect(piTrigger(128_000, { reserveTokens: 20_000 })).toBe(108_000);
+    // A reserve at or past the window compacts every turn in Pi; the trigger floors at 1.
+    expect(piTrigger(16_000, { reserveTokens: 16_384 })).toBe(1);
+  });
+
+  it("reads Pi's preparation.settings, and Pi's auto-compaction follows its enabled flag", () => {
+    expect(piPolicyOf({ enabled: true, reserveTokens: 8_000, keepRecentTokens: 20_000 })).toEqual({ enabled: true, reserveTokens: 8_000 });
+    expect(piPolicyOf(undefined)).toBeUndefined();
+    expect(PI_TRIGGER_RULE.autoCompacts({ enabled: false })).toBe(false);
+    expect(PI_TRIGGER_RULE.autoCompacts(undefined)).toBe(true);
+  });
+
+  it("sizes a compaction for Pi's trigger on the effective window, an overflow bounded by what overflowed", () => {
+    const model = { provider: "p", id: "pi-m", contextWindow: 128_000 };
+    const w = windowOf(model, "pi");
+    expect(w).toMatchObject({ host: 128_000, effective: 128_000, source: "pi" });
+    const policy = PI_TRIGGER_RULE.policyOf({ enabled: true, reserveTokens: 20_000, keepRecentTokens: 20_000 });
+    expect(triggerFor(w, createCompactionState(), "p/pi-m", "threshold", 110_000, policy, PI_TRIGGER_RULE)).toBe(108_000);
+    expect(triggerFor(w, createCompactionState(), "p/pi-m", "overflow", 90_000, policy, PI_TRIGGER_RULE)).toBe(90_000);
+    // The policy carries over to a later pass that brings none, for the same model.
+    const state = createCompactionState();
+    triggerFor(w, state, "p/pi-m", "threshold", 110_000, policy, PI_TRIGGER_RULE);
+    expect(triggerFor(w, state, "p/pi-m", "manual", 40_000, undefined, PI_TRIGGER_RULE)).toBe(108_000);
+  });
+});
+
+
+
+describe.skipIf(!piInstalled())("piTrigger against Pi's own shouldCompact", () => {
+  it("is the largest context Pi does not compact at", async () => {
+    assertRealPi();
+    const { shouldCompact }: any = await import("@earendil-works/pi-coding-agent");
+    for (const window of [32_768, 128_000, 200_000, 1_000_000]) {
+      for (const reserveTokens of [0, 8_000, 16_384, 50_000]) {
+        if (reserveTokens >= window) continue;
+        const settings = { enabled: true, reserveTokens, keepRecentTokens: 20_000 };
+        const t = piTrigger(window, settings);
+        expect(shouldCompact(t, window, settings)).toBe(false);
+        expect(shouldCompact(t + 1, window, settings)).toBe(true);
+      }
+    }
   });
 });

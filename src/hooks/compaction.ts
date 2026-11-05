@@ -1,6 +1,7 @@
-// The compaction hook. It imports no host package at runtime: omp's own
-// functions arrive through a CompactionHost (src/hooks/omp-host.ts), so `bun build
-// --packages external` stays on node builtins.
+// The compaction hook, shared by both hosts. It imports no host package at
+// runtime: the host's own functions and rules arrive through a CompactionHost
+// (omp: src/hooks/omp-host.ts; Pi: pi.ts), so `bun build --packages external`
+// stays on node builtins.
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { writeFileSync } from "fs";
 import { compileRanked } from "../core/summarize";
@@ -11,7 +12,8 @@ import { buildGlobalIndexById, loadGlobalIndexById } from "../core/global-indice
 import { parseKeepAndPrompt, OMP_VCC_COMPACT_INSTRUCTION } from "../core/compact-args";
 import { loadSettings, type VccSettings } from "../core/settings";
 import { calibrateCharsPerToken, DEFAULT_CHARS_PER_TOKEN, estimateMessageChars, estimateMessageTokens, estimateTokensFromChars } from "../core/token-estimate";
-import { compactionBudgets, ompPolicyOf, type OmpCompactionPolicy } from "../core/window";
+import { compactionBudgets, OMP_TRIGGER_RULE, type TriggerRule } from "../core/window";
+import { applyContextEdits } from "../core/context-edits";
 import { modelKey } from "../core/model-limits";
 import { triggerFor, windowOf } from "./window-limits";
 import { restoreOriginals } from "../core/raw-store";
@@ -51,7 +53,7 @@ export interface CompactionStats {
 export type BudgetCutKind = "no_anchor" | "oversized_tail" | "final_reply" | "running_turn";
 export const OVERSIZED_TAIL_FACTOR = 2.5;
 
-/** What started a compaction, and whether omp retries the turn after it. */
+/** What started a compaction, and whether the host retries the turn after it. */
 export interface CompactionTrigger {
   reason: CompactionReason;
   willRetry: boolean;
@@ -59,16 +61,19 @@ export interface CompactionTrigger {
 
 const MANUAL_TRIGGER: CompactionTrigger = { reason: "manual", willRetry: false };
 
-/** What the compaction hook needs from omp. */
+/** What the compaction hook needs from its host. */
 export interface CompactionHost {
-  /** omp's convertToLlm; omp-vcc calls it with one message at a time. */
+  /** The host's own convertToLlm; omp-vcc calls it with one message at a time. */
   convertToLlm: (messages: any[]) => any[];
   /**
-   * The trigger of the compaction the hook is running for: omp's
-   * session_before_compact carries none (src/hooks/omp-host.ts reads it from
+   * The trigger of the compaction the hook is running for, given the
+   * session_before_compact event: Pi's carries it (`reason`, `willRetry`);
+   * omp's carries none (src/hooks/omp-host.ts reads it from
    * auto_compaction_start). Called once per hook run; omitted means manual.
    */
-  compactionTrigger?: () => CompactionTrigger;
+  compactionTrigger?: (event: unknown) => CompactionTrigger;
+  /** Where the host compacts, from the policy it hands the hook; omp's when omitted. */
+  rule?: TriggerRule;
 }
 
 /** Per-registration state. omp binds the factory again for every subagent, so it gets one per binding. */
@@ -85,10 +90,10 @@ export interface CompactionState {
   pendingManualInstructions: string | null;
   /** Why the hook last cancelled a compaction, for /omp-vcc to report where omp shows no notifications. */
   lastCancelNotice: string | null;
-  /** omp's trigger as the last threshold pass measured it (its tokensBefore), for this model. */
+  /** The host's trigger as the last threshold pass measured it (its tokensBefore), for this model. */
   measuredTrigger: { key: string; tokens: number } | null;
-  /** omp's compaction policy as the last compaction carried it (preparation.settings), for this model. */
-  ompPolicy: { key: string | undefined; policy: OmpCompactionPolicy } | null;
+  /** The host's compaction policy as the last compaction carried it (preparation.settings, read by its TriggerRule), for this model. */
+  hostPolicy: { key: string | undefined; policy: object } | null;
   /** The compaction omp-vcc started itself (window-limits.ts), so the hook records why. */
   selfTrigger: CompactionTrigger | null;
   /** The note that omp's window is above the real one was shown. */
@@ -102,7 +107,7 @@ export const createCompactionState = (): CompactionState => ({
   pendingManualInstructions: null,
   lastCancelNotice: null,
   measuredTrigger: null,
-  ompPolicy: null,
+  hostPolicy: null,
   selfTrigger: null,
   windowNoticeShown: false,
 });
@@ -746,8 +751,12 @@ export const registerCompactionHook = (
   state: CompactionState,
 ) => {
   pi.on("session_before_compact", (event, ctx) => {
-    const { preparation, branchEntries } = event;
-    const hostTrigger = host.compactionTrigger?.();
+    const { preparation } = event;
+    // What the context holds: Pi's context edits applied, as Pi applies them
+    // (core/context-edits.ts). An omp branch has none and comes back as it is.
+    const branchEntries = applyContextEdits(event.branchEntries as any[]);
+    const rule = host.rule ?? OMP_TRIGGER_RULE;
+    const hostTrigger = host.compactionTrigger?.(event);
     const { reason, willRetry } = state.selfTrigger ?? hostTrigger ?? MANUAL_TRIGGER;
     const customInstructions = event.customInstructions
       ?? (reason === "manual" ? state.pendingManualInstructions ?? undefined : undefined);
@@ -792,8 +801,8 @@ export const registerCompactionHook = (
       ?? (preparation.tokensBefore > 0 ? Math.max(0, preparation.tokensBefore - estimateTokensFromChars(contentChars, DEFAULT_CHARS_PER_TOKEN)) : 0);
 
     // Budgets from the model's real window and where the next compaction comes (core/window.ts).
-    const window = windowOf(ctx?.model);
-    const trigger = triggerFor(window, state, modelKey(ctx?.model), reason, preparation.tokensBefore, ompPolicyOf(preparation.settings));
+    const window = windowOf(ctx?.model, rule.host);
+    const trigger = triggerFor(window, state, modelKey(ctx?.model), reason, preparation.tokensBefore, rule.policyOf((preparation as { settings?: unknown }).settings), rule);
     const budgets = compactionBudgets(trigger, overheadTokens, settings.workingSet);
 
     // Smart keep-tail: boost default keep when the tail is small.

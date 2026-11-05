@@ -57,7 +57,7 @@ export const reportCompactDone = (
  * Why a compaction /omp-vcc asked for did not happen. `cancelNotice` is the
  * hook's own reason when it cancelled; where there is a UI it was shown already.
  */
-export const reportCompactError = (ctx: NotifyCtx, err: Error, cancelNotice?: string | null): void => {
+export const reportCompactError = (ctx: NotifyCtx, err: Error, cancelNotice?: string | null, hostName: "omp" | "Pi" = "omp"): void => {
   if (err.message === "Compaction cancelled" && cancelNotice) {
     if (ctx.hasUI === false) tell(ctx, cancelNotice, "warning");
   } else if (err.message === "Already compacted") {
@@ -65,16 +65,16 @@ export const reportCompactError = (ctx: NotifyCtx, err: Error, cancelNotice?: st
   } else if (err.message === "Compaction cancelled") {
     tell(ctx, "Nothing to compact", "warning");
   } else if (err.message.startsWith("Nothing to compact")) {
-    // omp throws this before any extension hook runs: everything since the last
-    // compaction (or the start) still fits in the recent part it always keeps
-    // (compaction.keepRecentTokens).
+    // omp and Pi throw this before any extension hook runs: everything since the
+    // last compaction (or the start) still fits in the recent part the host always
+    // keeps (compaction.keepRecentTokens in either's settings).
     tell(
       ctx,
       compactedBefore(ctx)
-        ? "Nothing to compact yet: what came after the last compaction still fits in the recent part omp always keeps " +
-            "(compaction.keepRecentTokens in omp settings). Try again after a few more turns."
-        : "Nothing to compact yet: the whole session still fits in the recent part omp always keeps " +
-            "(compaction.keepRecentTokens in omp settings). Try again once the session is longer.",
+        ? `Nothing to compact yet: what came after the last compaction still fits in the recent part ${hostName} always keeps ` +
+            `(compaction.keepRecentTokens in ${hostName} settings). Try again after a few more turns.`
+        : `Nothing to compact yet: the whole session still fits in the recent part ${hostName} always keeps ` +
+            `(compaction.keepRecentTokens in ${hostName} settings). Try again once the session is longer.`,
       "warning",
     );
   } else {

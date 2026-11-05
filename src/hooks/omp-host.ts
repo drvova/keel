@@ -1,6 +1,7 @@
 // The compaction hook's view of omp.
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import type { CompactionHost, CompactionTrigger } from "./compaction";
+import { OMP_TRIGGER_RULE } from "../core/window";
 
 /**
  * omp's session_before_compact carries no trigger. Every automatic pass emits
@@ -41,5 +42,6 @@ export const createOmpCompactionHost = (
   compactionTrigger: () => CompactionTrigger,
 ): CompactionHost => ({
   convertToLlm: (messages) => pi.pi.convertToLlm(messages),
-  compactionTrigger,
+  compactionTrigger: () => compactionTrigger(),
+  rule: OMP_TRIGGER_RULE,
 });

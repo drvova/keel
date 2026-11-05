@@ -2,8 +2,9 @@
 //
 // A long task outlives one session: a restart, /new, a fork, an omp handoff or
 // a sibling move starts a new session file, and recall over the current file
-// alone loses everything before it. omp keeps one directory of session files
-// per working directory (~/.omp/agent/sessions/<cwd>/), so "this project's
+// alone loses everything before it. omp and Pi each keep one directory of
+// session files per working directory (~/.omp/agent/sessions/<cwd>/,
+// ~/.pi/agent/sessions/--<cwd>--/), so "this project's
 // earlier sessions" is that directory minus the current file. Each is read the way the current one is:
 // its active branch (its last entry back to the root), with `#N` in its own
 // index space.

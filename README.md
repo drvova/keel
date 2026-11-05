@@ -1,12 +1,12 @@
 # omp-vcc
 
-Algorithmic conversation compactor for [omp](https://github.com/can1357/oh-my-pi) (oh-my-pi). No LLM calls: it builds the summary by extraction and formatting, keeps the raw history searchable with `vcc_recall`, and keeps pinned notes at the top of every summary.
+Algorithmic conversation compactor for [omp](https://github.com/can1357/oh-my-pi) (oh-my-pi) and [Pi](https://github.com/earendil-works/pi). No LLM calls: it builds the summary by extraction and formatting, keeps the raw history searchable with `vcc_recall`, and keeps pinned notes at the top of every summary.
 
-A fork of [pi-vcc](https://github.com/sting8k/pi-vcc) by [@sting8k](https://github.com/sting8k), made native to omp: it uses omp's extension API, types and session format directly and no longer runs on Pi. Inspired by [VCC](https://github.com/lllyasviel/VCC) (View-oriented Conversation Compiler).
+A fork of [pi-vcc](https://github.com/sting8k/pi-vcc) by [@sting8k](https://github.com/sting8k), native to both hosts: each gets its own entry, written against that host's own extension API, types and session format (`index.ts` for omp, `pi.ts` for Pi), over one shared core. Inspired by [VCC](https://github.com/lllyasviel/VCC) (View-oriented Conversation Compiler).
 
 ## Why omp-vcc
 
-|  | omp's summary | omp-vcc |
+|  | omp's or Pi's summary | omp-vcc |
 |---|---|---|
 | **Method** | LLM-generated summary | Algorithmic extraction, no LLM |
 | **Determinism** | Non-deterministic, can hallucinate | Same input, same output |
@@ -25,17 +25,21 @@ Size and latency were measured by pi-vcc over 1,884 real sessions (summary chars
 omp install https://github.com/drvova/omp-vcc
 ```
 
-omp-vcc needs omp 18.14 or later (`omp.extensions` in `package.json` points omp at `index.ts`).
+```bash
+pi install git:github.com/drvova/omp-vcc
+```
+
+omp-vcc needs omp 18.14 or later, or Pi 1.0 or later. `package.json` points each host at its entry: `omp.extensions` at `index.ts`, `pi.extensions` at `pi.ts` (omp reads its own key first).
 
 ## Usage
 
-omp-vcc runs whenever omp compacts (`/compact`, a full context, an overflow, idle maintenance, a cut-off reply), or on demand:
+omp-vcc runs whenever the host compacts (on omp: `/compact`, a full context, an overflow, idle maintenance, a cut-off reply; on Pi: `/compact`, its threshold, overflow recovery), or on demand. On Pi the commands are `/pi-vcc`, `/pi-vcc-pin`, `/pi-vcc-unpin` and `/pi-vcc-recall`, the names pi-vcc had; on omp:
 
 - `/omp-vcc` compacts now, keeping the last user turn.
 - `/omp-vcc keep:N [prompt]` keeps the last `N` user turns (`keep:0` compacts everything) and sends the optional prompt to the agent afterwards, instead of omp resuming the interrupted turn.
 - `/omp-vcc-pin <note>` pins a note that stays at the top of every summary until `/omp-vcc-unpin <N>`; `/omp-vcc-pin` alone lists the notes. The agent pins its own with the `vcc_pin` tool (decisions, constraints, facts the task depends on).
 
-With the default `keep:1`, a small tail is grown automatically (see `smartKeepTail`). To leave `/compact` and automatic compactions to omp, set `overrideDefaultCompaction: false`.
+With the default `keep:1`, a small tail is grown automatically (see `smartKeepTail`). To leave `/compact` and automatic compactions to the host, set `overrideDefaultCompaction: false`.
 
 How it fits into omp:
 
@@ -46,6 +50,12 @@ How it fits into omp:
 - After `/clear`, the summary, the history index and the pinned notes cover only what follows it.
 - Between compactions, omp keeps the live context small by rewriting messages in place: it shakes tool output and large fenced blocks into `artifact://` files (on an overflow, before omp-vcc is asked), and blanks old, superseded or useless tool output in the session file. omp-vcc keeps the original of every message omp may rewrite, in `<session>.jsonl.vcc-raw` beside the session, as it lands, so `vcc_recall` searches and expands what was there (`keepOriginals`). omp's placeholder then says where the original is (`[Output truncated - 1200 tokens] (the original: vcc_recall expand:[12])`), so the agent does not run the tool again to get it back; the summary is written from the originals; and a fork reads what its parent kept.
 - `vcc_recall` and `vcc_pin` are top-level tools with read-only approval: the summary tells the agent to call `vcc_recall` by name.
+
+How it fits into Pi:
+
+- Pi asks omp-vcc for every compaction it runs, with the reason (`manual`, `threshold`, `overflow`) and whether it retries the turn after, and omp-vcc sizes the summary for Pi's own trigger: the window less `compaction.reserveTokens`, as Pi hands it over. Nothing needs setting in Pi.
+- Pi never rewrites the session file: what it changes in the model's context are `context_edit` entries of their own (Pi omits a failed attempt before an overflow retry; an extension may redact a result). omp-vcc reads the branch through them as Pi does, so an omitted or replaced message is summarized as the context holds it, and `vcc_recall` still reads the raw history.
+- When an overflow error shows the model's real window is smaller than Pi's, omp-vcc compacts at its own trigger once Pi's run has settled (`agent_settled`), and says how to set the window in Pi's `models.json`.
 
 In print mode (`omp -p "/omp-vcc"`), the commands report on stderr, since omp's print mode shows no notifications; stdout stays the model's.
 
@@ -121,7 +131,7 @@ On the next compaction, the sections are merged with the previous summary and re
 
 ## Recall
 
-omp's own compaction drops old messages from the model's view. `vcc_recall` reads the raw session file instead, so anything compacted away stays reachable. It searches the active conversation lineage by default; `scope:"all"` also covers edited or retried branches, and `scope:"project"` this project's earlier sessions (restarts, `/new`, forks, handoffs).
+The host's own compaction drops old messages from the model's view. `vcc_recall` reads the raw session file instead, so anything compacted away stays reachable. It searches the active conversation lineage by default; `scope:"all"` also covers edited or retried branches, and `scope:"project"` this project's earlier sessions (restarts, `/new`, forks, handoffs).
 
 Plain keywords work best. Multi-word queries are OR-matched and ranked, rare terms weigh more, and a regex is accepted (falling back to keywords if it matches nothing):
 
@@ -183,7 +193,7 @@ No step calls a model, and token counts are estimated from the session's own num
 
 ## Config
 
-Config lives at `omp-vcc-config.json` in omp's agent directory (`~/.omp/agent`, the active profile's, or `$PI_CODING_AGENT_DIR` if set; `$OMP_VCC_CONFIG_PATH` overrides the path) and is created with these defaults on first load. A `pi-vcc-config.json` already in that directory, from pi-vcc on omp, is copied over instead.
+Config lives at `omp-vcc-config.json` in the host's agent directory (omp: `~/.omp/agent`, the active profile's; Pi: `~/.pi/agent`; either: `$PI_CODING_AGENT_DIR` if set; `$OMP_VCC_CONFIG_PATH` overrides the path) and is created with these defaults on first load. A `pi-vcc-config.json` already in that directory, from pi-vcc, is copied over instead.
 
 ```json
 {
@@ -198,10 +208,10 @@ Config lives at `omp-vcc-config.json` in omp's agent directory (`~/.omp/agent`, 
 }
 ```
 
-- **`overrideDefaultCompaction`** *(default `true`)*: omp-vcc handles `/omp-vcc`, `/compact` and automatic compactions. With `false` it only handles `/omp-vcc`. Existing config files keep their value.
+- **`overrideDefaultCompaction`** *(default `true`)*: omp-vcc handles `/omp-vcc` (`/pi-vcc` on Pi), `/compact` and automatic compactions. With `false` it only handles `/omp-vcc`. Existing config files keep their value.
 - **`smartKeepTail`** *(default `true`)*: if the `keep:1` tail is under 5k tokens, keep as many turns as fit in 25k (both smaller on a small window, see [The model's context window](#the-models-context-window)). This is omp-vcc's own limit; omp's `compaction.keepRecentTokens` does not change it. An explicit `keep:N` is always respected.
 - **`debug`** *(default `false`)*: write details of each compaction (message counts, cut, sections, token calibration) to `/tmp/omp-vcc-debug.json`.
-- **`skipForProviders`** *(default `[]`)*: providers for which omp-vcc steps aside, so omp's own method (or another compaction extension) handles them. Compared case-insensitively with omp's provider id (see `/model`). Checked on every compaction; `/omp-vcc` always runs.
+- **`skipForProviders`** *(default `[]`)*: providers for which omp-vcc steps aside, so the host's own method (or another compaction extension) handles them. Compared case-insensitively with the host's provider id (see `/model`). Checked on every compaction; `/omp-vcc` always runs.
 - **`skipCustomTypes`** *(default `[]`)*: `customType` values of `custom_message` entries to leave out of the summary, for per-turn boilerplate other extensions inject (skill cards, guidance blocks). Exact, case-sensitive match; look for `"type":"custom_message"` in your session file to find the value. Only the summary input changes, not the cut.
 - **`keepOriginals`** *(default `true`)*: keep the original of every message omp may rewrite in place (tool output, long text blocks) in `<session>.jsonl.vcc-raw`, so `vcc_recall` reads what was there after omp blanks or shakes it (see [Usage](#usage)). Text over 1M chars per message is clipped; images are kept without their data. `false`: recall shows omp's placeholders.
 - **`workingSet`** *(default `true`)*: bring back what the next step works from with each compaction, as `[Working Set]` (see [Compacted message structure](#compacted-message-structure)). `false`: the summary says what happened, the agent fetches what it needs with `vcc_recall`, and the kept tail gets the working set's room.

@@ -1,9 +1,10 @@
 // Long-horizon floor: 60- and 120-turn sessions with planted facts, worked through
-// by a real model in omp with omp-vcc loaded, omp's idle pass every 6 turns
-// (tests/support/long-horizon.ts). Numbers for the current code:
-// bun run scripts/benchmark-long-horizon.ts
+// by a real model in omp (or Pi, with OMP_VCC_LH_HOST=pi) with omp-vcc loaded,
+// omp's idle pass (Pi's /compact) every 6 turns (tests/support/long-horizon.ts).
+// Numbers for the current code: bun run scripts/benchmark-long-horizon.ts
 import { beforeAll, describe, expect, it } from "bun:test";
 import { realModel, runLongHorizon, type LongHorizonResult } from "./support/long-horizon";
+import { sessionHost } from "./support/host-session";
 import { searchEntries, stemOf } from "../src/core/search-entries";
 import { renderMessage } from "../src/core/render-entries";
 import { recallOutputChars, RECALL_OUTPUT_CHARS } from "../src/core/recall-run";
@@ -11,7 +12,7 @@ import { recallOutputChars, RECALL_OUTPUT_CHARS } from "../src/core/recall-run";
 // Each run is a real model working in omp, a turn at a time: minutes per run. Without a
 // model in the environment (see tests/support/long-horizon.ts) these are skipped.
 const PIN = "Sessions are stored in SQLite rather than Redis: the deploy host has no Redis.";
-describe.skipIf(!realModel())("long-horizon session, on a real model in omp", () => {
+describe.skipIf(!realModel())(`long-horizon session, on a real model in ${sessionHost()}`, () => {
   const runs: Record<string, LongHorizonResult> = {};
   // Each run's per-fact table goes to the log: a real model's runs differ, and a failure needs the table to read.
   const report = (label: string, r: LongHorizonResult) =>
@@ -32,7 +33,7 @@ describe.skipIf(!realModel())("long-horizon session, on a real model in omp", ()
       const r = () => runs[key];
       const by = (kind: string) => r().needles.find((n) => n.kind === kind)!;
 
-      it("omp compacted at least every 6 turns, through omp-vcc each time", () => {
+      it(`${sessionHost()} compacted at least every 6 turns, through omp-vcc each time`, () => {
         expect(r().compactions).toBeGreaterThanOrEqual(turns / 6);
         expect(r().byOmpVcc).toBe(r().compactions);
       });

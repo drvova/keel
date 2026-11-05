@@ -1,6 +1,6 @@
 import type { Message } from "@oh-my-pi/pi-ai";
 
-/** What started a compaction: omp's auto_compaction_start reason, or manual (/compact, /omp-vcc). */
+/** What started a compaction: omp's auto_compaction_start reason or Pi's session_before_compact reason, or manual (/compact, /omp-vcc, /pi-vcc). Pi's are manual, threshold and overflow. */
 export type CompactionReason = "manual" | "threshold" | "overflow" | "idle" | "incomplete";
 
 export interface FileOps {

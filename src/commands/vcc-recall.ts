@@ -14,23 +14,25 @@ import { resolveSession } from "../core/sessions";
 import { sessionDirOf } from "../tools/recall";
 import { tell } from "./compact-feedback";
 import { windowOf } from "../hooks/window-limits";
+import { OMP_HOST, type HostProfile } from "../host";
 
 const scopeArg = (scope: string) => (scope === "all" ? " scope:all" : scope === "project" ? " scope:project" : "");
 
-const commandHints = (session?: string): RecallPagingHints => {
+const commandHints = (name: string, session?: string): RecallPagingHints => {
   const at = session ? ` session:${session}` : "";
   return {
     outOfRange: (query, scope, totalPages, truncated) =>
-      `Use /omp-vcc-recall ${query}${at}${scopeArg(scope)} page:N with N between 1 and ${totalPages}` +
+      `Use /${name} ${query}${at}${scopeArg(scope)} page:N with N between 1 and ${totalPages}` +
       (truncated ? "." : ", or refine your query."),
-    nextPage: (query, scope, page) => `\n--- /omp-vcc-recall ${query}${at}${scopeArg(scope)} page:${page} ---`,
+    nextPage: (query, scope, page) => `\n--- /${name} ${query}${at}${scopeArg(scope)} page:${page} ---`,
     otherSessions: (n) =>
-      `This project has ${n} earlier session${n === 1 ? "" : "s"}: add scope:project to search ${n === 1 ? "it" : "them"} too; /omp-vcc-recall sessions lists ${n === 1 ? "it" : "them"}.`,
+      `This project has ${n} earlier session${n === 1 ? "" : "s"}: add scope:project to search ${n === 1 ? "it" : "them"} too; /${name} sessions lists ${n === 1 ? "it" : "them"}.`,
   };
 };
 
-export const registerVccRecallCommand = (pi: ExtensionAPI) => {
-  pi.registerCommand("omp-vcc-recall", {
+export const registerVccRecallCommand = (pi: ExtensionAPI, host: HostProfile = OMP_HOST) => {
+  const name = `${host.command}-recall`;
+  pi.registerCommand(name, {
     description:
       "Recall earlier parts of this session. Plain keywords work best; scope:all reaches edited or retried turns, " +
       "scope:project this project's earlier sessions; 'sessions' lists them, session:<id> reads one.",
@@ -42,7 +44,7 @@ export const registerVccRecallCommand = (pi: ExtensionAPI) => {
       }
       const request = parseCommandRequest(args);
       const project = projectSessions(sessionDirOf(ctx.sessionManager as any, sessionFile), sessionFile);
-      const maxChars = recallOutputChars(windowOf(ctx.model).effective);
+      const maxChars = recallOutputChars(windowOf(ctx.model, host.name).effective);
       const detailChars = expandDetailChars(maxChars);
       let content: string;
       if (request.session) {
@@ -51,12 +53,12 @@ export const registerVccRecallCommand = (pi: ExtensionAPI) => {
           tell(ctx, target.error, "warning");
           return;
         }
-        content = runRecall(request, openSessionView(target, request.scope, project, detailChars), commandHints(target.short), {
+        content = runRecall(request, openSessionView(target, request.scope, project, detailChars), commandHints(name, target.short), {
           maxChars: Math.max(0, maxChars - 300),
           header: sessionHeader(target),
         });
       } else {
-        content = runRecall(request, openRecallView(sessionFile, request.scope, ctx.sessionManager, { project, detailChars }), commandHints(), { maxChars });
+        content = runRecall(request, openRecallView(sessionFile, request.scope, ctx.sessionManager, { project, detailChars }), commandHints(name), { maxChars });
       }
       pi.sendMessage({ customType: "vcc-recall", content, display: true }, { triggerTurn: true });
     },

@@ -11,10 +11,12 @@
 // trigger, clamped like the recall cap (recallOutputChars): the same numbers as
 // before on a typical 128K window, smaller below it, a larger summary far above it.
 //
-// The window itself is the smaller of omp's and a limit an overflow error
-// stated; omp-vcc makes no network call. The trigger is omp's own: its
-// compaction policy (threshold, reserve, the model's entry) arrives with every
-// compaction, and ompTrigger applies it to that window as omp does. Pure
+// The window itself is the smaller of the host's and a limit an overflow error
+// stated; omp-vcc makes no network call. The trigger is the host's own: its
+// compaction policy (omp: threshold, reserve, the model's entry; Pi: its
+// reserve) arrives with every compaction, and the host's TriggerRule applies it
+// to that window as the host does (ompTrigger, piTrigger). Pi re-compacts only
+// past its trigger, so the landing below omp's recovery band suits it too. Pure
 // functions; the IO is in model-limits.ts.
 
 /** Clamp `value` to [floor, ceiling], rounded. */
@@ -136,6 +138,73 @@ export const ompTrigger = (window: number, policy: OmpCompactionPolicy = {}): nu
 
 /** Where omp compacts on `window` with its default policy. */
 export const ompDefaultTrigger = (window: number): number => Math.max(1, ompTrigger(window));
+
+/**
+ * Pi's compaction settings for the current model, as Pi hands them to
+ * extensions in `session_before_compact` (`preparation.settings`, its
+ * CompactionSettings from settingsManager.getCompactionSettings(model)). Only
+ * the fields that decide where Pi compacts.
+ */
+export interface PiCompactionPolicy {
+  enabled?: boolean;
+  /** Kept free below the window; Pi's DEFAULT_COMPACTION_SETTINGS has 16,384. */
+  reserveTokens?: number;
+}
+
+/** Pi's reserve when `reserveTokens` is unset (DEFAULT_COMPACTION_SETTINGS). */
+const PI_DEFAULT_RESERVE_TOKENS = 16_384;
+
+/** The policy fields in Pi's `preparation.settings`, or undefined when there are none. */
+export const piPolicyOf = (settings: unknown): PiCompactionPolicy | undefined => {
+  if (!isRecord(settings)) return undefined;
+  const policy: PiCompactionPolicy = {};
+  if (typeof settings.enabled === "boolean") policy.enabled = settings.enabled;
+  if (typeof settings.reserveTokens === "number" && Number.isFinite(settings.reserveTokens)) policy.reserveTokens = settings.reserveTokens;
+  return policy;
+};
+
+/**
+ * Where Pi compacts on `window`: its shouldCompact, `contextTokens >
+ * contextWindow - reserveTokens` (core/compaction/compaction.ts), which Pi
+ * applies with `enabled` on. A reserve at or past the window would compact on
+ * every turn; the trigger is then 1.
+ */
+export const piTrigger = (window: number, policy: PiCompactionPolicy = {}): number => {
+  const reserve = typeof policy.reserveTokens === "number" && Number.isFinite(policy.reserveTokens)
+    ? Math.max(0, policy.reserveTokens)
+    : PI_DEFAULT_RESERVE_TOKENS;
+  return Math.max(1, Math.floor(window - reserve));
+};
+
+/** Whether Pi compacts on its own under this policy. */
+export const piAutoCompacts = (policy: PiCompactionPolicy | undefined): boolean => policy?.enabled !== false;
+
+/**
+ * A host's compaction rule, from its own code: the policy it hands the hook
+ * (`preparation.settings`), where it compacts under that policy, and whether it
+ * compacts on its own at all. omp-vcc sizes each compaction for where the host
+ * compacts next, so the rule is the host's, never a guess.
+ */
+export interface TriggerRule {
+  host: "omp" | "pi";
+  policyOf(settings: unknown): object | undefined;
+  trigger(window: number, policy?: object): number;
+  autoCompacts(policy: object | undefined): boolean;
+}
+
+export const OMP_TRIGGER_RULE: TriggerRule = {
+  host: "omp",
+  policyOf: ompPolicyOf,
+  trigger: (window, policy) => ompTrigger(window, policy as OmpCompactionPolicy | undefined),
+  autoCompacts: (policy) => ompAutoCompacts(policy as OmpCompactionPolicy | undefined),
+};
+
+export const PI_TRIGGER_RULE: TriggerRule = {
+  host: "pi",
+  policyOf: piPolicyOf,
+  trigger: (window, policy) => piTrigger(window, policy as PiCompactionPolicy | undefined),
+  autoCompacts: (policy) => piAutoCompacts(policy as PiCompactionPolicy | undefined),
+};
 
 /** omp re-compacts unless the result lands at or under this share of the trigger. */
 export const RECOVERY_BAND = 0.8;
