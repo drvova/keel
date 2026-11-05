@@ -63,3 +63,5 @@ const right = r.answers.filter((a) => a.correct).length;
 const again = r.recall.filter((a) => a.correct).length;
 const fromContext = r.recall.filter((a) => a.correct && a.toolCalls === 0).length;
 console.log(`totals: answered ${right}/${r.answers.length}; asked again ${again}/${r.recall.length}, ${fromContext} of them with no tool call; ${r.recall.reduce((n, a) => n + a.toolCalls, 0)} tool calls to answer again`);
+// omp leaves handles open after the session closes; the run is over, so don't sit on them for hours.
+process.exit(0);
