@@ -33,17 +33,23 @@ omp-vcc needs omp 18.14 or later, or Pi 1.0 or later. `package.json` points each
 
 ## Usage
 
-omp-vcc runs whenever the host compacts (on omp: `/compact`, a full context, an overflow, idle maintenance, a cut-off reply; on Pi: `/compact`, its threshold, overflow recovery), or on demand. On Pi the commands are `/pi-vcc`, `/pi-vcc-pin`, `/pi-vcc-unpin` and `/pi-vcc-recall`, the names pi-vcc had; on omp:
+omp-vcc runs whenever the host compacts, or on demand. The commands carry the host's prefix: `/omp-vcc…` on omp, `/pi-vcc…` on Pi (the names pi-vcc had).
 
-- `/omp-vcc` compacts now, keeping the last user turn.
-- `/omp-vcc keep:N [prompt]` keeps the last `N` user turns (`keep:0` compacts everything) and sends the optional prompt to the agent afterwards, instead of omp resuming the interrupted turn.
-- `/omp-vcc-pin <note>` pins a note that stays at the top of every summary until `/omp-vcc-unpin <N>`; `/omp-vcc-pin` alone lists the notes. The agent pins its own with the `vcc_pin` tool (decisions, constraints, facts the task depends on).
+| omp | Pi | What it does |
+|---|---|---|
+| `/omp-vcc` | `/pi-vcc` | Compact now, keeping the last user turn. |
+| `/omp-vcc keep:N [prompt]` | `/pi-vcc keep:N [prompt]` | Keep the last `N` user turns (`keep:0` compacts everything), then send the optional prompt to the agent instead of resuming the interrupted turn. |
+| `/omp-vcc-pin <note>` | `/pi-vcc-pin <note>` | Pin a note that stays at the top of every summary; with no note, list them. The agent pins its own with the `vcc_pin` tool (decisions, constraints, facts the task depends on). |
+| `/omp-vcc-unpin <N>` | `/pi-vcc-unpin <N>` | Unpin note `N`. |
+| `/omp-vcc-recall …` | `/pi-vcc-recall …` | Search the history, as `vcc_recall` does (see [Recall](#recall)). |
 
-With the default `keep:1`, a small tail is grown automatically (see `smartKeepTail`). To leave `/compact` and automatic compactions to the host, set `overrideDefaultCompaction: false`.
+With the default `keep:1`, a small tail is grown automatically (see `smartKeepTail`). To leave `/compact` and automatic compactions to the host, set `overrideDefaultCompaction: false`. Nothing needs setting in either host.
 
-How it fits into omp:
+In print mode (`omp -p "/omp-vcc"`, `pi --print "/pi-vcc"`) the commands report on stderr, since print mode shows no notifications; stdout stays the model's. On a short session the command can answer "Nothing to compact yet" whatever `keep:N` says: the host stops before any extension runs while the whole session still fits in the recent part it always keeps (`compaction.keepRecentTokens` in its settings).
 
-- Nothing needs setting in omp. Every omp method that writes a summary (server compaction, snapcompact, handoff, soft, notes-backed context windows) asks omp-vcc first and stays out of the way when it answers, and omp-vcc answers every pass, overflow recovery included, so none of them writes one while omp-vcc compacts. On an overflow inside a running turn it keeps the turn's newest steps (at most half of it) and summarizes the request and the steps before them. omp's shake works with it: on an overflow it can run first (it is the first usable method for a text-only model) and hands over to soft, which is omp-vcc; and after a compaction that still leaves the context too large, omp's rescue shakes the oversized tool output it kept. When nothing summarized could shrink the context (it is full of the system prompt and tools), omp-vcc says so instead.
+### On omp
+
+- omp-vcc runs on `/compact`, a full context, an overflow, idle maintenance and a cut-off reply. Every omp method that writes a summary (server compaction, snapcompact, handoff, soft, notes-backed context windows) asks omp-vcc first and stays out of the way when it answers, and omp-vcc answers every pass, overflow recovery included, so none of them writes one while omp-vcc compacts. On an overflow inside a running turn it keeps the turn's newest steps (at most half of it) and summarizes the request and the steps before them. omp's shake works with it: on an overflow it can run first (it is the first usable method for a text-only model) and hands over to soft, which is omp-vcc; and after a compaction that still leaves the context too large, omp's rescue shakes the oversized tool output it kept. When nothing summarized could shrink the context (it is full of the system prompt and tools), omp-vcc says so instead.
 - omp compacts between the tool calls of a turn. When that turn is all that is left in context and fits the tail budget, a threshold or idle pass waits until the turn ends instead of summarizing it away.
 - omp resumes the interrupted run itself after automatic compactions (`compaction.autoContinue`); omp-vcc sends no continue of its own.
 - While omp-vcc is installed, omp skips its background (speculative) compaction, as it does for any extension that handles compaction. omp-vcc's summary takes milliseconds, so there is no latency to hide.
@@ -51,17 +57,15 @@ How it fits into omp:
 - Between compactions, omp keeps the live context small by rewriting messages in place: it shakes tool output and large fenced blocks into `artifact://` files (on an overflow, before omp-vcc is asked), and blanks old, superseded or useless tool output in the session file. omp-vcc keeps the original of every message omp may rewrite, in `<session>.jsonl.vcc-raw` beside the session, as it lands, so `vcc_recall` searches and expands what was there (`keepOriginals`). omp's placeholder then says where the original is (`[Output truncated - 1200 tokens] (the original: vcc_recall expand:[12])`), so the agent does not run the tool again to get it back; the summary is written from the originals; and a fork reads what its parent kept.
 - `vcc_recall` and `vcc_pin` are top-level tools with read-only approval: the summary tells the agent to call `vcc_recall` by name.
 
-How it fits into Pi:
+### On Pi
 
-- Pi asks omp-vcc for every compaction it runs, with the reason (`manual`, `threshold`, `overflow`) and whether it retries the turn after, and omp-vcc sizes the summary for Pi's own trigger: the window less `compaction.reserveTokens`, as Pi hands it over. Nothing needs setting in Pi.
-- Pi never rewrites the session file: what it changes in the model's context are `context_edit` entries of their own (Pi omits a failed attempt before an overflow retry; an extension may redact a result). omp-vcc reads the branch through them as Pi does, so an omitted or replaced message is summarized as the context holds it, and `vcc_recall` still reads the raw history.
-- When an overflow error shows the model's real window is smaller than Pi's, omp-vcc compacts at its own trigger once Pi's run has settled (`agent_settled`), and says how to set the window in Pi's `models.json`.
+- omp-vcc runs on `/compact`, Pi's threshold and overflow recovery. Pi asks it for every compaction it runs, with the reason and whether it retries the turn after, and Pi resumes the run itself.
+- omp-vcc sizes the summary for Pi's own trigger: the window less `compaction.reserveTokens`, as Pi hands it over (see [The model's context window](#the-models-context-window)).
+- Pi never rewrites the session file. What it changes in the model's context are `context_edit` entries of their own: Pi omits a failed attempt before an overflow retry, and an extension may redact a result. omp-vcc reads the branch through them as Pi does, so an omitted message stays out of the summary and a replaced one is summarized as the context holds it, while `vcc_recall` still reads the raw history. There is nothing to keep aside, so `keepOriginals` does nothing on Pi.
+- A `!cmd` is one line of the summary, like on omp; a `!!cmd`, which Pi keeps out of the model's context, is left out of it too.
+- When an overflow error shows the model's real window is smaller than Pi's, omp-vcc compacts at its own trigger once Pi's run has settled (`agent_settled`, not after a run you aborted), and says how to set the window in Pi's `models.json`.
 
-In print mode (`omp -p "/omp-vcc"`), the commands report on stderr, since omp's print mode shows no notifications; stdout stays the model's.
-
-On a short session `/omp-vcc` can answer "Nothing to compact yet" whatever `keep:N` says: omp stops before any extension runs while the whole session still fits in the recent part it always keeps (`compaction.keepRecentTokens` in omp's settings).
-
-### Compacted message structure
+## Compacted message structure
 
 ```
 [Pinned Notes]
@@ -117,21 +121,21 @@ A section only appears when it has something to say; a session with no git commi
 
 | Section | Contents |
 |---|---|
-| `[Pinned Notes]` | Notes pinned with `/omp-vcc-pin` or `vcc_pin`, verbatim, until unpinned (the newest 20 are shown) |
+| `[Pinned Notes]` | Notes pinned with `/omp-vcc-pin` (`/pi-vcc-pin`) or `vcc_pin`, verbatim, until unpinned (the newest 20 are shown) |
 | `[Early Session Requests]` | The session's first 3 user messages, as written (one over 300 characters is clipped and ends with `… (#N)`). Kept for the whole session; they can be stale later in a long session |
-| `[Files And Changes]` | Files modified, created (first written in the session) or read (capped, paths trimmed to a common root), including omp's hashline edits |
+| `[Files And Changes]` | Files modified, created (first written in the session) or read (capped, paths trimmed to a common root), from each host's edit tool (omp's hashline and replace edits, Pi's `edits` lists) |
 | `[Commits]` | Last 8 commits made in the session (hash + subject) |
 | `[Tracked Commands]` | Recent runs of only the commands listed in `trackCommands` (off by default) |
 | `[User Messages]` | The 15 newest later user messages on a typical window, as written (one line each, up to 300 characters) |
 | `[History Index]` | One line per compacted range of `#N` entries, back to the start of the session: how many requests, the longest one, the files or directories changed, commits and failed calls. At most 8 lines on a typical window; older ranges merge into coarser ones |
-| `[Working Set]` | What the next step works from, brought back from the original history so the agent does not fetch it again: the latest version of each file the work is on, from anywhere in the session since `/clear` (unless the kept messages already hold it): what showed it last first, newest first (omp's edit results are the changed lines with their numbers, a range read the lines it asked for), then its last whole read; a file comes back whole or as those lines, never as its first lines, the output of the latest failed call no later run of it fixed (its end, where the error is), and up to 3 results `vcc_recall` ranks highest for the latest request. Each excerpt ends with the `vcc_recall expand` that shows the rest. Up to 3,800 tokens on a typical window, and never more than half of what the compaction removes |
-| Brief transcript | The conversation in order with `(#N)` refs: its highest-signal lines within a token budget (1,100–2,000 tokens and 120 lines on a typical window), not only the latest ones; each tool call shortened to one line (`[failed]` when its result was an error; `vcc_recall` and `vcc_pin` calls say what they looked up or pinned). A user's `!cmd` or python cell is one `$ cmd` / `>>> code` line |
+| `[Working Set]` | What the next step works from, brought back from the original history so the agent does not fetch it again: the latest version of each file the work is on, from anywhere in the session (since omp's `/clear`; unless the kept messages already hold it): what showed it last first, newest first (an edit result showing the changed lines with their numbers, a range read the lines it asked for), then its last whole read; a file comes back whole or as those lines, never as its first lines, the output of the latest failed call no later run of it fixed (its end, where the error is), and up to 3 results `vcc_recall` ranks highest for the latest request. Each excerpt ends with the `vcc_recall expand` that shows the rest. Up to 3,800 tokens on a typical window, and never more than half of what the compaction removes |
+| Brief transcript | The conversation in order with `(#N)` refs: its highest-signal lines within a token budget (1,100–2,000 tokens and 120 lines on a typical window), not only the latest ones; each tool call shortened to one line (`[failed]` when its result was an error; `vcc_recall` and `vcc_pin` calls say what they looked up or pinned). A user's `!cmd` (or omp's python cell) is one `$ cmd` / `>>> code` line |
 
-On the next compaction, the sections are merged with the previous summary and re-capped, and the transcript rolls forward; `[Working Set]` is chosen again from the messages, never carried. What leaves the other sections is still named in `[History Index]`, so on a long task the agent knows which range to read or what to search for. None of the sections depend on wording, so they work the same in every language. omp's host reminders (developer messages), `@file` bodies and text an extension sent on the agent's behalf are not read as the user's words.
+On the next compaction, the sections are merged with the previous summary and re-capped, and the transcript rolls forward; `[Working Set]` is chosen again from the messages, never carried. What leaves the other sections is still named in `[History Index]`, so on a long task the agent knows which range to read or what to search for. None of the sections depend on wording, so they work the same in every language. Messages an extension injects (Pi's and omp's custom messages, text sent on the agent's behalf), omp's host reminders (developer messages) and `@file` bodies are not read as the user's words.
 
 ## Recall
 
-The host's own compaction drops old messages from the model's view. `vcc_recall` reads the raw session file instead, so anything compacted away stays reachable. It searches the active conversation lineage by default; `scope:"all"` also covers edited or retried branches, and `scope:"project"` this project's earlier sessions (restarts, `/new`, forks, handoffs).
+The host's own compaction drops old messages from the model's view. `vcc_recall` reads the raw session file instead, so anything compacted away stays reachable. It searches the active conversation lineage by default; `scope:"all"` also covers edited or retried branches, and `scope:"project"` this project's earlier sessions (restarts, `/new`, forks, omp's handoffs).
 
 Plain keywords work best. Multi-word queries are OR-matched and ranked, rare terms weigh more, and a regex is accepted (falling back to keywords if it matches nothing):
 
@@ -161,9 +165,9 @@ vcc_recall({ session: "01a194d8", expand: [12] })    // read one: any call works
 
 `scope:"project"` searches the 20 newest earlier sessions (up to 24 MB); `session:` reaches any of them. Each session's `#N` are its own.
 
-Each call does one of these. `page` and `scope` work with all of them, and a param the call cannot use is named in the output instead of dropped silently. omp validates arguments before an extension sees them, so the schema also accepts the loose forms agents send (`"#12"`, `"10-20"`, a scope value in `mode`), and the tool repairs them. One result is capped at 50 KB, or a tenth of the model's context window when that is smaller (at least 8 KB); a clipped one starts with a warning. A search word also matches other forms of it (`rounding` finds `rounds`, `failure` finds `FAIL`).
+Each call does one of these. `page` and `scope` work with all of them, and a param the call cannot use is named in the output instead of dropped silently. The host validates arguments before an extension sees them, so the schema also accepts the loose forms agents send (`"#12"`, `"10-20"`, a scope value in `mode`), and the tool repairs them. One result is capped at 50 KB, or a tenth of the model's context window when that is smaller (at least 8 KB); a clipped one starts with a warning. A search word also matches other forms of it (`rounding` finds `rounds`, `failure` finds `FAIL`).
 
-The same search as a slash command, with results shown in the chat and passed to the agent:
+The same search as a slash command (`/pi-vcc-recall` on Pi), with results shown in the chat and passed to the agent:
 
 ```
 /omp-vcc-recall auth token scope:all
@@ -175,21 +179,24 @@ The same search as a slash command, with results shown in the chat and passed to
 
 How much a compaction keeps follows the model's window instead of fixed numbers:
 
-- **The window** is what omp uses (`contextWindow`, from the provider when omp's `discovery` is configured, else its catalog, `models.yml` or a 128K default), or a limit an overflow error stated ("maximum context length is 32768 tokens") when that is smaller. omp-vcc makes no network call of its own. Learned limits are kept in `omp-vcc-models.json` next to the config, so the next session starts with them.
-- **The trigger** is where omp compacts, from omp itself: every compaction carries omp's compaction policy for the model (`compaction.thresholdPercent`, `thresholdTokens`, `reserveTokens` and the model's `compaction.modelThresholds` entry), and omp-vcc applies it to the window exactly as omp does (by default the window less a reserve of 15% or 16,384 tokens). When the real window is below omp's, the same policy applies to the real one. With `compaction.enabled` off, omp-vcc does not compact on its own either.
-- **The budgets** are shares of the trigger, clamped like the `vcc_recall` cap: the kept tail (25k on a typical window), the smart keep-tail trigger and the summary size, so that what a compaction keeps lands inside omp's recovery band (80% of the trigger). On a ~128K window they are the numbers they always were; a small window keeps less, a ~1M one allows a larger summary. Each compaction records what it sized from in its details (`limits`).
+- **The window** is the host's (`contextWindow`: on omp from the provider when omp's `discovery` is configured, else its catalog, `models.yml` or a 128K default; on Pi from its catalog or `models.json`, 128K by default), or a limit an overflow error stated ("maximum context length is 32768 tokens") when that is smaller. omp-vcc makes no network call of its own. Learned limits are kept in `omp-vcc-models.json` next to the config, so the next session starts with them.
+- **The trigger** is where the host compacts, from the host itself: every compaction carries its compaction settings for the model, and omp-vcc applies them to the window exactly as the host does.
+  - omp: `compaction.thresholdPercent`, `thresholdTokens`, `reserveTokens` and the model's `compaction.modelThresholds` entry; by default the window less a reserve of 15% or 16,384 tokens.
+  - Pi: the window less `compaction.reserveTokens` (16,384 by default).
+  - When the real window is below the host's, the same settings apply to the real one. With the host's automatic compaction off (`compaction.enabled`), omp-vcc does not compact on its own either.
+- **The budgets** are shares of the trigger, clamped like the `vcc_recall` cap: the kept tail (25k on a typical window), the smart keep-tail trigger and the summary size, so that what a compaction keeps lands well below the trigger (inside omp's recovery band, 80% of it). On a ~128K window they are the numbers they always were; a small window keeps less, a ~1M one allows a larger summary. Each compaction records what it sized from in its details (`limits`).
 - **The summary's sections** scale with it: the user messages, files per category, commits, `[History Index]` lines and brief lines listed under [Compacted message structure](#compacted-message-structure) are those of a ~128K or 200K window. Below that they shrink with the square root of the trigger (a 32K window keeps about 40% of each, never less than a quarter); past a 500K trigger they grow as the brief's ceiling does (1.7× on a 1M window). `[Early Session Requests]` and pinned notes do not scale. `[Working Set]` takes up to 3,800 tokens of the kept tail's room; on a smaller window, 14% of the trigger, out of what the compaction may land with above the kept tail's 1,000-token floor (2,090 on a 40K window with omp's system prompt and tools, none on a 32K one); past a 500K trigger it grows with the sections (6,460 on a 1M window). On a 120-turn test session, a 32K window's summary is half the size with the same pointers and recall, and a 1M window's holds more of the planted facts.
 - **`vcc_recall`** follows it too: one result's cap (above), and what `expand` shows of a call's arguments and of its paired result, 4,000 chars under the 50 KB cap and the same share of a smaller one.
-- **When omp's window is too high** (an overflow says less), omp's trigger can never fire before the request overflows, so omp-vcc compacts at the end of a run that is past the trigger of the real window, and says so once. Setting `contextWindow` in omp's `models.yml` makes omp do the same.
+- **When the host's window is too high** (an overflow says less), its trigger can never fire before the request overflows, so omp-vcc compacts at the end of a run that is past the trigger of the real window, and says so once. Setting `contextWindow` in omp's `models.yml` or Pi's `models.json` makes the host do the same.
 
 ## How it works
 
 1. Pick the cut: everything before the kept tail is summarized, the tail stays as is.
-2. Convert each message with omp's own `convertToLlm`, normalize it into uniform blocks and drop noise.
+2. Read the branch as the host's context holds it (Pi's context edits applied), convert each message with the host's own `convertToLlm`, normalize it into uniform blocks and drop noise.
 3. Extract the sections and the brief transcript, pick the working set from the originals, and format them.
 4. If there is a previous summary, merge into it; the history index is carried in the compaction's details.
 
-No step calls a model, and token counts are estimated from the session's own numbers. The extension imports no package at runtime: it gets omp's functions from the extension API.
+No step calls a model, and token counts are estimated from the session's own numbers. The shared code imports no package at runtime: on omp the functions come from omp's extension API, and on Pi from Pi's own package, which Pi's loader hands to its extensions.
 
 ## Config
 
@@ -208,20 +215,20 @@ Config lives at `omp-vcc-config.json` in the host's agent directory (omp: `~/.om
 }
 ```
 
-- **`overrideDefaultCompaction`** *(default `true`)*: omp-vcc handles `/omp-vcc` (`/pi-vcc` on Pi), `/compact` and automatic compactions. With `false` it only handles `/omp-vcc`. Existing config files keep their value.
-- **`smartKeepTail`** *(default `true`)*: if the `keep:1` tail is under 5k tokens, keep as many turns as fit in 25k (both smaller on a small window, see [The model's context window](#the-models-context-window)). This is omp-vcc's own limit; omp's `compaction.keepRecentTokens` does not change it. An explicit `keep:N` is always respected.
+- **`overrideDefaultCompaction`** *(default `true`)*: omp-vcc handles `/omp-vcc` (`/pi-vcc` on Pi), `/compact` and automatic compactions. With `false` it only handles its own command. Existing config files keep their value.
+- **`smartKeepTail`** *(default `true`)*: if the `keep:1` tail is under 5k tokens, keep as many turns as fit in 25k (both smaller on a small window, see [The model's context window](#the-models-context-window)). This is omp-vcc's own limit; the host's `compaction.keepRecentTokens` does not change it. An explicit `keep:N` is always respected.
 - **`debug`** *(default `false`)*: write details of each compaction (message counts, cut, sections, token calibration) to `/tmp/omp-vcc-debug.json`.
-- **`skipForProviders`** *(default `[]`)*: providers for which omp-vcc steps aside, so the host's own method (or another compaction extension) handles them. Compared case-insensitively with the host's provider id (see `/model`). Checked on every compaction; `/omp-vcc` always runs.
+- **`skipForProviders`** *(default `[]`)*: providers for which omp-vcc steps aside, so the host's own method (or another compaction extension) handles them. Compared case-insensitively with the host's provider id (see `/model`). Checked on every compaction; omp-vcc's own command always runs.
 - **`skipCustomTypes`** *(default `[]`)*: `customType` values of `custom_message` entries to leave out of the summary, for per-turn boilerplate other extensions inject (skill cards, guidance blocks). Exact, case-sensitive match; look for `"type":"custom_message"` in your session file to find the value. Only the summary input changes, not the cut.
-- **`keepOriginals`** *(default `true`)*: keep the original of every message omp may rewrite in place (tool output, long text blocks) in `<session>.jsonl.vcc-raw`, so `vcc_recall` reads what was there after omp blanks or shakes it (see [Usage](#usage)). Text over 1M chars per message is clipped; images are kept without their data. `false`: recall shows omp's placeholders.
+- **`keepOriginals`** *(default `true`, omp only)*: keep the original of every message omp may rewrite in place (tool output, long text blocks) in `<session>.jsonl.vcc-raw`, so `vcc_recall` reads what was there after omp blanks or shakes it (see [On omp](#on-omp)). Text over 1M chars per message is clipped; images are kept without their data. `false`: recall shows omp's placeholders. Pi never rewrites the session file, so there is nothing to keep.
 - **`workingSet`** *(default `true`)*: bring back what the next step works from with each compaction, as `[Working Set]` (see [Compacted message structure](#compacted-message-structure)). `false`: the summary says what happened, the agent fetches what it needs with `vcc_recall`, and the kept tail gets the working set's room.
 - **`trackCommands`** *(default `[]`)*: commands to remember across compactions, listed in a `[Tracked Commands]` section. Any command or prefix works: `["ssh", "kubectl", "docker"]`, `["psql", "./deploy.sh"]`, or `"gh pr"` (matches `gh pr merge`, not `gh run`). Each entry is the command as written, up to the next shell separator outside quotes, with any `sudo`/`env`/`VAR=` prefix kept; the 10 most recent per command are kept. Only `bash` calls are read, and only `ssh` remote commands are looked into, not `sh -c` or `docker exec`. Empty = off.
 
 ## Coming from pi-vcc
 
-- Commands are renamed: `/pi-vcc` → `/omp-vcc`, `/pi-vcc-recall` → `/omp-vcc-recall`, `/pi-vcc-pin` / `/pi-vcc-unpin` → `/omp-vcc-pin` / `/omp-vcc-unpin`. The tools keep their names (`vcc_recall`, `vcc_pin`).
+- On Pi, the commands keep their names (`/pi-vcc`, `/pi-vcc-recall`, `/pi-vcc-pin`, `/pi-vcc-unpin`); on omp they are `/omp-vcc`, `/omp-vcc-recall`, `/omp-vcc-pin`, `/omp-vcc-unpin`. The tools keep their names (`vcc_recall`, `vcc_pin`).
 - Summaries pi-vcc stored in a session (`compactor: "pi-vcc"`) are still read as this extension's: their history index carries on and their toasts and follow-ups still fire.
-- The config moves to `omp-vcc-config.json` (copied from `pi-vcc-config.json` on first load), and `continueAfterThresholdCompact` is gone: omp always resumes on its own.
+- The config moves to `omp-vcc-config.json` (copied from `pi-vcc-config.json` on first load), and `continueAfterThresholdCompact` is gone: both hosts resume the run on their own.
 
 ## Benchmarks
 
@@ -229,7 +236,7 @@ Benchmarks comparing the ranked brief with the pi-vcc 0.3.18 baseline (recall, f
 
 ### On a real model
 
-DeepSeek V4.1 Flash working in omp (and, for Cybench, GLM 5.3 Flash too), with omp told a smaller window than the model's so it compacts during the session.
+DeepSeek V4.1 Flash working in omp (and, for Cybench, GLM 5.3 Flash too), with omp told a smaller window than the model's so it compacts during the session. These runs are omp's; both benchmark scripts run the same sessions in Pi with `--host=pi` (Pi's own compaction is mode `own` there, as omp's is here), and no Pi runs are reported yet.
 
 ![Cybench, three compactors: answers right, asked again and right, and tool calls to answer again](./benchmarks/images/cybench-runs.png)
 
