@@ -9,9 +9,11 @@
         "typescript": "7.0.2",
       },
       "peerDependencies": {
+        "@earendil-works/pi-coding-agent": ">=1.0.0",
         "@oh-my-pi/pi-coding-agent": ">=18.14.0",
       },
       "optionalPeers": [
+        "@earendil-works/pi-coding-agent",
         "@oh-my-pi/pi-coding-agent",
       ],
     },

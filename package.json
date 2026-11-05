@@ -1,11 +1,12 @@
 {
   "name": "@drvova/omp-vcc",
   "version": "0.11.2",
-  "description": "Algorithmic conversation compactor for omp (oh-my-pi) - transcript-preserving structured summaries, pinned notes and recall across sessions, no LLM calls",
+  "description": "Algorithmic conversation compactor for omp (oh-my-pi) and Pi - transcript-preserving structured summaries, pinned notes and recall across sessions, no LLM calls",
   "license": "MIT",
   "main": "index.ts",
   "files": [
     "index.ts",
+    "pi.ts",
     "src/",
     "CHANGELOG.md"
   ],
@@ -13,6 +14,9 @@
     "omp-extension",
     "oh-my-pi",
     "omp",
+    "pi-package",
+    "pi-extension",
+    "pi",
     "vcc",
     "compact",
     "compaction",
@@ -24,23 +28,33 @@
   },
   "scripts": {
     "setup:omp": "npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @oh-my-pi/pi-coding-agent@${OMP_VERSION:-latest}",
-    "typecheck": "tsc --ignoreConfig --noEmit --skipLibCheck --module preserve --moduleResolution bundler --target ES2022 --types node index.ts"
+    "setup:pi": "npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-coding-agent@${PI_VERSION:-latest}",
+    "typecheck": "tsc --ignoreConfig --noEmit --skipLibCheck --module preserve --moduleResolution bundler --target ES2022 --types node index.ts pi.ts"
   },
   "devDependencies": {
     "@types/node": "26.6.5",
     "typescript": "7.0.2"
   },
   "peerDependencies": {
-    "@oh-my-pi/pi-coding-agent": ">=18.14.0"
+    "@oh-my-pi/pi-coding-agent": ">=18.14.0",
+    "@earendil-works/pi-coding-agent": ">=1.0.0"
   },
   "peerDependenciesMeta": {
     "@oh-my-pi/pi-coding-agent": {
+      "optional": true
+    },
+    "@earendil-works/pi-coding-agent": {
       "optional": true
     }
   },
   "omp": {
     "extensions": [
       "./index.ts"
+    ]
+  },
+  "pi": {
+    "extensions": [
+      "./pi.ts"
     ]
   }
 }
