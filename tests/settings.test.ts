@@ -9,6 +9,8 @@ const saved = { config: process.env.OMP_VCC_CONFIG_PATH, agentDir: process.env.P
 let dir: string;
 
 beforeEach(() => {
+  // No entry point's agent dir: another test file in this process may have loaded one.
+  setSettingsAgentDir();
   dir = mkdtempSync(join(tmpdir(), "omp-vcc-settings-"));
   delete process.env.OMP_VCC_CONFIG_PATH;
   delete process.env.PI_CODING_AGENT_DIR;
