@@ -219,11 +219,15 @@ Benchmarks comparing the ranked brief with the pi-vcc 0.3.18 baseline (recall, f
 
 ### On a real model
 
-DeepSeek V4.1 Flash working in omp, with omp told a smaller window than the model's so it compacts during the session.
+DeepSeek V4.1 Flash working in omp (and, for Cybench, GLM 5.3 Flash too), with omp told a smaller window than the model's so it compacts during the session.
 
 ![Cybench, three compactors: answers right, asked again and right, and tool calls to answer again](./benchmarks/images/cybench-runs.png)
 
 All 17 of [Cybench](https://arxiv.org/abs/2408.08926)'s file-only capture-the-flag tasks (binaries to reverse, a pcap, emails, crypto) in one session on a 64K window, answering each task's own questions with at most 15 model requests per question (Cybench's own cap), and earlier answers asked again tasks later (`scripts/benchmark-cybench.ts`). Answered right: 53 of 62 with omp-vcc, 55 without `[Working Set]`, 55 with omp's own compaction. Asked again, all three got every one right, but not with the same work: omp's own compaction, which writes its summary with the model, answered 22 of 28 from what its context held, 8 tool calls in all; omp-vcc answered 10 of 27 that way and looked the rest up again, 39 calls. One run each.
+
+![Cybench on GLM 5.3 Flash, three compactors: answers right, asked again and right, and tool calls to answer again](./benchmarks/images/cybench-runs-glm.png)
+
+The same benchmark on GLM 5.3 Flash (`OMP_VCC_LH_MODEL=z-ai/glm-5.3-flash-0828`). Answered right: 51 of 62 with omp-vcc, 50 without `[Working Set]`, 50 with omp's own compaction. Asked again: 26 of 27, 25 of 26 and 25 of 26 right. omp's own compaction answered all of its 25 without a tool call, and compacted 2 times to omp-vcc's 6; omp-vcc looked things up in 20 calls, 33 without `[Working Set]`. One run each, throttled by the provider for most of the day.
 
 ![Working set on and off: runs finished, files read again and requests over 8 runs on a 40K window](./benchmarks/images/working-set-40k.png)
 
