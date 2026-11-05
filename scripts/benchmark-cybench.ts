@@ -5,6 +5,8 @@
  *
  *   OMP_VCC_LH_API_KEY=… bun run scripts/benchmark-cybench.ts [tasks] [contextWindow] [vcc|vcc-no-ws|omp] [--detach] [--max-requests=15]
  *
+ * The model is DeepSeek V4.1 Flash unless OMP_VCC_LH_MODEL (in the env or research/long-horizon.env) names another.
+ *
  * tasks: how many of the 17 (default all); contextWindow: what omp is told
  * (default 128000); the compactor: omp-vcc (default), omp-vcc without
  * [Working Set], or omp's own compaction. Expect two to three hours for all
@@ -20,6 +22,7 @@ import { spawn } from "child_process";
 import { openSync } from "fs";
 import { resolve } from "path";
 import { CYBENCH_TASKS, runCybench } from "../tests/support/cybench";
+import { LONG_HORIZON_MODEL, realModel } from "../tests/support/omp-session";
 
 const args = process.argv.slice(2).filter((a) => a !== "--detach" && !a.startsWith("--max-requests="));
 const capArg = process.argv.find((a) => a.startsWith("--max-requests="));
@@ -27,10 +30,13 @@ const maxRequests = capArg ? Number(capArg.split("=")[1]) : undefined;
 const tasks = args[0] && args[0] !== "all" ? Number(args[0]) : CYBENCH_TASKS.length;
 const contextWindow = Number(args[1] ?? 128_000);
 const mode = args[2] ?? "vcc";
+const model = realModel({ keyFile: true })?.model ?? LONG_HORIZON_MODEL.model;
+// Another model's logs go to files of their own, so they never append to the default model's.
+const modelTag = model === LONG_HORIZON_MODEL.model ? "" : `${model.split("/").pop()!.replace(/[^\w.-]+/g, "_")}-`;
 
 // --detach: run in a process of its own, logging to research/, and return at once (a run takes hours).
 if (process.argv.includes("--detach")) {
-  const log = resolve(import.meta.dir, `../research/cybench-${mode}-${Math.round(contextWindow / 1000)}k-${tasks}.txt`);
+  const log = resolve(import.meta.dir, `../research/cybench-${modelTag}${mode}-${Math.round(contextWindow / 1000)}k-${tasks}.txt`);
   const fd = openSync(log, "a");
   const child = spawn(process.execPath, ["run", import.meta.path, ...args, ...(capArg ? [capArg] : [])], { detached: true, stdio: ["ignore", fd, fd], cwd: resolve(import.meta.dir, "..") });
   child.unref();
@@ -56,7 +62,7 @@ for (const a of r.recall) {
   if (a.correct) t.again++;
   t.calls += a.toolCalls;
 }
-console.log(`\n${tasks} tasks, ${Math.round(contextWindow / 1000)}K window, ${mode}: ${r.compactions} compactions (${r.byOmpVcc} by omp-vcc), ${r.requests} requests, ${Math.round(r.promptTokens / 1000)}K prompt tokens, ${minutes} min`);
+console.log(`\n${tasks} tasks, ${Math.round(contextWindow / 1000)}K window, ${model}, ${mode}: ${r.compactions} compactions (${r.byOmpVcc} by omp-vcc), ${r.requests} requests, ${Math.round(r.promptTokens / 1000)}K prompt tokens, ${minutes} min`);
 console.log("task                                  answered  again  calls to answer again");
 for (const [name, t] of byTask) console.log(`${name.slice(0, 36).padEnd(37)} ${`${t.right}/${t.total}`.padStart(8)}  ${t.asked ? `${t.again}/${t.asked}`.padStart(5) : "    -"}  ${t.asked ? t.calls : "-"}`);
 const right = r.answers.filter((a) => a.correct).length;

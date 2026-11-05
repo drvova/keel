@@ -186,11 +186,13 @@ export const runCybench = async (options: CybenchOptions = {}): Promise<CybenchR
     const { session, sessionManager } = omp;
     const maxRequests = options.maxRequests ?? 15;
     const ask = async (task: Task, text: string, subtask: Subtask, distance?: number): Promise<AnswerScore> => {
-      // Cybench's iteration cap: stop the turn after maxRequests model responses.
+      // Cybench's iteration cap: stop the turn after maxRequests model responses. A request the
+      // provider failed (a timeout, a 429 omp gave up on) is not a response, so it does not count.
       let requests = 0;
       let stopped = false;
       const off = session.subscribe((ev: any) => {
         if (ev?.type !== "message_end" || ev.message?.role !== "assistant" || stopped) return;
+        if (ev.message.stopReason === "error" || ev.message.stopReason === "aborted") return;
         if (++requests >= maxRequests) {
           stopped = true;
           // Outside omp's own event dispatch: an abort from inside it never lets prompt() return.
