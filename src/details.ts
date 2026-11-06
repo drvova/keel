@@ -1,12 +1,11 @@
 import type { CompactionReason } from "./types";
 import type { HistoryRange } from "./core/history-index";
+import { COMPACTOR, LEGACY_COMPACTOR } from "./names";
 
 /** Compactions stored before the rename say "pi-vcc"; both are read as this extension's. */
-export type VccCompactor = "omp-vcc" | "pi-vcc";
+export type VccCompactor = typeof COMPACTOR | typeof LEGACY_COMPACTOR;
 
-export const VCC_COMPACTOR = "omp-vcc" as const;
-
-export const isVccCompactor = (value: unknown): value is VccCompactor => value === "omp-vcc" || value === "pi-vcc";
+export const isVccCompactor = (value: unknown): value is VccCompactor => value === COMPACTOR || value === LEGACY_COMPACTOR;
 
 export interface VccCompactionDetails {
   compactor: VccCompactor;

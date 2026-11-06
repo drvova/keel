@@ -1,7 +1,7 @@
 // /omp-vcc-pin and /omp-vcc-unpin (/pi-vcc-pin and /pi-vcc-unpin on Pi).
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { OMP_HOST, type HostProfile } from "../host";
-import { PIN_NOTICE_TYPE } from "../core/pins";
+import { PIN_NOTICE_TYPE } from "../names";
 import { addPin, listPins, removePin } from "../tools/pin";
 import { tell } from "./compact-feedback";
 

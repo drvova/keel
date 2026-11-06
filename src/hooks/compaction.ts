@@ -6,7 +6,7 @@ import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { writeFileSync } from "fs";
 import { compileRanked } from "../core/summarize";
 import { mergeHistoryIndex, rangeOfWindow, readHistoryIndex, unindexedRange } from "../core/history-index";
-import { PIN_NOTICE_TYPE, readPins } from "../core/pins";
+import { readPins } from "../core/pins";
 import { normalize } from "../core/normalize";
 import { buildGlobalIndexById, loadGlobalIndexById } from "../core/global-indices";
 import { parseKeepAndPrompt, OMP_VCC_COMPACT_INSTRUCTION } from "../core/compact-args";
@@ -18,7 +18,8 @@ import { modelKey } from "../core/model-limits";
 import { triggerFor, windowOf } from "./window-limits";
 import { restoreOriginals } from "../core/raw-store";
 import { formatWorkingSet, selectWorkingSet, type WorkingSetItem } from "../core/working-set";
-import { VCC_COMPACTOR, vccDetailsOf, type VccCompactionDetails } from "../details";
+import { vccDetailsOf, type VccCompactionDetails } from "../details";
+import { COMPACTOR, UNSUMMARIZED_MESSAGE_TYPES } from "../names";
 import type { CompactionReason } from "../types";
 
 export { OMP_VCC_COMPACT_INSTRUCTION } from "../core/compact-args";
@@ -238,7 +239,7 @@ const toLlmSafe = (message: unknown, host: CompactionHost): any[] => {
 export const toSummaryMessage = (message: any, host: CompactionHost): any | null => {
   const role = message?.role;
   if (role === "developer" || role === "fileMention") return null;
-  if (role === "custom" && message.customType === PIN_NOTICE_TYPE) return null;
+  if (role === "custom" && UNSUMMARIZED_MESSAGE_TYPES.has(message.customType)) return null;
   const converted = toLlmSafe(message, host);
   if (converted.length === 0) return null;
   if (role === "bashExecution" || role === "pythonExecution") return message;
@@ -1155,7 +1156,7 @@ export const registerCompactionHook = (
     });
 
     const details: VccCompactionDetails = {
-      compactor: VCC_COMPACTOR,
+      compactor: COMPACTOR,
       // version 2 = refs are session-global (recall index space); version 1
       // summaries carried window-relative refs (issue #28).
       version: 2,

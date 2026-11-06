@@ -23,6 +23,7 @@ import { extractFiles } from "../extract/files";
 import { extractCommits } from "../extract/commits";
 import { extractUserMessages } from "../extract/user-messages";
 import { DEFAULT_SUMMARY_LIMITS } from "./window";
+import { RECALL_TOOL } from "../names";
 
 export interface HistoryRange {
   /** First and last session-wide `#N` the range covers. */
@@ -150,7 +151,7 @@ const formatFiles = (files: string[]): string => {
 
 export const formatHistoryRange = (r: HistoryRange): string => {
   const parts: string[] = [];
-  if (r.requests == null) parts.push("earlier, not indexed; search it with vcc_recall");
+  if (r.requests == null) parts.push(`earlier, not indexed; search it with ${RECALL_TOOL}`);
   else if (r.requests > 0) parts.push(`${plural(r.requests, "request")}: ${r.asks.slice(0, ASKS_SHOWN).map((a) => `"${a}"`).join(", ")}`);
   if (r.files.length > 0) parts.push(formatFiles(r.files));
   if (r.commitCount > 0) {

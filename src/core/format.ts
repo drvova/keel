@@ -1,5 +1,6 @@
 import type { SectionData } from "../sections";
 import { DEFAULT_SUMMARY_LIMITS } from "./window";
+import { RECALL_TOOL } from "../names";
 
 const section = (title: string, items: string[]): string => {
   if (items.length === 0) return "";
@@ -67,7 +68,7 @@ export const capBrief = (text: string, maxLines = BRIEF_MAX_LINES): string => {
 };
 
 export const RECALL_NOTE =
-  "Use `vcc_recall` to search for prior work, decisions, and context from before this summary. " +
+  `Use \`${RECALL_TOOL}\` to search for prior work, decisions, and context from before this summary. ` +
   "Do not redo work already completed.";
 
 export interface FormatSummaryOptions {

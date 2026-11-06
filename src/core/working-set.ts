@@ -32,6 +32,7 @@ import { isContentBearing, textOf } from "./content";
 import { renderMessage, type RenderedEntry } from "./render-entries";
 import { searchEntriesDetailed } from "./search-entries";
 import { extractPaths, isUrlPath, stripReadSelector } from "./tool-args";
+import { RECALL_TOOL } from "../names";
 
 export interface WorkingSetInput {
   /**
@@ -325,7 +326,7 @@ export const formatWorkingSet = (items: readonly WorkingSetItem[], maxChars: num
     const { lines: body, omitted } = excerpt(item.text, room, item.fromEnd);
     if (body.length === 0 || (item.whole && omitted > 0)) continue;
     // Where the rest is: after the excerpt, or before it when the excerpt is the end.
-    const more = omitted > 0 ? `    …[${omitted} ${item.fromEnd ? "earlier" : "more"} lines: vcc_recall expand:[${item.index}]]` : "";
+    const more = omitted > 0 ? `    …[${omitted} ${item.fromEnd ? "earlier" : "more"} lines: ${RECALL_TOOL} expand:[${item.index}]]` : "";
     const quoted = body.map((l) => `    ${l}`);
     const block = [head, ...(more && item.fromEnd ? [more] : []), ...quoted, ...(more && !item.fromEnd ? [more] : [])];
     lines.push(...block);

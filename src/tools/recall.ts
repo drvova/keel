@@ -21,8 +21,8 @@ import {
 } from "../core/recall-run";
 import { resolveSession } from "../core/sessions";
 import type { LineageSessionManagerLike } from "../core/lineage";
+import { RECALL_TOOL } from "../names";
 
-export const RECALL_TOOL_NAME = "vcc_recall";
 export const RECALL_TOOL_LABEL = "VCC Recall";
 
 export const RECALL_TOOL_DESCRIPTION = [
@@ -147,7 +147,7 @@ export const RECALL_PARAMETERS = {
 
 export const registerRecallTool = (pi: ExtensionAPI) => {
   pi.registerTool({
-    name: RECALL_TOOL_NAME,
+    name: RECALL_TOOL,
     label: RECALL_TOOL_LABEL,
     description: RECALL_TOOL_DESCRIPTION,
     parameters: RECALL_PARAMETERS,

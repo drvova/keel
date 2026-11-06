@@ -15,6 +15,7 @@ import { sessionDirOf } from "../tools/recall";
 import { tell } from "./compact-feedback";
 import { windowOf } from "../hooks/window-limits";
 import { OMP_HOST, type HostProfile } from "../host";
+import { RECALL_COMMAND_MESSAGE_TYPE } from "../names";
 
 const scopeArg = (scope: string) => (scope === "all" ? " scope:all" : scope === "project" ? " scope:project" : "");
 
@@ -60,7 +61,7 @@ export const registerVccRecallCommand = (pi: ExtensionAPI, host: HostProfile = O
       } else {
         content = runRecall(request, openRecallView(sessionFile, request.scope, ctx.sessionManager, { project, detailChars }), commandHints(name), { maxChars });
       }
-      pi.sendMessage({ customType: "vcc-recall", content, display: true }, { triggerTurn: true });
+      pi.sendMessage({ customType: RECALL_COMMAND_MESSAGE_TYPE, content, display: true }, { triggerTurn: true });
     },
   });
 };

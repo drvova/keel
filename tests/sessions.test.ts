@@ -5,7 +5,7 @@ import { join } from "path";
 import { listProjectSessions, resolveSession, type SessionInfo } from "../src/core/sessions";
 import { executeRecall } from "../src/tools/recall";
 import { parseCommandRequest } from "../src/core/recall-request";
-import { PIN_ENTRY_TYPE } from "../src/core/pins";
+import { PIN_ENTRY_TYPE } from "../src/names";
 
 const header = (id: string, ts: string) => ({ type: "session", version: 3, id, timestamp: ts, cwd: "/work/app" });
 let n = 0;

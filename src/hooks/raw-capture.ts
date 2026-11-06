@@ -13,6 +13,7 @@ import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { appendRawStore, keptContent, mayBeRewritten, rawStoreIds, sessionLineage, type RawRecord } from "../core/raw-store";
 import { buildGlobalIndexById } from "../core/global-indices";
 import { loadSettings } from "../core/settings";
+import { RECALL_TOOL } from "../names";
 
 interface SessionManagerLike {
   getSessionFile?: () => string | undefined;
@@ -94,7 +95,7 @@ export const pointPlaceholders = (messages: unknown[], state: RawCaptureState, s
     if (!id || n === undefined || !state.kept.has(id)) continue;
     out ??= [...messages];
     const m = messages[i] as Record<string, unknown>;
-    out[i] = { ...m, content: [{ type: "text", text: `${text} (the original: vcc_recall expand:[${n}])` }] };
+    out[i] = { ...m, content: [{ type: "text", text: `${text} (the original: ${RECALL_TOOL} expand:[${n}])` }] };
   }
   return out;
 };

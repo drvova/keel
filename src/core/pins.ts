@@ -14,10 +14,8 @@
 // reset_boundary) hides earlier pins, as it does omp's own context notes.
 import { clip } from "./content";
 import { isCountedMessageEntry } from "./global-indices";
+import { PIN_ENTRY_TYPE, PIN_TOOL } from "../names";
 
-export const PIN_ENTRY_TYPE = "omp-vcc.pin";
-/** customType of the notice /omp-vcc-pin sends the agent; [Pinned Notes] already says it, so summaries leave it out. */
-export const PIN_NOTICE_TYPE = "omp-vcc-pin";
 /** One note is clipped to this many characters. */
 export const PIN_CHARS = 300;
 /** Notes shown in a summary; past this the newest are shown and the count says so. */
@@ -93,7 +91,7 @@ export const formatPinLines = (notes: readonly PinnedNote[]): string[] => {
   const shown = notes.slice(-PINS_SHOWN);
   const hidden = notes.length - shown.length;
   return [
-    ...(hidden > 0 ? [`(+${hidden} older pinned notes; vcc_pin lists them all)`] : []),
+    ...(hidden > 0 ? [`(+${hidden} older pinned notes; ${PIN_TOOL} lists them all)`] : []),
     ...shown.map(formatPin),
   ];
 };

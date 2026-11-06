@@ -12,7 +12,8 @@ import { readdirSync, realpathSync, statSync } from "fs";
 import { join } from "path";
 import { forEachJsonlLine } from "./jsonl";
 import { clip, textOf } from "./content";
-import { PIN_ENTRY_TYPE, formatPin, readPins } from "./pins";
+import { formatPin, readPins } from "./pins";
+import { PIN_ENTRY_TYPE } from "../names";
 
 export interface SessionInfo {
   file: string;

@@ -8,14 +8,13 @@ import {
   lastMessageIndex,
   nextPinId,
   PIN_CHARS,
-  PIN_ENTRY_TYPE,
   pinText,
   readPins,
   type PinAuthor,
   type PinOp,
 } from "../core/pins";
+import { PIN_ENTRY_TYPE, PIN_TOOL } from "../names";
 
-export const PIN_TOOL_NAME = "vcc_pin";
 export const PIN_TOOL_LABEL = "VCC Pin";
 
 export const PIN_TOOL_DESCRIPTION = [
@@ -103,7 +102,7 @@ export const PIN_PARAMETERS = {
 
 export const registerPinTool = (pi: ExtensionAPI) => {
   pi.registerTool({
-    name: PIN_TOOL_NAME,
+    name: PIN_TOOL,
     label: PIN_TOOL_LABEL,
     description: PIN_TOOL_DESCRIPTION,
     parameters: PIN_PARAMETERS,

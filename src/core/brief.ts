@@ -2,6 +2,7 @@ import type { NormalizedBlock } from "../types";
 import { clip } from "./content";
 import { extractPaths } from "./tool-args";
 import { collapseSkillText } from "./skill-collapse";
+import { PIN_TOOL, RECALL_TOOL } from "../names";
 
 const TRUNCATE_USER = 256;
 const SEGMENT_CLOSING_ASSISTANT_HEAD_WORDS = 120;
@@ -234,7 +235,7 @@ const recallArg = (value: unknown): string =>
  * history the agent already went back to.
  */
 const vccToolLine = (name: string, args: Record<string, unknown>): string | undefined => {
-  if (name === "vcc_recall") {
+  if (name === RECALL_TOOL) {
     const parts: string[] = [];
     if (typeof args.query === "string" && args.query.trim()) parts.push(`"${clip(args.query, 60)}"`);
     for (const key of ["range", "expand", "mode", "scope", "session"]) {
@@ -244,7 +245,7 @@ const vccToolLine = (name: string, args: Record<string, unknown>): string | unde
     }
     return parts.length > 0 ? `* ${name} ${parts.join(" ")}` : `* ${name}`;
   }
-  if (name === "vcc_pin") {
+  if (name === PIN_TOOL) {
     if (typeof args.note === "string" && args.note.trim()) return `* ${name} "${clip(args.note, 60)}"`;
     if (args.unpin != null && args.unpin !== "") return `* ${name} unpin:${recallArg(args.unpin)}`;
     return `* ${name}`;
