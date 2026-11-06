@@ -78,7 +78,7 @@ const normalizeOne = (
 
 /**
  * Normalize messages to blocks. `sourceIndices`, when provided, supplies the
- * session-global `#N` index per input position (see src/core/global-indices.ts).
+ * session-global `#N` index per input position (see src/core/session-file.ts).
  * A missing entry yields `sourceIndex: undefined`, which downstream renderers
  * display as no ref — never a window-relative number. Omitted entirely, the
  * legacy positional behavior is preserved (used by callers/tests that have no

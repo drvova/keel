@@ -8,7 +8,7 @@ import { compileRanked } from "../core/summarize";
 import { mergeHistoryIndex, rangeOfWindow, readHistoryIndex, unindexedRange } from "../core/history-index";
 import { readPins } from "../core/pins";
 import { normalize } from "../core/normalize";
-import { buildGlobalIndexById, loadGlobalIndexById } from "../core/global-indices";
+import { indexById, lastResetIndex, readEntries } from "../core/session-file";
 import { parseKeepAndPrompt, OMP_VCC_COMPACT_INSTRUCTION } from "../core/compact-args";
 import { loadSettings, type VccSettings } from "../core/settings";
 import { calibrateCharsPerToken, DEFAULT_CHARS_PER_TOKEN, estimateMessageChars, estimateMessageTokens, estimateTokensFromChars } from "../core/token-estimate";
@@ -343,7 +343,7 @@ const lastIndexOfType = (entries: any[], type: string): number => {
  *   previous summary in the first case.
  */
 const liveWindowStart = (branchEntries: any[]): number => {
-  const resetIdx = lastIndexOfType(branchEntries, "reset_boundary");
+  const resetIdx = lastResetIndex(branchEntries);
   const compactionIdx = lastIndexOfType(branchEntries, "compaction");
   if (resetIdx > compactionIdx) return resetIdx + 1;
   if (compactionIdx < 0) return 0;
@@ -946,18 +946,13 @@ export const registerCompactionHook = (
     // persisted); the session file is the streaming fallback.
     let globalIndexById: Map<string, number> | undefined;
     try {
-      const all = (ctx as any)?.sessionManager?.getEntries?.();
-      if (Array.isArray(all)) globalIndexById = buildGlobalIndexById(all);
+      const sm = (ctx as any)?.sessionManager;
+      const all = sm?.getEntries?.();
+      const sf = sm?.getSessionFile?.();
+      const entries = Array.isArray(all) ? all : typeof sf === "string" && sf ? readEntries(sf) : undefined;
+      if (entries) globalIndexById = indexById(entries);
     } catch {
       globalIndexById = undefined;
-    }
-    if (!globalIndexById) {
-      try {
-        const sf = (ctx as any)?.sessionManager?.getSessionFile?.();
-        if (typeof sf === "string" && sf) globalIndexById = loadGlobalIndexById(sf);
-      } catch {
-        globalIndexById = undefined;
-      }
     }
 
     // convertToLlm is elementwise (drops/replaces per message, order
@@ -1024,7 +1019,7 @@ export const registerCompactionHook = (
     // compaction stored. Only a compaction still in context counts: after omp's
     // /clear (a later reset_boundary) the index starts over, as the summary does.
     const lastCompactionIdx = lastIndexOfType(branchEntries as any[], "compaction");
-    const previousCompaction = lastCompactionIdx > lastIndexOfType(branchEntries as any[], "reset_boundary")
+    const previousCompaction = lastCompactionIdx > lastResetIndex(branchEntries as any[])
       ? (branchEntries as any[])[lastCompactionIdx]
       : undefined;
     const windowRange = rangeOfWindow(messages, sourceIndices);
@@ -1050,7 +1045,7 @@ export const registerCompactionHook = (
       // Everything out of context once this lands, since /clear: what this
       // compaction summarizes and what earlier ones did, from the originals.
       const past = all
-        .slice(lastIndexOfType(all, "reset_boundary") + 1, keptAt >= 0 ? keptAt : all.length)
+        .slice(lastResetIndex(all) + 1, keptAt >= 0 ? keptAt : all.length)
         .filter((e: any) => e?.type !== "compaction")
         .map((e: any) => ({ id: e.id as string, m: toLiveMessage(e) }))
         .filter((x: any) => x.m);

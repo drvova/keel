@@ -1,11 +1,11 @@
 // vcc_pin and /omp-vcc-pin: the text the agent reads, vcc_pin's JSON Schema, and
 // what a call does. unpin also takes "#3"; omp has no prepareArguments, so
 // executePin reads either form.
+import { lastIndex } from "../core/session-file";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import {
   formatPin,
   formatPinList,
-  lastMessageIndex,
   nextPinId,
   PIN_CHARS,
   pinText,
@@ -63,7 +63,7 @@ export const addPin = (host: PinHost, session: PinSession, raw: string, by: PinA
   if (existing) return `Already pinned: ${formatPin(existing)}.`;
   let entries: any[] = branch;
   try { entries = session.getEntries?.() ?? branch; } catch {}
-  const op: PinOp = { v: 1, op: "add", id: nextPinId(branch), text, by, ...withAt(lastMessageIndex(entries)) };
+  const op: PinOp = { v: 1, op: "add", id: nextPinId(branch), text, by, ...withAt(lastIndex(entries)) };
   host.appendEntry(PIN_ENTRY_TYPE, op);
   const note = { id: op.id, text, by, ...withAt(op.at) };
   return `Pinned ${formatPin(note)}${clipped ? ` (clipped to ${PIN_CHARS} chars)` : ""}.`;

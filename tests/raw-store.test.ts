@@ -1,5 +1,6 @@
 // vcc_recall keeps the originals of what omp rewrites in the session file
 // (src/core/raw-store.ts, src/hooks/raw-capture.ts), with no omp setting changed.
+import { sessionLineage } from "../src/core/session-file";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
@@ -11,7 +12,6 @@ import {
   mayBeRewritten,
   rawStorePath,
   readRawStore,
-  sessionLineage,
   wasRewritten,
   withOriginalContent,
 } from "../src/core/raw-store";

@@ -17,7 +17,7 @@ export interface CompileInput {
   fileOps?: FileOps;
   /**
    * Session-global `#N` index per message position (see
-   * src/core/global-indices.ts). Parallel to `messages`; a missing entry
+   * src/core/session-file.ts). Parallel to `messages`; a missing entry
    * renders as no ref (fail-closed). Omitted entirely → legacy positional.
    */
   sourceIndices?: Array<number | undefined>;

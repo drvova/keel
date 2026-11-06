@@ -15,7 +15,6 @@
  *   requires the entire query to be the drill-down pattern.
  */
 import { fileWriteOf, toolCallsOf, type FileWrite } from "./tools";
-import { loadAllMessages } from "./load-messages";
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -196,7 +195,7 @@ export function parseDrillDown(query: string): {
  *   #42:auth.ts:30      → lines 31-60 (default limit 30)
  *   #42:auth.ts:30:20   → lines 31-50 (custom limit 20)
  *
- * @param sessionFile - Path to the JSONL session file
+ * @param message - The message at #N (undefined when there is none)
  * @param entryIndex - The message index (#N)
  * @param pathPattern - File path substring to match (or "file" keyword)
  * @param full - If true, return complete content without truncation
@@ -205,23 +204,18 @@ export function parseDrillDown(query: string): {
  * @returns Formatted content string
  */
 export function expandEntryFile(
-  sessionFile: string,
+  message: unknown,
   entryIndex: number,
   pathPattern: string,
   full = false,
   offset?: number,
   limit?: number,
 ): string {
-  const { rendered, rawMessages } = loadAllMessages(sessionFile, true);
-  // Look up by `#N` index, not array position: skipped entries (system
-  // messages) keep their index but are absent from the arrays.
-  const pos = rendered.findIndex((r) => r.index === entryIndex);
-
-  if (pos < 0) {
+  if (message === undefined) {
     return `Entry #${entryIndex} not found in session history.`;
   }
 
-  const calls = fileWritesOf(rawMessages[pos]);
+  const calls = fileWritesOf(message);
 
   // Special case: #42:file keyword
   if (pathPattern === "file") {

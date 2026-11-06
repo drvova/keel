@@ -1,12 +1,13 @@
 // What omp-vcc's commands tell the user, and what /omp-vcc says once a
 // compaction it asked for ends.
+import { afterReset, type SessionManagerLike } from "../core/session-file";
 import { formatCompactionStats, scheduleCompactionStatsNotify, type CompactionStats } from "../hooks/compaction";
 
 export interface NotifyCtx {
   /** False in omp's print and json modes, whose extension UI drops notify. */
   hasUI?: boolean;
   ui: { notify: (message: string, type?: "info" | "warning" | "error") => void };
-  sessionManager?: { getBranch?: () => Array<{ type?: string }> };
+  sessionManager?: SessionManagerLike;
 }
 
 /** The branch has a compaction still in effect (none, or one before omp's /clear, does not count). */
@@ -15,11 +16,7 @@ const compactedBefore = (ctx: NotifyCtx): boolean => {
   try {
     branch = ctx.sessionManager?.getBranch?.() ?? [];
   } catch {}
-  for (let i = branch.length - 1; i >= 0; i--) {
-    if (branch[i]?.type === "compaction") return true;
-    if (branch[i]?.type === "reset_boundary") return false;
-  }
-  return false;
+  return afterReset(branch).some((e) => e?.type === "compaction");
 };
 
 /**

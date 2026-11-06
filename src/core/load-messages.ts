@@ -1,76 +1,68 @@
+// The messages recall reads from a session file: every message entry with its
+// `#N` (session-file.ts), readable whatever the file holds, and with what omp
+// rewrote in place put back from the originals omp-vcc kept (raw-store.ts).
 import type { Message } from "@oh-my-pi/pi-ai";
 import { renderMessage, type RenderedEntry } from "./render-entries";
 import { isObject, readableMessage } from "./content";
-import { forEachJsonlLine } from "./jsonl";
-import { isCountedMessageEntry } from "./global-indices";
-import { readRawStore, wasRewritten, withOriginalContent } from "./raw-store";
+import { activeBranchIds, indexedMessages, readEntries } from "./session-file";
+import { restoreOriginals } from "./raw-store";
+
+export interface RecallMessage {
+  index: number;
+  id: string | undefined;
+  message: Message;
+}
+
+/** A session file as recall reads it, once per call. */
+export interface SessionRead {
+  /**
+   * Every message recall can show, with its `#N`. A system message (the host's
+   * prompt and tool loadout) holds a `#N` but is not conversation; an entry
+   * that cannot be read is left out, its `#N` still taken.
+   */
+  messages: RecallMessage[];
+  /** The file's active branch: its last entry back to the root. */
+  branchIds: Set<string>;
+}
+
+export const readSession = (file: string): SessionRead => {
+  const entries = readEntries(file) ?? [];
+  const indexed = indexedMessages(entries).filter((m) => isObject(m.message) && m.message.role !== "system");
+  const restored = restoreOriginals(indexed.map((m) => m.message), indexed.map((m) => m.id), file);
+  const messages: RecallMessage[] = [];
+  indexed.forEach((m, i) => {
+    try { messages.push({ index: m.index, id: m.id, message: readableMessage(restored[i]) }); } catch {}
+  });
+  return { messages, branchIds: activeBranchIds(entries) };
+};
 
 export interface LoadedMessages {
   rendered: RenderedEntry[];
   rawMessages: Message[];
 }
 
-export const loadAllMessages = (
-  sessionFile: string,
+/**
+ * Messages as recall shows them, only those in `allowed` when it is given:
+ * `full` is expand's view, `detailChars` its clip for one call's arguments
+ * (render-entries.ts EXPAND_DETAIL_CHARS).
+ */
+export const renderMessages = (
+  messages: readonly RecallMessage[],
   full: boolean,
-  allowedEntryIds?: Set<string>,
-  /** The full view's clip for one call's arguments (render-entries.ts EXPAND_DETAIL_CHARS). */
+  allowed?: ReadonlySet<string>,
   detailChars?: number,
 ): LoadedMessages => {
   const rendered: RenderedEntry[] = [];
   const rawMessages: Message[] = [];
-  let messageIndex = 0;
-  // Entries omp rewrote in place (core/raw-store.ts): rendered again from the
-  // originals omp-vcc kept, once the file is read.
-  const rewritten: Array<{ pos: number; id: string; message: Record<string, unknown>; index: number }> = [];
-
-  const processLine = (line: Buffer) => {
-    if (line.length === 0) return;
-    let entry: any;
-    try { entry = JSON.parse(line.toString("utf8")); } catch { return; }
-    // Counting rule shared with src/core/global-indices.ts — both index
-    // spaces must agree by construction.
-    if (!isCountedMessageEntry(entry)) return;
-
-    // A `role: "system"` message entry (host prompt/tool loadout) still
-    // occupies a `#N` index (shared counting rule) but is not conversation
-    // content, so recall never renders or searches it.
-    const allowed = (!allowedEntryIds || allowedEntryIds.has(entry.id))
-      && entry.message.role !== "system";
-    if (allowed) {
-      // An entry that still cannot be rendered is left out, not the session:
-      // its #N stays taken, so every other ref still resolves.
-      try {
-        if (!isObject(entry.message)) throw new Error("not a message");
-        const message = readableMessage(entry.message);
-        const view = renderMessage(message, messageIndex, full, detailChars);
-        if (typeof entry.id === "string" && wasRewritten(entry.message)) {
-          rewritten.push({ pos: rendered.length, id: entry.id, message: entry.message, index: messageIndex });
-        }
-        rendered.push(view);
-        rawMessages.push(message);
-      } catch {}
-    }
-    messageIndex++;
-  };
-
-  // Streamed via forEachJsonlLine: large sessions can exceed V8's maximum
-  // string length before parsing even starts. A missing file yields an empty
-  // result — omp does not create a new session's JSONL until its first
-  // persisted entry.
-  forEachJsonlLine(sessionFile, processLine);
-
-  if (rewritten.length > 0) {
-    const kept = readRawStore(sessionFile, new Set(rewritten.map((r) => r.id)));
-    for (const r of rewritten) {
-      if (!kept.has(r.id)) continue;
-      try {
-        const message = readableMessage(withOriginalContent(r.message, kept.get(r.id)));
-        rendered[r.pos] = renderMessage(message, r.index, full, detailChars);
-        rawMessages[r.pos] = message;
-      } catch {}
-    }
+  for (const m of messages) {
+    if (allowed && !(m.id && allowed.has(m.id))) continue;
+    try {
+      rendered.push(renderMessage(m.message, m.index, full, detailChars));
+      rawMessages.push(m.message);
+    } catch {}
   }
-
   return { rendered, rawMessages };
 };
+
+export const loadAllMessages = (file: string, full: boolean, allowed?: ReadonlySet<string>, detailChars?: number): LoadedMessages =>
+  renderMessages(readSession(file).messages, full, allowed, detailChars);

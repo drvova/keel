@@ -13,7 +13,7 @@
 // or retried turn drops the ones made after the edit point. omp's /clear (a
 // reset_boundary) hides earlier pins, as it does omp's own context notes.
 import { clip } from "./content";
-import { isCountedMessageEntry } from "./global-indices";
+import { afterReset } from "./session-file";
 import { PIN_ENTRY_TYPE, PIN_TOOL } from "../names";
 
 /** One note is clipped to this many characters. */
@@ -37,15 +37,10 @@ export type PinOp =
 
 const isPinEntry = (e: any): boolean => e?.type === "custom" && e.customType === PIN_ENTRY_TYPE && e.data && typeof e.data === "object";
 
-const afterLastReset = (branch: readonly any[]): readonly any[] => {
-  for (let i = branch.length - 1; i >= 0; i--) if (branch[i]?.type === "reset_boundary") return branch.slice(i + 1);
-  return branch;
-};
-
 /** The notes pinned on this branch, oldest first. */
 export const readPins = (branch: readonly any[]): PinnedNote[] => {
   const notes = new Map<number, PinnedNote>();
-  for (const e of afterLastReset(branch)) {
+  for (const e of afterReset(branch)) {
     if (!isPinEntry(e)) continue;
     const op = e.data as Partial<PinOp> & Record<string, unknown>;
     if (!Number.isInteger(op.id)) continue;
@@ -68,13 +63,6 @@ export const nextPinId = (branch: readonly any[]): number => {
   let max = 0;
   for (const e of branch) if (isPinEntry(e) && Number.isInteger(e.data.id)) max = Math.max(max, e.data.id);
   return max + 1;
-};
-
-/** #N of the last message entry, the position a new pin is recorded at. */
-export const lastMessageIndex = (entries: readonly any[]): number | undefined => {
-  let n = 0;
-  for (const e of entries) if (isCountedMessageEntry(e)) n++;
-  return n > 0 ? n - 1 : undefined;
 };
 
 /** Normalize note text: one line, clipped. Empty when there is nothing to pin. */

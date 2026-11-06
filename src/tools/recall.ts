@@ -20,7 +20,7 @@ import {
   type RecallPagingHints,
 } from "../core/recall-run";
 import { resolveSession } from "../core/sessions";
-import type { LineageSessionManagerLike } from "../core/lineage";
+import type { SessionManagerLike } from "../core/session-file";
 import { RECALL_TOOL } from "../names";
 
 export const RECALL_TOOL_LABEL = "VCC Recall";
@@ -72,7 +72,7 @@ export const TOOL_PAGING_HINTS: RecallPagingHints = {
     `This project has ${n} earlier session${n === 1 ? "" : "s"}: scope:'project' searches ${n === 1 ? "it" : "them"} too; mode:'sessions' lists ${n === 1 ? "it" : "them"}.`,
 };
 
-export interface RecallSessionManager extends LineageSessionManagerLike {
+export interface RecallSessionManager extends SessionManagerLike {
   getSessionFile: () => string | undefined;
   /** The directory of this project's session files; the session file's own directory when absent. */
   getSessionDir?: () => string | undefined;

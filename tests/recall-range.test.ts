@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { registerRecallTool } from "../src/tools/recall";
-import { buildGlobalIndexById } from "../src/core/global-indices";
+import { indexById } from "../src/core/session-file";
 
 const dirs: string[] = [];
 afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
@@ -63,7 +63,7 @@ describe("vcc_recall range", () => {
       msg("a1", "assistant", "target answer on the live branch"),
     ];
     const file = writeSession(entries);
-    const n = buildGlobalIndexById(entries).get("a1")!;
+    const n = indexById(entries).get("a1")!;
     const out = await recall(file, { range: [n, n] }, ["hdr", "u1", "c1", "x1", "s1", "a1"]);
     expect(out).toContain(`#${n} [assistant] target answer on the live branch`);
     expect(out).not.toContain("abandoned");

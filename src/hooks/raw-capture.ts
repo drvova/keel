@@ -10,16 +10,10 @@
 // read a newer read supersedes is an older one), so a message is copied well
 // before omp could rewrite it.
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
-import { appendRawStore, keptContent, mayBeRewritten, rawStoreIds, sessionLineage, type RawRecord } from "../core/raw-store";
-import { buildGlobalIndexById } from "../core/global-indices";
+import { appendRawStore, keptContent, mayBeRewritten, rawStoreIds, type RawRecord } from "../core/raw-store";
+import { indexById, sessionLineage, type SessionManagerLike } from "../core/session-file";
 import { loadSettings } from "../core/settings";
 import { RECALL_TOOL } from "../names";
-
-interface SessionManagerLike {
-  getSessionFile?: () => string | undefined;
-  getEntries?: () => any[];
-  getBranch?: () => any[];
-}
 
 /** One binding's place in its session: which file, how many entries it has looked at, which are kept. */
 export interface RawCaptureState {
@@ -87,7 +81,7 @@ export const pointPlaceholders = (messages: unknown[], state: RawCaptureState, s
   for (const e of sessionManager?.getBranch?.() ?? []) {
     if (e?.type === "message" && e.message?.role === "toolResult" && typeof e.message.toolCallId === "string") byCall.set(e.message.toolCallId, e.id);
   }
-  const index = buildGlobalIndexById(sessionManager?.getEntries?.() ?? []);
+  const index = indexById(sessionManager?.getEntries?.() ?? []);
   let out: unknown[] | undefined;
   for (const { i, text, callId } of hits) {
     const id = byCall.get(callId);

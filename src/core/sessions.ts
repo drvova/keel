@@ -10,7 +10,7 @@
 // index space.
 import { readdirSync, realpathSync, statSync } from "fs";
 import { join } from "path";
-import { forEachJsonlLine } from "./jsonl";
+import { readHeader, RESET_ENTRY_TYPE, scanLines } from "./session-file";
 import { clip, textOf } from "./content";
 import { formatPin, readPins } from "./pins";
 import { PIN_ENTRY_TYPE } from "../names";
@@ -34,63 +34,51 @@ export interface SessionInfo {
 /** Sessions listed at most; the newest are kept. */
 export const MAX_LISTED_SESSIONS = 50;
 
-const MESSAGE_PREFIX = Buffer.from('{"type":"message"');
-
-const startsWith = (line: Buffer, prefix: Buffer): boolean =>
-  line.length >= prefix.length && line.subarray(0, prefix.length).equals(prefix);
-
-const lineHas = (line: Buffer, needle: string): boolean => line.includes(needle);
-
 const parse = (line: Buffer): any => {
   try { return JSON.parse(line.toString("utf8")); } catch { return undefined; }
 };
 
 /**
  * One pass over a session file: header, message count, first user request,
- * title, pins. Only the lines those need are parsed; the rest are counted by
- * their prefix (both hosts write `{"type":"message",…}` first).
+ * title, pins (replayed along its active branch). Only the lines those need
+ * are parsed; the rest are read by their heads (session-file.ts entryHead).
  */
 export const scanSession = (file: string): SessionInfo | undefined => {
   let stat;
   try { stat = statSync(file); } catch { return undefined; }
-  let header: any;
+  const header = readHeader(file);
+  if (typeof header?.id !== "string") return undefined;
   let title: string | undefined;
   let firstRequest: string | undefined;
   let messages = 0;
-  let lineNo = 0;
+  // Pin ops and /clear boundaries, with their ids, to replay along the branch.
   const pinEntries: any[] = [];
+  let branch: Set<string> | undefined;
   try {
-    forEachJsonlLine(file, (line) => {
-      lineNo++;
-      if (line.length === 0) return;
-      if (startsWith(line, MESSAGE_PREFIX)) {
+    branch = scanLines(file, (line, head) => {
+      if (head.type === "message") {
         messages++;
-        if (firstRequest === undefined && lineHas(line, '"role":"user"')) {
+        if (firstRequest === undefined && line.includes('"role":"user"')) {
           const text = textOf(parse(line)?.message?.content ?? "").replace(/\s+/g, " ").trim();
           if (text && !text.startsWith("<")) firstRequest = clip(text, 100);
         }
         return;
       }
-      if (lineNo <= 3 && !header) {
+      if (head.type === RESET_ENTRY_TYPE || (head.type === "custom" && line.includes(PIN_ENTRY_TYPE))) {
         const e = parse(line);
-        if (e?.type === "session" && typeof e.id === "string") header = e;
-        else if (e?.type === "title" && typeof e.title === "string" && e.title.trim()) title = e.title.trim();
+        if (e) pinEntries.push(e);
         return;
       }
-      if (lineHas(line, PIN_ENTRY_TYPE) || lineHas(line, '"reset_boundary"')) {
+      // omp's title slot (its first line, rewritten in place) and later renames.
+      if (head.type === "title" || head.type === "title_change") {
         const e = parse(line);
-        if (e?.type === "custom" || e?.type === "reset_boundary") pinEntries.push(e);
-        return;
-      }
-      if (lineHas(line, '"title_change"')) {
-        const e = parse(line);
-        if (e?.type === "title_change" && typeof e.title === "string" && e.title.trim()) title = e.title.trim();
+        if (typeof e?.title === "string" && e.title.trim()) title = e.title.trim();
       }
     });
   } catch {
     return undefined;
   }
-  if (!header) return undefined;
+  const onBranch = branch?.size ? pinEntries.filter((e) => typeof e.id === "string" && branch!.has(e.id)) : pinEntries;
   return {
     file,
     id: header.id,
@@ -101,7 +89,7 @@ export const scanSession = (file: string): SessionInfo | undefined => {
     messages,
     ...(title ? { title: clip(title, 80) } : {}),
     ...(firstRequest ? { firstRequest } : {}),
-    pins: readPins(pinEntries).map(formatPin),
+    pins: readPins(onBranch).map(formatPin),
   };
 };
 
@@ -134,26 +122,6 @@ export const resolveSession = (ref: string, sessions: readonly SessionInfo[]): S
     return { error: `No earlier session of this project starts with '${ref}'. mode:'sessions' lists them.` };
   }
   return { error: `session:'${ref}' matches ${matches.length} sessions (${matches.map((s) => s.short).join(", ")}): give more of the id.` };
-};
-
-/** The ids on a session file's active branch: its last entry back to the root. */
-export const fileBranchIds = (file: string): Set<string> | undefined => {
-  const parentOf = new Map<string, string | null>();
-  let last: string | undefined;
-  forEachJsonlLine(file, (line) => {
-    if (line.length === 0) return;
-    // id and parentId come before the payload on both hosts; parse only the head.
-    const head = line.subarray(0, Math.min(line.length, 400)).toString("utf8");
-    const id = head.match(/"id":"([^"]+)"/)?.[1];
-    if (!id || head.startsWith('{"type":"session"') || head.startsWith('{"type":"title"')) return;
-    const parent = head.match(/"parentId":(?:"([^"]+)"|null)/);
-    parentOf.set(id, parent ? parent[1] ?? null : null);
-    last = id;
-  });
-  if (!last) return undefined;
-  const ids = new Set<string>();
-  for (let id: string | null | undefined = last; id && !ids.has(id); id = parentOf.get(id)) ids.add(id);
-  return ids;
 };
 
 const date = (iso?: string): string => (iso ? iso.replace("T", " ").slice(0, 16) : "unknown start");

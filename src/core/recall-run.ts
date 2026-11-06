@@ -1,13 +1,13 @@
-import { loadAllMessages, type LoadedMessages } from "./load-messages";
+import { readSession, renderMessages, type LoadedMessages, type RecallMessage, type SessionRead } from "./load-messages";
 import { searchEntriesDetailed, getTouchedFiles, type SearchHit } from "./search-entries";
 import { formatRecallOutput, formatTouchedOutput, TOUCHED_PAGE_SIZE } from "./format-recall";
-import { getActiveLineageEntryIds, type LineageSessionManagerLike } from "./lineage";
 import { expandEntryFile } from "./drill-down";
 import { EXPAND_DETAIL_CHARS } from "./render-entries";
 import type { RecallScope } from "./recall-scope";
 import type { RecallRequest } from "./recall-request";
 import type { Message } from "@oh-my-pi/pi-ai";
-import { describeSession, fileBranchIds, listProjectSessions, type SessionInfo } from "./sessions";
+import { describeSession, listProjectSessions, type SessionInfo } from "./sessions";
+import { currentBranchIds, type SessionManagerLike } from "./session-file";
 import { toolCallsOf } from "./tools";
 
 export const SEARCH_PAGE_SIZE = 5;
@@ -26,6 +26,8 @@ export interface RecallView {
   /** Set when the view is over one of those earlier sessions instead of the current one. */
   session?: SessionInfo;
   load(full: boolean): LoadedMessages;
+  /** The message at `#N`, on any branch. */
+  message(index: number): Message | undefined;
   /** What expand shows of one call's arguments and of its paired result (expandDetailChars). */
   detailChars: number;
   /** The same session with scope:'all' (itself when already 'all'). */
@@ -49,15 +51,29 @@ export const projectSessions = (dir: string, currentFile: string): ProjectSessio
   return { dir, list: () => (listed ??= listProjectSessions(dir, currentFile)) };
 };
 
+interface ViewOptions {
+  project?: ProjectSessions;
+  session?: SessionInfo;
+  detailChars?: number;
+  /** The file, read once for every view of it in this call. */
+  read?: () => SessionRead;
+}
+
+const once = <T>(f: () => T): (() => T) => {
+  let value: { v: T } | undefined;
+  return () => (value ??= { v: f() }).v;
+};
+
 export const openRecallView = (
   sessionFile: string,
   scope: RecallScope,
-  sessionManager: LineageSessionManagerLike,
-  options: { project?: ProjectSessions; session?: SessionInfo; detailChars?: number } = {},
+  sessionManager: SessionManagerLike,
+  options: ViewOptions = {},
 ): RecallView => {
+  const read = options.read ?? once(() => readSession(sessionFile));
   // scope:'project' reads the current session on its current path, like lineage;
   // only its search reaches further.
-  const lineageEntryIds = scope !== "all" ? getActiveLineageEntryIds(sessionManager) : undefined;
+  const lineageEntryIds = scope !== "all" ? currentBranchIds(sessionManager) : undefined;
   const cache = new Map<boolean, LoadedMessages>();
   let wide: RecallView | undefined;
   let turn: Set<number> | undefined;
@@ -70,18 +86,21 @@ export const openRecallView = (
     load(full) {
       let loaded = cache.get(full);
       if (!loaded) {
-        loaded = loadAllMessages(sessionFile, full, lineageEntryIds, view.detailChars);
+        loaded = renderMessages(read().messages, full, lineageEntryIds, view.detailChars);
         cache.set(full, loaded);
       }
       return loaded;
     },
+    message(index) {
+      return read().messages.find((m) => m.index === index)?.message;
+    },
     widen() {
       if (scope === "all") return view;
-      return (wide ??= openRecallView(sessionFile, "all", sessionManager, options));
+      return (wide ??= openRecallView(sessionFile, "all", sessionManager, { ...options, read }));
     },
     currentTurn() {
       // An earlier session has no turn in progress.
-      return (turn ??= options.session ? new Set() : findCurrentTurn(sessionFile, sessionManager));
+      return (turn ??= options.session ? new Set() : findCurrentTurn(read().messages, sessionManager));
     },
   };
   return view;
@@ -89,11 +108,12 @@ export const openRecallView = (
 
 /** A view over one of the project's earlier sessions, on its own active branch. */
 export const openSessionView = (session: SessionInfo, scope: RecallScope, project?: ProjectSessions, detailChars?: number): RecallView => {
-  const ids = fileBranchIds(session.file);
+  const read = once(() => readSession(session.file));
+  const ids = read().branchIds;
   // A file without entry ids (an old format) has no branch to follow: read all of it.
-  const effective = !ids?.size ? "all" : scope === "project" ? "lineage" : scope;
-  const branch = [...(ids ?? [])].map((id) => ({ id }));
-  return openRecallView(session.file, effective, { getBranch: () => branch }, { project, session, detailChars });
+  const effective = ids.size === 0 ? "all" : scope === "project" ? "lineage" : scope;
+  const branch = [...ids].map((id) => ({ id }));
+  return openRecallView(session.file, effective, { getBranch: () => branch }, { project, session, detailChars, read });
 };
 
 /** "Session 01a194d8 · …" line that opens output read from an earlier session. */
@@ -105,19 +125,20 @@ export const sessionHeader = (s: SessionInfo): string => `Session ${describeSess
  * something follows that user message; a compaction in between means the
  * start of the turn may have left the context.
  */
-const findCurrentTurn = (sessionFile: string, sessionManager: LineageSessionManagerLike): Set<number> => {
+const findCurrentTurn = (messages: readonly RecallMessage[], sessionManager: SessionManagerLike): Set<number> => {
   const none = new Set<number>();
   let branch: any[] = [];
-  try { branch = sessionManager.getBranch() ?? []; } catch { return none; }
+  try { branch = sessionManager.getBranch?.() ?? []; } catch { return none; }
   for (let i = branch.length - 1; i >= 0; i--) {
     const e = branch[i];
     if (e?.type === "compaction") return none;
     if (e?.type === "message" && e.message?.role === "user") break;
   }
-  const { rendered } = loadAllMessages(sessionFile, false, getActiveLineageEntryIds(sessionManager));
-  for (let i = rendered.length - 1; i >= 0; i--) {
-    if (rendered[i].role !== "user") continue;
-    return i < rendered.length - 1 ? new Set(rendered.slice(i).map((m) => m.index)) : none;
+  const ids = currentBranchIds(sessionManager);
+  const onPath = messages.filter((m) => m.id !== undefined && ids.has(m.id));
+  for (let i = onPath.length - 1; i >= 0; i--) {
+    if (onPath[i].message.role !== "user") continue;
+    return i < onPath.length - 1 ? new Set(onPath.slice(i).map((m) => m.index)) : none;
   }
   return none;
 };
@@ -216,7 +237,7 @@ const runAction = (request: RecallRequest, view: RecallView, hints: RecallPaging
       const t = action.target;
       const offPath = !scopeAll && !view.load(false).rendered.some((m) => m.index === t.index);
       return (offPath ? OFF_PATH_NOTE : "") +
-        expandEntryFile(view.sessionFile, t.index, t.pathPattern, t.full, t.offset, t.limit);
+        expandEntryFile(view.message(t.index), t.index, t.pathPattern, t.full, t.offset, t.limit);
     }
 
     case "touched":
@@ -306,7 +327,7 @@ const runExpand = (indices: number[], view: RecallView): string => {
 /**
  * Entries #from..#to in order, RANGE_PAGE_SIZE per page, same per-entry clip
  * as search and recent. Indices are the global #N space shared with summaries
- * (global-indices.ts), so a ref copied from a summary lands on its message.
+ * (session-file.ts), so a ref copied from a summary lands on its message.
  */
 const runRange = (range: unknown[], page: number, view: RecallView): string => {
   const [from, to] = range;

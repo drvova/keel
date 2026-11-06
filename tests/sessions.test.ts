@@ -69,6 +69,27 @@ describe("listProjectSessions", () => {
   });
 });
 
+describe("an earlier session's pins", () => {
+  it("are the ones on its active branch: a pin made on an abandoned branch is not", () => {
+    const d = mkdtempSync(join(tmpdir(), "omp-vcc-sessions-pins-"));
+    try {
+      const root = msg("user", "Plan the migration", null);
+      const pin = (id: string, parentId: string, noteId: number, text: string) =>
+        ({ type: "custom", id, parentId, customType: PIN_ENTRY_TYPE, data: { v: 1, op: "add", id: noteId, text, by: "user" } });
+      const abandoned = msg("assistant", "First try", root.id);
+      const kept = msg("assistant", "Second try", root.id);
+      write(join(d, "2026-10-01T10-00-00-000Z_dddd4444-0000-7000-8000-000000000004.jsonl"), [
+        header("dddd4444-0000-7000-8000-000000000004", "2026-10-01T10:00:00.000Z"),
+        root, abandoned, pin("p-old", abandoned.id, 1, "use the old schema"),
+        kept, pin("p-new", kept.id, 2, "use the new schema"),
+      ], 1_000);
+      expect(listProjectSessions(d)[0].pins).toEqual(["[2] use the new schema (user)"]);
+    } finally {
+      rmSync(d, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("resolveSession", () => {
   it("takes an id prefix, refuses short, unknown and ambiguous ones", () => {
     expect((resolveSession("aaaa", sessions) as SessionInfo).short).toBe("aaaa1111");
