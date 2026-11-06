@@ -89,7 +89,13 @@ export const prefixHasRenderableContent = (
   skipCustomTypes: readonly string[],
   convert: ConvertToLlm,
 ): boolean =>
-  summaryBlocks(summaryInputOf(prefix.map((m) => m.message), prefix.map((m) => m.entry.id), skipCustomTypes, convert).messages).length > 0;
+  // One message at a time, up to the first that renders: what renders does not
+  // depend on the others (they only mark which calls failed).
+  prefix.some(({ message }) => {
+    if (isSkippedCustom(message, skipCustomTypes)) return false;
+    const m = toSummaryMessage(message, convert);
+    return m != null && summaryBlocks([m]).length > 0;
+  });
 
 // Convert a non-message entry that carries LLM-context text (custom_message /
 // branch_summary) into its agent-message form, as omp's session context builds

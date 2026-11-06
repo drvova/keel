@@ -495,6 +495,12 @@ const search = (
   const cap = tuning?.cap ?? SEARCH_RESULT_CAP;
   const rawQuery = query.trim();
   const checkBudget = startBudget();
+  // What each entry is found by (snippets come from it), and the document scored: with its role and files.
+  const texts = messages.map((msg, i) => {
+    checkBudget();
+    return searchableText(msg, entries[i]);
+  });
+  const docs = entries.map((e, i) => `${e.role} ${texts[i]} ${e.files?.join(" ") ?? ""}`);
 
   // If the query looks like a single regex pattern (contains metacharacters),
   // treat the whole thing as one pattern — don't split into terms.
@@ -512,30 +518,13 @@ const search = (
     const hits: SearchHit[] = [];
     for (let i = 0; i < entries.length; i++) {
       checkBudget();
-      const e = entries[i];
-      const msg = messages[i];
-      const text = searchableText(msg, e);
-      const filePart = e.files?.join(" ") ?? "";
-      const hay = `${e.role} ${text} ${filePart}`;
-      if (regex.test(hay)) {
-        const snip = lineSnippet(text, regex);
-        hits.push({ ...e, snippet: snip, matchCount: 1 });
-      }
+      if (regex.test(docs[i])) hits.push({ ...entries[i], snippet: lineSnippet(texts[i], regex), matchCount: 1 });
     }
     if (hits.length > 0) return capHits(hits, cap);
   }
 
   const rawTerms = rawQuery.split(/\s+/);
   const terms = filterStopwords(rawTerms);
-
-  const docs: string[] = [];
-  for (let i = 0; i < entries.length; i++) {
-    const e = entries[i];
-    const msg = messages[i];
-    const text = searchableText(msg, e);
-    const filePart = e.files?.join(" ") ?? "";
-    docs.push(`${e.role} ${text} ${filePart}`);
-  }
 
   const compiled = compileTerms(terms);
   // The snippet shows where a term matched as matching does, its stem included.
@@ -553,8 +542,7 @@ const search = (
     if (mc === 0) continue;
     // Terms absent from the doc add 0, so scoring only the matched ones gives the same sum in the same order.
     const score = bm25Score(hay, docLens[i], here, ctx);
-    const text = searchableText(messages[i], e);
-    const snip = lineSnippet(text, snipRe);
+    const snip = lineSnippet(texts[i], snipRe);
     scored.push({
       hit: { ...e, snippet: snip, matchCount: mc },
       score,
