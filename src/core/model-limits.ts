@@ -9,6 +9,7 @@
 // with it.
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
+import { effectiveWindow } from "./window";
 
 export interface ModelLike {
   provider?: string;
@@ -58,4 +59,25 @@ export const recordLearnedWindow = (dir: string, key: string | undefined, contex
   } catch {
     return false;
   }
+};
+
+export interface WindowInfo<Host extends string = string> {
+  /** What the host uses (ctx.model.contextWindow; omp's discovery fills it from the provider, Pi's catalog and models.json). */
+  host?: number;
+  /** What an overflow error said, in this or an earlier session. */
+  learned?: number;
+  /** The smaller of them. */
+  effective?: number;
+  source: Host | "overflow-error" | "unknown";
+}
+
+/** The window for this model: the host's, or the smaller one an overflow error stated (learned next to the config in `configDir`). */
+export const windowOf = <Host extends string>(model: ModelLike | undefined, hostName: Host, configDir: string): WindowInfo<Host> => {
+  const host = typeof model?.contextWindow === "number" && model.contextWindow > 0 ? model.contextWindow : undefined;
+  const learned = learnedWindow(configDir, modelKey(model));
+  const effective = effectiveWindow(host, learned);
+  const source = effective === undefined ? "unknown"
+    : effective === learned && learned !== host ? "overflow-error"
+    : hostName;
+  return { host, learned, effective, source };
 };

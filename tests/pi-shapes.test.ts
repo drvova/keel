@@ -17,7 +17,7 @@ import { extractFiles } from "../src/extract/files";
 import { touchedFiles } from "../src/core/touched";
 import { fileWriteOf, writtenText } from "../src/core/tools";
 import { openConfig } from "../src/core/settings";
-import { MANUAL_TRIGGER, PI_HOST } from "../src/host";
+import { bind, MANUAL_TRIGGER, PI_HOST } from "../src/host";
 
 
 
@@ -30,7 +30,7 @@ describe.skipIf(!piInstalled())("Pi shapes", () => {
   beforeAll(async () => {
     assertRealPi();
     pi = await import("@earendil-works/pi-coding-agent");
-    host = { ...PI_HOST, convertToLlm: (m) => pi.convertToLlm(m), triggerOf: () => MANUAL_TRIGGER, config: testConfig };
+    host = bind({ ...PI_HOST, convertToLlm: (m: any[]) => pi.convertToLlm(m), triggerOf: () => MANUAL_TRIGGER }, testConfig);
     dir = mkdtempSync(join(tmpdir(), "omp-vcc-pi-shapes-"));
     for (const key of ["OMP_VCC_CONFIG_PATH", "PI_CODING_AGENT_DIR"]) saved[key] = process.env[key];
     process.env.OMP_VCC_CONFIG_PATH = join(dir, "omp-vcc-config.json");

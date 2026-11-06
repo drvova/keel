@@ -5,6 +5,7 @@
 import { OMP_TRIGGER_RULE, PI_TRIGGER_RULE, type TriggerRule } from "./core/window";
 import { isRecoveryReason, type CompactionReason } from "./types";
 import type { Config } from "./core/settings";
+import { windowOf, type ModelLike, type WindowInfo } from "./core/model-limits";
 import type { SessionManagerLike } from "./core/session-file";
 
 export type HostName = "omp" | "pi";
@@ -61,7 +62,16 @@ export interface Host extends HostProfile {
 /** A host as one binding of omp-vcc sees it: with its own config file. */
 export interface Binding extends Host {
   config: Config;
+  /** The model's window: the host's, or the smaller one an overflow error stated (learned next to the config). */
+  window(model: ModelLike | undefined): WindowInfo<HostName>;
 }
+
+/** A host profile with its config, and the window read through it. */
+export const bind = <H extends HostProfile>(host: H, config: Config): H & Pick<Binding, "config" | "window"> => ({
+  ...host,
+  config,
+  window: (model) => windowOf(model, host.name, config.dir()),
+});
 
 export const OMP_HOST: HostProfile = {
   name: "omp",

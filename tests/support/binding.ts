@@ -3,10 +3,10 @@
 import { tmpdir } from "os";
 import { join } from "path";
 import { openConfig } from "../../src/core/settings";
-import { OMP_HOST, PI_HOST } from "../../src/host";
+import { bind, OMP_HOST, PI_HOST } from "../../src/host";
 
 export const testConfig = openConfig(() => join(tmpdir(), "omp-vcc-test-agent"));
 
 /** omp's and Pi's profiles with that config, for what reads only those (the recall tool and command). */
-export const ompBinding = { ...OMP_HOST, config: testConfig };
-export const piBinding = { ...PI_HOST, config: testConfig };
+export const ompBinding = bind(OMP_HOST, testConfig);
+export const piBinding = bind(PI_HOST, testConfig);

@@ -1,10 +1,10 @@
 // The model's context window as omp-vcc sizes compactions by, and the cases
 // where omp-vcc compacts on its own because the host's trigger is above the real limit.
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
-import { learnedWindow, modelKey, recordLearnedWindow, type ModelLike } from "../core/model-limits";
+import { modelKey, recordLearnedWindow, type WindowInfo } from "../core/model-limits";
 import type { Config } from "../core/settings";
-import { effectiveWindow, limitFromOverflowError, type TriggerRule } from "../core/window";
-import { compactAndWait, type CompactionTrigger, type HostName, type HostProfile } from "../host";
+import { limitFromOverflowError, type TriggerRule } from "../core/window";
+import { compactAndWait, type Binding, type CompactionTrigger, type HostProfile } from "../host";
 import { isRecoveryReason, type CompactionReason } from "../types";
 
 /** What window tracking learns over a binding's sessions, and the compaction it starts itself. */
@@ -26,27 +26,6 @@ export const createWindowState = (): WindowState => ({
   windowNoticeShown: false,
 });
 
-interface WindowInfo {
-  /** What the host uses (ctx.model.contextWindow; omp's discovery fills it from the provider, Pi's catalog and models.json). */
-  host?: number;
-  /** What an overflow error said, in this or an earlier session. */
-  learned?: number;
-  /** The smaller of them. */
-  effective?: number;
-  source: HostName | "overflow-error" | "unknown";
-}
-
-/** The window for this model: the host's, or the smaller one an overflow error stated (learned next to the config in `configDir`). */
-export const windowOf = (model: ModelLike | undefined, hostName: HostName, configDir: string): WindowInfo => {
-  const host = typeof model?.contextWindow === "number" && model.contextWindow > 0 ? model.contextWindow : undefined;
-  const learned = learnedWindow(configDir, modelKey(model));
-  const effective = effectiveWindow(host, learned);
-  const source = effective === undefined ? "unknown"
-    : effective === learned && learned !== host ? "overflow-error"
-    : hostName;
-  return { host, learned, effective, source };
-};
-
 /** The host's window is above the real one, so its trigger cannot fire before an overflow. */
 const hostOverestimates = (w: WindowInfo): boolean =>
   w.host !== undefined && w.effective !== undefined && w.effective < w.host;
@@ -63,7 +42,7 @@ const positive = (n: number | undefined): number | undefined => (typeof n === "n
  * or, from a host that sends none, a threshold pass's tokensBefore, which just
  * crossed the host's trigger.
  */
-export const observeCompaction = (
+const observeCompaction = (
   state: WindowState,
   w: WindowInfo,
   key: string | undefined,
@@ -79,8 +58,8 @@ export const observeCompaction = (
 };
 
 /**
- * Where this compaction's budgets assume the next one happens, from what
- * observeCompaction kept: the host's policy applied to the effective window as
+ * Where this compaction's budgets assume the next one happens, once what it
+ * tells is kept (observeCompaction): the host's policy applied to the effective window as
  * the host applies it (`rule`: omp its threshold, reserve and the model's own
  * entry, Pi its reserve). When the host's window is too high, its trigger can
  * never fire, and the same policy on the real window applies. Without a
@@ -93,8 +72,10 @@ export const triggerFor = (
   key: string | undefined,
   reason: CompactionReason,
   tokensBefore: number | undefined,
+  policy: object | undefined,
   rule: TriggerRule,
 ): number | undefined => {
+  observeCompaction(state, w, key, reason, tokensBefore, policy);
   const before = positive(tokensBefore);
   const known = knownHostPolicy(state, key);
   const bounded = (t: number | undefined) =>
@@ -110,7 +91,7 @@ export const triggerFor = (
  * own trigger on a model whose window the host overestimates (the host would
  * only notice at the overflow).
  */
-export const registerWindowTracking = (pi: ExtensionAPI, state: WindowState, host: HostProfile & { config: Config }): void => {
+export const registerWindowTracking = (pi: ExtensionAPI, state: WindowState, host: Pick<Binding, "rule" | "settledEvent" | "displayName" | "modelsFile" | "config" | "window">): void => {
   // One compaction of omp-vcc's own at a time, per binding.
   let scheduled = false;
 
@@ -125,7 +106,7 @@ export const registerWindowTracking = (pi: ExtensionAPI, state: WindowState, hos
   const onSettled = (event: { willContinue?: boolean; aborted?: boolean } | undefined, ctx: any) => {
     if (event?.willContinue || event?.aborted || scheduled) return;
     if (!host.config.load().overrideDefaultCompaction) return;
-    const w = windowOf(ctx?.model, host.name, host.config.dir());
+    const w = host.window(ctx?.model);
     if (!hostOverestimates(w)) return;
     // The host's own policy, once a compaction has carried it: a user who turned
     // the host's automatic compaction off gets none from omp-vcc either, and a

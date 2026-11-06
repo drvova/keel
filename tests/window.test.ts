@@ -24,14 +24,15 @@ import {
 import { resolveThresholdTokens } from "@oh-my-pi/pi-agent-core/compaction";
 import { learnedWindow, recordLearnedWindow } from "../src/core/model-limits";
 import type { CompactionReason } from "../src/types";
-import { createWindowState, observeCompaction, triggerFor as triggerForRule, windowOf as windowOfHost, type WindowState } from "../src/hooks/window-limits";
+import { createWindowState, triggerFor as triggerForRule, type WindowState } from "../src/hooks/window-limits";
+import { windowOf as windowOfHost } from "../src/core/model-limits";
 import type { HostName } from "../src/host";
 
 /** The learned limits sit next to the test's config. */
 const configDir = () => dirname(process.env.OMP_VCC_CONFIG_PATH!);
 /** omp's unless a test names Pi's. */
 const windowOf = (model: Parameters<typeof windowOfHost>[0], host: HostName = "omp") => windowOfHost(model, host, configDir());
-/** As the hook runs a compaction: what it tells is kept, then the trigger is read. */
+/** As the hook runs a compaction, omp's rule unless a test names another. */
 const triggerFor = (
   w: ReturnType<typeof windowOfHost>,
   state: WindowState,
@@ -41,8 +42,7 @@ const triggerFor = (
   policy?: object,
   rule: TriggerRule = OMP_TRIGGER_RULE,
 ) => {
-  observeCompaction(state, w, key, reason, before, policy);
-  return triggerForRule(w, state, key, reason, before, rule);
+  return triggerForRule(w, state, key, reason, before, policy, rule);
 };
 
 let dir: string;

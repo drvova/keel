@@ -2,7 +2,7 @@
 // binding gets its own state: omp binds the factory again for every subagent
 // session while module state is shared.
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
-import type { Binding, Host } from "./host";
+import { bind, type Host } from "./host";
 import { openConfig } from "./core/settings";
 import { createCompactionState, registerCompactionHook } from "./hooks/compaction";
 import { createWindowState, registerWindowTracking } from "./hooks/window-limits";
@@ -14,7 +14,7 @@ import { registerRecallTool } from "./tools/recall";
 import { registerPinTool } from "./tools/pin";
 
 export const register = (pi: ExtensionAPI, host: Host): void => {
-  const binding: Binding = { ...host, config: openConfig(host.agentDir) };
+  const binding = bind(host, openConfig(host.agentDir));
   binding.config.scaffold();
   const state = createCompactionState();
   const windows = createWindowState();

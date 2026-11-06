@@ -15,7 +15,7 @@ import { isRecovery, tell, type Binding } from "../host";
 export type { CompactionTrigger } from "../host";
 import { applyContextEdits } from "../core/context-edits";
 import { modelKey } from "../core/model-limits";
-import { observeCompaction, triggerFor, windowOf, type WindowState } from "./window-limits";
+import { triggerFor, type WindowState } from "./window-limits";
 import { vccDetailsOf, type VccCompactionDetails } from "../details";
 import { COMPACTOR } from "../names";
 import type { CompactionReason } from "../types";
@@ -35,7 +35,7 @@ import { scheduleCompactionStatsNotify, type CompactionStats } from "../compacti
 export { OMP_VCC_COMPACT_INSTRUCTION } from "../core/compact-args";
 
 /** What the compaction hook needs of its host. */
-export type CompactionHost = Pick<Binding, "name" | "rule" | "convertToLlm" | "triggerOf" | "config">;
+export type CompactionHost = Pick<Binding, "name" | "rule" | "convertToLlm" | "triggerOf" | "config" | "window">;
 
 /** Per-registration state. omp binds the factory again for every subagent, so it gets one per binding. */
 export interface CompactionState {
@@ -158,10 +158,9 @@ export const registerCompactionHook = (
 
     const { tokenEstimate, overheadTokens } = measureContext(branchEntries, preparation.tokensBefore, previousSummary);
     // Budgets from the model's real window and where the next compaction comes (core/window.ts).
-    const window = windowOf(ctx?.model, host.name, host.config.dir());
+    const window = host.window(ctx?.model);
     const key = modelKey(ctx?.model);
-    observeCompaction(windows, window, key, reason, preparation.tokensBefore, rule.policyOf((preparation as { settings?: unknown }).settings));
-    const trigger = triggerFor(window, windows, key, reason, preparation.tokensBefore, rule);
+    const trigger = triggerFor(window, windows, key, reason, preparation.tokensBefore, rule.policyOf((preparation as { settings?: unknown }).settings), rule);
     const budgets = compactionBudgets(trigger, overheadTokens, settings.workingSet);
     const cutOptions = { charsPerToken: tokenEstimate.charsPerToken, skipCustomTypes: settings.skipCustomTypes, maxTokens: budgets.maxTailTokens };
 

@@ -7,7 +7,6 @@
 // them. omp drops unknown keys itself, before execute().
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import type { Binding } from "../host";
-import { windowOf } from "../hooks/window-limits";
 import { normalizeToolParams, parseToolRequest, RECALL_PARAMS, type RecallToolParams } from "../core/recall-request";
 import { RANGE_PAGE_SIZE, RECALL_OUTPUT_CHARS, recall, SEARCH_PAGE_SIZE, type RecallInput, type RecallPagingHints } from "../core/recall-run";
 import { SESSION_REF_MIN_CHARS } from "../core/sessions";
@@ -97,7 +96,7 @@ const RECALL_PARAMETERS = {
   properties: Object.fromEntries(RECALL_PARAMS.map((p) => [p, { ...SCHEMA[p], description: RECALL_PARAM_DESCRIPTIONS[p] }])),
 } as const;
 
-export const registerRecallTool = (pi: ExtensionAPI, host: Pick<Binding, "name" | "config">) => {
+export const registerRecallTool = (pi: ExtensionAPI, host: Pick<Binding, "window">) => {
   pi.registerTool({
     name: RECALL_TOOL,
     label: RECALL_TOOL_LABEL,
@@ -108,7 +107,7 @@ export const registerRecallTool = (pi: ExtensionAPI, host: Pick<Binding, "name" 
     loadMode: "essential",
     approval: "read",
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const text = executeRecall(params, ctx.sessionManager, { contextWindow: windowOf(ctx.model, host.name, host.config.dir()).effective });
+      const text = executeRecall(params, ctx.sessionManager, { contextWindow: host.window(ctx.model).effective });
       return { content: [{ type: "text", text }], details: undefined };
     },
   });

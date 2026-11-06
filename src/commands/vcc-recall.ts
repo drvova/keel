@@ -3,7 +3,6 @@
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { parseCommandRequest, type RecallScope } from "../core/recall-request";
 import { recall, type RecallPagingHints } from "../core/recall-run";
-import { windowOf } from "../hooks/window-limits";
 import { tell, type Binding } from "../host";
 import { RECALL_COMMAND_MESSAGE_TYPE } from "../names";
 
@@ -22,7 +21,7 @@ const commandHints = (name: string) => (short?: string): RecallPagingHints => {
   };
 };
 
-export const registerVccRecallCommand = (pi: ExtensionAPI, host: Pick<Binding, "name" | "command" | "config">) => {
+export const registerVccRecallCommand = (pi: ExtensionAPI, host: Pick<Binding, "command" | "window">) => {
   const name = `${host.command}-recall`;
   pi.registerCommand(name, {
     description:
@@ -30,7 +29,7 @@ export const registerVccRecallCommand = (pi: ExtensionAPI, host: Pick<Binding, "
       "scope:project this project's earlier sessions; 'sessions' lists them, session:<id> reads one.",
     handler: async (args: string, ctx) => {
       const result = recall(
-        { request: parseCommandRequest(args), sessionManager: ctx.sessionManager, contextWindow: windowOf(ctx.model, host.name, host.config.dir()).effective },
+        { request: parseCommandRequest(args), sessionManager: ctx.sessionManager, contextWindow: host.window(ctx.model).effective },
         commandHints(name),
       );
       if (!result.ok) {
