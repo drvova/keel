@@ -1,7 +1,9 @@
 import type { NormalizedBlock } from "../types";
 import { clip } from "./content";
-import { extractPaths } from "./tool-args";
+import { callKind, callSubject, isOwnTool, isUnset } from "./tools";
 import { collapseSkillText } from "./skill-collapse";
+import { PIN_PARAMS, PIN_TOOL, RECALL_PARAMS, RECALL_TOOL } from "../names";
+import { pinCallOf } from "./pins";
 
 const TRUNCATE_USER = 256;
 const SEGMENT_CLOSING_ASSISTANT_HEAD_WORDS = 120;
@@ -14,18 +16,14 @@ const ASSISTANT_TAIL_WORDS = 120;
 const SELF_TALK_PREFIX_RE =
   /^\s*(?:hmm|wait|actually|oh|okay|ok|well|so)[,.!\s-]+/i;
 
-// ── noise filtering ──
-
 const isNoiseUser = (text: string): boolean => {
   return !text.trim();
 };
 
-// ── truncation ──
-
 // Unicode-aware word segmentation via Intl.Segmenter (built-in, zero dependency)
 const segmenter = new Intl.Segmenter(undefined, { granularity: "word" });
 
-/** Check if segment is a word (Bun's isWordLike is unreliable for alphanumeric tokens) */
+/** Bun's isWordLike is unreliable for alphanumeric tokens. */
 const isWord = (seg: { segment: string; isWordLike?: boolean }): boolean =>
   seg.isWordLike || /[\p{L}\p{N}]/u.test(seg.segment);
 
@@ -105,18 +103,16 @@ const isSegmentClosingAssistant = (blocks: NormalizedBlock[], index: number): bo
   return !next || next.kind === "user";
 };
 
-// ── bash command compression ──
-
 const BASH_CAP = 240;
 const PIPE_TAIL_RE = /\s*\|\s*(?:head|tail|sort|wc|column|tr|cut|awk|uniq|python3|node|bun)(?:\s[^|]*)?$/;
 // Preamble/boilerplate lines that carry no durable fact on their own. Dropped
 // when a script has more informative lines, so `set -euo pipefail\ngit commit`
 // renders the commit rather than the shell option.
-const TRIVIAL_LINE_RE = /^(?:set\s+[-+]|cd\s+\S+$|export\s+\w+=|(?:source|\.)\s+\S+|pwd$|true$|:$|#)/;
+export const TRIVIAL_LINE_RE = /^(?:set\s+[-+]|cd\s+\S+$|export\s+\w+=|(?:source|\.)\s+\S+|pwd$|true$|:$|#)/;
 // A real heredoc opener: `<<` at a command boundary — not preceded by a word
 // char or `)`, so shift ops (`8 << 20`, `Rd<<8`) are not misread — with an
 // identifier terminator starting [A-Za-z_], so numeric `<< 10` is rejected too.
-export const HEREDOC_OPEN_RE = /(?<![\w)])<<-?\s*["']?([A-Za-z_]\w*)["']?/;
+const HEREDOC_OPEN_RE = /(?<![\w)])<<-?\s*["']?([A-Za-z_]\w*)["']?/;
 // File-writer heredocs (`cat > f <<EOF`, tee, dd) already name their target, so
 // the opener alone is informative → body-only. EVERY other heredoc has a
 // content-free opener (interpreters python3/node, remote shells `ssh host <<CMD`,
@@ -199,8 +195,8 @@ const compressBash = (raw: string): string => {
     .filter(l => !TRIVIAL_LINE_RE.test(l))
     .map(l => stripPipeTail(stripCdPrefix(l)))
     .filter(Boolean);
-  // If everything was trivial (e.g. a bare `set -e` or `ls`), fall back to the
-  // first line so we never emit an empty marker.
+  // If everything was trivial (e.g. a bare `set -e` or `cd dir`), fall back to
+  // the first line so the marker is never empty.
   const chosen = meaningful.length ? meaningful : [stripPipeTail(stripCdPrefix(lines[0]))].filter(Boolean);
 
   const cmd = chosen.join("; ");
@@ -216,14 +212,6 @@ const compressCode = (raw: string): string => {
   return cmd.length > BASH_CAP ? cmd.slice(0, BASH_CAP - 3) + "..." : cmd;
 };
 
-// ── tool summary ──
-
-const TOOL_SUMMARY_FIELDS: Record<string, string> = {
-  Read: "file_path", Edit: "file_path", Write: "file_path",
-  read: "file_path", edit: "file_path", write: "file_path",
-  Glob: "pattern", Grep: "pattern",
-};
-
 /** A recall arg as the agent would write it again: `[1, 25]`, `sessions`. */
 const recallArg = (value: unknown): string =>
   Array.isArray(value) ? `[${value.join(", ")}]` : clip(String(value).trim(), 40);
@@ -234,19 +222,23 @@ const recallArg = (value: unknown): string =>
  * history the agent already went back to.
  */
 const vccToolLine = (name: string, args: Record<string, unknown>): string | undefined => {
-  if (name === "vcc_recall") {
+  if (isOwnTool(name, RECALL_TOOL)) {
     const parts: string[] = [];
     if (typeof args.query === "string" && args.query.trim()) parts.push(`"${clip(args.query, 60)}"`);
-    for (const key of ["range", "expand", "mode", "scope", "session"]) {
+    // Every param the tool takes, so a page-2 call is not merged with page 1 as `x2`.
+    for (const key of RECALL_PARAMS) {
       const value = args[key];
-      if (value == null || value === "" || (Array.isArray(value) && value.length === 0)) continue;
+      if (key === "query" || isUnset(value)) continue;
+      if (key === "page" && Number(value) === 1) continue;
       parts.push(`${key}:${recallArg(value)}`);
     }
     return parts.length > 0 ? `* ${name} ${parts.join(" ")}` : `* ${name}`;
   }
-  if (name === "vcc_pin") {
-    if (typeof args.note === "string" && args.note.trim()) return `* ${name} "${clip(args.note, 60)}"`;
-    if (args.unpin != null && args.unpin !== "") return `* ${name} unpin:${recallArg(args.unpin)}`;
+  if (isOwnTool(name, PIN_TOOL)) {
+    // As the tool ran it: a call with both was refused, and pinned nothing.
+    const call = pinCallOf(args);
+    if ("note" in call) return `* ${name} "${clip(call.note, 60)}"`;
+    if ("unpin" in call) return `* ${name} ${PIN_PARAMS.unpin}:${recallArg(call.unpin)}`;
     return `* ${name}`;
   }
   return undefined;
@@ -255,43 +247,55 @@ const vccToolLine = (name: string, args: Record<string, unknown>): string | unde
 const toolOneLiner = (name: string, args: Record<string, unknown>): string => {
   const own = vccToolLine(name, args);
   if (own) return own;
-  const field = TOOL_SUMMARY_FIELDS[name];
-  if (field && typeof args[field] === "string") {
-    return `* ${name} "${args[field] as string}"`;
-  }
-  const [path, ...more] = extractPaths(args);
-  if (path) return `* ${name} "${path}"${more.length ? ` +${more.length}` : ""}`;
-  if (name === "bash" || name === "Bash") {
-    const raw = (args.command ?? args.description ?? "") as string;
-    const cmd = compressBash(raw);
-    return `* ${name} "${cmd}"`;
-  }
-  if (typeof args.query === "string") {
-    return `* ${name} "${clip(args.query as string, 60)}"`;
-  }
-  return `* ${name}`;
+  const subject = callSubject({ name, args });
+  if (!subject) return `* ${name}`;
+  if (callKind({ name, args }) === "shell") return `* ${name} "${compressBash(subject.value)}"`;
+  const value = subject.label === "query" ? clip(subject.value, 60) : subject.value;
+  return `* ${name} "${value}"${subject.more ? ` +${subject.more}` : ""}`;
 };
 
-export interface BriefLine {
+/**
+ * A line of the brief: text (a ref already in it), a tool call with the `#N`
+ * of every consecutive identical call, or the count of a turn's calls left out.
+ */
+type BriefItem = { text: string } | { call: string; refs: number[] } | { omitted: number };
+
+interface BriefLine {
   /** Section header like "[user]" or "[assistant]" */
   header: string;
-  /** Content lines for this section */
-  lines: string[];
+  lines: BriefItem[];
 }
 
-/**
- * Build BriefLine sections from NormalizedBlocks.
- */
+const isToolItem = (item: BriefItem): boolean => !("text" in item);
+
+const renderItem = (item: BriefItem): string => {
+  if ("text" in item) return item.text;
+  if ("omitted" in item) return `* (${item.omitted} earlier tool-call entries omitted)`;
+  const refs = item.refs.map((r) => `#${r}`).join(", ");
+  if (item.refs.length === 0) return item.call;
+  return item.refs.length === 1 ? `${item.call} (${refs})` : `${item.call} (${refs}) x${item.refs.length}`;
+};
+
+/** Cap tool calls per [assistant] turn, keeping the tail: the latest actions tend to be the deciding edits and writes, the head exploration. */
+const TOOL_CALLS_PER_TURN = 8;
+
 export const buildBriefSections = (blocks: NormalizedBlock[]): BriefLine[] => {
   const sections: BriefLine[] = [];
   let lastHeader = "";
 
-  const push = (header: string, line: string) => {
+  const push = (header: string, item: BriefItem) => {
     if (header === lastHeader && sections.length > 0) {
-      sections[sections.length - 1].lines.push(line);
+      const lines = sections[sections.length - 1].lines;
+      const last = lines[lines.length - 1];
+      // Consecutive identical calls are one line with every #N; a ref-less call never joins one.
+      if ("call" in item && item.refs.length > 0 && last && "call" in last && last.refs.length > 0 && last.call === item.call) {
+        last.refs.push(...item.refs);
+        return;
+      }
+      lines.push(item);
       return;
     }
-    sections.push({ header, lines: [line] });
+    sections.push({ header, lines: [item] });
     lastHeader = header;
   };
 
@@ -300,7 +304,7 @@ export const buildBriefSections = (blocks: NormalizedBlock[]): BriefLine[] => {
     if (ref && lines.length > 0) {
       lines[lines.length - 1] = `${lines[lines.length - 1]}${ref}`;
     }
-    for (const line of lines) push(header, line);
+    for (const line of lines) push(header, { text: line });
   };
 
   for (let blockIndex = 0; blockIndex < blocks.length; blockIndex++) {
@@ -321,7 +325,7 @@ export const buildBriefSections = (blocks: NormalizedBlock[]): BriefLine[] => {
         const ref = b.sourceIndex != null ? ` (#${b.sourceIndex})` : "";
         if (cmd) {
           const failed = b.exitCode != null && b.exitCode !== 0 ? " [failed]" : "";
-          push("[user]", `${b.lang === "python" ? ">>>" : "$"} ${cmd}${failed}${ref}`);
+          push("[user]", { text: `${b.lang === "python" ? ">>>" : "$"} ${cmd}${failed}${ref}` });
         }
         lastHeader = "[user]";
         break;
@@ -346,9 +350,8 @@ export const buildBriefSections = (blocks: NormalizedBlock[]): BriefLine[] => {
       case "tool_call": {
         // Skip malformed tool calls from streaming providers (empty name / fragmented args).
         if (!b.name || b.name.trim() === "") break;
-        const ref = b.sourceIndex != null ? ` (#${b.sourceIndex})` : "";
-        const summary = toolOneLiner(b.name, b.args) + (b.failed ? " [failed]" : "") + ref;
-        push("[assistant]", summary);
+        const call = toolOneLiner(b.name, b.args) + (b.failed ? " [failed]" : "");
+        push("[assistant]", { call, refs: b.sourceIndex != null ? [b.sourceIndex] : [] });
         break;
       }
       case "tool_result":
@@ -357,88 +360,31 @@ export const buildBriefSections = (blocks: NormalizedBlock[]): BriefLine[] => {
     }
   }
 
-  // Collapse consecutive identical tool lines (same text, different #ref)
   for (const sec of sections) {
     if (sec.header !== "[assistant]") continue;
-    const out: string[] = [];
-    for (const line of sec.lines) {
-      if (!line.startsWith("* ")) { out.push(line); continue; }
-      const ref = line.match(/\(#(\d+)\)$/)?.[1] ?? "";
-      // A ref-less line never joins a ref'd collapse group — merging it would
-      // emit a malformed "(#12, #) x2" once mixed ref/no-ref lines can occur
-      // (global indices: unresolved positions render no ref).
-      if (!ref) { out.push(line); continue; }
-      const base = line.slice(0, -(ref.length + 3)).trimEnd();
-      const last = out.length > 0 ? out[out.length - 1] : "";
-      const m = last.match(/^(.*) \((#[\d, #]+)\) x(\d+)$/);
-      if (m && m[1] === base) {
-        out[out.length - 1] = `${base} (${m[2]}, #${ref}) x${parseInt(m[3]) + 1}`;
-      } else if (last.match(/\(#\d+\)$/) && last.replace(/\s*\(#\d+\)$/, "") === base) {
-        const prevRef = last.match(/\(#(\d+)\)$/)?.[1];
-        out[out.length - 1] = `${base} (#${prevRef}, #${ref}) x2`;
-      } else {
-        out.push(line);
-      }
-    }
-    sec.lines = out;
-  }
-
-  // Cap tool calls per [assistant] turn — keep tail (latest actions tend to
-  // be the deciding edits/writes; head is usually exploration noise).
-  const TOOL_CALLS_PER_TURN = 8;
-  for (const sec of sections) {
-    if (sec.header !== "[assistant]") continue;
-    const toolIdxs = sec.lines
-      .map((l, i) => (l.startsWith("* ") ? i : -1))
-      .filter((i) => i >= 0);
-    if (toolIdxs.length <= TOOL_CALLS_PER_TURN) continue;
-    const dropCount = toolIdxs.length - TOOL_CALLS_PER_TURN;
-    const dropSet = new Set(toolIdxs.slice(0, dropCount));
-    const firstKeptToolIdx = toolIdxs[dropCount];
-    const next: string[] = [];
-    let inserted = false;
-    for (let i = 0; i < sec.lines.length; i++) {
-      if (dropSet.has(i)) continue;
-      if (!inserted && i === firstKeptToolIdx) {
-        next.push(`* (${dropCount} earlier tool-call entries omitted)`);
-        inserted = true;
-      }
-      next.push(sec.lines[i]);
-    }
-    sec.lines = next;
+    const calls = sec.lines.filter(isToolItem);
+    if (calls.length <= TOOL_CALLS_PER_TURN) continue;
+    const dropped = new Set(calls.slice(0, calls.length - TOOL_CALLS_PER_TURN));
+    const firstKept = calls[calls.length - TOOL_CALLS_PER_TURN];
+    sec.lines = sec.lines.flatMap((item) =>
+      dropped.has(item) ? [] : item === firstKept ? [{ omitted: dropped.size }, item] : [item]);
   }
 
   return sections;
 };
 
-/**
- * Stringify BriefLine sections into text format.
- */
 export const stringifyBrief = (sections: BriefLine[]): string => {
-
-  // Emit sections -- suppress blank lines between consecutive tool summaries
+  // No blank line between consecutive sections of tool calls only.
   const out: string[] = [];
+  const toolsOnly = (sec: BriefLine) => sec.header === "[assistant]" && sec.lines.every(isToolItem);
   for (let i = 0; i < sections.length; i++) {
     const sec = sections[i];
-    if (i > 0) {
-      const prev = sections[i - 1];
-      const prevIsTools = prev.header === "[assistant]" &&
-        prev.lines.every((l) => l.startsWith("* "));
-      const curIsTools = sec.header === "[assistant]" &&
-        sec.lines.every((l) => l.startsWith("* "));
-      if (!(prevIsTools && curIsTools)) {
-        out.push("");
-      }
-    }
+    if (i > 0 && !(toolsOnly(sections[i - 1]) && toolsOnly(sec))) out.push("");
     out.push(sec.header);
-    for (const line of sec.lines) {
-      out.push(line);
-    }
+    for (const item of sec.lines) out.push(renderItem(item));
   }
-
   return out.join("\n");
 };
 
-/** Convenience: build sections from blocks and stringify to text */
 export const compileBrief = (blocks: NormalizedBlock[]): string =>
   stringifyBrief(buildBriefSections(blocks));

@@ -2,6 +2,8 @@ import type { SessionMessageEntry } from "@oh-my-pi/pi-coding-agent";
 import type { NormalizedBlock } from "../types";
 import { isObject, readableMessage, textOf } from "./content";
 import { sanitize } from "./sanitize";
+import { filterNoise } from "./filter-noise";
+import { toolCallOf } from "./tools";
 
 const normalizeOne = (
   msg: SessionMessageEntry["message"],
@@ -11,6 +13,7 @@ const normalizeOne = (
   if (msg.role === "user") {
     const blocks: NormalizedBlock[] = [];
     const text = sanitize(textOf(msg.content));
+    // Marked by the compaction's summary input (src/compaction/summary-input.ts toSummaryMessage).
     const injected = (msg as { injected?: boolean }).injected === true;
     if (text) blocks.push({ kind: "user", text, sourceIndex: msgIndex, ...(injected ? { injected } : {}) });
     if (msg.content && typeof msg.content !== "string") {
@@ -39,6 +42,7 @@ const normalizeOne = (
   if (msg.role === "toolResult") {
     return [{
       kind: "tool_result",
+      ...(typeof msg.toolCallId === "string" ? { callId: msg.toolCallId } : {}),
       name: msg.toolName,
       text: sanitize(textOf(msg.content)),
       sourceIndex: msgIndex,
@@ -55,13 +59,16 @@ const normalizeOne = (
     for (const part of msg.content) {
       if (part.type === "text") {
         blocks.push({ kind: "assistant", text: sanitize(part.text), sourceIndex: msgIndex });
-      } else if (part.type === "toolCall") {
+      } else {
+        const call = toolCallOf(part);
+        if (!call) continue;
         blocks.push({
           kind: "tool_call",
-          name: part.name,
-          args: part.arguments,
+          ...(call.id !== undefined ? { id: call.id } : {}),
+          name: call.name,
+          args: call.args,
           sourceIndex: msgIndex,
-          ...(failedCallIds?.has(part.id) ? { failed: true as const } : {}),
+          ...(call.id !== undefined && failedCallIds?.has(call.id) ? { failed: true as const } : {}),
         });
       }
     }
@@ -72,8 +79,8 @@ const normalizeOne = (
 };
 
 /**
- * Normalize messages to blocks. `sourceIndices`, when provided, supplies the
- * session-global `#N` index per input position (see src/core/global-indices.ts).
+ * `sourceIndices`, when provided, supplies the session-global `#N` index per
+ * input position (see src/core/session-file.ts).
  * A missing entry yields `sourceIndex: undefined`, which downstream renderers
  * display as no ref — never a window-relative number. Omitted entirely, the
  * legacy positional behavior is preserved (used by callers/tests that have no
@@ -93,4 +100,8 @@ export const normalize = (
   return readable.flatMap((msg, i) => (msg ? normalizeOne(msg, sourceIndices ? sourceIndices[i] : i, failedCallIds) : []));
 };
 
-
+/** The blocks a summary is made of: every part of it (the sections, the brief, [History Index]) reads these. */
+export const summaryBlocks = (
+  messages: SessionMessageEntry["message"][],
+  sourceIndices?: Array<number | undefined>,
+): NormalizedBlock[] => filterNoise(normalize(messages, sourceIndices));

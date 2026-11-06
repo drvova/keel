@@ -15,10 +15,10 @@ describe("renderMessage", () => {
     expect(r.summary).toBe("done");
   });
 
-  it("renders tool result", () => {
-    const r = renderMessage(toolResult("Read", "file contents"), 2);
+  it("renders tool result as [tool] and its text", () => {
+    const r = renderMessage(toolResult("bash", "not found"), 3);
     expect(r.role).toBe("tool_result");
-    expect(r.summary).toContain("[Read]");
+    expect(r.summary).toBe("[bash] not found");
   });
 
   it("renders tool call arguments with values", () => {
@@ -30,11 +30,6 @@ describe("renderMessage", () => {
     const r = renderMessage(assistantWithToolCall("edit", { code: "...", paths: ["a.ts", "b.ts", "c.ts"] }), 2);
     expect(r.summary).toContain("edit(path=a.ts +2)");
     expect(r.files).toEqual(["a.ts", "b.ts", "c.ts"]);
-  });
-
-  it("renders tool results without error prefix", () => {
-    const r = renderMessage(toolResult("bash", "not found"), 3);
-    expect(r.summary).toBe("[bash] not found");
   });
 
   it("truncates long user text", () => {
@@ -55,7 +50,7 @@ describe("renderMessage", () => {
     const msg = { role: "bashExecution", command: "exit 1" } as any;
     const r = renderMessage(msg, 6);
     expect(r.role).toBe("bash");
-    expect(r.summary).toContain("$ exit 1");
+    expect(r.summary).toBe("$ exit 1\n");
   });
 
   it("handles message with undefined content", () => {
@@ -83,5 +78,11 @@ describe("renderMessage full view shows tool-call arguments", () => {
     expect(renderMessage(msg, 4, true).summary).toBe("write(path=a.txt), bash(command=ls)\n  write:\n    content: x\n  bash:\n    timeout: 30\n    env: A=1\n      B=2");
     const long: any = { role: "assistant", content: [call("t3", "write", { path: "b.txt", content: "y".repeat(9000) })] };
     expect(renderMessage(long, 7, true).summary).toContain("...[arguments of #7 clipped at 4000 of");
+  });
+
+  it("points a clipped write at its file content, in the session it was read from", () => {
+    const long: any = { role: "assistant", content: [call("t3", "write", { path: "b.txt", content: "y".repeat(200) })] };
+    expect(renderMessage(long, 7, true, { chars: 50, via: " with session:'aaaa1111'" }).summary)
+      .toContain("query '#7:b.txt:full' with session:'aaaa1111' reads the file content]");
   });
 });

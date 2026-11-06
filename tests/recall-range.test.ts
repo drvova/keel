@@ -1,9 +1,10 @@
+import { ompBinding } from "./support/binding";
 import { describe, it, expect, afterEach } from "bun:test";
 import { mkdtempSync, writeFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { registerRecallTool } from "../src/tools/recall";
-import { buildGlobalIndexById } from "../src/core/global-indices";
+import { indexById } from "../src/core/session-file";
 
 const dirs: string[] = [];
 afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
@@ -21,7 +22,7 @@ const msg = (id: string, role: string, content: unknown, extra: Record<string, u
 
 const recall = async (file: string, params: Record<string, unknown>, branch?: string[], model?: { contextWindow: number }) => {
   let tool: any;
-  registerRecallTool({ registerTool: (t: any) => { tool = t; } } as any);
+  registerRecallTool({ registerTool: (t: any) => { tool = t; } } as any, ompBinding);
   const ids = branch ?? [];
   const result = await tool.execute("call", params, undefined, undefined, {
     sessionManager: {
@@ -63,7 +64,7 @@ describe("vcc_recall range", () => {
       msg("a1", "assistant", "target answer on the live branch"),
     ];
     const file = writeSession(entries);
-    const n = buildGlobalIndexById(entries).get("a1")!;
+    const n = indexById(entries).get("a1")!;
     const out = await recall(file, { range: [n, n] }, ["hdr", "u1", "c1", "x1", "s1", "a1"]);
     expect(out).toContain(`#${n} [assistant] target answer on the live branch`);
     expect(out).not.toContain("abandoned");
@@ -117,7 +118,7 @@ describe("vcc_recall range", () => {
     expect(await recall(file, { range: [1] }, ids)).toStartWith("Range #1..#1 (1 messages):");
     expect(await recall(file, { range: ["1", "2"] }, ids)).toStartWith("Range #1..#2 (2 messages):");
     expect(await recall(file, { range: [1.5, 3] }, ids)).toStartWith("Ignored: range [1.5,3] (not [from, to]).");
-    expect(await recall(file, { range: [-1, 2] }, ids)).toContain("Invalid range");
+    expect(await recall(file, { range: [-1, 2] }, ids)).toStartWith("Ignored: range [-1,2] (not [from, to]).");
     expect(await recall(file, { range: [10, 20] }, ids)).toBe("No messages #10..#20 in session history (last entry is #2).");
   });
 
@@ -253,7 +254,7 @@ describe("vcc_recall search skips the current turn", () => {
   it("skips nothing once the context was compacted inside the turn", async () => {
     const file = writeSession(entries);
     let tool: any;
-    registerRecallTool({ registerTool: (t: any) => { tool = t; } } as any);
+    registerRecallTool({ registerTool: (t: any) => { tool = t; } } as any, ompBinding);
     const branch = [
       ...["u0", "a1", "u4", "a5"].map((id) => ({ id })),
       { id: "u6", type: "message", message: { role: "user" } },

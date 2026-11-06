@@ -86,9 +86,6 @@ describe.skipIf(!piInstalled())("Pi host", () => {
 
   afterAll(async () => {
     await session?.dispose?.();
-    // pi.ts pointed the settings at Pi's agent dir; later test files in this process expect none.
-    const { setSettingsAgentDir } = await import("../src/core/settings");
-    setSettingsAgentDir();
     for (const [key, value] of Object.entries(savedEnv)) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;

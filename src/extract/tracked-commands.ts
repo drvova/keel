@@ -1,9 +1,5 @@
 import type { NormalizedBlock } from "../types";
-import { capItems } from "../core/format";
-
-/** Maximum characters kept per captured entry (a truncated one-liner, not a
- * parsed structure -- deliberately shallow, see module docstring below). */
-const MAX_ENTRY_CHARS = 80;
+import { commandOf } from "../core/tools";
 
 /** Single-pass quote-aware scan: returns the index of every UNQUOTED
  * shell separator (`;`, `&`, `|`, newline). Quote state tracks ' and "
@@ -37,8 +33,8 @@ const unquotedSeparators = (cmd: string): number[] => {
 /** Cut `text` at the next UNQUOTED separator. Quotes are kept as written:
  * the cut never lands inside a quote, so they stay balanced. No truncation
  * here -- dedup must see the full string (two distinct invocations sharing
- * an 80-char prefix must not collapse); render-time truncation lives in
- * formatTrackedCommands. */
+ * an 80-char prefix must not collapse); the summary clips it when it shows
+ * it (core/format.ts trackedEntry). */
 const captureEntry = (text: string): string => {
   const seps = unquotedSeparators(text);
   const cut = seps.length ? text.slice(0, seps[0]) : text;
@@ -77,7 +73,7 @@ const skipToCommand = (cmd: string, pos: number): number => {
       if (!flag.startsWith("-")) break;
       pos = fat + flag.length;
       if (WRAPPER_VALUE_FLAGS[tok]?.test(flag)) {
-        const [value, vat] = tokenAt(cmd, pos); // consume the flag's value
+        const [value, vat] = tokenAt(cmd, pos);
         pos = vat + value.length;
       }
     }
@@ -125,13 +121,13 @@ const sshRemoteCommand = (afterSsh: string): string | undefined => {
   return rest || undefined;
 };
 
-export interface TrackedCommandActivity {
+interface TrackedCommandActivity {
   /** Command name (as configured in settings.trackCommands) -> entries seen. */
   byCommand: Map<string, Set<string>>;
 }
 
 /**
- * Scans bash tool-call commands for invocations of any command name in
+ * Scans shell commands (the agent's and the user's `!cmd`) for invocations of any command name in
  * `trackCommands`, capturing a one-line snapshot per match --
  * deliberately shallow (no per-command argument parsing) so this never
  * needs updating as any given CLI's flags evolve, unlike a design that
@@ -156,8 +152,7 @@ export const extractTrackedCommands = (
   const trackSsh = trackCommands.includes("ssh");
 
   for (const b of blocks) {
-    if (b.kind !== "tool_call" || b.name !== "bash") continue;
-    const cmd = typeof b.args.command === "string" ? b.args.command : "";
+    const cmd = commandOf(b);
     if (!cmd) continue;
 
     for (const name of trackCommands) {
@@ -177,7 +172,7 @@ export const extractTrackedCommands = (
         // bounds are segment starts (incl. wrappers); the ssh token itself
         // sits at skipToCommand — slice past it for the remote parser.
         const seg = cmd.slice(bound);
-        const remote = sshRemoteCommand(seg.slice(skipToCommand(seg, 0) + 3));
+        const remote = sshRemoteCommand(seg.slice(skipToCommand(seg, 0) + "ssh".length));
         if (!remote) continue;
         // The remote string's quotes were the LOCAL shell's syntax, not
         // the remote command's — a leftover stray ' would open a phantom
@@ -199,34 +194,4 @@ export const extractTrackedCommands = (
   }
 
   return { byCommand };
-};
-
-/** Line format of `[Tracked Commands]`, shared with the merge in
- * core/summarize.ts: `- <name>: <entry> | <entry> ...`, newest
- * COMMANDS_PER_NAME kept. " | " rather than "," since an entry (e.g.
- * `kubectl get pods,svc`) can legitimately contain a comma. */
-export const COMMAND_SEPARATOR = " | ";
-export const COMMANDS_PER_NAME = 10;
-
-/** Render form: one line (a quoted multi-line argument such as
- * `python3 -c '...'` would otherwise break the line format), with an inner
- * separator escaped as ` \| ` so the merge, which splits on
- * COMMAND_SEPARATOR, keeps the entry whole. Then truncated. */
-const renderEntry = (entry: string): string => {
-  const line = entry.replace(/\s+/g, " ").replaceAll(COMMAND_SEPARATOR, " \\| ");
-  return line.length > MAX_ENTRY_CHARS ? `${line.slice(0, MAX_ENTRY_CHARS)}…` : line;
-};
-
-/** Formats TrackedCommandActivity into `[Tracked Commands]` body lines, one per
- * tracked command name that had at least one match. Keeps the NEWEST
- * entries: a ledger of what was run recently must not freeze at its first
- * ten while everything later drowns in a permanent "(+N more)". */
-export const formatTrackedCommands = (act: TrackedCommandActivity): string[] => {
-  const lines: string[] = [];
-  for (const [name, entries] of act.byCommand) {
-    if (entries.size > 0) {
-      lines.push(`${name}: ${capItems([...entries].map(renderEntry), COMMANDS_PER_NAME, COMMAND_SEPARATOR)}`);
-    }
-  }
-  return lines;
 };

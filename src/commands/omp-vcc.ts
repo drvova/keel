@@ -15,10 +15,10 @@
 import { buildVccCustomInstructions, parseKeepAndPrompt } from "../core/compact-args";
 import type { CompactionState } from "../hooks/compaction";
 import { reportCompactDone, reportCompactError } from "../commands/compact-feedback";
-import { OMP_HOST, type HostProfile } from "../host";
+import { compactAndWait, type HostProfile } from "../host";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 
-export const registerOmpVccCommand = (pi: ExtensionAPI, state: CompactionState, host: HostProfile = OMP_HOST) => {
+export const registerOmpVccCommand = (pi: ExtensionAPI, state: CompactionState, host: HostProfile) => {
   pi.registerCommand(host.command, {
     description: "Compact the conversation into an omp-vcc structured summary (keep:N keeps the last N user turns)",
     handler: async (args, ctx) => {
@@ -28,31 +28,15 @@ export const registerOmpVccCommand = (pi: ExtensionAPI, state: CompactionState, 
       state.lastCancelNotice = null;
       state.pendingManualInstructions = instructions;
       try {
-        await new Promise<void>((resolve) => {
-          const returned: unknown = ctx.compact({
-            customInstructions: instructions,
-            // A follow-up prompt replaces omp's resume of a turn the compaction interrupted.
-            ...(followUpPrompt ? { suppressContinuation: true } : {}),
-            onComplete: () => {
-              reportCompactDone(ctx, state.lastStats, followUpPrompt, (content) => pi.sendUserMessage(content));
-              resolve();
-            },
-            onError: (err: Error) => {
-              // The TUI already shows "Compaction cancelled" / "Compaction failed: …";
-              // there omp-vcc adds only its hint for a session that is still too short.
-              if (!(ctx.mode === "tui" && !err.message.startsWith("Nothing to compact"))) {
-                reportCompactError(ctx, err, state.lastCancelNotice, host.displayName);
-              }
-              resolve();
-            },
-          } as Parameters<typeof ctx.compact>[0]);
-          // omp settles the call with the compaction (its callbacks have run by then).
-          if (returned && typeof (returned as Promise<unknown>).then === "function") {
-            (returned as Promise<unknown>).then(() => resolve(), () => resolve());
-          }
+        await compactAndWait(ctx as any, {
+          customInstructions: instructions,
+          // A follow-up prompt replaces omp's resume of a turn the compaction interrupted.
+          ...(followUpPrompt ? { suppressContinuation: true } : {}),
+          onComplete: () => reportCompactDone(ctx, state.lastStats, followUpPrompt, (content) => pi.sendUserMessage(content)),
+          onError: (err: Error) => reportCompactError(ctx, err, state.lastCancelNotice, host.displayName),
         });
       } catch {
-        // Already reported through onError.
+        // A compact() that throws has reported through onError.
       } finally {
         state.pendingManualInstructions = null;
       }

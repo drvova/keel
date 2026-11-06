@@ -2,10 +2,11 @@
 // by a real model in omp (or Pi, with OMP_VCC_LH_HOST=pi) with omp-vcc loaded,
 // omp's idle pass (Pi's /compact) every 6 turns (tests/support/long-horizon.ts).
 // Numbers for the current code: bun run scripts/benchmark-long-horizon.ts
+import { pairs, searchHits } from "./support/pairs";
 import { beforeAll, describe, expect, it } from "bun:test";
 import { realModel, runLongHorizon, type LongHorizonResult } from "./support/long-horizon";
 import { sessionHost } from "./support/host-session";
-import { searchEntries, stemOf } from "../src/core/search-entries";
+import { stemOf } from "../src/core/search-entries";
 import { renderMessage } from "../src/core/render-entries";
 import { recallOutputChars, RECALL_OUTPUT_CHARS } from "../src/core/recall-run";
 
@@ -58,7 +59,7 @@ describe.skipIf(!realModel())(`long-horizon session, on a real model in ${sessio
     expect(Math.max(...runs.r120.sectionChars)).toBeLessThan(Math.max(...runs.r60.sectionChars) * 1.15);
   });
 
-  it("a note pinned at turn 9 leads the summary after every compaction", () => {
+  it("a note pinned at turn 9 still leads the last summary", () => {
     expect(runs.r120.finalSummary.startsWith(`[Pinned Notes]\n- [1] ${PIN} (agent`)).toBe(true);
   });
 
@@ -102,7 +103,7 @@ describe("recall search: inflected forms", () => {
       { role: "user", content: "unrelated message about the docs" },
     ];
     const rendered = msgs.map((m, i) => renderMessage(m, i));
-    expect(searchEntries(rendered, msgs, "rounding failure").map((h) => h.index)).toEqual([0]);
+    expect(searchHits(pairs(rendered, msgs), "rounding failure").map((h) => h.index)).toEqual([0]);
   });
 });
 

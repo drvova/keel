@@ -10,18 +10,13 @@
 // read a newer read supersedes is an older one), so a message is copied well
 // before omp could rewrite it.
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
-import { appendRawStore, keptContent, mayBeRewritten, rawStoreIds, sessionLineage, type RawRecord } from "../core/raw-store";
-import { buildGlobalIndexById } from "../core/global-indices";
-import { loadSettings } from "../core/settings";
-
-interface SessionManagerLike {
-  getSessionFile?: () => string | undefined;
-  getEntries?: () => any[];
-  getBranch?: () => any[];
-}
+import { appendRawStore, keptContent, mayBeRewritten, rawStoreIds, type RawRecord } from "../core/raw-store";
+import { hostBranch, hostEntries, indexById, sessionLineage, type SessionManagerLike } from "../core/session-file";
+import type { Config } from "../core/settings";
+import { recallExpandCall } from "../names";
 
 /** One binding's place in its session: which file, how many entries it has looked at, which are kept. */
-export interface RawCaptureState {
+interface RawCaptureState {
   file?: string;
   seen: number;
   kept: Set<string>;
@@ -41,7 +36,7 @@ export const captureNewEntries = (state: RawCaptureState, sessionManager: Sessio
     state.seen = 0;
     state.kept = new Set(sessionLineage(file).flatMap((f) => [...rawStoreIds(f)]));
   }
-  const entries = sessionManager?.getEntries?.() ?? [];
+  const entries = hostEntries(sessionManager) ?? [];
   if (entries.length < state.seen) state.seen = 0;
   const records: RawRecord[] = [];
   for (let i = state.seen; i < entries.length; i++) {
@@ -50,14 +45,14 @@ export const captureNewEntries = (state: RawCaptureState, sessionManager: Sessio
     if (!mayBeRewritten(entry.message)) continue;
     records.push({ id: entry.id, content: keptContent(entry.message.content) });
   }
-  state.seen = entries.length;
-  if (records.length === 0) return 0;
+  // Seen only once kept: a failed write (a full disk) is tried again on the next event.
   try {
-    appendRawStore(file, records);
-    for (const r of records) state.kept.add(r.id);
+    if (records.length > 0) appendRawStore(file, records);
   } catch {
     return 0;
   }
+  for (const r of records) state.kept.add(r.id);
+  state.seen = entries.length;
   return records.length;
 };
 
@@ -83,10 +78,10 @@ export const pointPlaceholders = (messages: unknown[], state: RawCaptureState, s
   if (hits.length === 0 || state.kept.size === 0) return undefined;
   // The tool result each call id names on the active path (a reused id after an interrupted call: the latest).
   const byCall = new Map<string, string>();
-  for (const e of sessionManager?.getBranch?.() ?? []) {
+  for (const e of hostBranch(sessionManager) ?? []) {
     if (e?.type === "message" && e.message?.role === "toolResult" && typeof e.message.toolCallId === "string") byCall.set(e.message.toolCallId, e.id);
   }
-  const index = buildGlobalIndexById(sessionManager?.getEntries?.() ?? []);
+  const index = indexById(hostEntries(sessionManager) ?? []);
   let out: unknown[] | undefined;
   for (const { i, text, callId } of hits) {
     const id = byCall.get(callId);
@@ -94,16 +89,17 @@ export const pointPlaceholders = (messages: unknown[], state: RawCaptureState, s
     if (!id || n === undefined || !state.kept.has(id)) continue;
     out ??= [...messages];
     const m = messages[i] as Record<string, unknown>;
-    out[i] = { ...m, content: [{ type: "text", text: `${text} (the original: vcc_recall expand:[${n}])` }] };
+    out[i] = { ...m, content: [{ type: "text", text: `${text} (the original: ${recallExpandCall(n)})` }] };
   }
   return out;
 };
 
 /** Keep originals for the session this binding serves (`keepOriginals`, default on). */
-export const registerRawCapture = (pi: ExtensionAPI, state: RawCaptureState = createRawCaptureState()): void => {
+export const registerRawCapture = (pi: ExtensionAPI, config: Config): void => {
+  const state = createRawCaptureState();
   const capture = (ctx: unknown) => {
     try {
-      if (!loadSettings().keepOriginals) return;
+      if (!config.load().keepOriginals) return;
       captureNewEntries(state, (ctx as { sessionManager?: SessionManagerLike })?.sessionManager);
     } catch {}
   };
@@ -113,7 +109,7 @@ export const registerRawCapture = (pi: ExtensionAPI, state: RawCaptureState = cr
   pi.on("agent_end", (_event, ctx) => capture(ctx));
   pi.on("context", (event, ctx) => {
     try {
-      if (!loadSettings().keepOriginals) return;
+      if (!config.load().keepOriginals) return;
       const sessionManager = (ctx as { sessionManager?: SessionManagerLike })?.sessionManager;
       // Entries that arrived since the last event, so a result omp just blanked is known to be kept.
       captureNewEntries(state, sessionManager);

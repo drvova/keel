@@ -1,61 +1,52 @@
 import { describe, expect, it } from "bun:test";
-import { compile, compileRanked } from "../src/core/summarize";
+import { compile as compileAt, type CompileInput } from "../src/core/summarize";
+import { DEFAULT_SUMMARY_LIMITS } from "../src/core/window";
 import { rankBriefBlocks, selectRankedBriefBlocks } from "../src/core/rank";
 import { compileBrief } from "../src/core/brief";
 import type { NormalizedBlock } from "../src/types";
+import { normalize } from "../src/core/normalize";
 import { assistantText, assistantWithToolCall, userMsg } from "./fixtures";
+/** compile at a ~128K window's section limits unless a test sets its own. */
+const compile = (input: Omit<CompileInput, "limits"> & { limits?: CompileInput["limits"] }) => compileAt({ limits: DEFAULT_SUMMARY_LIMITS, ...input });
 
 const briefPart = (summary: string): string => summary.split("\n\n---\n\n")[1] ?? "";
 
-describe("section-aware brief ranking prototype", () => {
-  it("scores structural edit/test events above read-only exploration", () => {
-    const blocks: NormalizedBlock[] = [
-      { kind: "tool_call", name: "Read", args: { file_path: "src/auth.ts" } },
-      { kind: "tool_call", name: "Edit", args: { file_path: "src/auth.ts" } },
-      { kind: "tool_call", name: "bash", args: { command: "bun test tests/auth.test.ts" } },
-    ];
+/** A block's score ranked on its own: no recency or neighbour bonus to tell two blocks apart. */
+const scoreOf = (block: NormalizedBlock): number => rankBriefBlocks([block])[0].score;
+const call = (name: string, args: Record<string, unknown>): NormalizedBlock => ({ kind: "tool_call", name, args });
+const userRan = (command: string, exitCode = 0): NormalizedBlock => ({ kind: "bash", command, exitCode });
 
-    const ranked = rankBriefBlocks(blocks);
-    const read = ranked.find((r) => r.block.kind === "tool_call" && r.block.name === "Read")!;
-    const edit = ranked.find((r) => r.block.kind === "tool_call" && r.block.name === "Edit")!;
-    const test = ranked.find((r) => r.block.kind === "tool_call" && r.block.name === "bash")!;
-
-    expect(edit.score).toBeGreaterThan(read.score);
-    expect(test.score).toBeGreaterThan(read.score);
-    expect(edit.reasons).toContain("edit-tool");
-    expect(test.reasons).toContain("test-command");
+describe("brief ranking", () => {
+  it("scores an edit and a test run above a read and another command", () => {
+    const edit = scoreOf(call("Edit", { file_path: "src/auth.ts" }));
+    const test = scoreOf(call("bash", { command: "bun test tests/auth.test.ts" }));
+    for (const plain of [call("Read", { file_path: "src/auth.ts" }), call("bash", { command: "du -sh dist" })]) {
+      expect(edit).toBeGreaterThan(scoreOf(plain));
+      expect(test).toBeGreaterThan(scoreOf(plain));
+    }
   });
 
   it("penalizes scaffolding-only bash so it ranks below substantive commands", () => {
-    const blocks: NormalizedBlock[] = [
-      { kind: "bash", command: "set -euo pipefail\ncd /tmp/proj\nls -la", exitCode: 0 },
-      { kind: "bash", command: "set -euo pipefail\ngit commit -m \"fix\"\ngit push", exitCode: 0 },
-    ];
-    const ranked = rankBriefBlocks(blocks);
-    const scaffold = ranked[0];
-    const work = ranked[1];
-    expect(scaffold.reasons).toContain("trivial-bash");
-    expect(work.reasons).not.toContain("trivial-bash");
-    expect(work.score).toBeGreaterThan(scaffold.score);
+    // The same preamble in front of real work is no penalty.
+    expect(scoreOf(userRan("set -euo pipefail\nmake dist"))).toBeGreaterThan(scoreOf(userRan("set -euo pipefail\ncd /tmp/proj\nls -la")));
   });
 
   it("does not penalize a real command hidden after a stray '<<' with no terminator", () => {
-    const blocks: NormalizedBlock[] = [
-      // `<<NOTE` has no closing `NOTE` line, so it must not be treated as a
-      // heredoc opener that swallows the git commit below into a skipped body.
-      { kind: "bash", command: "echo \"see <<NOTE for details\"\ngit commit -m fix", exitCode: 0 },
-    ];
-    const ranked = rankBriefBlocks(blocks);
-    expect(ranked[0].reasons).not.toContain("trivial-bash");
+    // `<<NOTE` has no closing `NOTE` line, so it must not be treated as a
+    // heredoc opener that swallows the git commit below into a skipped body.
+    expect(scoreOf(userRan("echo \"see <<NOTE for details\"\ngit commit -m fix"))).toBe(scoreOf(userRan("echo \"see NOTE for details\"\ngit commit -m fix")));
   });
 
   it("does not penalize a scaffolding command that failed (nonzero exit is a real fact)", () => {
-    const blocks: NormalizedBlock[] = [
-      { kind: "bash", command: "cd /tmp/missing", exitCode: 1 },
-    ];
-    const ranked = rankBriefBlocks(blocks);
-    expect(ranked[0].reasons).not.toContain("trivial-bash");
-    expect(ranked[0].reasons).toContain("nonzero-exit");
+    expect(scoreOf(userRan("cd /tmp/missing", 1))).toBe(scoreOf(userRan("make dist", 1)));
+  });
+
+  it("ranks a failed call above the same call that passed", () => {
+    const run = (isError: boolean) => normalize([
+      { role: "assistant", content: [{ type: "toolCall", id: "a", name: "bash", arguments: { command: "make dist" } }] },
+      { role: "toolResult", toolCallId: "a", toolName: "bash", content: [{ type: "text", text: isError ? "make: *** [dist] Error 1" : "built" }], isError },
+    ] as any).find((b) => b.kind === "tool_call")!;
+    expect(scoreOf(run(true))).toBeGreaterThan(scoreOf(run(false)));
   });
 
   it("selects ranked blocks chronologically after scoring", () => {
@@ -79,25 +70,14 @@ describe("section-aware brief ranking prototype", () => {
   });
 
   it("boosts non-trivial assistant turns that close a user segment", () => {
-    const blocks: NormalizedBlock[] = [
-      { kind: "user", text: "Fix auth bug" },
-      { kind: "assistant", text: "I'll inspect this now." },
-      { kind: "tool_call", name: "Read", args: { file_path: "noise-a.ts" } },
-      { kind: "tool_call", name: "Edit", args: { file_path: "src/auth.ts" } },
-      { kind: "tool_call", name: "bash", args: { command: "bun test tests/auth.test.ts" } },
-      {
-        kind: "assistant",
-        text: "Implemented the auth fix, verified the focused auth test, confirmed the changed file is limited to src/auth.ts, and no follow-up blockers remain for this task.",
-      },
-      { kind: "user", text: "ok next" },
-    ];
-    const ranked = rankBriefBlocks(blocks);
-    const report = ranked.find((r) => r.block === blocks[5])!;
-    const chatter = ranked.find((r) => r.block === blocks[1])!;
-
-    expect(report.reasons).toContain("segment-closing-assistant");
-    expect(chatter.reasons).not.toContain("segment-closing-assistant");
-    expect(report.score).toBeGreaterThan(chatter.score);
+    // The same reply in the same place, followed by the next request or by more work.
+    const scoreAt = (text: string, next: NormalizedBlock) =>
+      rankBriefBlocks([{ kind: "user", text: "Fix auth bug" }, { kind: "assistant", text }, next])[1].score;
+    const report = "Implemented the auth fix, verified the focused auth test, confirmed the changed file is limited to src/auth.ts, and no follow-up blockers remain for this task.";
+    const nextRequest: NormalizedBlock = { kind: "user", text: "ok next" };
+    const moreWork = call("Read", { file_path: "noise-a.ts" });
+    expect(scoreAt(report, nextRequest)).toBeGreaterThan(scoreAt(report, moreWork));
+    expect(scoreAt("Done.", nextRequest)).toBe(scoreAt("Done.", moreWork));
   });
 
   it("does not spend ranked selection budget on tool results", () => {
@@ -119,13 +99,15 @@ describe("section-aware brief ranking prototype", () => {
   });
 
   it("deduplicates repeated gh PR polling commands", () => {
+    // One block more than maxBlocks, so the selection ranks; both polls outscore the read.
     const blocks: NormalizedBlock[] = [
+      { kind: "tool_call", name: "Read", args: { file_path: "notes.md" } },
       { kind: "user", text: "Merge PR 123 when green" },
       { kind: "tool_call", name: "bash", args: { command: "gh pr view 123 --json mergeStateStatus" } },
       { kind: "tool_call", name: "bash", args: { command: "gh pr checks 123 --watch" } },
       { kind: "tool_call", name: "bash", args: { command: "gh pr merge 123 --squash --delete-branch" } },
     ];
-    const selected = selectRankedBriefBlocks(blocks, { maxBlocks: 3, preserveRecentBlocks: 0 });
+    const selected = selectRankedBriefBlocks(blocks, { maxBlocks: 4, preserveRecentBlocks: 0 });
     const pollCount = selected.filter((block) =>
       block.kind === "tool_call"
         && /^bash$/i.test(block.name)
@@ -134,10 +116,10 @@ describe("section-aware brief ranking prototype", () => {
     ).length;
 
     expect(pollCount).toBeLessThanOrEqual(1);
-    expect(selected).toContain(blocks[3]);
+    expect(selected).toContain(blocks[4]);
   });
 
-  it("compileRanked reduces brief noise while keeping semantic sections from all blocks", () => {
+  it("compile reduces brief noise while keeping semantic sections from all blocks", () => {
     const exploration = Array.from({ length: 15 }, (_, i) => [
       userMsg(`look around ${i}`),
       assistantWithToolCall("Read", { file_path: `noise${i}.ts` }),
@@ -151,23 +133,26 @@ describe("section-aware brief ranking prototype", () => {
     ];
 
     const baseline = compile({ messages: [...exploration, ...critical] });
-    const ranked = compileRanked({
+    const ranked = compile({
       messages: [...exploration, ...critical],
       ranking: { maxBlocks: 10, preserveRecentBlocks: 4 },
     });
 
-    expect(ranked.length).toBeLessThan(baseline.length);
-    expect(ranked).toContain("[Early Session Requests]");
-    expect(ranked).toContain("Fix auth bug");
-    expect(ranked).toContain('* Edit "src/auth.ts"');
-    expect(ranked).toContain('* bash "bun test tests/auth.test.ts"');
-    expect(briefPart(ranked)).not.toContain('Read "noise0.ts"');
+    expect(briefPart(ranked).length).toBeLessThan(briefPart(baseline).length);
+    expect(briefPart(ranked)).toContain("Fix auth bug");
+    expect(briefPart(ranked)).toContain('* Edit "src/auth.ts"');
+    expect(briefPart(ranked)).toContain('* bash "bun test tests/auth.test.ts"');
+    expect(briefPart(ranked)).not.toContain('Read "noise');
+    // The sections still come from every block, the ones the brief left out too.
+    const header = ranked.slice(0, ranked.indexOf("\n\n---\n\n"));
+    expect(header).toContain("[Early Session Requests]\n- look around 0\n");
+    expect(header).toContain("noise14.ts");
   });
 
   it("keeps fresh ranked brief and gives previous brief the remaining budget", () => {
     const previousBrief = Array.from({ length: 200 }, (_, i) => `[user]\nold context ${i}`).join("\n\n");
     const previousSummary = `[Early Session Requests]\n- Original goal\n\n---\n\n${previousBrief}`;
-    const ranked = compileRanked({
+    const ranked = compile({
       previousSummary,
       messages: [
         userMsg("Fix fresh ranked bug"),
@@ -219,7 +204,7 @@ describe("section-aware brief ranking prototype", () => {
     );
     const maxBriefChars = 3000;
 
-    const ranked = compileRanked({
+    const ranked = compile({
       messages: [userMsg("start a big task"), ...huge],
       ranking: { maxBlocks: 80, preserveRecentBlocks: 10, maxBriefChars },
     });
@@ -237,9 +222,8 @@ describe("section-aware brief ranking prototype", () => {
       Array.from({ length: n }, (_, i) => ({ kind: "assistant" as const, text: `block ${i} ` + "x".repeat(300) }));
     const opts = { maxBlocks: 500, preserveRecentBlocks: 0, maxBriefChars: 4400, maxBriefCharsCeiling: 8000, briefCharsPerBlock: 60 };
 
-    // Small transcript (10 blocks -> 600 < floor): pinned at the floor.
-    const small = compileBrief(selectRankedBriefBlocks(mkBlocks(10), opts));
-    expect(small.length).toBeLessThanOrEqual(4400);
+    // Small transcript (10 blocks -> 600 < floor): pinned at the floor, where all ~3,200 chars fit.
+    expect(selectRankedBriefBlocks(mkBlocks(10), opts)).toHaveLength(10);
 
     // Mid transcript (100 blocks -> 6000, between floor and ceiling): exceeds the floor.
     const mid = compileBrief(selectRankedBriefBlocks(mkBlocks(100), opts));

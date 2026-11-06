@@ -1,7 +1,9 @@
 // vcc_recall keeps the originals of what omp rewrites in the session file
 // (src/core/raw-store.ts, src/hooks/raw-capture.ts), with no omp setting changed.
+import { ompBinding, testConfig } from "./support/binding";
+import { sessionLineage } from "../src/core/session-file";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import {
@@ -9,9 +11,9 @@ import {
   keptContent,
   MAX_KEPT_CHARS,
   mayBeRewritten,
+  rawStoreIds,
   rawStorePath,
   readRawStore,
-  sessionLineage,
   wasRewritten,
   withOriginalContent,
 } from "../src/core/raw-store";
@@ -66,7 +68,7 @@ describe("what is kept", () => {
 describe("with omp's own session manager", () => {
   const recallOn = async (sm: any, params: Record<string, unknown>) => {
     let tool: any;
-    registerRecallTool({ registerTool: (t: any) => { tool = t; } } as any);
+    registerRecallTool({ registerTool: (t: any) => { tool = t; } } as any, ompBinding);
     const result = await tool.execute("call", params, undefined, undefined, { sessionManager: sm });
     return result.content[0].text as string;
   };
@@ -120,21 +122,42 @@ describe("with omp's own session manager", () => {
 
   it("is taken on omp's events, and not when keepOriginals is off", () => {
     const handlers = new Map<string, Array<(e: unknown, c: unknown) => void>>();
-    registerRawCapture({ on: (name: string, h: any) => handlers.set(name, [...(handlers.get(name) ?? []), h]) } as any);
-    expect([...handlers.keys()].sort()).toEqual(["agent_end", "context", "message_end", "session_start", "turn_end"]);
+    registerRawCapture({ on: (name: string, h: any) => handlers.set(name, [...(handlers.get(name) ?? []), h]) } as any, testConfig);
     const file = join(dir, "events.jsonl");
     const entries: any[] = [{ type: "message", id: "r1", message: { role: "toolResult", toolCallId: "c", content: text("out") } }];
     const ctx = { sessionManager: { getSessionFile: () => file, getEntries: () => entries } };
+    const fireAll = () => { for (const hs of handlers.values()) for (const h of hs) h({ messages: [] }, ctx); };
     writeFileSync(process.env.OMP_VCC_CONFIG_PATH!, JSON.stringify({ keepOriginals: false }));
-    handlers.get("message_end")![0]({}, ctx);
+    fireAll();
     expect(existsSync(rawStorePath(file))).toBe(false);
+    // Off, the events passed the message by without taking it as seen.
     writeFileSync(process.env.OMP_VCC_CONFIG_PATH!, JSON.stringify({ keepOriginals: true }));
-    handlers.get("turn_end")![0]({}, ctx);
+    handlers.get("message_end")![0]({}, ctx);
     expect([...readRawStore(file, new Set(["r1"])).values()]).toEqual([text("out")]);
   });
 });
 
 describe("the summary is written from the originals", () => {
+  it("a write that fails is tried again on the next event, not given up", () => {
+    const file = join(dir, "retry.jsonl");
+    const entries = [{ type: "message", id: "t1", message: { role: "toolResult", toolCallId: "c", content: text("out") } }];
+    const sm = { getSessionFile: () => file, getEntries: () => entries };
+    const state = createRawCaptureState();
+    // The store's path is a directory: appending to it fails, as on a full disk.
+    mkdirSync(rawStorePath(file), { recursive: true });
+    expect(captureNewEntries(state, sm)).toBe(0);
+    rmSync(rawStorePath(file), { recursive: true, force: true });
+    expect(captureNewEntries(state, sm)).toBe(1);
+    expect([...readRawStore(file, new Set(["t1"])).values()]).toEqual([text("out")]);
+  });
+
+  it("finds a record whatever order its fields were built in", () => {
+    const file = join(dir, "order.jsonl");
+    appendRawStore(file, [{ content: text("kept"), id: "o1" } as any]);
+    expect([...rawStoreIds(file)]).toEqual(["o1"]);
+    expect([...readRawStore(file, new Set(["o1"])).values()]).toEqual([text("kept")]);
+  });
+
   it("a commit whose git output omp blanked before omp-vcc compacted is still in [Commits]", async () => {
     writeFileSync(process.env.OMP_VCC_CONFIG_PATH!, JSON.stringify({ overrideDefaultCompaction: true }));
     const { registerHook } = await import("./support/host");
@@ -225,7 +248,7 @@ describe("a fork reads its parent's originals", () => {
     expect(captureNewEntries(state, sm)).toBe(0);
 
     let tool: any;
-    registerRecallTool({ registerTool: (t: any) => { tool = t; } } as any);
+    registerRecallTool({ registerTool: (t: any) => { tool = t; } } as any, ompBinding);
     const found = (await tool.execute("f", { query: "pelican healthcheck" }, undefined, undefined, { sessionManager: sm })).content[0].text;
     expect(found).toContain("deploy aborted: pelican-7 healthcheck timed out");
   });

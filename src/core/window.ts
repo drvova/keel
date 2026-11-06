@@ -19,7 +19,6 @@
 // past its trigger, so the landing below omp's recovery band suits it too. Pure
 // functions; the IO is in model-limits.ts.
 
-/** Clamp `value` to [floor, ceiling], rounded. */
 const clampTokens = (value: number, floor: number, ceiling: number): number =>
   Math.round(Math.max(floor, Math.min(ceiling, value)));
 
@@ -71,7 +70,7 @@ export const effectiveWindow = (...windows: Array<number | undefined>): number |
  * CompactionSettings, with the model's `compaction.modelThresholds` entry
  * already applied). Only the fields that decide where omp compacts.
  */
-export interface OmpCompactionPolicy {
+interface OmpCompactionPolicy {
   enabled?: boolean;
   strategy?: string;
   /** Compact at this share of the window (1–99). */
@@ -90,7 +89,7 @@ const OMP_DEFAULT_RESERVE_TOKENS = 16_384;
 const finitePositive = (value: unknown): number | undefined =>
   typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
 
-/** The policy fields in omp's `preparation.settings`, or undefined when there are none. */
+/** The policy fields in omp's `preparation.settings`, or undefined when it is not an object. */
 export const ompPolicyOf = (settings: unknown): OmpCompactionPolicy | undefined => {
   if (!isRecord(settings)) return undefined;
   const policy: OmpCompactionPolicy = {};
@@ -103,8 +102,7 @@ export const ompPolicyOf = (settings: unknown): OmpCompactionPolicy | undefined 
   return policy;
 };
 
-/** Whether omp compacts on its own under this policy. */
-export const ompAutoCompacts = (policy: OmpCompactionPolicy | undefined): boolean =>
+const ompAutoCompacts = (policy: OmpCompactionPolicy | undefined): boolean =>
   policy?.enabled !== false && policy?.strategy !== "off";
 
 /** The reserve below the window omp keeps (pi-agent-core resolveBudgetReserveTokens). */
@@ -145,7 +143,7 @@ export const ompDefaultTrigger = (window: number): number => Math.max(1, ompTrig
  * CompactionSettings from settingsManager.getCompactionSettings(model)). Only
  * the fields that decide where Pi compacts.
  */
-export interface PiCompactionPolicy {
+interface PiCompactionPolicy {
   enabled?: boolean;
   /** Kept free below the window; Pi's DEFAULT_COMPACTION_SETTINGS has 16,384. */
   reserveTokens?: number;
@@ -154,7 +152,7 @@ export interface PiCompactionPolicy {
 /** Pi's reserve when `reserveTokens` is unset (DEFAULT_COMPACTION_SETTINGS). */
 const PI_DEFAULT_RESERVE_TOKENS = 16_384;
 
-/** The policy fields in Pi's `preparation.settings`, or undefined when there are none. */
+/** The policy fields in Pi's `preparation.settings`, or undefined when it is not an object. */
 export const piPolicyOf = (settings: unknown): PiCompactionPolicy | undefined => {
   if (!isRecord(settings)) return undefined;
   const policy: PiCompactionPolicy = {};
@@ -176,8 +174,7 @@ export const piTrigger = (window: number, policy: PiCompactionPolicy = {}): numb
   return Math.max(1, Math.floor(window - reserve));
 };
 
-/** Whether Pi compacts on its own under this policy. */
-export const piAutoCompacts = (policy: PiCompactionPolicy | undefined): boolean => policy?.enabled !== false;
+const piAutoCompacts = (policy: PiCompactionPolicy | undefined): boolean => policy?.enabled !== false;
 
 /**
  * A host's compaction rule, from its own code: the policy it hands the hook
@@ -186,24 +183,42 @@ export const piAutoCompacts = (policy: PiCompactionPolicy | undefined): boolean 
  * compacts next, so the rule is the host's, never a guess.
  */
 export interface TriggerRule {
-  host: "omp" | "pi";
   policyOf(settings: unknown): object | undefined;
   trigger(window: number, policy?: object): number;
   autoCompacts(policy: object | undefined): boolean;
 }
 
 export const OMP_TRIGGER_RULE: TriggerRule = {
-  host: "omp",
   policyOf: ompPolicyOf,
   trigger: (window, policy) => ompTrigger(window, policy as OmpCompactionPolicy | undefined),
   autoCompacts: (policy) => ompAutoCompacts(policy as OmpCompactionPolicy | undefined),
 };
 
 export const PI_TRIGGER_RULE: TriggerRule = {
-  host: "pi",
   policyOf: piPolicyOf,
   trigger: (window, policy) => piTrigger(window, policy as PiCompactionPolicy | undefined),
   autoCompacts: (policy) => piAutoCompacts(policy as PiCompactionPolicy | undefined),
+};
+
+/**
+ * Where this compaction's budgets assume the next one happens: the host's
+ * policy, which every compaction of either host carries (preparation.settings,
+ * required from omp 18.14 and Pi 1.0 on), applied to the effective window as
+ * the host applies it (`rule`: omp its threshold, reserve and the model's own
+ * entry, Pi its reserve). When the host's window is too high, its trigger can
+ * never fire, and the same policy on the real window applies. A recovery pass
+ * (the hook's `recovering`) is bounded by the context that overflowed.
+ */
+export const triggerFor = (
+  effectiveWindow: number | undefined,
+  recovering: boolean,
+  tokensBefore: number | undefined,
+  policy: object | undefined,
+  rule: TriggerRule,
+): number | undefined => {
+  const trigger = effectiveWindow ? rule.trigger(effectiveWindow, policy) : undefined;
+  const before = positive(tokensBefore);
+  return recovering && before ? (trigger ? Math.min(trigger, before) : before) : trigger;
 };
 
 /** omp re-compacts unless the result lands at or under this share of the trigger. */
@@ -229,6 +244,8 @@ export interface SummaryLimits {
   historyRanges: number;
   /** Brief transcript lines, a merged one included. */
   briefLines: number;
+  /** [Tracked Commands] invocations kept per command name. */
+  commandsPerName: number;
 }
 
 /** The section sizes from before the window was known; still those of a ~128K window. */
@@ -238,6 +255,7 @@ export const DEFAULT_SUMMARY_LIMITS: SummaryLimits = {
   commits: 8,
   historyRanges: 8,
   briefLines: 120,
+  commandsPerName: 10,
 };
 
 /** Never fewer than these, however small the window. */
@@ -247,6 +265,7 @@ const SUMMARY_LIMIT_FLOORS: SummaryLimits = {
   commits: 2,
   historyRanges: 3,
   briefLines: 30,
+  commandsPerName: 3,
 };
 
 export interface CompactionBudgets {
@@ -254,9 +273,12 @@ export interface CompactionBudgets {
   maxTailTokens: number;
   /** Smart keep-tail grows keep:1 only when its tail is at most this. */
   minTailTokens: number;
-  /** The ranked brief's floor and ceiling. */
+  /** The ranked brief's floor and ceiling, and what each block it covers adds between them. */
   briefTokens: number;
   briefCeilingTokens: number;
+  briefTokensPerBlock: number;
+  /** Blocks the ranked brief takes at most, whatever their size. */
+  briefMaxBlocks: number;
   /**
    * Chars a summary may add beyond what it replaces before it is not written
    * (or a share of the prefix, when larger): its framing, which grows with its sections.
@@ -275,6 +297,8 @@ export const DEFAULT_BUDGETS: CompactionBudgets = {
   minTailTokens: 5_000,
   briefTokens: 1_100,
   briefCeilingTokens: 2_000,
+  briefTokensPerBlock: 15,
+  briefMaxBlocks: 80,
   growthMarginChars: 500,
   summary: { ...DEFAULT_SUMMARY_LIMITS },
   summaryScale: 1,
@@ -304,8 +328,7 @@ export const summaryScale = (trigger: number, briefCeilingTokens: number): numbe
     ? Math.max(0.25, Math.sqrt(trigger / REFERENCE_TRIGGER))
     : Math.max(1, briefCeilingTokens / DEFAULT_BUDGETS.briefCeilingTokens);
 
-/** The default section sizes scaled by `scale`, each at or above its floor. */
-export const summaryLimits = (scale: number): SummaryLimits => {
+const summaryLimits = (scale: number): SummaryLimits => {
   const limits = { ...DEFAULT_SUMMARY_LIMITS };
   for (const key of Object.keys(limits) as Array<keyof SummaryLimits>) {
     limits[key] = Math.max(SUMMARY_LIMIT_FLOORS[key], Math.round(DEFAULT_SUMMARY_LIMITS[key] * scale));
@@ -339,6 +362,9 @@ export const compactionBudgets = (trigger?: number, overheadTokens = 0, withWork
     minTailTokens: Math.round(maxTailTokens / 5),
     briefTokens,
     briefCeilingTokens,
+    briefTokensPerBlock: DEFAULT_BUDGETS.briefTokensPerBlock,
+    // A brief whose ceiling grows past a ~128K window's may cover more blocks too.
+    briefMaxBlocks: Math.round(DEFAULT_BUDGETS.briefMaxBlocks * Math.max(1, scale)),
     growthMarginChars: Math.round(DEFAULT_BUDGETS.growthMarginChars * Math.max(1, scale)),
     summary: summaryLimits(scale),
     summaryScale: Math.round(scale * 100) / 100,

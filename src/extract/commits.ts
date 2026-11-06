@@ -1,19 +1,30 @@
 import type { NormalizedBlock } from "../types";
-import { DEFAULT_SUMMARY_LIMITS } from "../core/window";
+import { commandOf } from "../core/tools";
 
-interface CommitInfo {
+export interface Commit {
   hash?: string;
   message: string;
 }
+
+/**
+ * One entry per commit, first seen first: the same message seen hashless
+ * (`-q` prints no hash) and hashed is one commit, kept hashed in the earlier
+ * place. The same message under two hashes is two commits.
+ */
+export const addCommit = (commits: Commit[], c: Commit): void => {
+  const dup = commits.find((o) => o.message === c.message && (!o.hash || !c.hash || o.hash === c.hash));
+  if (!dup) commits.push({ ...c });
+  else if (c.hash && !dup.hash) dup.hash = c.hash;
+};
 
 const COMMIT_MSG_RE = /git\s+commit[^\n]*?\s-[A-Za-z]*m\s+(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'|\$?'((?:[^'\\]|\\.)*)')/;
 // `-F -` / `--file=-` reads the message from stdin; the heredoc feeding it sits on the same command.
 // A file path after -F cannot be read from the transcript, so it is not matched.
 const STDIN_HEREDOC_COMMIT_RE =
   /git\s+commit[^\n]*?(?:\s-[A-Za-z]*F|\s--file)(?:\s+|=)-(?=\s)[^\n]*?<<-?\s*(?:'([^']+)'|"([^"]+)"|([A-Za-z_]\w*))[^\n]*(?:\r?\n|\\n)/;
-// A line that is only a hash, as `git rev-parse --short HEAD` prints it. It must
-// contain a letter: a bare number on its own line (a count, a random tag) is far
-// more often output of something else.
+// A line that is only a hash, as `git rev-parse --short HEAD` prints it. It
+// counts only with a letter in it (hashFromResults checks): a bare number on its
+// own line (a count, a random tag) is far more often output of something else.
 const LONE_HASH_LINE_RE = /^\s*([0-9a-f]{7,40})\s*$/;
 
 const cleanMessage = (msg: string): string =>
@@ -134,31 +145,37 @@ const amendedCommit = (results: string[]): { hash: string; message: string } | u
 };
 
 /**
- * Extract git commits from bash tool calls (`git commit -m "..."`) and pair
- * with hash from the immediately following tool_result.
+ * What a command block printed and whether it failed: a `!cmd`'s own output and
+ * exit code, a shell call's results (matched by id, before the next user turn).
  */
-export const extractCommits = (blocks: NormalizedBlock[]): CommitInfo[] => {
-  const commits: CommitInfo[] = [];
+const outcomeOf = (blocks: NormalizedBlock[], i: number): { results: string[]; failed: boolean } => {
+  const b = blocks[i];
+  if (b.kind === "bash") return { results: [b.output], failed: b.exitCode != null && b.exitCode !== 0 };
+  const results: string[] = [];
+  if (b.kind === "tool_call" && b.id !== undefined) {
+    for (let j = i + 1; j < blocks.length && blocks[j].kind !== "user"; j++) {
+      const r = blocks[j];
+      if (r.kind === "tool_result" && r.callId === b.id) results.push(r.text);
+    }
+  }
+  return { results, failed: b.kind === "tool_call" && b.failed === true };
+};
+
+/** Git commits the session made (`git commit -m "..."`), each with the hash its output reported. */
+export const extractCommits = (blocks: NormalizedBlock[]): Commit[] => {
+  const commits: Commit[] = [];
 
   for (let i = 0; i < blocks.length; i++) {
-    const b = blocks[i];
-    if (b.kind !== "tool_call" || b.name !== "bash") continue;
-    const cmd = typeof b.args.command === "string" ? b.args.command : "";
-    const segments = commitSegments(cmd);
+    const segments = commitSegments(commandOf(blocks[i]) ?? "");
     if (segments.length === 0) continue;
-
-    const results: string[] = [];
-    for (let j = i + 1; j < Math.min(blocks.length, i + 3); j++) {
-      const r = blocks[j];
-      if (r.kind === "tool_result") results.push(r.text);
-    }
+    const { results, failed } = outcomeOf(blocks, i);
 
     for (const seg of segments) {
       const amend = /\s--amend\b/.test(seg);
       const message = subjectOf(seg);
       // A failed command made no commit unless git printed that it did (`git commit … && git push` with
       // the push failing): `a && git commit` stops at a failing `a`.
-      if (b.failed && !(message ? committedLine(results, message) : amend && amendedCommit(results))) continue;
+      if (failed && !(message ? committedLine(results, message) : amend && amendedCommit(results))) continue;
       if (amend) {
         // --amend replaces the commit before it, so that commit's hash (and with -m its subject) is gone.
         const reported = message ? undefined : amendedCommit(results);
@@ -180,23 +197,9 @@ export const extractCommits = (blocks: NormalizedBlock[]): CommitInfo[] => {
       if (!message) continue;
       // With several commits one output cannot be split reliably, so a hash is taken only when its line names this subject.
       const hash = segments.length === 1 ? hashFromResults(results, message) : hashForSubject(results, message);
-
-      // One entry per commit: the same message seen hashless (`-q` prints no hash) and hashed is one commit, keep the hashed.
-      const dup = commits.find((c) => c.message === message && (!c.hash || !hash || c.hash === hash));
-      if (!dup) commits.push({ hash, message });
-      else if (hash && !dup.hash) dup.hash = hash;
+      addCommit(commits, { hash, message });
     }
   }
 
   return commits;
-};
-
-export const formatCommits = (commits: CommitInfo[], limit = DEFAULT_SUMMARY_LIMITS.commits): string[] => {
-  const lines: string[] = [];
-  const items = commits.slice(-limit); // keep most recent
-  for (const c of items) {
-    const prefix = c.hash ? `${c.hash}: ` : "";
-    lines.push(`${prefix}${c.message}`);
-  }
-  return lines;
 };

@@ -5,12 +5,10 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { join } from "path";
 import { homedir } from "os";
 import { applyTailBudget, buildOwnCut, registerHook } from "./support/host";
-import { extractPaths, hashlineEditPaths, stripReadSelector } from "../src/core/tool-args";
+import { callKind, fileWriteOf, namedPaths, readsPart, stripReadSelector } from "../src/core/tools";
 import { extractFiles } from "../src/extract/files";
 import { renderMessage } from "../src/core/render-entries";
-import { getTouchedFiles } from "../src/core/search-entries";
-import { extractToolCallText, isContentBearing } from "../src/core/content";
-import { setSettingsAgentDir, settingsPath } from "../src/core/settings";
+import { touchedFiles } from "../src/core/touched";
 
 const msg = (id: string, role: "user" | "assistant", content = `text of ${id}`) => ({
   id,
@@ -69,11 +67,24 @@ describe("omp tool shapes", () => {
   const hashline = "*** Begin Patch\n[src/auth/session.ts#1A2B]\nPUT 4.=4:\n+x\n[lib/util.py#3c4d]\nCUT 1.=2\n*** End Patch";
 
   test("a hashline edit names the files of its [PATH#TAG] sections", () => {
-    expect(hashlineEditPaths({ input: hashline })).toEqual(["src/auth/session.ts", "lib/util.py"]);
-    expect(extractPaths({ input: hashline })).toEqual(["src/auth/session.ts", "lib/util.py"]);
-    expect(hashlineEditPaths({ input: "[not a header] text" })).toEqual([]);
+    expect(namedPaths({ input: hashline })).toEqual(["src/auth/session.ts", "lib/util.py"]);
+    expect(namedPaths({ input: "[not a header] text" })).toEqual([]);
     // A path argument still wins.
-    expect(extractPaths({ path: "a.ts", input: hashline })).toEqual(["a.ts"]);
+    expect(namedPaths({ path: "a.ts", input: hashline })).toEqual(["a.ts"]);
+  });
+
+  test("an apply_patch edit names the files of its headers", () => {
+    const patch = "*** Begin Patch\n*** Add File: hello.txt\n+Hello\n*** Update File: src/app.py\n*** Move to: src/main.py\n@@\n-a\n+b\n*** Delete File: old.txt\n*** End Patch\n";
+    expect(namedPaths({ input: patch })).toEqual(["hello.txt", "src/app.py", "src/main.py", "old.txt"]);
+    expect(callKind({ name: "edit", args: { input: patch } })).toBe("edit");
+    // On GPT-5 omp's edit goes on the wire, and into the session, as apply_patch.
+    expect(callKind({ name: "apply_patch", args: { input: patch } })).toBe("edit");
+  });
+
+  test("a read of lines is a read of part of the file; :raw and a whole read are not", () => {
+    const read = (path: string) => readsPart({ name: "read", args: { path } });
+    for (const p of ["src/a.ts:50-100", "src/a.ts:L50-L60", "src/a.ts:-20", "src/a.ts:1-12,-15", "src/a.ts:raw:50-100", "src/a.ts:50+10"]) expect(read(p)).toBe(true);
+    for (const p of ["src/a.ts", "src/a.ts:raw", "src/a.ts:img", "db.sqlite:table"]) expect(read(p)).toBe(false);
   });
 
   test("read selectors are dropped, other colons kept", () => {
@@ -98,7 +109,7 @@ describe("omp tool shapes", () => {
 
   test("mode:'touched' lists a hashline edit's files, not drillable", () => {
     const edit: any = { role: "assistant", content: [{ type: "toolCall", id: "t", name: "edit", arguments: { input: hashline } }] };
-    const touched = getTouchedFiles([edit], [{ index: 7, role: "assistant", summary: "" }]);
+    const touched = touchedFiles([{ entry: { index: 7, role: "assistant", summary: "" }, message: edit }]);
     expect(touched.map((t) => t.path).sort()).toEqual(["lib/util.py", "src/auth/session.ts"]);
     expect(touched[0].entries).toEqual([{ index: 7, toolName: "edit", drillable: false }]);
   });
@@ -107,10 +118,10 @@ describe("omp tool shapes", () => {
 describe("omp's replace edit (old_string/new_string)", () => {
   const edit: any = { role: "assistant", content: [{ type: "toolCall", id: "t", name: "edit", arguments: { path: "src/money.ts", old_string: "floor + 1 : floor", new_string: "floor : floor + 1" } }] };
 
-  test("is a change: listed and drillable in mode:'touched', its text searchable", () => {
-    expect(isContentBearing(edit.content[0].arguments)).toBe(true);
-    expect(extractToolCallText(edit.content[0].arguments)).toBe("floor + 1 : floor\nfloor : floor + 1\n");
-    const touched = getTouchedFiles([edit], [{ index: 4, role: "assistant", summary: "" }]);
+  test("is a change: listed and drillable in mode:'touched'", () => {
+    const call = { name: "edit", args: edit.content[0].arguments };
+    expect(fileWriteOf(call)).toEqual({ path: "src/money.ts", replace: { oldText: "floor + 1 : floor", newText: "floor : floor + 1" } });
+    const touched = touchedFiles([{ entry: { index: 4, role: "assistant", summary: "" }, message: edit }]);
     expect(touched[0].entries).toEqual([{ index: 4, toolName: "edit" }]);
   });
 });
@@ -132,23 +143,6 @@ describe("recall rendering of omp roles", () => {
   });
 });
 
-describe("settings path follows the host's agent dir", () => {
-  const previous = process.env.OMP_VCC_CONFIG_PATH;
-  afterEach(() => {
-    if (previous === undefined) delete process.env.OMP_VCC_CONFIG_PATH;
-    else process.env.OMP_VCC_CONFIG_PATH = previous;
-    setSettingsAgentDir();
-  });
-
-  test("the entry point's agent dir, unless OMP_VCC_CONFIG_PATH is set", () => {
-    delete process.env.OMP_VCC_CONFIG_PATH;
-    setSettingsAgentDir(() => join(homedir(), ".omp", "agent"));
-    expect(settingsPath()).toBe(join(homedir(), ".omp", "agent", "omp-vcc-config.json"));
-    process.env.OMP_VCC_CONFIG_PATH = "/tmp/elsewhere.json";
-    expect(settingsPath()).toBe("/tmp/elsewhere.json");
-  });
-});
-
 describe("a turn still running", () => {
   const prev = process.env.OMP_VCC_CONFIG_PATH;
   afterEach(() => {
@@ -156,7 +150,8 @@ describe("a turn still running", () => {
     else process.env.OMP_VCC_CONFIG_PATH = prev;
   });
 
-  test("a threshold pass between tool calls waits; a recovery pass is answered by omp-vcc", async () => {
+  // The threshold pass on such a turn (it waits) is omp-entry.test.ts's "a threshold pass waits for the turn to end".
+  test("a recovery pass on a running turn whose one step is over half of it summarizes the turn whole", async () => {
     const { mkdtempSync, writeFileSync } = await import("fs");
     const { tmpdir } = await import("os");
     const dir = mkdtempSync(join(tmpdir(), "omp-vcc-running-"));
@@ -169,17 +164,16 @@ describe("a turn still running", () => {
       { id: "a1", type: "message", message: { role: "assistant", content: [{ type: "toolCall", id: "t1", name: "bash", arguments: { command: "bun test" } }] } },
       { id: "r1", type: "message", message: { role: "toolResult", toolCallId: "t1", toolName: "bash", content: [{ type: "text", text: "12 pass" }], isError: false } },
     ];
-    const event = (reason: "threshold" | "overflow") => (hook.autoCompactionStart(reason), {
+    hook.autoCompactionStart("overflow");
+    const event = {
       type: "session_before_compact", branchEntries: entries, customInstructions: undefined,
       preparation: { previousSummary: undefined, fileOps: { read: [], written: [], edited: [] }, tokensBefore: 1000 },
       signal: new AbortController().signal,
-    });
-    const ctx = { ui: { notify: () => {} } };
-    expect(handler(event("threshold"), ctx)).toEqual({ cancel: true });
+    };
     // Recovering, omp-vcc answers itself (omp would run snapcompact, handoff or an
     // LLM summary otherwise). One step is more than half the turn, so the turn is
     // summarized whole, the request with it.
-    const recovered = handler(event("overflow"), ctx).compaction;
+    const recovered = handler(event, { ui: { notify: () => {} } }).compaction;
     expect(recovered.firstKeptEntryId).toBe("");
     expect(recovered.summary).toContain("Run the tests");
   });

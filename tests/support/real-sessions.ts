@@ -46,8 +46,3 @@ export const prepareSessionSamples = async (limit = 2, host: "omp" | "pi" = "omp
   }
   return samples;
 };
-
-export const readSourceStat = async (sample: SessionSample) => {
-  const s = await stat(sample.source);
-  return { size: s.size, mtimeMs: s.mtimeMs };
-};

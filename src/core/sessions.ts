@@ -9,19 +9,19 @@
 // its active branch (its last entry back to the root), with `#N` in its own
 // index space.
 import { readdirSync, realpathSync, statSync } from "fs";
-import { join } from "path";
-import { forEachJsonlLine } from "./jsonl";
-import { clip, textOf } from "./content";
-import { PIN_ENTRY_TYPE, formatPin, readPins } from "./pins";
+import { dirname, join } from "path";
+import { readHeader, scanLines } from "./session-file";
+import { clip, isExtensionUserMessage, textOf } from "./content";
+import { userWords } from "../extract/user-messages";
+import { formatPin, readPins, replaysPins } from "./pins";
 
 export interface SessionInfo {
   file: string;
   id: string;
-  /** The id's first 8 characters: what output shows and session:'…' takes. */
+  /** The shortest prefix of the id, 8 characters or more, that no other session of the project shares: what output shows and session:'…' takes. */
   short: string;
   /** Header timestamp (session start), ISO. */
   started?: string;
-  modifiedMs: number;
   bytes: number;
   messages: number;
   title?: string;
@@ -30,77 +30,77 @@ export interface SessionInfo {
   pins: string[];
 }
 
+/** The shortest id prefix that names a session. */
+export const SESSION_REF_MIN_CHARS = 4;
+
 /** Sessions listed at most; the newest are kept. */
 export const MAX_LISTED_SESSIONS = 50;
-
-const MESSAGE_PREFIX = Buffer.from('{"type":"message"');
-
-const startsWith = (line: Buffer, prefix: Buffer): boolean =>
-  line.length >= prefix.length && line.subarray(0, prefix.length).equals(prefix);
-
-const lineHas = (line: Buffer, needle: string): boolean => line.includes(needle);
+/** A session's short id is at least this long. */
+const SHORT_ID_CHARS = 8;
 
 const parse = (line: Buffer): any => {
   try { return JSON.parse(line.toString("utf8")); } catch { return undefined; }
 };
 
 /**
- * One pass over a session file: header, message count, first user request,
- * title, pins. Only the lines those need are parsed; the rest are counted by
- * their prefix (both hosts write `{"type":"message",…}` first).
+ * A session's name as each host writes it: omp's title slot (its first line,
+ * rewritten in place) and renames, `title`; Pi's `/name`, a session_info entry's
+ * `name` (docs/session-format.md). The latest wins.
  */
-export const scanSession = (file: string): SessionInfo | undefined => {
+const nameOf = (e: any): string | undefined => {
+  const name = e?.type === "title" || e?.type === "title_change" ? e.title : e?.type === "session_info" ? e.name : undefined;
+  return typeof name === "string" && name.trim() ? name.trim() : undefined;
+};
+
+/**
+ * One pass over a session file: header, message count, first user request,
+ * title, pins (replayed along its active branch). Only the lines those need
+ * are parsed (compactions, the bulk of the rest, never); messages are read by
+ * their heads (session-file.ts entryHead).
+ */
+const scanSession = (file: string, short: string): SessionInfo | undefined => {
   let stat;
   try { stat = statSync(file); } catch { return undefined; }
-  let header: any;
+  const header = readHeader(file);
+  if (typeof header?.id !== "string") return undefined;
   let title: string | undefined;
   let firstRequest: string | undefined;
   let messages = 0;
-  let lineNo = 0;
+  // What readPins replays, with their ids, to replay along the branch.
   const pinEntries: any[] = [];
+  let branch: Set<string> | undefined;
   try {
-    forEachJsonlLine(file, (line) => {
-      lineNo++;
-      if (line.length === 0) return;
-      if (startsWith(line, MESSAGE_PREFIX)) {
+    branch = scanLines(file, (line, head) => {
+      if (head.type === "message") {
         messages++;
-        if (firstRequest === undefined && lineHas(line, '"role":"user"')) {
-          const text = textOf(parse(line)?.message?.content ?? "").replace(/\s+/g, " ").trim();
-          if (text && !text.startsWith("<")) firstRequest = clip(text, 100);
+        if (firstRequest === undefined && line.includes('"role":"user"')) {
+          const m = parse(line)?.message;
+          // What the user wrote, as the summary reads it; not what an extension sent as the user.
+          const words = m?.role === "user" && !isExtensionUserMessage(m) ? userWords(textOf(m.content ?? "")).words : "";
+          if (words) firstRequest = clip(words, 100);
         }
         return;
       }
-      if (lineNo <= 3 && !header) {
-        const e = parse(line);
-        if (e?.type === "session" && typeof e.id === "string") header = e;
-        else if (e?.type === "title" && typeof e.title === "string" && e.title.trim()) title = e.title.trim();
-        return;
-      }
-      if (lineHas(line, PIN_ENTRY_TYPE) || lineHas(line, '"reset_boundary"')) {
-        const e = parse(line);
-        if (e?.type === "custom" || e?.type === "reset_boundary") pinEntries.push(e);
-        return;
-      }
-      if (lineHas(line, '"title_change"')) {
-        const e = parse(line);
-        if (e?.type === "title_change" && typeof e.title === "string" && e.title.trim()) title = e.title.trim();
-      }
+      // A compaction's summary is the bulk of what is left; nothing here reads it.
+      if (head.type === "compaction") return;
+      const e = parse(line);
+      if (replaysPins(e)) pinEntries.push(e);
+      else title = nameOf(e) ?? title;
     });
   } catch {
     return undefined;
   }
-  if (!header) return undefined;
+  const onBranch = branch?.size ? pinEntries.filter((e) => typeof e.id === "string" && branch!.has(e.id)) : pinEntries;
   return {
     file,
     id: header.id,
-    short: header.id.replace(/-/g, "").slice(0, 8),
+    short,
     started: typeof header.timestamp === "string" ? header.timestamp : undefined,
-    modifiedMs: stat.mtimeMs,
     bytes: stat.size,
     messages,
     ...(title ? { title: clip(title, 80) } : {}),
     ...(firstRequest ? { firstRequest } : {}),
-    pins: readPins(pinEntries).map(formatPin),
+    pins: readPins(onBranch).map(formatPin),
   };
 };
 
@@ -108,25 +108,59 @@ const sameFile = (a: string, b: string): boolean => {
   try { return realpathSync(a) === realpathSync(b); } catch { return a === b; }
 };
 
-/** The project's other sessions, newest first (by last write). */
-export const listProjectSessions = (dir: string, currentFile?: string, limit = MAX_LISTED_SESSIONS): SessionInfo[] => {
+/** The project's other session files, newest first (by last write). */
+const projectFiles = (dir: string, currentFile?: string): string[] => {
   let names: string[];
   try { names = readdirSync(dir); } catch { return []; }
-  const files = names
+  return names
     .filter((n) => n.endsWith(".jsonl"))
     .map((n) => join(dir, n))
     .filter((f) => !currentFile || !sameFile(f, currentFile))
     .map((f) => { try { return { f, mtime: statSync(f).mtimeMs }; } catch { return undefined; } })
     .filter((x): x is { f: string; mtime: number } => !!x)
     .sort((a, b) => b.mtime - a.mtime)
-    .slice(0, limit);
-  return files.map((x) => scanSession(x.f)).filter((s): s is SessionInfo => !!s);
+    .map((x) => x.f);
 };
 
-/** "01a194d8", "@01a1", "session:01a194d8-…" -> the one session it names, or why not. */
-export const resolveSession = (ref: string, sessions: readonly SessionInfo[]): SessionInfo | { error: string } => {
-  const key = ref.trim().replace(/^(?:@|session:)/i, "").replace(/-/g, "").toLowerCase();
-  if (key.length < 4) return { error: `session:'${ref}' is too short: give at least 4 characters of an id from mode:'sessions'.` };
+/** The project's other sessions, newest first, the newest MAX_LISTED_SESSIONS of them; `more` when there are older ones. */
+export const listProjectSessions = (dir: string, currentFile?: string): SessionInfo[] & { more: boolean } => {
+  const ids = projectIds(dir, currentFile);
+  const listed = ids.slice(0, MAX_LISTED_SESSIONS).map((s) => scanSession(s.file, s.short)).filter((s): s is SessionInfo => !!s);
+  return Object.assign(listed, { more: ids.length > MAX_LISTED_SESSIONS });
+};
+
+/** The shortest prefix (dashes left out) of SHORT_ID_CHARS or more that names each id alone among these. */
+const shortIds = (ids: readonly string[]): string[] => {
+  const keys = ids.map((id) => id.replace(/-/g, ""));
+  const lower = keys.map((k) => k.toLowerCase());
+  return keys.map((key, i) => {
+    let n = SHORT_ID_CHARS;
+    // omp's ids are UUIDv7: their first characters are a timestamp, the same for sessions a minute apart.
+    while (n < key.length && lower.some((k, j) => j !== i && k.startsWith(lower[i].slice(0, n)))) n++;
+    return key.slice(0, n);
+  });
+};
+
+/** The project's other session files with their ids and shorts, newest first, read from each file's header alone. */
+const projectIds = (dir: string, currentFile?: string): Array<{ file: string; id: string; short: string }> => {
+  const found = projectFiles(dir, currentFile).flatMap((file) => {
+    const id = readHeader(file)?.id;
+    return typeof id === "string" ? [{ file, id }] : [];
+  });
+  const shorts = shortIds(found.map((s) => s.id));
+  return found.map((s, i) => ({ ...s, short: shorts[i] }));
+};
+
+/** How many other sessions the project has. */
+export const countProjectSessions = (dir: string, currentFile?: string): number => projectIds(dir, currentFile).length;
+
+/**
+ * An id prefix ("01a194d8", "01a1", "01a194d8-…"; core/recall-request.ts
+ * sessionRef strips "@"/"session:") -> the one of these sessions it names, or why not.
+ */
+export const resolveSession = <S extends { id: string; short: string }>(ref: string, sessions: readonly S[]): S | { error: string } => {
+  const key = ref.replace(/-/g, "").toLowerCase();
+  if (key.length < SESSION_REF_MIN_CHARS) return { error: `session:'${ref}' is too short: give at least ${SESSION_REF_MIN_CHARS} characters of an id from mode:'sessions'.` };
   const matches = sessions.filter((s) => s.id.replace(/-/g, "").toLowerCase().startsWith(key));
   if (matches.length === 1) return matches[0];
   if (matches.length === 0) {
@@ -135,27 +169,23 @@ export const resolveSession = (ref: string, sessions: readonly SessionInfo[]): S
   return { error: `session:'${ref}' matches ${matches.length} sessions (${matches.map((s) => s.short).join(", ")}): give more of the id.` };
 };
 
-/** The ids on a session file's active branch: its last entry back to the root. */
-export const fileBranchIds = (file: string): Set<string> | undefined => {
-  const parentOf = new Map<string, string | null>();
-  let last: string | undefined;
-  forEachJsonlLine(file, (line) => {
-    if (line.length === 0) return;
-    // id and parentId come before the payload on both hosts; parse only the head.
-    const head = line.subarray(0, Math.min(line.length, 400)).toString("utf8");
-    const id = head.match(/"id":"([^"]+)"/)?.[1];
-    if (!id || head.startsWith('{"type":"session"') || head.startsWith('{"type":"title"')) return;
-    const parent = head.match(/"parentId":(?:"([^"]+)"|null)/);
-    parentOf.set(id, parent ? parent[1] ?? null : null);
-    last = id;
-  });
-  if (!last) return undefined;
-  const ids = new Set<string>();
-  for (let id: string | null | undefined = last; id && !ids.has(id); id = parentOf.get(id)) ids.add(id);
-  return ids;
+/** The earlier session an id prefix names, among every one of the project's (by header), read whole once found. */
+export const findSession = (dir: string, currentFile: string, ref: string): SessionInfo | { error: string } => {
+  const found = resolveSession(ref, projectIds(dir, currentFile));
+  if ("error" in found) return found;
+  return scanSession(found.file, found.short) ?? { error: `Session ${found.short} could not be read.` };
 };
 
 const date = (iso?: string): string => (iso ? iso.replace("T", " ").slice(0, 16) : "unknown start");
 
 export const describeSession = (s: SessionInfo): string =>
   `${s.short} · ${date(s.started)} · ${s.messages} messages${s.title ? ` · ${s.title}` : ""}${s.firstRequest ? ` · "${s.firstRequest}"` : ""}`;
+
+/** The current session's project directory: the host's, else the session file's own. */
+export const sessionDirOf = (sessionManager: { getSessionDir?(): string | undefined }, sessionFile: string): string => {
+  try {
+    const dir = sessionManager.getSessionDir?.();
+    if (typeof dir === "string" && dir) return dir;
+  } catch {}
+  return dirname(sessionFile);
+};

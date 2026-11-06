@@ -7,13 +7,17 @@ import { assertRealPi, piInstalled } from "./support/pi";
 import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { buildOwnCut, createCompactionState, registerCompactionHook, toSummaryMessage, type CompactionHost } from "../src/hooks/compaction";
+import { createCompactionState, registerCompactionHook, type CompactionHost } from "../src/hooks/compaction";
+import { createWindowState } from "../src/hooks/window-limits";
+import { testConfig } from "./support/binding";
+import { buildOwnCut } from "../src/compaction/cut";
+import { toSummaryMessage } from "../src/compaction/summary-input";
 import { normalize } from "../src/core/normalize";
 import { extractFiles } from "../src/extract/files";
-import { getTouchedFiles } from "../src/core/search-entries";
-import { extractToolCallText, isContentBearing } from "../src/core/content";
-import { setSettingsAgentDir, settingsPath } from "../src/core/settings";
-import { PI_TRIGGER_RULE } from "../src/core/window";
+import { touchedFiles } from "../src/core/touched";
+import { fileWriteOf } from "../src/core/tools";
+import { openConfig } from "../src/core/settings";
+import { bind, MANUAL_TRIGGER, PI_HOST } from "../src/host";
 
 
 
@@ -26,7 +30,7 @@ describe.skipIf(!piInstalled())("Pi shapes", () => {
   beforeAll(async () => {
     assertRealPi();
     pi = await import("@earendil-works/pi-coding-agent");
-    host = { convertToLlm: (m) => pi.convertToLlm(m), rule: PI_TRIGGER_RULE };
+    host = bind({ ...PI_HOST, convertToLlm: (m: any[]) => pi.convertToLlm(m), triggerOf: () => MANUAL_TRIGGER }, testConfig);
     dir = mkdtempSync(join(tmpdir(), "omp-vcc-pi-shapes-"));
     for (const key of ["OMP_VCC_CONFIG_PATH", "PI_CODING_AGENT_DIR"]) saved[key] = process.env[key];
     process.env.OMP_VCC_CONFIG_PATH = join(dir, "omp-vcc-config.json");
@@ -34,7 +38,6 @@ describe.skipIf(!piInstalled())("Pi shapes", () => {
   });
 
   afterAll(() => {
-    setSettingsAgentDir();
     for (const [key, value] of Object.entries(saved)) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
@@ -42,7 +45,7 @@ describe.skipIf(!piInstalled())("Pi shapes", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  const summaryOf = (message: any) => toSummaryMessage(message, host);
+  const summaryOf = (message: any) => toSummaryMessage(message, host.convertToLlm);
 
   describe("Pi's message roles in the summary", () => {
     test("a user-run command stays one line; one run with !! (kept out of Pi's context) is left out", () => {
@@ -69,12 +72,11 @@ describe.skipIf(!piInstalled())("Pi shapes", () => {
     const args = { path: "src/money.ts", edits: [{ oldText: "floor + 1 : floor", newText: "floor : floor + 1" }, { oldText: "a", newText: "b" }] };
     const edit: any = { role: "assistant", content: [{ type: "toolCall", id: "t", name: "edit", arguments: args }] };
 
-    test("is a change: listed as modified, drillable in mode:'touched', its text searchable", () => {
-      expect(isContentBearing(args)).toBe(true);
-      expect(extractToolCallText(args)).toContain("floor : floor + 1");
+    test("is a change: listed as modified, drillable in mode:'touched'", () => {
+      expect(fileWriteOf({ name: "edit", args })?.edits).toHaveLength(2);
       const files = extractFiles([{ kind: "tool_call", name: "edit", args } as any]);
       expect([...files.modified]).toEqual(["src/money.ts"]);
-      const touched = getTouchedFiles([edit], [{ index: 4, role: "assistant", summary: "" }]);
+      const touched = touchedFiles([{ entry: { index: 4, role: "assistant", summary: "" }, message: edit }]);
       expect(touched[0]).toMatchObject({ path: "src/money.ts", entries: [{ index: 4, toolName: "edit" }] });
     });
   });
@@ -95,7 +97,7 @@ describe.skipIf(!piInstalled())("Pi shapes", () => {
     test("summarizes Pi's shapes as Pi's context holds them, sized for Pi's trigger", () => {
       const handlers = new Map<string, any>();
       const fake: any = { on: (name: string, h: any) => handlers.set(name, h) };
-      registerCompactionHook(fake, { ...host, compactionTrigger: () => ({ reason: "threshold", willRetry: false }) }, createCompactionState());
+      registerCompactionHook(fake, { ...host, triggerOf: () => ({ reason: "threshold", willRetry: false }) }, createCompactionState(), createWindowState());
       const result = handlers.get("session_before_compact")(
         {
           type: "session_before_compact",
@@ -118,10 +120,11 @@ describe.skipIf(!piInstalled())("Pi shapes", () => {
     });
 
     test("a compact-all keeps nothing, which Pi reads from an empty firstKeptEntryId", () => {
-      const cut = buildOwnCut(host, branch(), 0, []);
+      const cut = buildOwnCut(host.convertToLlm, branch(), 0, []);
       expect(cut.ok && cut.compactAll).toBe(true);
+      if (!cut.ok) return;
       // Pi's buildContextEntries keeps nothing before a compaction whose kept id is not on the path.
-      const compaction = { type: "compaction", id: "cmp", parentId: "a2", timestamp: "2026-11-06T00:00:00.000Z", summary: "s", firstKeptEntryId: "", tokensBefore: 1 };
+      const compaction = { type: "compaction", id: "cmp", parentId: "a2", timestamp: "2026-11-06T00:00:00.000Z", summary: "s", firstKeptEntryId: cut.firstKeptEntryId, tokensBefore: 1 };
       let parent: string | null = null;
       const linked = [...branch(), compaction].map((e) => {
         const withParent = { ...e, parentId: parent };
@@ -135,9 +138,9 @@ describe.skipIf(!piInstalled())("Pi shapes", () => {
   test("the settings follow Pi's agent dir", () => {
     delete process.env.OMP_VCC_CONFIG_PATH;
     delete process.env.PI_CODING_AGENT_DIR;
-    setSettingsAgentDir(pi.getAgentDir);
-    expect(settingsPath()).toBe(join(pi.getAgentDir(), "omp-vcc-config.json"));
-    expect(settingsPath()).toContain(join(".pi", "agent"));
+    const config = openConfig(pi.getAgentDir);
+    expect(config.path()).toBe(join(pi.getAgentDir(), "omp-vcc-config.json"));
+    expect(config.path()).toContain(join(".pi", "agent"));
     process.env.OMP_VCC_CONFIG_PATH = join(dir, "omp-vcc-config.json");
   });
 });

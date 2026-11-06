@@ -2,10 +2,12 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, utimesSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { listProjectSessions, resolveSession, type SessionInfo } from "../src/core/sessions";
-import { executeRecall } from "../src/tools/recall";
+import { findSession, listProjectSessions, MAX_LISTED_SESSIONS, resolveSession, type SessionInfo } from "../src/core/sessions";
+import { executeRecall, toolHints as toolHintsOf } from "../src/tools/recall";
+import { recall } from "../src/core/recall-run";
 import { parseCommandRequest } from "../src/core/recall-request";
-import { PIN_ENTRY_TYPE } from "../src/core/pins";
+import { sessionRef } from "../src/core/recall-request";
+import { PIN_ENTRY_TYPE } from "../src/names";
 
 const header = (id: string, ts: string) => ({ type: "session", version: 3, id, timestamp: ts, cwd: "/work/app" });
 let n = 0;
@@ -62,6 +64,51 @@ beforeAll(() => {
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
 describe("listProjectSessions", () => {
+  it("lists a session by the first request the user wrote, read as the summary reads one", () => {
+    const skillDir = mkdtempSync(join(tmpdir(), "omp-vcc-first-request-"));
+    try {
+      const c = chain([["user", '<skill name="tdd">Write the test first.</skill>'], ["user", "ok"], ["user", "Add refunds to the ledger"], ["assistant", "Done."]]);
+      write(join(skillDir, "s.jsonl"), [header("eeee5555-0000-7000-8000-000000000005", "2026-10-05T10:00:00.000Z"), ...c], 5_000);
+      expect(listProjectSessions(skillDir)[0].firstRequest).toBe("Add refunds to the ledger");
+    } finally {
+      rmSync(skillDir, { recursive: true, force: true });
+    }
+  });
+
+  it("gives sessions started within a minute short ids that tell them apart, and each names its session", () => {
+    // omp's ids are UUIDv7: the first 8 characters are the start time's top bits.
+    const twinDir = mkdtempSync(join(tmpdir(), "omp-vcc-twins-"));
+    try {
+      const ids = ["01a1af12-0000-7000-8000-00000000000a", "01a1af12-0001-7000-8000-00000000000b"];
+      ids.forEach((id, i) => write(join(twinDir, `${i}.jsonl`), [header(id, "2026-10-06T10:00:00.000Z"), ...chain([["user", `twin request ${i}`]])], 6_000 + i));
+      const shorts = listProjectSessions(twinDir).map((s) => s.short);
+      expect(shorts).toEqual(["01a1af120001", "01a1af120000"]);
+      for (const [i, short] of [[1, shorts[0]], [0, shorts[1]]] as const) {
+        expect((findSession(twinDir, "", short) as SessionInfo).firstRequest).toBe(`twin request ${i}`);
+      }
+    } finally {
+      rmSync(twinDir, { recursive: true, force: true });
+    }
+  });
+
+  it("names a Pi session by its /name, the latest one", () => {
+    const piDir = mkdtempSync(join(tmpdir(), "omp-vcc-pi-names-"));
+    try {
+      const c = chain([["user", "Refactor the auth module"], ["assistant", "Done."]]);
+      write(join(piDir, "pi.jsonl"), [
+        header("dddd4444-0000-7000-8000-000000000004", "2026-10-04T10:00:00.000Z"),
+        c[0],
+        { type: "session_info", id: "n1", parentId: c[0].id, timestamp: "2026-10-04T10:01:00.000Z", name: "Auth refactor" },
+        { type: "session_info", id: "n2", parentId: "n1", timestamp: "2026-10-04T10:02:00.000Z", name: "Auth refactor, part 2" },
+        c[1],
+      ], 4_000);
+      expect(listProjectSessions(piDir)[0]).toMatchObject({ title: "Auth refactor, part 2", messages: 2 });
+    } finally {
+      rmSync(piDir, { recursive: true, force: true });
+    }
+  });
+
+
   it("lists the other session files newest first, with title, first request, size and pins", () => {
     expect(sessions.map((s) => s.short)).toEqual(["bbbb2222", "aaaa1111"]);
     expect(sessions[0]).toMatchObject({ title: "Billing cron move", firstRequest: "Migrate the billing cron", messages: 3 });
@@ -69,10 +116,31 @@ describe("listProjectSessions", () => {
   });
 });
 
+describe("an earlier session's pins", () => {
+  it("are the ones on its active branch: a pin made on an abandoned branch is not", () => {
+    const d = mkdtempSync(join(tmpdir(), "omp-vcc-sessions-pins-"));
+    try {
+      const root = msg("user", "Plan the migration", null);
+      const pin = (id: string, parentId: string, noteId: number, text: string) =>
+        ({ type: "custom", id, parentId, customType: PIN_ENTRY_TYPE, data: { v: 1, op: "add", id: noteId, text, by: "user" } });
+      const abandoned = msg("assistant", "First try", root.id);
+      const kept = msg("assistant", "Second try", root.id);
+      write(join(d, "2026-10-01T10-00-00-000Z_dddd4444-0000-7000-8000-000000000004.jsonl"), [
+        header("dddd4444-0000-7000-8000-000000000004", "2026-10-01T10:00:00.000Z"),
+        root, abandoned, pin("p-old", abandoned.id, 1, "use the old schema"),
+        kept, pin("p-new", kept.id, 2, "use the new schema"),
+      ], 1_000);
+      expect(listProjectSessions(d)[0].pins).toEqual(["[2] use the new schema (user)"]);
+    } finally {
+      rmSync(d, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("resolveSession", () => {
   it("takes an id prefix, refuses short, unknown and ambiguous ones", () => {
     expect((resolveSession("aaaa", sessions) as SessionInfo).short).toBe("aaaa1111");
-    expect((resolveSession("@bbbb2222-0000", sessions) as SessionInfo).short).toBe("bbbb2222");
+    expect((resolveSession(sessionRef("@bbbb2222-0000"), sessions) as SessionInfo).short).toBe("bbbb2222");
     expect(resolveSession("aa", sessions)).toHaveProperty("error");
     expect(resolveSession("ffff", sessions)).toHaveProperty("error");
     const twins = [{ ...sessions[0], id: "abcd1-x", short: "abcd1x" }, { ...sessions[1], id: "abcd2-y", short: "abcd2y" }];
@@ -94,6 +162,34 @@ describe("vcc_recall across sessions", () => {
     expect(out).toContain("in this session and 2 earlier sessions");
     expect(out).toMatch(/\[session aaaa1111\] #1 \[assistant\]/);
     expect(out).toContain("session:'aaaa1111', expand:[1]");
+  });
+
+  it("a hit off the current path is read around in its scope, both calls", () => {
+    expect(toolHintsOf().aroundHit!(3, "all")).toBe("\n--- Read around a hit: range:[0, 6], scope:'all'; full text: expand:[3], scope:'all' ---");
+    expect(toolHintsOf("aaaa1111").aroundHit!(1, "all")).toBe("\n--- Read around a hit: session:'aaaa1111', range:[0, 4], scope:'all'; full text: session:'aaaa1111', expand:[1], scope:'all' ---");
+  });
+
+  it("the command takes the quoted forms recall's own output shows", () => {
+    expect(parseCommandRequest("session:'aaaa1111' release")).toMatchObject({ session: "aaaa1111", action: { kind: "search", query: "release" } });
+    expect(parseCommandRequest("release scope:'project'")).toMatchObject({ scope: "project", action: { kind: "search", query: "release" } });
+  });
+
+  it("the next page of a scope:'project' search keeps the scope", () => {
+    expect(toolHintsOf().nextPage("x", "project", 2)).toBe("\n--- Use page:2 with scope:'project' for more results ---");
+    // A listing that depends on the scope, too: mode:'touched' over every branch.
+    expect(toolHintsOf().listPage("touched", 2, "all")).toBe("\n--- Use mode:'touched' page:2 with scope:'all' for more results ---");
+    expect(toolHintsOf("aaaa1111").nextPage("x", "all", 2)).toBe("\n--- Use page:2 with session:'aaaa1111' and scope:'all' for more results ---");
+  });
+
+  it("a surface without a read-around hint gives none for a hit in an earlier session either", () => {
+    const surface = () => ({ outOfRange: () => "", nextPage: () => "" });
+    const result = recall({ request: parseCommandRequest("rolled back release tag scope:project"), sessionManager: sm(currentBranch) }, surface);
+    expect(result.ok && result.text).toMatch(/\[session aaaa1111\] #1 \[assistant\]/);
+    expect(result.ok && result.text).not.toContain("Read around a hit");
+  });
+
+  it("an entry that does not exist is only that: not also off the current path", () => {
+    expect(executeRecall({ query: "#99:file" }, sm(currentBranch))).toBe("Entry #99 not found in session history.");
   });
 
   it("session:'id' reads that session, on its own active branch", () => {
@@ -134,10 +230,25 @@ describe("vcc_recall across sessions", () => {
   });
 });
 
-describe("/omp-vcc-recall arguments", () => {
-  it("parses sessions, session:<id> and scope:project", () => {
-    expect(parseCommandRequest("sessions").action).toEqual({ kind: "sessions", page: 1 });
-    expect(parseCommandRequest("session:aaaa1111 rolled back")).toMatchObject({ session: "aaaa1111", action: { kind: "search", query: "rolled back" } });
-    expect(parseCommandRequest("rolled back scope:project")).toMatchObject({ scope: "project", action: { kind: "search", query: "rolled back" } });
+describe("reading an earlier session", () => {
+  it("names it in the follow-up calls it suggests, and finds one older than the listed ones", () => {
+    const d = mkdtempSync(join(tmpdir(), "omp-vcc-sessions-older-"));
+    try {
+      const write1 = { type: "message", id: "w1", parentId: null, timestamp: "2026-10-01T00:00:00.000Z", message: { role: "assistant", content: [{ type: "toolCall", id: "c1", name: "write", arguments: { path: "src/a.ts", content: "export const a = 1;\n" } }] } };
+      const id = (n: number) => `${String(n).padStart(8, "0")}-0000-7000-8000-000000000000`;
+      // The oldest session holds the write; MAX_LISTED_SESSIONS newer ones push it out of the listing.
+      const oldId = "a0a0a0a0-0000-7000-8000-000000000000";
+      write(join(d, `old_${oldId}.jsonl`), [header(oldId, "2026-10-01T00:00:00.000Z"), write1], 1_000);
+      for (let n = 1; n <= MAX_LISTED_SESSIONS; n++) write(join(d, `s_${id(n)}.jsonl`), [header(id(n), "2026-10-02T00:00:00.000Z"), msg("user", `session ${n} here`, null)], 2_000 + n);
+      const cur = join(d, "current.jsonl");
+      write(cur, [header("ffffffff-0000-7000-8000-000000000000", "2026-10-03T00:00:00.000Z")], 9_000);
+      const manager = { getSessionFile: () => cur, getSessionDir: () => d, getBranch: () => [], getEntries: () => [] };
+      const touched = executeRecall({ session: "a0a0", mode: "touched" }, manager);
+      expect(touched).toStartWith("Session a0a0a0a0");
+      expect(touched).toContain("query:'#0:a.ts' with session:'a0a0a0a0'");
+      expect(executeRecall({ mode: "sessions" }, manager)).toContain(`the newest ${MAX_LISTED_SESSIONS} (session:'id' reads an older one)`);
+    } finally {
+      rmSync(d, { recursive: true, force: true });
+    }
   });
 });

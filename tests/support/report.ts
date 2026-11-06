@@ -1,13 +1,22 @@
+import { pairs, searchHits } from "./pairs";
 import type { Message } from "@oh-my-pi/pi-ai";
-import { buildSections } from "./build-sections";
-import { clip } from "./content";
-import { normalize } from "./normalize";
-import { renderMessage } from "./render-entries";
-import { searchEntries } from "./search-entries";
-import { type CompileInput, briefOf, compile, sectionOf } from "./summarize";
-import { estimateTokensFromChars } from "./token-estimate";
+// A before/after report of one compile over a session's messages, for the
+// real-session tests and the benchmark scripts, at a ~128K window's limits.
+import { clip } from "../../src/core/content";
+import { filesOf } from "../../src/core/tools";
+import { normalize } from "../../src/core/normalize";
+import { renderMessage } from "../../src/core/render-entries";
+import { type CompileInput, compile } from "../../src/core/summarize";
+import { briefOf, sectionOf } from "../../src/core/legacy-summary";
+import { freshState } from "../../src/core/summary-state";
+import { SECTION } from "../../src/core/format";
+import { DEFAULT_SUMMARY_LIMITS } from "../../src/core/window";
+import { EARLY_REQUESTS_KEPT } from "../../src/extract/user-messages";
+import { estimateTokensFromChars } from "../../src/core/token-estimate";
 
-const SECTION_HEADERS = ["Early Session Requests", "Files And Changes", "Commits", "User Messages"];
+const SECTION_HEADERS = [SECTION.early, SECTION.files, SECTION.commits, SECTION.tracked, SECTION.userMessages];
+const earlyRequestsOf = (messages: Message[]): string[] =>
+  freshState({ blocks: normalize(messages), earlySlots: EARLY_REQUESTS_KEPT }).earlyRequests;
 
 interface RoleCounts {
   user: number;
@@ -96,12 +105,7 @@ const inputCharsOf = (messages: Message[]): number =>
 const topFilesOf = (messages: Message[]): string[] => {
   const files = new Set<string>();
   for (const block of normalize(messages)) {
-    if (block.kind === "tool_call") {
-      for (const key of ["path", "file_path", "filePath", "file"]) {
-        const val = block.args[key];
-        if (typeof val === "string") { files.add(val); break; }
-      }
-    }
+    if (block.kind === "tool_call") for (const file of filesOf(block)) files.add(file);
   }
   return [...files].slice(0, 10);
 };
@@ -153,21 +157,12 @@ const matchesQuery = (text: string, query: string): boolean => {
 
 const probesOf = (messages: Message[], summary: string): RecallProbe[] => {
   const blocks = normalize(messages);
-  const data = buildSections({ blocks });
 
   // Find first file from tool calls
-  let firstFile = "";
-  for (const b of blocks) {
-    if (b.kind === "tool_call") {
-      for (const key of ["path", "file_path", "filePath", "file"]) {
-        if (typeof b.args[key] === "string") { firstFile = b.args[key] as string; break; }
-      }
-      if (firstFile) break;
-    }
-  }
+  const firstFile = blocks.flatMap((b) => (b.kind === "tool_call" ? filesOf(b) : []))[0] ?? "";
 
   const rawProbes = [
-    { label: "request", text: data.earlyRequests[0] ?? "" },
+    { label: "request", text: earlyRequestsOf(messages)[0] ?? "" },
     { label: "file", text: firstFile },
   ];
 
@@ -183,15 +178,14 @@ const probesOf = (messages: Message[], summary: string): RecallProbe[] => {
         sourceText,
         query,
         summaryMentioned: matchesQuery(summary, query),
-        recallHits: searchEntries(rendered, messages, query).length,
+        recallHits: searchHits(pairs(rendered, messages), query).length,
       };
     })
     .filter((probe): probe is RecallProbe => probe !== null);
 };
 
-export const buildCompactReport = (input: CompileInput): CompactReport => {
-  const summary = compile(input);
-  const data = buildSections({ blocks: normalize(input.messages) });
+export const buildCompactReport = (input: Omit<CompileInput, "limits">): CompactReport => {
+  const summary = compile({ limits: DEFAULT_SUMMARY_LIMITS, ...input });
   const inputChars = inputCharsOf(input.messages);
   const topFiles = topFilesOf(input.messages);
 
@@ -211,7 +205,7 @@ export const buildCompactReport = (input: CompileInput): CompactReport => {
       estimatedTokens: estimateTokensFromChars(summary.length),
       sectionCount: sectionCountOf(summary),
       summaryPreview: summary,
-      earlyRequestsCount: data.earlyRequests.length,
+      earlyRequestsCount: earlyRequestsOf(input.messages).length,
       briefTranscriptLines: briefLineCountOf(summary),
     },
     compression: {

@@ -1,8 +1,10 @@
 // /omp-vcc's argument handling and what it reports, against a fake omp API.
 // tests/omp-entry.test.ts covers the command wired to the hook through index.ts.
+import { OMP_HOST } from "../src/host";
 import { describe, expect, test } from "bun:test";
 import { registerOmpVccCommand } from "../src/commands/omp-vcc";
-import { createCompactionState, OMP_VCC_COMPACT_INSTRUCTION } from "../src/hooks/compaction";
+import { createCompactionState } from "../src/hooks/compaction";
+import { OMP_VCC_COMPACT_INSTRUCTION } from "../src/core/compact-args";
 
 type CompactOptions = {
   suppressContinuation?: boolean;
@@ -44,7 +46,7 @@ function createHarness(sendUserMessage?: (content: string | unknown[]) => unknow
     },
   };
 
-  registerOmpVccCommand(pi, state);
+  registerOmpVccCommand(pi, state, OMP_HOST);
 
   return {
     invoke: async (args = "") => handler!(args, ctx),
@@ -113,8 +115,10 @@ describe("/omp-vcc", () => {
 
     await invoke("continue");
 
-    expect(() => compactCalls[0].onComplete?.()).not.toThrow();
-    await Promise.resolve();
+    // Called outside expect(): bun:test fails a test on an unhandled rejection
+    // after a turn of the event loop, but not one raised inside expect(fn).toThrow.
+    compactCalls[0].onComplete?.();
+    await Bun.sleep(0);
   });
 
   test("skips follow-up when trailing prompt is empty", async () => {
@@ -166,7 +170,7 @@ describe("/omp-vcc", () => {
       await invoke();
       compactCalls[0].onError?.(new Error("Nothing to compact (session too small)"));
       await invoke();
-      state.lastStats = { summarized: 4, kept: 2, keptUserTurns: 1, totalUserTurns: 2, requestedKeepUserTurns: 1, keepUserTurnsExplicit: false, keepFallbackToCompactAll: false, keptTokensEst: 120 };
+      state.lastStats = { summarized: 4, keptUserTurns: 1, totalUserTurns: 2, keptTokensEst: 120 };
       compactCalls[1].onComplete?.();
       expect(notifyCalls).toEqual([]);
       expect(written[0]).toStartWith("Nothing to compact yet:");
@@ -189,7 +193,7 @@ describe("/omp-vcc", () => {
     expect(cleared.notifyCalls[0].msg).toStartWith("Nothing to compact yet: the whole session still fits");
   });
 
-  test("when omp-vcc's hook cancelled, print mode gets its reason; a UI already showed it", async () => {
+  test("when omp-vcc's hook cancelled, the command adds nothing: the hook told the user why", async () => {
     const written: string[] = [];
     const write = process.stderr.write;
     (process.stderr as any).write = (chunk: string) => (written.push(String(chunk)), true);
@@ -198,7 +202,7 @@ describe("/omp-vcc", () => {
       await print.invoke();
       print.state.lastCancelNotice = "omp-vcc: Too few messages to compact";
       print.compactCalls[0].onError?.(new Error("Compaction cancelled"));
-      expect(written).toEqual(["omp-vcc: Too few messages to compact\n"]);
+      expect(written).toEqual([]);
     } finally {
       (process.stderr as any).write = write;
     }

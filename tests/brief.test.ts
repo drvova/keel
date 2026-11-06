@@ -1,7 +1,6 @@
 import { describe, it, expect } from "bun:test";
 import { compileBrief } from "../src/core/brief";
 import { normalize } from "../src/core/normalize";
-import { rankBriefBlocks } from "../src/core/rank";
 import type { NormalizedBlock } from "../src/types";
 
 describe("compileBrief", () => {
@@ -17,15 +16,22 @@ describe("compileBrief", () => {
       call("vcc_recall", { mode: "sessions" }, 2),
       call("vcc_recall", { expand: "[1, 25]" }, 3),
       call("vcc_recall", { session: "01a19511", range: [28, 34] }, 4),
+      call("vcc_recall", { query: "build tag", page: 2 }, 7),
       call("vcc_pin", { note: "The deploy host has no Redis" }, 5),
       call("vcc_pin", { unpin: 2 }, 6),
+      call("vcc_pin", { note: "refused", unpin: 3 }, 8),
     ]);
     expect(r).toContain(`* vcc_recall "build tag" scope:project (#1)`);
     expect(r).toContain("* vcc_recall mode:sessions (#2)");
     expect(r).toContain("* vcc_recall expand:[1, 25] (#3)");
     expect(r).toContain("* vcc_recall range:[28, 34] session:01a19511 (#4)");
+    // Page 2 is another call than page 1, not a repeat of it.
+    expect(r).toContain(`* vcc_recall "build tag" page:2 (#7)`);
     expect(r).toContain(`* vcc_pin "The deploy host has no Redis" (#5)`);
     expect(r).toContain("* vcc_pin unpin:2 (#6)");
+    // The tool refused a call with both: it pinned nothing, and the brief does not say it did.
+    expect(r).toContain("* vcc_pin (#8)");
+    expect(r).not.toContain('"refused"');
     expect(r).not.toContain("intent text");
   });
 
@@ -225,10 +231,7 @@ describe("compileBrief", () => {
       { kind: "assistant", text: "Actually, the issue is in middleware." },
       { kind: "assistant", text: "Let me check the logs." },
     ];
-    const r = compileBrief(blocks);
-    expect(r).toContain("I found the root cause.");
-    expect(r).toContain("the issue is in middleware.");
-    expect(r).toContain("Let me check the logs.");
+    expect(compileBrief(blocks)).toBe("[assistant]\nI found the root cause.\nthe issue is in middleware.\nLet me check the logs.");
   });
 
   it("collapses tool calls to one-liners under [assistant]", () => {
@@ -245,20 +248,12 @@ describe("compileBrief", () => {
     expect(matches?.length).toBe(1);
   });
 
-  it("hides non-error tool results", () => {
+  it("hides tool results, whatever they say", () => {
     const blocks: NormalizedBlock[] = [
       { kind: "tool_result", name: "Read", text: "const x = 1;\nconst y = 2;\n// lots of code" },
-    ];
-    const r = compileBrief(blocks);
-    expect(r).toBe("");
-  });
-
-  it("hides tool results regardless of output text", () => {
-    const blocks: NormalizedBlock[] = [
       { kind: "tool_result", name: "bash", text: "FAIL auth.test.ts\nexpected 200 got 401" },
     ];
-    const r = compileBrief(blocks);
-    expect(r).toBe("");
+    expect(compileBrief(blocks)).toBe("");
   });
 
   it("merges adjacent assistant sections", () => {
@@ -295,29 +290,29 @@ describe("compileBrief", () => {
     expect(r).not.toContain("word299");
   });
 
-  it("truncates segment-closing assistant text with head and tail", () => {
+  // The text that closes a turn (nothing but tool results before the next user
+  // message) keeps a longer head: it is usually the answer.
+  it("truncates segment-closing assistant text with head and tail, the head 120 words", () => {
     const longText = Array.from({ length: 600 }, (_, i) => `word${i}`).join(" ");
     const blocks: NormalizedBlock[] = [
       { kind: "assistant", text: longText },
     ];
     const r = compileBrief(blocks);
-    expect(r).toContain("...(middle truncated)...");
+    expect(r).toContain("word119\n...(middle truncated)...\nword480");
     expect(r).toContain("word0");
     expect(r).toContain("word599");
-    expect(r).not.toContain("word300");
   });
 
-  it("truncates non-closing assistant text with head and tail", () => {
+  it("truncates non-closing assistant text with head and tail, the head 80 words", () => {
     const longText = Array.from({ length: 600 }, (_, i) => `word${i}`).join(" ");
     const blocks: NormalizedBlock[] = [
       { kind: "assistant", text: longText },
       { kind: "tool_call", name: "Read", args: { file_path: "a.ts" } },
     ];
     const r = compileBrief(blocks);
-    expect(r).toContain("...(middle truncated)...");
+    expect(r).toContain("word79\n...(middle truncated)...\nword480");
     expect(r).toContain("word0");
     expect(r).toContain("word599");
-    expect(r).not.toContain("word300");
   });
 
   it("renders a realistic conversation flow", () => {
@@ -347,53 +342,20 @@ describe("compileBrief", () => {
     expect(r).toContain('[assistant]\nRunning tests again.\n* bash "npm test"');
 
     // Hidden content
-    expect(r).not.toContain("think");
     expect(r).not.toContain("export function login");
     expect(r).not.toContain("File edited successfully");
     expect(r).not.toContain("All tests passed");
   });
 
-  // ── noise filtering tests (aligned with VCC) ──
-
-
-
-
-
-
-
-
-
-  it("suppresses blank lines between consecutive tool-only sections", () => {
+  it("a hidden tool result does not split the assistant's turn", () => {
     const blocks: NormalizedBlock[] = [
       { kind: "assistant", text: "Checking files." },
       { kind: "tool_call", name: "Read", args: { file_path: "a.ts" } },
       { kind: "tool_result", name: "Read", text: "..." },
-      // tool_result hidden → next tool_call starts new assistant section
-      // but since both are tool-only, no blank line between
       { kind: "tool_call", name: "Read", args: { file_path: "b.ts" } },
       { kind: "tool_result", name: "Read", text: "..." },
     ];
-    const r = compileBrief(blocks);
-    // The first assistant section has text + tool, so it's NOT tool-only
-    // The second would be tool-only but merges into the first (adjacent assistant)
-    // So all under one [assistant]
-    expect(r.match(/\[assistant\]/g)?.length).toBe(1);
-  });
-
-  it("caps tool calls per [assistant] turn at 8 (keep tail)", () => {
-    const blocks: NormalizedBlock[] = [
-      { kind: "assistant", text: "Working." },
-    ];
-    for (let i = 1; i <= 12; i++) {
-      blocks.push({ kind: "tool_call", name: "bash", args: { command: `echo ${i}` } });
-    }
-    const r = compileBrief(blocks);
-    expect(r).toContain("(4 earlier tool-call entries omitted)");
-    // Last 8 (5..12) kept; first 4 dropped
-    expect(r).not.toContain("echo 1\"");
-    expect(r).not.toContain("echo 4\"");
-    expect(r).toContain("echo 5");
-    expect(r).toContain("echo 12");
+    expect(compileBrief(blocks)).toBe('[assistant]\nChecking files.\n* Read "a.ts"\n* Read "b.ts"');
   });
 
   it("does not cap when tool calls per turn <= 8", () => {
@@ -420,18 +382,38 @@ describe("failed tool calls", () => {
     expect(r).toContain('* bash "bun test tests/billing.test.ts" [failed] (#10)');
     expect(r).toContain('* bash "bun test tests/billing.test.ts" (#12)');
   });
+});
 
-  it("ranks a failed call above the same call that passed", () => {
-    const blocks = normalize([
-      { role: "assistant", content: [{ type: "toolCall", id: "a", name: "bash", arguments: { command: "ls" } }] },
-      { role: "toolResult", toolCallId: "a", toolName: "bash", content: [{ type: "text", text: "ls: no such dir" }], isError: true },
-      { role: "assistant", content: [{ type: "toolCall", id: "b", name: "bash", arguments: { command: "ls" } }] },
-      { role: "toolResult", toolCallId: "b", toolName: "bash", content: [{ type: "text", text: "src" }], isError: false },
-    ] as any);
-    const ranked = rankBriefBlocks(blocks);
-    const failed = ranked.find((r) => r.block.kind === "tool_call" && r.block.failed)!;
-    const passed = ranked.find((r) => r.block.kind === "tool_call" && !r.block.failed)!;
-    expect(failed.reasons).toContain("failed-call");
-    expect(failed.score).toBeGreaterThan(passed.score);
+describe("tool lines", () => {
+  it("a search shows its pattern, whatever the host's casing", () => {
+    const brief = compileBrief([
+      { kind: "tool_call", name: "grep", args: { pattern: "authRetry", path: "src" }, sourceIndex: 1 },
+      { kind: "tool_call", name: "Grep", args: { pattern: "billingRetry" }, sourceIndex: 2 },
+      { kind: "tool_call", name: "ast_grep", args: { pat: "retry($A)", path: "src" }, sourceIndex: 3 },
+    ]);
+    expect(brief).toContain('* grep "authRetry" (#1)');
+    expect(brief).toContain('* Grep "billingRetry" (#2)');
+    expect(brief).toContain('* ast_grep "retry($A)" (#3)');
+  });
+
+  it("identical calls in a row are one line with every #N; markdown bullets in the text are not calls", () => {
+    const brief = compileBrief([
+      { kind: "assistant", text: "Checked:\n* tests pass", sourceIndex: 1 },
+      { kind: "assistant", text: "* tests pass", sourceIndex: 2 },
+      { kind: "tool_call", name: "read", args: { path: "a.ts" }, sourceIndex: 2 },
+      { kind: "tool_call", name: "read", args: { path: "a.ts" }, sourceIndex: 3 },
+    ]);
+    expect(brief).toContain("* tests pass (#1)\n* tests pass (#2)");
+    expect(brief).toContain('* read "a.ts" (#2, #3) x2');
+  });
+
+  it("past eight calls in a turn the earliest are counted, not shown; text lines stay", () => {
+    const blocks: NormalizedBlock[] = [{ kind: "assistant", text: "* a bullet, not a call", sourceIndex: 0 }];
+    for (let i = 1; i <= 10; i++) blocks.push({ kind: "tool_call", name: "read", args: { path: `f${i}.ts` }, sourceIndex: i });
+    const brief = compileBrief(blocks);
+    expect(brief).toContain("* a bullet, not a call (#0)");
+    expect(brief).toContain("* (2 earlier tool-call entries omitted)");
+    expect(brief).not.toContain('"f2.ts"');
+    expect(brief).toContain('* read "f3.ts" (#3)');
   });
 });

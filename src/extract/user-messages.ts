@@ -1,14 +1,11 @@
 import type { NormalizedBlock } from "../types";
 import { clip } from "../core/content";
 import { SKILL_BLOCK_RE } from "../core/skill-collapse";
-import { DEFAULT_SUMMARY_LIMITS } from "../core/window";
 
 /** Each user message becomes one item, clipped to this many characters. */
 const USER_MESSAGE_CHARS = 300;
 /** [Early Session Requests] keeps this many of the first messages. */
 export const EARLY_REQUESTS_KEPT = 3;
-/** [User Messages] keeps this many of the newest messages on a ~128K window (core/window.ts scales it). */
-const USER_MESSAGES_KEPT = DEFAULT_SUMMARY_LIMITS.userMessages;
 
 const segmenter = new Intl.Segmenter(undefined, { granularity: "word" });
 
@@ -20,13 +17,13 @@ const wordCount = (text: string): number => {
 };
 
 /**
- * The user's own words in a message, on one line. An expanded skill alone
- * is not the user's words: a skill with text keeps the text behind a
- * `[skill: name]` tag. Text that opens with a tag (`<peer_message …>`,
- * `<local-command-stdout>`) was put there by a tool, and one-word replies
- * ("ok", "好的") say little: both are dropped.
+ * The user's own words in a message, on one line, and the skills it expanded;
+ * "" when there are none. An expanded skill alone is not the user's words.
+ * Text that opens with a tag (`<peer_message …>`, `<local-command-stdout>`)
+ * was put there by a tool, and one-word replies ("ok", "好的") say little:
+ * both are none. The summary and the session listing read a request by it.
  */
-const userLine = (text: string, sourceIndex?: number): string => {
+export const userWords = (text: string): { words: string; skills: string[] } => {
   const skills: string[] = [];
   const rest = text
     .replace(SKILL_BLOCK_RE, (_, name: string) => {
@@ -35,7 +32,13 @@ const userLine = (text: string, sourceIndex?: number): string => {
     })
     .replace(/\s+/g, " ")
     .trim();
-  if (rest.startsWith("<") || wordCount(rest) < 2) return "";
+  return { words: rest.startsWith("<") || wordCount(rest) < 2 ? "" : rest, skills };
+};
+
+/** A user message as the summary lists it: its words behind a `[skill: name]` tag when it expanded one, clipped. */
+const userLine = (text: string, sourceIndex?: number): string => {
+  const { words: rest, skills } = userWords(text);
+  if (!rest) return "";
   const line = skills.length > 0 ? `[skill: ${skills.join(", ")}] ${rest}` : rest;
   const clipped = clip(line, USER_MESSAGE_CHARS);
   if (clipped.length === line.length) return line;
@@ -44,23 +47,10 @@ const userLine = (text: string, sourceIndex?: number): string => {
   return `${clipped.trimEnd()}…${sourceIndex != null ? ` (#${sourceIndex})` : ""}`;
 };
 
-/** The newest `keep` lines, oldest first. A repeated line
- * counts as new: it moves to the end. */
-export const keepNewestUserMessages = (lines: string[], keep = USER_MESSAGES_KEPT): string[] => {
-  const seq: string[] = [];
-  for (const l of lines) {
-    const at = seq.indexOf(l);
-    if (at >= 0) seq.splice(at, 1);
-    seq.push(l);
-  }
-  return seq.slice(-keep);
-};
-
 /**
  * What the user wrote, oldest first, verbatim and clipped (a clipped one ends
- * with `… (#N)`). Messages the
- * user did not write (`injected`) are left out. No wording is interpreted, so this works
- * the same in every language.
+ * with `… (#N)`). Messages the user did not write (`injected`) are left out.
+ * No wording is interpreted, so this works the same in every language.
  */
 export const extractUserMessages = (blocks: NormalizedBlock[]): string[] => {
   const lines: string[] = [];

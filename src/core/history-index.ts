@@ -8,7 +8,7 @@
 // changed, its commits and failed calls. That gives the agent ranges to read and
 // words to search for, however far back the work was.
 //
-// It stays bounded: past MAX_RANGES lines, the two adjacent ranges that span
+// It stays bounded: past its line limit (SummaryLimits.historyRanges), the two adjacent ranges that span
 // the fewest entries merge. Recent ranges stay fine and old ones coarsen, about
 // geometrically. Each range is built from the messages, never from summary text,
 // and is stored in the compaction's details, so it is not re-parsed or reworded
@@ -16,13 +16,11 @@
 import type { Message } from "@oh-my-pi/pi-ai";
 import type { NormalizedBlock } from "../types";
 import { clip } from "./content";
-import { normalize } from "./normalize";
-import { filterNoise } from "./filter-noise";
-import { vccDetailsOf } from "../details";
+import { summaryBlocks } from "./normalize";
 import { extractFiles } from "../extract/files";
 import { extractCommits } from "../extract/commits";
 import { extractUserMessages } from "../extract/user-messages";
-import { DEFAULT_SUMMARY_LIMITS } from "./window";
+import { RECALL_TOOL } from "../names";
 
 export interface HistoryRange {
   /** First and last session-wide `#N` the range covers. */
@@ -42,8 +40,6 @@ export interface HistoryRange {
   failed: number;
 }
 
-/** Lines on a ~128K window; core/window.ts scales it with the model's window. */
-export const MAX_RANGES = DEFAULT_SUMMARY_LIMITS.historyRanges;
 const ASKS_KEPT = 4;
 const ASKS_SHOWN = 1;
 const ASK_CHARS = 80;
@@ -64,7 +60,7 @@ export const rangeOfWindow = (
 ): HistoryRange | undefined => {
   const known = sourceIndices.filter((n): n is number => typeof n === "number");
   if (known.length === 0) return undefined;
-  const blocks: NormalizedBlock[] = filterNoise(normalize(messages, sourceIndices));
+  const blocks: NormalizedBlock[] = summaryBlocks(messages, sourceIndices);
   const files = extractFiles(blocks);
   const changed = [...new Set([...files.modified, ...files.created])];
   const commits = extractCommits(blocks).map((c) => clip(c.hash ? `${c.hash} ${c.message}` : c.message, COMMIT_CHARS));
@@ -103,7 +99,7 @@ const saysNothing = (r: HistoryRange): boolean =>
  * it has nothing to name (say the previous turn's final reply, kept by the last
  * compaction): then it is the end of the range before it, not a line of its own.
  */
-export const mergeHistoryIndex = (previous: HistoryRange[], fresh: HistoryRange | undefined, maxRanges = MAX_RANGES): HistoryRange[] => {
+export const mergeHistoryIndex = (previous: HistoryRange[], fresh: HistoryRange | undefined, maxRanges: number): HistoryRange[] => {
   const ranges = [...previous];
   const last = ranges[ranges.length - 1];
   if (fresh && last && saysNothing(fresh) && fresh.from <= last.to + 1 && fresh.to > last.to) {
@@ -150,7 +146,7 @@ const formatFiles = (files: string[]): string => {
 
 export const formatHistoryRange = (r: HistoryRange): string => {
   const parts: string[] = [];
-  if (r.requests == null) parts.push("earlier, not indexed; search it with vcc_recall");
+  if (r.requests == null) parts.push(`earlier, not indexed; search it with ${RECALL_TOOL}`);
   else if (r.requests > 0) parts.push(`${plural(r.requests, "request")}: ${r.asks.slice(0, ASKS_SHOWN).map((a) => `"${a}"`).join(", ")}`);
   if (r.files.length > 0) parts.push(formatFiles(r.files));
   if (r.commitCount > 0) {
@@ -169,9 +165,8 @@ const isRange = (value: unknown): value is HistoryRange => {
     && (r.requests === undefined || Number.isInteger(r.requests));
 };
 
-/** The index an omp-vcc (or, before the rename, pi-vcc) compaction stored in its details, if it is well-formed. */
-export const readHistoryIndex = (details: unknown): HistoryRange[] | undefined => {
-  const index: unknown = vccDetailsOf(details)?.historyIndex;
+/** A stored index (details.historyIndex), or undefined when it is not a well-formed one. */
+export const readHistoryIndex = (index: unknown): HistoryRange[] | undefined => {
   if (!Array.isArray(index)) return undefined;
   return index.every(isRange) ? (index as HistoryRange[]) : undefined;
 };

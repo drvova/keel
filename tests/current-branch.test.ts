@@ -1,16 +1,16 @@
 import { describe, it, expect } from "bun:test";
-import { getActiveLineageEntryIds } from "../src/core/lineage";
+import { currentBranchIds } from "../src/core/session-file";
 
-describe("getActiveLineageEntryIds", () => {
+describe("currentBranchIds", () => {
   it("returns IDs from active branch", () => {
-    const ids = getActiveLineageEntryIds({
+    const ids = currentBranchIds({
       getBranch: () => [{ id: "a" }, { id: "b" }, { id: "c" }],
     });
     expect([...ids]).toEqual(["a", "b", "c"]);
   });
 
   it("falls back to getEntries when getBranch throws", () => {
-    const ids = getActiveLineageEntryIds({
+    const ids = currentBranchIds({
       getBranch: () => {
         throw new Error("boom");
       },
@@ -20,7 +20,7 @@ describe("getActiveLineageEntryIds", () => {
   });
 
   it("returns empty set when both branch and entries are unavailable", () => {
-    const ids = getActiveLineageEntryIds({
+    const ids = currentBranchIds({
       getBranch: () => {
         throw new Error("boom");
       },

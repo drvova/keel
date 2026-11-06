@@ -1,30 +1,35 @@
-import { loadAllMessages, type LoadedMessages } from "./load-messages";
-import { searchEntriesDetailed, getTouchedFiles, type SearchHit } from "./search-entries";
-import { formatRecallOutput, formatTouchedOutput, TOUCHED_PAGE_SIZE } from "./format-recall";
-import { getActiveLineageEntryIds, type LineageSessionManagerLike } from "./lineage";
+import { readSession, renderMessages, type LoadedEntry, type RecallMessage, type SessionRead } from "./load-messages";
+import { searchEntries, type SearchHit, type SearchResult } from "./search-entries";
+import { formatRecallOutput, outsidePage, scopeParam, sessionParam, withParams } from "./format-recall";
+import { formatTouched, touchedFiles } from "./touched";
 import { expandEntryFile } from "./drill-down";
 import { EXPAND_DETAIL_CHARS } from "./render-entries";
-import type { RecallScope } from "./recall-scope";
-import type { RecallRequest } from "./recall-request";
+import { ignoredNote, type RecallRequest, type RecallScope } from "./recall-request";
 import type { Message } from "@oh-my-pi/pi-ai";
-import { describeSession, fileBranchIds, listProjectSessions, type SessionInfo } from "./sessions";
+import { countProjectSessions, describeSession, findSession, listProjectSessions, MAX_LISTED_SESSIONS, sessionDirOf, type SessionInfo } from "./sessions";
+import { currentBranchIds, hostBranch, type SessionManagerLike } from "./session-file";
+import { toolCallsOf } from "./tools";
+import { DEFAULT_CHARS_PER_TOKEN } from "./token-estimate";
 
 export const SEARCH_PAGE_SIZE = 5;
 export const RANGE_PAGE_SIZE = 20;
-export const RECENT_COUNT = 25;
+const RECENT_COUNT = 25;
 
 /**
  * The session as one recall call sees it. Scope is applied here, once, and
  * every action reads through it. Loads are cached per call.
  */
-export interface RecallView {
-  sessionFile: string;
+interface RecallView {
   scope: RecallScope;
   /** This project's other sessions (mode:'sessions', scope:'project'); unset when unknown. */
   project?: ProjectSessions;
   /** Set when the view is over one of those earlier sessions instead of the current one. */
   session?: SessionInfo;
-  load(full: boolean): LoadedMessages;
+  load(full: boolean): LoadedEntry[];
+  /** What the action may take of one recall result: the cap (recallOutputChars) less what recall puts in front. */
+  maxChars: number;
+  /** The message at `#N`, on any branch. */
+  message(index: number): Message | undefined;
   /** What expand shows of one call's arguments and of its paired result (expandDetailChars). */
   detailChars: number;
   /** The same session with scope:'all' (itself when already 'all'). */
@@ -38,85 +43,114 @@ export interface RecallView {
 }
 
 /** The project's other session files, listed once per recall call. */
-export interface ProjectSessions {
-  dir: string;
-  list(): SessionInfo[];
+interface ProjectSessions {
+  /** The newest MAX_LISTED_SESSIONS; `more` when there are older ones. */
+  list(): SessionInfo[] & { more: boolean };
+  /** How many there are, from their headers: no file is read past its first lines. */
+  count(): number;
 }
 
-export const projectSessions = (dir: string, currentFile: string): ProjectSessions => {
-  let listed: SessionInfo[] | undefined;
-  return { dir, list: () => (listed ??= listProjectSessions(dir, currentFile)) };
+const projectSessions = (dir: string, currentFile: string): ProjectSessions => {
+  let listed: ReturnType<typeof listProjectSessions> | undefined;
+  return {
+    list: () => (listed ??= listProjectSessions(dir, currentFile)),
+    count: () => countProjectSessions(dir, currentFile),
+  };
 };
 
-export const openRecallView = (
+interface ViewOptions {
+  project?: ProjectSessions;
+  session?: SessionInfo;
+  /** What the action may take of one recall result (the cap less what recall puts in front). */
+  maxChars?: number;
+  /** Expand's clip for one call's arguments: from the cap itself (expandDetailChars), whatever goes in front. */
+  detailChars?: number;
+  /** The file, read once for every view of it in this call. */
+  read?: () => SessionRead;
+}
+
+const once = <T>(f: () => T): (() => T) => {
+  let value: { v: T } | undefined;
+  return () => (value ??= { v: f() }).v;
+};
+
+const openRecallView = (
   sessionFile: string,
   scope: RecallScope,
-  sessionManager: LineageSessionManagerLike,
-  options: { project?: ProjectSessions; session?: SessionInfo; detailChars?: number } = {},
+  sessionManager: SessionManagerLike,
+  options: ViewOptions = {},
 ): RecallView => {
+  const read = options.read ?? once(() => readSession(sessionFile));
   // scope:'project' reads the current session on its current path, like lineage;
   // only its search reaches further.
-  const lineageEntryIds = scope !== "all" ? getActiveLineageEntryIds(sessionManager) : undefined;
-  const cache = new Map<boolean, LoadedMessages>();
+  const lineageEntryIds = scope !== "all" ? currentBranchIds(sessionManager) : undefined;
+  const cache = new Map<boolean, LoadedEntry[]>();
   let wide: RecallView | undefined;
   let turn: Set<number> | undefined;
   const view: RecallView = {
-    sessionFile,
     scope,
     ...(options.project ? { project: options.project } : {}),
     ...(options.session ? { session: options.session } : {}),
-    detailChars: options.detailChars ?? EXPAND_DETAIL_CHARS,
+    maxChars: options.maxChars ?? RECALL_OUTPUT_CHARS,
+    detailChars: options.detailChars ?? expandDetailChars(options.maxChars ?? RECALL_OUTPUT_CHARS),
     load(full) {
       let loaded = cache.get(full);
       if (!loaded) {
-        loaded = loadAllMessages(sessionFile, full, lineageEntryIds, view.detailChars);
+        loaded = renderMessages(read().messages, full, lineageEntryIds, { chars: view.detailChars, via: inSession(view) });
         cache.set(full, loaded);
       }
       return loaded;
     },
+    message(index) {
+      return read().messages.find((m) => m.index === index)?.message;
+    },
     widen() {
       if (scope === "all") return view;
-      return (wide ??= openRecallView(sessionFile, "all", sessionManager, options));
+      return (wide ??= openRecallView(sessionFile, "all", sessionManager, { ...options, read }));
     },
     currentTurn() {
       // An earlier session has no turn in progress.
-      return (turn ??= options.session ? new Set() : findCurrentTurn(sessionFile, sessionManager));
+      return (turn ??= options.session ? new Set() : findCurrentTurn(read().messages, sessionManager));
     },
   };
   return view;
 };
 
 /** A view over one of the project's earlier sessions, on its own active branch. */
-export const openSessionView = (session: SessionInfo, scope: RecallScope, project?: ProjectSessions, detailChars?: number): RecallView => {
-  const ids = fileBranchIds(session.file);
+const openSessionView = (session: SessionInfo, scope: RecallScope, size: Pick<ViewOptions, "maxChars" | "detailChars"> = {}): RecallView => {
+  const read = once(() => readSession(session.file));
+  const ids = read().branchIds;
   // A file without entry ids (an old format) has no branch to follow: read all of it.
-  const effective = !ids?.size ? "all" : scope === "project" ? "lineage" : scope;
-  const branch = [...(ids ?? [])].map((id) => ({ id }));
-  return openRecallView(session.file, effective, { getBranch: () => branch }, { project, session, detailChars });
+  const effective = ids.size === 0 ? "all" : scope === "project" ? "lineage" : scope;
+  const branch = [...ids].map((id) => ({ id }));
+  return openRecallView(session.file, effective, { getBranch: () => branch }, { session, ...size, read });
 };
 
+/** What a follow-up call inside an earlier session adds, so it reads that session again. */
+const inSession = (view: RecallView): string => withParams(sessionParam(view.session?.short));
+
 /** "Session 01a194d8 · …" line that opens output read from an earlier session. */
-export const sessionHeader = (s: SessionInfo): string => `Session ${describeSession(s)}\n\n`;
+const sessionHeader = (s: SessionInfo): string => `Session ${describeSession(s)}\n\n`;
 
 /**
  * Walk the active path back to the last user message. The tool runs from an
- * agent message pi has already written, so a turn is in progress only when
+ * agent message the host has already written, so a turn is in progress only when
  * something follows that user message; a compaction in between means the
  * start of the turn may have left the context.
  */
-const findCurrentTurn = (sessionFile: string, sessionManager: LineageSessionManagerLike): Set<number> => {
+const findCurrentTurn = (messages: readonly RecallMessage[], sessionManager: SessionManagerLike): Set<number> => {
   const none = new Set<number>();
-  let branch: any[] = [];
-  try { branch = sessionManager.getBranch() ?? []; } catch { return none; }
+  const branch = hostBranch(sessionManager) ?? [];
   for (let i = branch.length - 1; i >= 0; i--) {
     const e = branch[i];
     if (e?.type === "compaction") return none;
     if (e?.type === "message" && e.message?.role === "user") break;
   }
-  const { rendered } = loadAllMessages(sessionFile, false, getActiveLineageEntryIds(sessionManager));
-  for (let i = rendered.length - 1; i >= 0; i--) {
-    if (rendered[i].role !== "user") continue;
-    return i < rendered.length - 1 ? new Set(rendered.slice(i).map((m) => m.index)) : none;
+  const ids = currentBranchIds(sessionManager);
+  const onPath = messages.filter((m) => m.id !== undefined && ids.has(m.id));
+  for (let i = onPath.length - 1; i >= 0; i--) {
+    if (onPath[i].message.role !== "user") continue;
+    return i < onPath.length - 1 ? new Set(onPath.slice(i).map((m) => m.index)) : none;
   }
   return none;
 };
@@ -129,43 +163,18 @@ const findCurrentTurn = (sessionFile: string, sessionManager: LineageSessionMana
 const OFF_PATH_NOTE =
   "Nothing on the current conversation path; showing edited or retried branches (scope:'all').\n\n";
 
-export const invalidExpandIndices = (requested: number[], available: Set<number>): number[] =>
-  requested.filter((i) => !Number.isInteger(i) || !available.has(i));
-
 /** Surface-specific wording: the tool says page:N, the command says /omp-vcc-recall … page:N. */
 export interface RecallPagingHints {
   outOfRange(query: string, scope: RecallScope, totalPages: number, truncated: boolean): string;
   nextPage(query: string, scope: RecallScope, page: number): string;
+  /** The next page of mode:'touched' or mode:'sessions', in the listing's scope; "" where the surface has no such call. */
+  listPage(mode: "touched" | "sessions", page: number, scope: RecallScope): string;
   /** Next step after a search page, pointing at its first hit. The command has none. */
   aroundHit?(index: number, scope: RecallScope): string;
-  /**
-   * Leave the current turn (last user message on the path and everything after
-   * it) out of search: the agent has it in context, and its question would
-   * otherwise match itself. Only the tool sets this; a /omp-vcc-recall command
-   * adds no user message, so the last one there belongs to a finished turn.
-   */
-  skipCurrentTurn?: boolean;
   /** After a search of this session finds nothing: where the project's earlier sessions are. */
   otherSessions?(count: number): string;
 }
 
-
-const IGNORED_REASON: Record<RecallRequest["action"]["kind"], string> = {
-  drill: "a #N:path query runs alone",
-  touched: "mode:'touched' runs alone",
-  expand: "expand runs alone; send the rest in a separate call",
-  range: "range runs alone; send the rest in a separate call",
-  sessions: "mode:'sessions' runs alone",
-  search: "",
-  recent: "page applies to query or range results",
-};
-
-/** One line naming params the action did not use, so nothing is dropped silently. */
-export const ignoredNote = (request: RecallRequest): string =>
-  (request.dropped?.length ? `Ignored: ${request.dropped.join(", ")}.\n\n` : "") +
-  (request.ignored?.length
-    ? `Ignored: ${request.ignored.join(", ")} (${IGNORED_REASON[request.action.kind]}).\n\n`
-    : "");
 
 /** Ceiling for one recall result, 50 KB like a read tool's: one long entry
  *  (a base64 image on one line) must not flood the context. */
@@ -181,7 +190,7 @@ const MIN_RECALL_OUTPUT_CHARS = 8 * 1024;
  */
 export const recallOutputChars = (contextWindow?: number): number =>
   typeof contextWindow === "number" && contextWindow > 0
-    ? Math.max(MIN_RECALL_OUTPUT_CHARS, Math.min(RECALL_OUTPUT_CHARS, Math.round(contextWindow * 4 * 0.1)))
+    ? Math.max(MIN_RECALL_OUTPUT_CHARS, Math.min(RECALL_OUTPUT_CHARS, Math.round(contextWindow * DEFAULT_CHARS_PER_TOKEN * 0.1)))
     : RECALL_OUTPUT_CHARS;
 
 const kb = (chars: number): string => `${Math.round(chars / 1024)} KB`;
@@ -195,34 +204,72 @@ const capOutput = (text: string, max: number): string => {
     `${text.slice(0, end)}\n...[clipped at ${kb(max)}]`;
 };
 
-export const runRecall = (
-  request: RecallRequest,
-  view: RecallView,
-  hints: RecallPagingHints,
-  /** header: a first line ahead of the output (which session it was read from). */
-  options: { maxChars?: number; header?: string } = {},
-): string =>
-  (options.header ?? "") + capOutput(ignoredNote(request) + runAction(request, view, hints), options.maxChars ?? RECALL_OUTPUT_CHARS);
+/** Where a recall call came from: how its follow-up hints are written, for this session or an earlier one (`short`). */
+type RecallSurface = (short?: string) => RecallPagingHints;
 
-const runAction = (request: RecallRequest, view: RecallView, hints: RecallPagingHints): string => {
+export interface RecallInput {
+  request: RecallRequest;
+  sessionManager: SessionManagerLike & { getSessionDir?(): string | undefined };
+  /** The model's window: it scales the output cap (recallOutputChars). */
+  contextWindow?: number;
+  /**
+   * Leave the current turn (last user message on the path and everything after
+   * it) out of search: the agent has it in context, and its question would
+   * otherwise match itself. Only the tool sets this; a /omp-vcc-recall command
+   * adds no user message, so the last one there belongs to a finished turn.
+   */
+  skipCurrentTurn?: boolean;
+}
+
+/**
+ * One recall call, for the tool and the command alike: the current session or
+ * the earlier one it names, read once, the action run, the output capped
+ * (its header included). `ok: false` when there is nothing to read, with how
+ * bad that is for a person told so.
+ */
+export const recall = (input: RecallInput, surface: RecallSurface): { ok: true; text: string } | { ok: false; text: string; severity: "error" | "warning" } => {
+  const { request, sessionManager } = input;
+  const sessionFile = sessionManager.getSessionFile?.();
+  if (!sessionFile) return { ok: false, text: "No session file available.", severity: "error" };
+  const dir = sessionDirOf(sessionManager, sessionFile);
+  const project = projectSessions(dir, sessionFile);
+  const maxChars = recallOutputChars(input.contextWindow);
+  // What goes in front of the action's output comes out of the view's share of the cap.
+  const note = ignoredNote(request);
+  const detailChars = expandDetailChars(maxChars);
+  const skipTurn = input.skipCurrentTurn === true;
+  if (request.session) {
+    // By header among all of them: an id older than the listed ones still names its session.
+    const target = findSession(dir, sessionFile, request.session);
+    if ("error" in target) return { ok: false, text: target.error, severity: "warning" };
+    const header = sessionHeader(target);
+    const view = openSessionView(target, request.scope, { maxChars: maxChars - header.length - note.length, detailChars });
+    return { ok: true, text: header + capOutput(note + runAction(request, view, surface, skipTurn), Math.max(0, maxChars - header.length)) };
+  }
+  const view = openRecallView(sessionFile, request.scope, sessionManager, { project, maxChars: maxChars - note.length, detailChars });
+  return { ok: true, text: capOutput(note + runAction(request, view, surface, skipTurn), maxChars) };
+};
+
+const runAction = (request: RecallRequest, view: RecallView, surface: RecallSurface, skipTurn: boolean): string => {
   const { action } = request;
+  const hints = surface(view.session?.short);
   const scopeAll = view.scope === "all";
 
   switch (action.kind) {
     case "drill": {
-      // expandEntryFile loads unfiltered so #N stays aligned with the global
-      // message index; scope only decides whether the entry is off-path.
+      // The entry is read from any branch; scope only decides whether it is off-path.
       const t = action.target;
-      const offPath = !scopeAll && !view.load(false).rendered.some((m) => m.index === t.index);
+      const message = view.message(t.index);
+      const offPath = message !== undefined && !scopeAll && !view.load(false).some((m) => m.entry.index === t.index);
       return (offPath ? OFF_PATH_NOTE : "") +
-        expandEntryFile(view.sessionFile, t.index, t.pathPattern, t.full, t.offset, t.limit);
+        expandEntryFile(message, t.index, t.pathPattern, t.full, t.offset, t.limit, { maxChars: view.maxChars - (offPath ? OFF_PATH_NOTE.length : 0), via: inSession(view) });
     }
 
     case "touched":
-      return runTouched(action.page, view);
+      return runTouched(action.page, view, hints);
 
     case "sessions":
-      return runSessions(action.page, view);
+      return runSessions(action.page, view, hints);
 
     case "expand":
       return runExpand(action.indices, view);
@@ -231,31 +278,24 @@ const runAction = (request: RecallRequest, view: RecallView, hints: RecallPaging
       return runRange(action.range, action.page, view);
 
     case "search":
-      if (view.scope === "project") return runProjectSearch(action.query, action.page, view, hints);
-      return runSearch(action.query, action.page, view, hints, hints.skipCurrentTurn ? view.currentTurn() : undefined);
+      // An earlier session has no current turn (RecallView.currentTurn).
+      const skip = skipTurn ? view.currentTurn() : undefined;
+      if (view.scope === "project") return runProjectSearch(action.query, action.page, view, surface, skip);
+      return runSearch(action.query, action.page, view, hints, skip);
 
     case "recent": {
-      const { rendered } = view.load(false);
-      return (scopeAll ? "Scope: all\n\n" : "") + formatRecallOutput(rendered.slice(-RECENT_COUNT), action.query);
+      return (scopeAll ? "Scope: all\n\n" : "") + formatRecallOutput(view.load(false).slice(-RECENT_COUNT).map((m) => m.entry));
     }
   }
 };
 
-/** Tool output shown with an expanded call under the 50 KB cap, clipped so one expand cannot flood the context. */
-export const PAIRED_RESULT_CHARS = EXPAND_DETAIL_CHARS;
-
 /** What expand shows of one call's arguments and of its result: the same share of a smaller cap (a smaller window) as 4,000 chars of 50 KB. */
 export const expandDetailChars = (maxChars: number = RECALL_OUTPUT_CHARS): number =>
-  Math.max(1, Math.round((maxChars * PAIRED_RESULT_CHARS) / RECALL_OUTPUT_CHARS));
-
-const toolCallIds = (msg: Message | undefined): string[] =>
-  msg?.role === "assistant" && Array.isArray(msg.content)
-    ? msg.content.flatMap((b: any) => (b?.type === "toolCall" && typeof b.id === "string" ? [b.id] : []))
-    : [];
+  Math.max(1, Math.round((maxChars * EXPAND_DETAIL_CHARS) / RECALL_OUTPUT_CHARS));
 
 /**
  * Full text of the requested entries. An expanded tool call brings its tool
- * results along (matched by toolCallId, clipped to PAIRED_RESULT_CHARS), so
+ * results along (matched by toolCallId, clipped to the view's detailChars), so
  * the agent does not have to know the result sits at a later #N. Entries off
  * the current path are served from the whole session and named in a note.
  */
@@ -263,9 +303,9 @@ const runExpand = (indices: number[], view: RecallView): string => {
   const pools = view.scope === "all" ? [view] : [view, view.widen()];
   const lookup = (i: number) => {
     for (const v of pools) {
-      const { rendered, rawMessages } = v.load(true);
-      const pos = rendered.findIndex((m) => m.index === i);
-      if (pos >= 0) return { entry: rendered[pos], raw: rawMessages[pos], v, pos };
+      const loaded = v.load(true);
+      const pos = loaded.findIndex((m) => m.entry.index === i);
+      if (pos >= 0) return { entry: loaded[pos].entry, raw: loaded[pos].message, v, pos };
     }
     return undefined;
   };
@@ -280,21 +320,21 @@ const runExpand = (indices: number[], view: RecallView): string => {
   for (const { hit } of found) {
     const { entry, raw, v, pos } = hit!;
     out.push(entry);
-    const ids = new Set(toolCallIds(raw));
+    const ids = new Set(toolCallsOf(raw).flatMap((c) => c.id ?? []));
     if (ids.size === 0) continue;
-    const { rendered, rawMessages } = v.load(true);
-    for (let j = pos + 1; j < rendered.length && ids.size > 0; j++) {
-      const r = rawMessages[j] as any;
+    const loaded = v.load(true);
+    for (let j = pos + 1; j < loaded.length && ids.size > 0; j++) {
+      const r = loaded[j].message as any;
       // A call's results come before the next assistant message; past it, a
       // reused id (after an interrupted call) belongs to a later call.
       if (r?.role === "assistant") break;
       if (r?.role !== "toolResult" || !ids.has(r.toolCallId)) continue;
       ids.delete(r.toolCallId);
-      const res = rendered[j];
+      const res = loaded[j].entry;
       if (requested.has(res.index)) continue;
       const clipAt = v.detailChars;
       const summary = res.summary.length > clipAt
-        ? `${res.summary.slice(0, clipAt)}\n...[result of #${entry.index} clipped at ${clipAt} of ${res.summary.length} chars; expand:[${res.index}] for all of it]`
+        ? `${res.summary.slice(0, clipAt)}\n...[result of #${entry.index} clipped at ${clipAt} of ${res.summary.length} chars; expand:[${res.index}]${inSession(v)} for all of it]`
         : res.summary;
       out.push({ ...res, summary });
     }
@@ -310,23 +350,19 @@ const runExpand = (indices: number[], view: RecallView): string => {
 /**
  * Entries #from..#to in order, RANGE_PAGE_SIZE per page, same per-entry clip
  * as search and recent. Indices are the global #N space shared with summaries
- * (global-indices.ts), so a ref copied from a summary lands on its message.
+ * (session-file.ts), so a ref copied from a summary lands on its message.
  */
-const runRange = (range: unknown[], page: number, view: RecallView): string => {
-  const [from, to] = range;
-  if (range.length !== 2 || !Number.isInteger(from) || !Number.isInteger(to) || (from as number) < 0 || (from as number) > (to as number)) {
-    return `Invalid range ${JSON.stringify(range)}: use range:[from, to] with two #N indices, from <= to.`;
-  }
-  const lo = from as number;
-  let hi = to as number;
+const runRange = (range: [number, number], page: number, view: RecallView): string => {
+  const [lo, to] = range;
+  let hi = to;
   const scopeAll = view.scope === "all";
-  const { rendered } = view.load(false);
+  const rendered = view.load(false).map((m) => m.entry);
   let entries = rendered.filter((m) => m.index >= lo && m.index <= hi);
 
   if (entries.length === 0) {
     if (!scopeAll) {
       const wide = view.widen();
-      if (wide.load(false).rendered.some((m) => m.index >= lo && m.index <= hi)) {
+      if (wide.load(false).some((m) => m.entry.index >= lo && m.entry.index <= hi)) {
         return OFF_PATH_NOTE + runRange(range, page, wide);
       }
     }
@@ -342,15 +378,14 @@ const runRange = (range: unknown[], page: number, view: RecallView): string => {
   const totalPages = Math.ceil(entries.length / RANGE_PAGE_SIZE);
   const counts = `${entries.length} messages${scopeAll ? ", scope: all" : ""}${clamped ? `, #${hi} is the last entry` : ""}`;
   if (page > totalPages) {
-    return `Page ${page} is outside the available range 1-${totalPages} (#${lo}..#${hi}: ${counts}). Use a page between 1 and ${totalPages}.`;
+    return `${outsidePage(page, totalPages, `#${lo}..#${hi}: ${counts}`)} Use a page between 1 and ${totalPages}.`;
   }
   const start = (page - 1) * RANGE_PAGE_SIZE;
   const header = totalPages > 1
     ? `Range #${lo}..#${hi}, page ${page}/${totalPages} (${counts})`
     : `Range #${lo}..#${hi} (${counts})`;
-  const inSession = view.session ? ` session:'${view.session.short}'` : "";
   const footer = page < totalPages
-    ? `\n--- Use range:[${lo}, ${hi}] page:${page + 1}${inSession}${scopeAll ? " scope:'all'" : ""} for the next ${RANGE_PAGE_SIZE} ---`
+    ? `\n--- Use range:[${lo}, ${hi}] page:${page + 1}${withParams(sessionParam(view.session?.short), scopeParam(view.scope))} for the next ${RANGE_PAGE_SIZE} ---`
     : "";
   return formatRecallOutput(entries.slice(start, start + RANGE_PAGE_SIZE), undefined, header) + footer;
 };
@@ -362,105 +397,104 @@ const runRange = (range: unknown[], page: number, view: RecallView): string => {
  * which hid earlier matches.
  */
 const searchBefore = (view: RecallView, query: string, skip: Set<number> | undefined) => {
-  const { rendered, rawMessages } = view.load(false);
-  if (!skip?.size) return searchEntriesDetailed(rendered, rawMessages, query);
-  const keep = rendered.map((m) => !skip.has(m.index));
-  return searchEntriesDetailed(rendered.filter((_, i) => keep[i]), rawMessages.filter((_, i) => keep[i]), query);
+  const loaded = view.load(false);
+  return searchEntries(skip?.size ? loaded.filter((m) => !skip.has(m.entry.index)) : loaded, query);
 };
 
 /** A search of this session found nothing: name the project's earlier sessions, which it did not search. */
 const otherSessionsNote = (view: RecallView, hints: RecallPagingHints): string => {
-  if (!hints.otherSessions || !view.project || view.session || view.scope === "project") return "";
-  let count = 0;
-  try { count = view.project.list().length; } catch {}
+  if (!hints.otherSessions || !view.project || view.session) return "";
+  const count = view.project.count();
   return count > 0 ? `\n${hints.otherSessions(count)}` : "";
 };
 
-const runSearch = (query: string, page: number, view: RecallView, hints: RecallPagingHints, skip?: Set<number>): string => {
-  const { hits, totalBeforeCap, truncated } = searchBefore(view, query, skip);
+const runSearch = (
+  query: string,
+  page: number,
+  view: RecallView,
+  hints: RecallPagingHints,
+  skip?: Set<number>,
+  result = searchBefore(view, query, skip),
+): string => {
+  if (result.aborted) return result.aborted;
+  const { hits } = result;
   if (hits.length === 0 && view.scope === "lineage") {
     const wide = view.widen();
-    if (searchBefore(wide, query, skip).hits.length > 0) {
-      return OFF_PATH_NOTE + runSearch(query, page, wide, hints, skip);
-    }
+    // Searched once: the hits found there are the ones shown.
+    const wideResult = searchBefore(wide, query, skip);
+    if (wideResult.hits.length > 0) return OFF_PATH_NOTE + runSearch(query, page, wide, hints, skip, wideResult);
   }
   if (hits.length === 0 && skip?.size) {
-    const inTurn = searchEntriesDetailed(view.load(false).rendered, view.load(false).rawMessages, query).hits
+    const inTurn = searchEntries(view.load(false), query).hits
       .filter((h) => skip.has(h.index)).length;
     if (inTurn > 0) {
       return `No earlier matches for "${query}"; its ${inTurn} match${inTurn === 1 ? " is" : "es are"} in the current turn, which is already in your context.` +
         otherSessionsNote(view, hints);
     }
   }
-  // Single source of truth for page count: hits.length, the same array
-  // that's actually paginated below (already floor-filtered and capped).
+  const none = hits.length === 0 ? otherSessionsNote(view, hints) : "";
+  return pageOfHits(result, query, page, {
+    where: view.scope === "all" ? " (scope: all)" : "",
+    scope: view.scope,
+    hints,
+    around: (top) => hints.aroundHit?.(top.index, view.scope) ?? "",
+  }) + none;
+};
+
+/**
+ * One page of search hits: a header with the count (and how many the hard cap
+ * left out), the hits, where to read around the first, and the next page's
+ * call. A page past the last says which pages exist: the cap fixes the
+ * reachable range, so it is not "no matches".
+ */
+const pageOfHits = (
+  { hits, totalBeforeCap, truncated }: SearchResult,
+  query: string,
+  page: number,
+  opts: { where: string; scope: RecallScope; hints: RecallPagingHints; around: (top: SearchHit) => string },
+): string => {
   const totalPages = Math.ceil(hits.length / SEARCH_PAGE_SIZE);
-  const scopeSuffix = view.scope === "all" ? " (scope: all)" : "";
-  // The hard cap can discard genuine matches; hits.length alone would then
-  // understate the real total. Say so explicitly. Neutral wording ("showing",
-  // not "showing top"): regex-path hits are chronological with no relevance
-  // score, so "top" would falsely imply a ranking only the BM25 path has.
+  // Neutral wording ("showing", not "showing top"): regex hits are chronological, unranked.
   const truncationNote = truncated
     ? ` — showing ${hits.length} of ${totalBeforeCap} matches, refine your query for more precise results`
     : "";
-
-  // The hard cap creates a fixed reachable page range (1..totalPages). A page
-  // beyond it isn't "no matches": say which pages exist instead of falling
-  // through to formatRecallOutput's zero-hit message, which would be false.
   if (hits.length > 0 && page > totalPages) {
-    return `Page ${page} is outside the available range 1-${totalPages} ` +
-      `(${hits.length} matches${scopeSuffix}${truncationNote}). ` +
-      hints.outOfRange(query, view.scope, totalPages, truncated);
+    return `${outsidePage(page, totalPages, `${hits.length} matches${opts.where}${truncationNote}`)} ` +
+      opts.hints.outOfRange(query, opts.scope, totalPages, truncated);
   }
-
   const start = (page - 1) * SEARCH_PAGE_SIZE;
   const pageHits = hits.slice(start, start + SEARCH_PAGE_SIZE);
   const header = totalPages > 1
-    ? `Page ${page}/${totalPages} (${hits.length} total matches${scopeSuffix}${truncationNote})`
-    : `${hits.length} matches${scopeSuffix}${truncationNote}`;
-  const around = pageHits.length > 0 && hints.aroundHit ? hints.aroundHit(pageHits[0].index, view.scope) : "";
-  const footer = page < totalPages ? hints.nextPage(query, view.scope, page + 1) : "";
-  const none = hits.length === 0 ? otherSessionsNote(view, hints) : "";
-  return formatRecallOutput(pageHits, query, header) + around + footer + none;
+    ? `Page ${page}/${totalPages} (${hits.length} total matches${opts.where}${truncationNote})`
+    : `${hits.length} matches${opts.where}${truncationNote}`;
+  const around = pageHits.length > 0 ? opts.around(pageHits[0]) : "";
+  const footer = page < totalPages ? opts.hints.nextPage(query, opts.scope, page + 1) : "";
+  return formatRecallOutput(pageHits, query, header) + around + footer;
 };
-
-const WRITES_FILE = /write|edit|patch/i;
 
 /** Files worked on, plus a ready #N:path call for the first file on the page that was written. */
-const runTouched = (page: number | undefined, view: RecallView): string => {
-  const { rendered, rawMessages } = view.load(false);
-  const touched = getTouchedFiles(rawMessages, rendered);
-  const text = formatTouchedOutput(touched, page);
-  const start = (Math.max(1, page ?? 1) - 1) * TOUCHED_PAGE_SIZE;
-  for (const tf of touched.slice(start, start + TOUCHED_PAGE_SIZE)) {
-    const write = [...tf.entries].reverse().find((e) => e.drillable !== false && WRITES_FILE.test(e.toolName));
-    if (!write) continue;
-    const name = tf.path.replace(/\\/g, "/").split("/").pop();
-    return `${text}\n--- File content at an entry: query:'#${write.index}:${name}' ---`;
-  }
-  return text;
-};
+const runTouched = (page: number, view: RecallView, hints: RecallPagingHints): string =>
+  formatTouched(touchedFiles(view.load(false)), page, { via: inSession(view), next: (n) => hints.listPage("touched", n, view.scope) });
 
-// ── Earlier sessions of this project ──────────────────────────────────────
-
-export const SESSIONS_PAGE_SIZE = 10;
+const SESSIONS_PAGE_SIZE = 10;
 /** scope:'project' searches at most this much: the newest sessions first. */
-export const PROJECT_SEARCH_SESSIONS = 20;
+const PROJECT_SEARCH_SESSIONS = 20;
 const PROJECT_SEARCH_BYTES = 24 * 1024 * 1024;
 const PROJECT_SEARCH_ENTRIES = 40_000;
 
-const runSessions = (page: number, view: RecallView): string => {
+const runSessions = (page: number, view: RecallView, hints: RecallPagingHints): string => {
   const sessions = view.project?.list() ?? [];
   if (sessions.length === 0) return "No earlier sessions in this project (the session directory has no other session files).";
   const totalPages = Math.ceil(sessions.length / SESSIONS_PAGE_SIZE);
-  if (page > totalPages) return `Page ${page} is outside the available range 1-${totalPages} (${sessions.length} earlier sessions).`;
+  if (page > totalPages) return outsidePage(page, totalPages, `${sessions.length} earlier sessions`);
   const start = (page - 1) * SESSIONS_PAGE_SIZE;
   const lines = sessions.slice(start, start + SESSIONS_PAGE_SIZE).map((s) =>
     `${describeSession(s)}${s.pins.length > 0 ? `\n  pinned: ${s.pins.join("; ")}` : ""}`);
+  const more = view.project?.list().more ? `, the newest ${MAX_LISTED_SESSIONS} (session:'id' reads an older one)` : "";
   const header = totalPages > 1
-    ? `Earlier sessions in this project, newest first, page ${page}/${totalPages} (${sessions.length} sessions):`
-    : `${sessions.length} earlier session${sessions.length === 1 ? "" : "s"} in this project, newest first:`;
-  const next = page < totalPages ? `\n--- Use mode:'sessions' page:${page + 1} for more ---` : "";
+    ? `Earlier sessions in this project, newest first, page ${page}/${totalPages} (${sessions.length} sessions${more}):`
+    : `${sessions.length} earlier session${sessions.length === 1 ? "" : "s"} in this project, newest first${more}:`;
+  const next = page < totalPages ? hints.listPage("sessions", page + 1, view.scope) : "";
   const first = sessions[start].short;
   return `${header}\n\n${lines.join("\n")}\n` +
     `\n--- Read one: session:'${first}' with a query, range, expand or mode:'touched'; search all: a query with scope:'project' ---${next}`;
@@ -472,27 +506,17 @@ const runSessions = (page: number, view: RecallView): string => {
  * the ranking is comparable across them. Bounded by session count, bytes and
  * entries; a hit names its session.
  */
-const runProjectSearch = (query: string, page: number, view: RecallView, hints: RecallPagingHints): string => {
-  const skip = hints.skipCurrentTurn ? view.currentTurn() : undefined;
-  const own = view.load(false);
-  const rendered: SearchHit[] = [];
-  const raws: Message[] = [];
-  own.rendered.forEach((e, i) => {
-    if (skip?.has(e.index)) return;
-    rendered.push(e);
-    raws.push(own.rawMessages[i]);
-  });
+const runProjectSearch = (query: string, page: number, view: RecallView, surface: RecallSurface, skip?: Set<number>): string => {
+  const hints = surface();
+  const corpus: LoadedEntry[] = view.load(false).filter((m) => !skip?.has(m.entry.index));
   let bytes = 0;
   let searched = 0;
   const all = view.project?.list() ?? [];
   for (const s of all.slice(0, PROJECT_SEARCH_SESSIONS)) {
     if (bytes + s.bytes > PROJECT_SEARCH_BYTES && searched > 0) break;
     const loaded = openSessionView(s, "lineage").load(false);
-    if (rendered.length + loaded.rendered.length > PROJECT_SEARCH_ENTRIES && searched > 0) break;
-    loaded.rendered.forEach((e, i) => {
-      rendered.push({ ...e, session: s.short });
-      raws.push(loaded.rawMessages[i]);
-    });
+    if (corpus.length + loaded.length > PROJECT_SEARCH_ENTRIES && searched > 0) break;
+    for (const m of loaded) corpus.push({ entry: { ...m.entry, session: s.short }, message: m.message });
     bytes += s.bytes;
     searched++;
   }
@@ -500,29 +524,14 @@ const runProjectSearch = (query: string, page: number, view: RecallView, hints: 
     ? "this session (no earlier sessions in this project)"
     : `this session and ${searched} earlier session${searched === 1 ? "" : "s"}${searched < all.length ? ` (the newest ${searched} of ${all.length}; session:'id' reads an older one)` : ""}`;
 
-  let result;
-  try {
-    result = searchEntriesDetailed(rendered, raws, query);
-  } catch (err) {
-    return `${(err as Error).message} Searching ${covered}: narrow the query, or read one session with session:'id' (mode:'sessions' lists them).`;
-  }
-  const { hits, totalBeforeCap, truncated } = result;
-  if (hits.length === 0) return `No matches for "${query}" in ${covered}.`;
-  const totalPages = Math.ceil(hits.length / SEARCH_PAGE_SIZE);
-  if (page > totalPages) {
-    return `Page ${page} is outside the available range 1-${totalPages} (${hits.length} matches in ${covered}). ` +
-      hints.outOfRange(query, "project", totalPages, truncated);
-  }
-  const truncationNote = truncated ? ` — showing ${hits.length} of ${totalBeforeCap} matches, refine your query` : "";
-  const start = (page - 1) * SEARCH_PAGE_SIZE;
-  const pageHits = hits.slice(start, start + SEARCH_PAGE_SIZE);
-  const header = totalPages > 1
-    ? `Page ${page}/${totalPages} (${hits.length} total matches in ${covered}${truncationNote})`
-    : `${hits.length} matches in ${covered}${truncationNote}`;
-  const top = pageHits[0];
-  const around = top?.session
-    ? `\n--- Read around a hit: session:'${top.session}', range:[${Math.max(0, top.index - 3)}, ${top.index + 3}]; full text: session:'${top.session}', expand:[${top.index}] ---`
-    : top && hints.aroundHit ? hints.aroundHit(top.index, "lineage") : "";
-  const footer = page < totalPages ? hints.nextPage(query, "project", page + 1) : "";
-  return formatRecallOutput(pageHits, query, header) + around + footer;
+  const result = searchEntries(corpus, query);
+  if (result.aborted) return `${result.aborted} Searching ${covered}: narrow the query, or read one session with session:'id' (mode:'sessions' lists them).`;
+  if (result.hits.length === 0) return `No matches for "${query}" in ${covered}.`;
+  return pageOfHits(result, query, page, {
+    where: ` in ${covered}`,
+    scope: "project",
+    hints,
+    // A hit from an earlier session is read there; one from this session as any other.
+    around: (top) => surface(top.session).aroundHit?.(top.index, "lineage") ?? "",
+  });
 };

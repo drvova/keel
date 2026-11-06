@@ -49,9 +49,9 @@ describe("selectWorkingSet", () => {
     const summarized = work();
     const kept = [user("still failing, keep going"), call("c4", "edit", { path: "src/billing/totals.ts", oldText: "a", newText: "b" })];
     const items = selectWorkingSet({ history: summarized, indices: indices(summarized.length), kept, maxChars: 20_000 });
-    expect(items.map((i) => [i.reason, i.index, i.title, i.note])).toEqual([
-      ["file", 2, 'read "src/billing/totals.ts"', "the latest version, edited after at #5"],
-      ["failure", 4, 'bash "bun test tests/billing.test.ts" [failed]', "its end"],
+    expect(items.map((i) => [i.index, i.title, i.note])).toEqual([
+      [2, 'read "src/billing/totals.ts"', "the latest version, edited after at #5"],
+      [4, 'bash "bun test tests/billing.test.ts" [failed]', "its end"],
     ]);
   });
 
@@ -82,7 +82,7 @@ describe("selectWorkingSet", () => {
     const kept = [user("now round to cents"), call("e2", "edit", { path: "src/billing/totals.ts", old_string: "100", new_string: "1000" })];
     const [item, ...rest] = selectWorkingSet({ history, indices: indices(history.length), kept, maxChars: 20_000 });
     expect(rest).toEqual([]);
-    expect([item.reason, item.index, item.title, item.note]).toEqual(["file", 2, 'read "src/billing/totals.ts"', "the latest version, newest first, edited after in context"]);
+    expect([item.index, item.title, item.note]).toEqual([2, 'read "src/billing/totals.ts"', "the latest version, newest first, edited after in context"]);
     const lines = item.text.split("\n");
     expect(lines[0]).toBe('[#6 read "src/billing/totals.ts:40-41"]');
     expect(lines[3]).toBe('[#4 edit "src/billing/totals.ts"]');
@@ -109,7 +109,7 @@ describe("selectWorkingSet", () => {
     ];
     const kept = [user("which region is the pelican cluster in now?")];
     const items = selectWorkingSet({ history: summarized, indices: indices(summarized.length), kept, maxChars: 20_000 });
-    expect(items.map((i) => [i.reason, i.index])).toEqual([["relevant", 7]]);
+    expect(items.map((i) => [i.index, i.note])).toEqual([[7, "matches the latest request"]]);
   });
 
   it("brings back the files of the request in progress, most recent first", () => {
@@ -121,7 +121,7 @@ describe("selectWorkingSet", () => {
     ];
     const kept = [call("b1", "bash", { command: "bun test" })];
     const items = selectWorkingSet({ history, indices: indices(history.length), kept, maxChars: 20_000 });
-    expect(items.map((i) => [i.reason, i.title])).toEqual([["file", 'read "src/billing/format.ts"'], ["file", 'read "src/billing/totals.ts"']]);
+    expect(items.map((i) => [i.title, i.note])).toEqual([['read "src/billing/format.ts"', "the latest version"], ['read "src/billing/totals.ts"', "the latest version"]]);
   });
 });
 
@@ -134,13 +134,13 @@ describe("formatWorkingSet", () => {
   };
 
   it("fits the budget, has no blank line, and brings a file back whole or not at all", () => {
-    const tight = formatWorkingSet(selectWorkingSet({ history: work(), indices: all(8), kept: [user("go on")], maxChars: 2_000 }), 2_000);
+    const tight = formatWorkingSet(selectWorkingSet({ history: work(), indices: all(8), kept: [user("go on")], maxChars: 2_000 }), 2_000).lines;
     shape(tight, 2_000);
     // The 60-line file does not fit whole in 2,000 chars: the failure has the room.
     expect(tight.some((l) => l.startsWith("- #2 "))).toBe(false);
     expect(tight[0]).toBe('- #4 bash "bun test tests/billing.test.ts" [failed], its end:');
     expect(tight.at(-1)).toBe("    expected 10.01, received 10.00");
-    const roomy = formatWorkingSet(selectWorkingSet({ history: work(), indices: all(8), kept: [user("go on")], maxChars: 20_000 }), 20_000);
+    const roomy = formatWorkingSet(selectWorkingSet({ history: work(), indices: all(8), kept: [user("go on")], maxChars: 20_000 }), 20_000).lines;
     shape(roomy, 20_000);
     expect(roomy).toContain("    export const roundTotal = (x: number) => Math.floor(x * 100) / 100;");
     expect(roomy.some((l) => l.includes("vcc_recall expand:[2]"))).toBe(false);
@@ -148,7 +148,7 @@ describe("formatWorkingSet", () => {
 
   it("quotes a long failure by its end, after where the earlier lines are", () => {
     const history = [user("run the tests"), call("t1", "bash", { command: "bun test" }), result("t1", "bash", `${"log line\n".repeat(300)}expected 1, received 2`, true)];
-    const lines = formatWorkingSet(selectWorkingSet({ history, indices: all(3), kept: [user("fix it")], maxChars: 2_000 }), 2_000);
+    const lines = formatWorkingSet(selectWorkingSet({ history, indices: all(3), kept: [user("fix it")], maxChars: 2_000 }), 2_000).lines;
     shape(lines, 2_000);
     expect(lines[0]).toBe('- #2 bash "bun test" [failed], its end:');
     expect(lines[1]).toMatch(/^    …\[\d+ earlier lines: vcc_recall expand:\[2\]\]$/);
@@ -243,10 +243,13 @@ describe("in the compaction hook", () => {
 
   it("is left out with workingSet off", () => {
     writeFileSync(process.env.OMP_VCC_CONFIG_PATH!, JSON.stringify({ overrideDefaultCompaction: true, workingSet: false }));
-    const branch = entries([user("Set up the build"), call("c0", "bash", { command: "cat build.log" }), result("c0", "bash", "compiling module\n".repeat(600)), say("Built."), ...work(), user("still failing"), call("c4", "edit", { path: "src/billing/totals.ts", oldText: "a", newText: "b" })]);
-    const out = compact(branch);
-    expect(out.summary).not.toContain("[Working Set]");
-    expect(out.details.workingSet).toBeUndefined();
-    writeFileSync(process.env.OMP_VCC_CONFIG_PATH!, JSON.stringify({ overrideDefaultCompaction: true }));
+    try {
+      const branch = entries([user("Set up the build"), call("c0", "bash", { command: "cat build.log" }), result("c0", "bash", "compiling module\n".repeat(600)), say("Built."), ...work(), user("still failing"), call("c4", "edit", { path: "src/billing/totals.ts", oldText: "a", newText: "b" })]);
+      const out = compact(branch);
+      expect(out.summary).not.toContain("[Working Set]");
+      expect(out.details.workingSet).toBeUndefined();
+    } finally {
+      writeFileSync(process.env.OMP_VCC_CONFIG_PATH!, JSON.stringify({ overrideDefaultCompaction: true }));
+    }
   });
 });

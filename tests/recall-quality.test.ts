@@ -1,3 +1,4 @@
+import { ompBinding } from "./support/binding";
 import { describe, it, expect } from "bun:test";
 import { mkdtempSync, writeFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
@@ -24,7 +25,7 @@ const makeSession = (n: number, textOf: (i: number) => string) => {
 
 const register = () => {
   let tool: any;
-  registerRecallTool({ registerTool: (t: any) => { tool = t; } } as any);
+  registerRecallTool({ registerTool: (t: any) => { tool = t; } } as any, ompBinding);
   return tool;
 };
 

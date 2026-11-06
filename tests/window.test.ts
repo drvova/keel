@@ -3,7 +3,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test";
 import { assertRealPi, piInstalled } from "./support/pi";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
-import { join } from "path";
+import { join, dirname } from "path";
 import {
   compactionBudgets,
   DEFAULT_BUDGETS,
@@ -16,13 +16,25 @@ import {
   RECOVERY_BAND,
   piPolicyOf,
   piTrigger,
+  OMP_TRIGGER_RULE,
   PI_TRIGGER_RULE,
+  triggerFor as triggerForRule,
+  type TriggerRule,
 } from "../src/core/window";
 // omp's own function, which omp-vcc ports since omp does not export it to extensions.
 import { resolveThresholdTokens } from "@oh-my-pi/pi-agent-core/compaction";
 import { learnedWindow, recordLearnedWindow } from "../src/core/model-limits";
-import { createCompactionState } from "../src/hooks/compaction";
-import { triggerFor, windowOf } from "../src/hooks/window-limits";
+import type { CompactionReason } from "../src/types";
+import { windowOf as windowOfHost } from "../src/core/model-limits";
+import { isRecovery, type HostName } from "../src/host";
+
+/** The learned limits sit next to the test's config. */
+const configDir = () => dirname(process.env.OMP_VCC_CONFIG_PATH!);
+/** omp's unless a test names Pi's. */
+const windowOf = (model: Parameters<typeof windowOfHost>[0], host: HostName = "omp") => windowOfHost(model, host, configDir());
+/** As the hook calls it, for a pass the host does not retry: omp's rule unless a test names another. */
+const triggerFor = (w: ReturnType<typeof windowOfHost>, reason: CompactionReason, before: number, policy?: object, rule: TriggerRule = OMP_TRIGGER_RULE) =>
+  triggerForRule(w.effective, isRecovery({ reason, willRetry: false }), before, policy, rule);
 
 let dir: string;
 const prev = process.env.OMP_VCC_CONFIG_PATH;
@@ -125,8 +137,11 @@ describe("compactionBudgets", () => {
     expect(b.briefCeilingTokens).toBe(3_400);
     // The sections grow with the brief's ceiling, and so does the framing a summary may add.
     expect(b.summaryScale).toBe(1.7);
-    expect(b.summary).toEqual({ userMessages: 26, filesPerCategory: 17, commits: 14, historyRanges: 14, briefLines: 204 });
+    expect(b.summary).toEqual({ userMessages: 26, filesPerCategory: 17, commits: 14, historyRanges: 14, briefLines: 204, commandsPerName: 17 });
     expect(b.growthMarginChars).toBe(850);
+    // The ranked brief may cover more blocks too: 80 capped it on any window.
+    expect(b.briefMaxBlocks).toBe(136);
+    expect(compactionBudgets(ompDefaultTrigger(128_000)).briefMaxBlocks).toBe(DEFAULT_BUDGETS.briefMaxBlocks);
   });
 
   it("shrinks each summary section on a small window, never under its floor", () => {
@@ -134,9 +149,9 @@ describe("compactionBudgets", () => {
     const b = compactionBudgets(ompDefaultTrigger(32_768), 8_000);
     // The square root of the trigger's share of a ~128K window's.
     expect(b.summaryScale).toBe(0.39);
-    expect(b.summary).toEqual({ userMessages: 6, filesPerCategory: 4, commits: 3, historyRanges: 3, briefLines: 47 });
+    expect(b.summary).toEqual({ userMessages: 6, filesPerCategory: 4, commits: 3, historyRanges: 3, briefLines: 47, commandsPerName: 4 });
     expect(b.growthMarginChars).toBe(DEFAULT_BUDGETS.growthMarginChars);
-    expect(compactionBudgets(2_000).summary).toEqual({ userMessages: 4, filesPerCategory: 3, commits: 2, historyRanges: 3, briefLines: 30 });
+    expect(compactionBudgets(2_000).summary).toEqual({ userMessages: 4, filesPerCategory: 3, commits: 2, historyRanges: 3, briefLines: 30, commandsPerName: 3 });
   });
 });
 
@@ -150,11 +165,11 @@ describe("effectiveWindow", () => {
 
 describe("learned limits", () => {
   it("keeps the smallest limit an overflow stated, per model, across reads", () => {
-    expect(recordLearnedWindow("eh/m", 65_536)).toBe(true);
-    expect(recordLearnedWindow("eh/m", 131_072)).toBe(false);
-    expect(recordLearnedWindow("eh/m", 32_768)).toBe(true);
-    expect(learnedWindow("eh/m")).toBe(32_768);
-    expect(learnedWindow("eh/other")).toBeUndefined();
+    expect(recordLearnedWindow(configDir(), "eh/m", 65_536)).toBe(true);
+    expect(recordLearnedWindow(configDir(), "eh/m", 131_072)).toBe(false);
+    expect(recordLearnedWindow(configDir(), "eh/m", 32_768)).toBe(true);
+    expect(learnedWindow(configDir(), "eh/m")).toBe(32_768);
+    expect(learnedWindow(configDir(), "eh/other")).toBeUndefined();
     expect(JSON.parse(readFileSync(join(dir, "omp-vcc-models.json"), "utf8"))["eh/m"]).toMatchObject({ contextWindow: 32_768, source: "overflow-error" });
   });
 });
@@ -162,38 +177,26 @@ describe("learned limits", () => {
 describe("triggerFor", () => {
   const model = { provider: "p", id: "m", contextWindow: 128_000 };
 
-  it("a threshold pass measures omp's trigger and later passes reuse it", () => {
-    const state = createCompactionState();
-    const w = windowOf(model);
-    expect(triggerFor(w, state, "p/m", "threshold", 90_000)).toBe(90_000);
-    expect(triggerFor(w, state, "p/m", "manual", 40_000)).toBe(90_000);
-    // Another model: omp's default for its window.
-    expect(triggerFor(windowOf({ ...model, id: "n" }), state, "p/n", "manual", 40_000)).toBe(108_800);
-  });
-
   it("an overflow pass is bounded by the context that overflowed", () => {
-    expect(triggerFor(windowOf(model), createCompactionState(), "p/m", "overflow", 30_000)).toBe(30_000);
+    expect(triggerFor(windowOf(model), "overflow", 30_000)).toBe(30_000);
   });
 
-  it("omp's policy, as its compactions carry it, places the trigger, for that model only", () => {
-    const state = createCompactionState();
+  it("omp's policy, as its compactions carry it, places the trigger; without one, omp's default for the window", () => {
     const w = windowOf(model);
-    expect(triggerFor(w, state, "p/m", "threshold", 70_000, { thresholdPercent: 50 })).toBe(64_000);
-    // A later pass without one (a /omp-vcc) keeps it; another model does not.
-    expect(triggerFor(w, state, "p/m", "manual", 40_000)).toBe(64_000);
-    expect(triggerFor(windowOf({ ...model, id: "n" }), state, "p/n", "manual", 40_000)).toBe(108_800);
-    expect(triggerFor(w, createCompactionState(), "p/m", "manual", 40_000, { thresholdTokens: 90_000 })).toBe(90_000);
-    expect(triggerFor(w, createCompactionState(), "p/m", "overflow", 30_000, { thresholdTokens: 90_000 })).toBe(30_000);
+    expect(triggerFor(w, "threshold", 70_000, { thresholdPercent: 50 })).toBe(64_000);
+    expect(triggerFor(w, "manual", 40_000)).toBe(108_800);
+    expect(triggerFor(w, "manual", 40_000, { thresholdTokens: 90_000 })).toBe(90_000);
+    expect(triggerFor(w, "overflow", 30_000, { thresholdTokens: 90_000 })).toBe(30_000);
   });
 
   it("when a smaller real window is known, omp's trigger is above it and omp-vcc's own applies", () => {
-    recordLearnedWindow("p/m", 32_768);
+    recordLearnedWindow(configDir(), "p/m", 32_768);
     const w = windowOf(model);
     expect(w).toMatchObject({ host: 128_000, learned: 32_768, effective: 32_768, source: "overflow-error" });
-    expect(triggerFor(w, createCompactionState(), "p/m", "threshold", 100_000)).toBe(16_384);
+    expect(triggerFor(w, "threshold", 100_000)).toBe(16_384);
     // The user's own policy, on the real window: 80% of it, and a fixed 90K past it falls back as omp's does.
-    expect(triggerFor(w, createCompactionState(), "p/m", "threshold", 100_000, { thresholdPercent: 80 })).toBe(26_214);
-    expect(triggerFor(w, createCompactionState(), "p/m", "threshold", 100_000, { thresholdTokens: 90_000 })).toBe(16_384);
+    expect(triggerFor(w, "threshold", 100_000, { thresholdPercent: 80 })).toBe(26_214);
+    expect(triggerFor(w, "threshold", 100_000, { thresholdTokens: 90_000 })).toBe(16_384);
   });
 });
 
@@ -217,12 +220,8 @@ describe("Pi's trigger rule", () => {
     const w = windowOf(model, "pi");
     expect(w).toMatchObject({ host: 128_000, effective: 128_000, source: "pi" });
     const policy = PI_TRIGGER_RULE.policyOf({ enabled: true, reserveTokens: 20_000, keepRecentTokens: 20_000 });
-    expect(triggerFor(w, createCompactionState(), "p/pi-m", "threshold", 110_000, policy, PI_TRIGGER_RULE)).toBe(108_000);
-    expect(triggerFor(w, createCompactionState(), "p/pi-m", "overflow", 90_000, policy, PI_TRIGGER_RULE)).toBe(90_000);
-    // The policy carries over to a later pass that brings none, for the same model.
-    const state = createCompactionState();
-    triggerFor(w, state, "p/pi-m", "threshold", 110_000, policy, PI_TRIGGER_RULE);
-    expect(triggerFor(w, state, "p/pi-m", "manual", 40_000, undefined, PI_TRIGGER_RULE)).toBe(108_000);
+    expect(triggerFor(w, "threshold", 110_000, policy, PI_TRIGGER_RULE)).toBe(108_000);
+    expect(triggerFor(w, "overflow", 90_000, policy, PI_TRIGGER_RULE)).toBe(90_000);
   });
 });
 

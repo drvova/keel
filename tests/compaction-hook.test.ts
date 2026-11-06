@@ -1,8 +1,9 @@
-import { describe, test, expect, beforeEach, afterEach, beforeAll, afterAll } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach, beforeAll, afterAll, jest } from "bun:test";
 import { existsSync, unlinkSync, writeFileSync, readFileSync, mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { OMP_VCC_COMPACT_INSTRUCTION, formatCompactionStats } from "../src/hooks/compaction";
+import { OMP_VCC_COMPACT_INSTRUCTION } from "../src/core/compact-args";
+import { formatCompactionStats } from "../src/compaction/stats";
 import { applyTailBudget, buildOwnCut, getLastCompactionStats, registerHook, type RegisteredHook } from "./support/host";
 
 let tmpDir: string;
@@ -19,6 +20,11 @@ afterAll(() => {
   delete process.env.OMP_VCC_CONFIG_PATH;
   rmSync(tmpDir, { recursive: true, force: true });
 });
+
+// The stats toast is shown 500 ms after session_compact (tellCompactionStats).
+// Under fake timers, jest.runAllTimers() fires it, and anything else scheduled, at once.
+beforeEach(() => jest.useFakeTimers());
+afterEach(() => jest.useRealTimers());
 
 /** Register the hook on a fake omp API (tests/support/host.ts), as index.ts does. */
 const register = (pi: any): RegisteredHook => (pi.__hook = registerHook(pi));
@@ -131,7 +137,7 @@ describe("compaction hook: cancel paths", () => {
     expect(result.compaction.firstKeptEntryId).toBe("");
   });
  
-  test("/compact with override=true cancels and notifies (NEW: was silent before)", () => {
+  test("/compact with override=true and too few messages cancels with a warning", () => {
     setConfig({ debug: false, overrideDefaultCompaction: true });
     const { pi, invokeBefore, notifyCalls } = createMockOmp();
     register(pi);
@@ -211,12 +217,8 @@ describe("compaction hook: cancel paths", () => {
 });
  
 describe("compaction hook: compact-all path", () => {
-  beforeEach(() => {
-    if (existsSync(DEBUG_PATH)) unlinkSync(DEBUG_PATH);
-  });
   afterEach(() => {
     if (existsSync(CONFIG_PATH)) unlinkSync(CONFIG_PATH);
-    if (existsSync(DEBUG_PATH)) unlinkSync(DEBUG_PATH);
   });
  
   test("single-user + autonomous tail → returns compaction with empty firstKeptEntryId", () => {
@@ -247,7 +249,6 @@ describe("compaction hook: compact-all path", () => {
     expect(result.compaction).toBeDefined();
     expect(result.compaction.firstKeptEntryId).toBe("m3");
     expect(result.compaction.details).toMatchObject({ reason: "manual", willRetry: false });
-    expect(getLastCompactionStats()).toMatchObject({ reason: "manual", willRetry: false });
   });
 
   test("threshold override still compacts and records reason metadata", () => {
@@ -261,7 +262,6 @@ describe("compaction hook: compact-all path", () => {
     expect(result.compaction).toBeDefined();
     expect(result.compaction.firstKeptEntryId).toBe("m3");
     expect(result.compaction.details).toMatchObject({ reason: "threshold", willRetry: false });
-    expect(getLastCompactionStats()).toMatchObject({ reason: "threshold", willRetry: false });
   });
 
   test("an automatic compaction sends no continue of its own: omp resumes the run itself", async () => {
@@ -272,7 +272,7 @@ describe("compaction hook: compact-all path", () => {
     const entries = [msg("m1", "user"), msg("m2", "assistant"), msg("m3", "user"), msg("m4", "assistant")];
     const result = invokeBefore(makeEvent(entries, undefined, { reason: "threshold" }));
     await invokeCompact({ type: "session_compact", fromExtension: true, compactionEntry: { details: result.compaction.details } });
-    await new Promise((resolve) => setTimeout(resolve, 550));
+    jest.runAllTimers();
 
     expect(customMessages).toEqual([]);
     expect(userMessages).toEqual([]);
@@ -280,30 +280,36 @@ describe("compaction hook: compact-all path", () => {
     expect(notifyCalls.some((call) => call.msg.startsWith("omp-vcc: kept"))).toBe(true);
   });
 
-  test("explicit /compact follow-up prompt is sent after the compaction", async () => {
+  test("explicit /compact follow-up prompt is sent after the compaction, with the stats toast", async () => {
     setConfig({ debug: false, overrideDefaultCompaction: true });
-    const { pi, invokeBefore, invokeCompact, userMessages, customMessages } = createMockOmp();
+    const { pi, invokeBefore, invokeCompact, userMessages, customMessages, notifyCalls } = createMockOmp();
     register(pi);
 
     const entries = [msg("m1", "user"), msg("m2", "assistant"), msg("m3", "user"), msg("m4", "assistant")];
     invokeBefore(makeEvent(entries, "continue"));
     await invokeCompact({ type: "session_compact", fromExtension: true, compactionEntry: { details: { compactor: "omp-vcc" } } });
-    await new Promise((resolve) => setTimeout(resolve, 550));
+    jest.runAllTimers();
 
     expect(userMessages).toEqual(["continue"]);
     expect(customMessages).toEqual([]);
+    expect(notifyCalls.some((call) => call.msg.startsWith("omp-vcc: kept 1/2 turns,"))).toBe(true);
   });
 
-  test("override=true + customInstructions sends follow-up user message after compact", async () => {
+  test("in print mode the outcome line of an automatic pass goes to stderr, as its reasons do", async () => {
     setConfig({ debug: false, overrideDefaultCompaction: true });
-    const { pi, invokeBefore, invokeCompact, userMessages, notifyCalls } = createMockOmp();
+    const { pi, invokeBefore, invokeCompact, ctx } = createMockOmp();
+    ctx.hasUI = false;
     register(pi);
-    const entries = [msg("m1", "user"), msg("m2", "assistant"), msg("m3", "user"), msg("m4", "assistant")];
-    invokeBefore(makeEvent(entries, "continue"));
-    await invokeCompact({ type: "session_compact", fromExtension: true, compactionEntry: { details: { compactor: "omp-vcc" } } });
-    await new Promise((resolve) => setTimeout(resolve, 550));
-    expect(userMessages).toEqual(["continue"]);
-    expect(notifyCalls.some((call) => call.msg.startsWith("omp-vcc: kept 1/2 turns,"))).toBe(true);
+    const written: string[] = [];
+    const write = process.stderr.write;
+    (process.stderr as any).write = (chunk: string) => (written.push(String(chunk)), true);
+    try {
+      invokeBefore(makeEvent([msg("m1", "user"), msg("m2", "assistant"), msg("m3", "user"), msg("m4", "assistant")], undefined, { reason: "threshold" }));
+      await invokeCompact({ type: "session_compact", fromExtension: true, compactionEntry: { details: { compactor: "omp-vcc", reason: "threshold", willRetry: false } } });
+    } finally {
+      (process.stderr as any).write = write;
+    }
+    expect(written.some((w) => w.startsWith("omp-vcc: kept 1/2 turns,"))).toBe(true);
   });
 
   test("follow-up prompt does not block compact metrics notify", async () => {
@@ -318,7 +324,7 @@ describe("compaction hook: compact-all path", () => {
     invokeBefore(makeEvent(entries, "continue"));
 
     invokeCompact({ type: "session_compact", fromExtension: true, compactionEntry: { details: { compactor: "omp-vcc" } } });
-    await new Promise((resolve) => setTimeout(resolve, 550));
+    jest.runAllTimers();
 
     expect(userMessages).toEqual(["continue"]);
     expect(notifyCalls.some((call) => call.msg.startsWith("omp-vcc: kept 1/2 turns,"))).toBe(true);
@@ -337,14 +343,12 @@ describe("compaction hook: compact-all path", () => {
     ];
     const result = invokeBefore(makeEvent(entries, "keep:3 continue"));
     await invokeCompact({ type: "session_compact", fromExtension: true, compactionEntry: { details: { compactor: "omp-vcc" } } });
-    await new Promise((resolve) => setTimeout(resolve, 550));
+    jest.runAllTimers();
 
     expect(result.compaction.firstKeptEntryId).toBe("m3");
     expect(getLastCompactionStats()).toMatchObject({
       keptUserTurns: 3,
       totalUserTurns: 4,
-      requestedKeepUserTurns: 3,
-      keepUserTurnsExplicit: true,
     });
     expect(userMessages).toEqual(["continue"]);
   });
@@ -361,14 +365,12 @@ describe("compaction hook: compact-all path", () => {
     ];
     const result = invokeBefore(makeEvent(entries, "continue keep:2"));
     await invokeCompact({ type: "session_compact", fromExtension: true, compactionEntry: { details: { compactor: "omp-vcc" } } });
-    await new Promise((resolve) => setTimeout(resolve, 550));
+    jest.runAllTimers();
 
     expect(result.compaction.firstKeptEntryId).toBe("m3");
     expect(getLastCompactionStats()).toMatchObject({
       keptUserTurns: 2,
       totalUserTurns: 3,
-      requestedKeepUserTurns: 2,
-      keepUserTurnsExplicit: true,
     });
     expect(userMessages).toEqual(["continue"]);
   });
@@ -382,55 +384,26 @@ describe("compaction hook: compact-all path", () => {
     const result = invokeBefore(makeEvent(entries, "continue", { reason: "overflow" }));
     expect(result.compaction.details).toMatchObject({ reason: "overflow", willRetry: true });
     await invokeCompact({ type: "session_compact", fromExtension: true, compactionEntry: { details: result.compaction.details } });
-    await new Promise((resolve) => setTimeout(resolve, 550));
+    jest.runAllTimers();
 
     expect(userMessages).toEqual([]);
     expect(customMessages).toEqual([]);
     expect(notifyCalls).toEqual([]);
   });
 
-  test("formatCompactionStats shows kept 0/N result for compact-all fallback without extra wording", () => {
-    const msg = formatCompactionStats({
-      summarized: 2,
-      kept: 4,
-      keptUserTurns: 0,
-      totalUserTurns: 2,
-      requestedKeepUserTurns: 2,
-      keepUserTurnsExplicit: true,
-      keepFallbackToCompactAll: true,
-      keptTokensEst: 10,
-    });
-    expect(msg).toBe("omp-vcc: kept 0/2 turns, ~10 tok (summarized 2).");
-    expect(msg).not.toMatch(/fallback/i);
-  });
-
-  test("formatCompactionStats shows kept 0/N result for default compact-all fallback without extra wording", () => {
-    const msg = formatCompactionStats({
-      summarized: 2,
-      kept: 4,
-      keptUserTurns: 0,
-      totalUserTurns: 1,
-      requestedKeepUserTurns: 1,
-      keepUserTurnsExplicit: false,
-      keepFallbackToCompactAll: true,
-      keptTokensEst: 10,
-    });
-    expect(msg).toBe("omp-vcc: kept 0/1 turns, ~10 tok (summarized 2).");
-    expect(msg).not.toMatch(/fallback/i);
+  test("formatCompactionStats shows kept 0/N for a compact-all fallback, explicit keep or default, without extra wording", () => {
+    const fallback = { summarized: 2, keptUserTurns: 0, keptTokensEst: 10 };
+    expect(formatCompactionStats({ ...fallback, totalUserTurns: 2 })).toBe("omp-vcc: kept 0/2 turns, ~10 tok (summarized 2).");
+    expect(formatCompactionStats({ ...fallback, totalUserTurns: 1 })).toBe("omp-vcc: kept 0/1 turns, ~10 tok (summarized 2).");
   });
 
   test("formatCompactionStats appends smart-keep tag when adjusted", () => {
     const msg = formatCompactionStats({
       summarized: 5,
-      kept: 6,
       keptUserTurns: 3,
       totalUserTurns: 5,
-      requestedKeepUserTurns: 1,
-      keepUserTurnsExplicit: false,
-      keepFallbackToCompactAll: false,
       keptTokensEst: 3200,
       smartKeepAdjusted: true,
-      smartFromKeep: 1,
     });
     expect(msg).toBe("omp-vcc: kept 3/5 turns, ~3.2k tok (summarized 5, smart-keep).");
   });
@@ -454,7 +427,6 @@ describe("compaction hook: compact-all path", () => {
     expect(result.compaction.details.sourceMessageCount).toBe(2);
     expect(getLastCompactionStats()).toMatchObject({
       summarized: 2,
-      kept: 4,
       keptUserTurns: 2,
       totalUserTurns: 3,
     });
@@ -475,12 +447,11 @@ describe("compaction hook: compact-all path", () => {
 
     const result = invokeBefore(makeEvent(entries, `${OMP_VCC_COMPACT_INSTRUCTION} keep:2 continue`));
     await invokeCompact({ type: "session_compact", fromExtension: true, compactionEntry: { details: { compactor: "omp-vcc", reason: "manual", willRetry: false } } });
-    await new Promise((resolve) => setTimeout(resolve, 550));
+    jest.runAllTimers();
 
     expect(result.compaction.firstKeptEntryId).toBe("u2");
     expect(getLastCompactionStats()).toMatchObject({
       keptUserTurns: 2,
-      keepUserTurnsExplicit: true,
     });
     expect(userMessages).toEqual([]);
   });
@@ -535,9 +506,9 @@ describe("applyTailBudget: token-budget tail cut (default path)", () => {
       msg("a2", "assistant", "done"),
     ];
     const cut = buildOwnCut(entries, 1);
-    if (!cut.ok) return;
+    expect(cut.ok).toBe(true);
     const result = applyTailBudget(entries, cut, { charsPerToken: 4 });
-    expect(result).toBe(cut); // returned unchanged
+    expect(result).toEqual(cut); // returned unchanged
     if (!result.ok) return;
     expect(result.compactAll).toBe(true);
     expect(result.firstKeptEntryId).toBe("");
@@ -554,11 +525,13 @@ describe("applyTailBudget: token-budget tail cut (default path)", () => {
       msg("a3", "assistant", "wrap"),
     ];
     const cut = buildOwnCut(entries, 1);
+    expect(cut.ok).toBe(true);
     if (!cut.ok) return;
     expect(cut.compactAll).toBe(false);
     expect(cut.firstKeptEntryId).toBe("u2");
 
     const result = applyTailBudget(entries, cut, { charsPerToken: 4 });
+    expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.budgetCut).toBe("oversized_tail");
     expect(result.compactAll).toBe(false);
@@ -577,9 +550,9 @@ describe("applyTailBudget: token-budget tail cut (default path)", () => {
       msg("a3", "assistant", "wrap"),
     ];
     const cut = buildOwnCut(entries, 1);
-    if (!cut.ok) return;
+    expect(cut.ok).toBe(true);
     const result = applyTailBudget(entries, cut, { charsPerToken: 4 });
-    expect(result).toBe(cut); // tolerance zone: unchanged
+    expect(result).toEqual(cut); // tolerance zone: unchanged
     if (!result.ok) return;
     expect(result.budgetCut).toBeUndefined();
     expect(result.firstKeptEntryId).toBe("u2");
@@ -593,9 +566,11 @@ describe("applyTailBudget: token-budget tail cut (default path)", () => {
       msg("a2", "assistant", "done"),
     ];
     const cut = buildOwnCut(entries, 1);
+    expect(cut.ok).toBe(true);
     if (!cut.ok) return;
     expect(cut.compactAll).toBe(true);
     const result = applyTailBudget(entries, cut, { charsPerToken: 4 });
+    expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.budgetCut).toBe("no_anchor");
     expect(result.firstKeptEntryId).toBe("a2"); // snapped past the toolResult
@@ -606,12 +581,8 @@ describe("applyTailBudget: token-budget tail cut (default path)", () => {
   test("formatCompactionStats leads with tail tokens for budget cuts", () => {
     const base = {
       summarized: 4,
-      kept: 2,
       keptUserTurns: 0,
       totalUserTurns: 1,
-      requestedKeepUserTurns: 1,
-      keepUserTurnsExplicit: false,
-      keepFallbackToCompactAll: false,
       keptTokensEst: 5000,
     };
     expect(formatCompactionStats({ ...base, budgetCut: "no_anchor" })).toBe("omp-vcc: kept ~5.0k tok tail (mid-turn cut, no user anchor), summarized 4.");
@@ -623,12 +594,8 @@ describe("applyTailBudget: token-budget tail cut (default path)", () => {
 });
 
 describe("compaction hook: budget-cut hook integration", () => {
-  beforeEach(() => {
-    if (existsSync(DEBUG_PATH)) unlinkSync(DEBUG_PATH);
-  });
   afterEach(() => {
     if (existsSync(CONFIG_PATH)) unlinkSync(CONFIG_PATH);
-    if (existsSync(DEBUG_PATH)) unlinkSync(DEBUG_PATH);
   });
 
   test("Case A default path: no_anchor budget cut keeps a tail and sets stats", () => {
@@ -677,11 +644,10 @@ describe("compaction hook: budget-cut hook integration", () => {
     const result = invokeBefore(makeEvent(entries, `${OMP_VCC_COMPACT_INSTRUCTION} keep:2`));
     expect(result.compaction.firstKeptEntryId).toBe("u2");
     expect(getLastCompactionStats()!.budgetCut).toBeUndefined();
-    expect(getLastCompactionStats()!.keepUserTurnsExplicit).toBe(true);
   });
 });
 
-describe("collectLiveMessages: custom_message / branch_summary entries", () => {
+describe("the cut: custom_message and branch_summary entries", () => {
   test("custom_message in the summarized prefix is carried into the summarizer input", () => {
     const entries = [
       msg("u1", "user", "go"),
@@ -773,35 +739,6 @@ describe("collectLiveMessages: custom_message / branch_summary entries", () => {
   });
 });
 
-describe("compaction hook: custom_message reaches the summarizer", () => {
-  beforeEach(() => {
-    if (existsSync(DEBUG_PATH)) unlinkSync(DEBUG_PATH);
-  });
-  afterEach(() => {
-    if (existsSync(CONFIG_PATH)) unlinkSync(CONFIG_PATH);
-    if (existsSync(DEBUG_PATH)) unlinkSync(DEBUG_PATH);
-  });
-
-  test("custom message content appears in the debug summarize-input preview", () => {
-    setConfig({ debug: true, overrideDefaultCompaction: false });
-    const { pi, invokeBefore } = createMockOmp();
-    register(pi);
-    const entries = [
-      custom("c1", "memory-inject", "INJECTED_CTX_9999"),
-      msg("u1", "user", "go"),
-      msg("a1", "assistant", "reply"),
-      msg("u2", "user", "next"),
-      msg("a2", "assistant", "done"),
-    ];
-    const result = invokeBefore(makeEvent(entries, OMP_VCC_COMPACT_INSTRUCTION));
-    expect(result.cancel).toBeUndefined();
-    expect(existsSync(DEBUG_PATH)).toBe(true);
-    const snapshot = JSON.parse(readFileSync(DEBUG_PATH, "utf-8"));
-    expect(snapshot.usedOwnCut).toBe(true);
-    expect(JSON.stringify(snapshot)).toContain("INJECTED_CTX_9999");
-  });
-});
-
 describe("compaction hook: only what the user wrote is read as user messages", () => {
   afterEach(() => {
     if (existsSync(CONFIG_PATH)) unlinkSync(CONFIG_PATH);
@@ -832,6 +769,24 @@ describe("compaction hook: only what the user wrote is read as user messages", (
     expect(summary).toMatch(/^\$ echo BASH_MARKER_88$/m); // no session file here, so no (#N) ref
     expect(summary).not.toContain("OUTPUT_MARKER_99");
     expect(head).not.toContain("BASH_MARKER_88");
+  });
+
+  test("a branch's summary stays in the transcript but is no request of the user's", () => {
+    setConfig({ overrideDefaultCompaction: true });
+    const { pi, invokeBefore } = createMockOmp();
+    register(pi);
+    const entries = [
+      branchSummary("bs1", "BRANCH_SUMMARY_MARKER tried the other parser"),
+      msg("u1", "user", "Fix the login bug"),
+      msg("a1", "assistant", "reply"),
+      msg("u2", "user", "next"),
+      msg("a2", "assistant", "done"),
+    ];
+    const summary: string = invokeBefore(makeEvent(entries, `${OMP_VCC_COMPACT_INSTRUCTION} keep:1`)).compaction.summary;
+    expect(summary).toContain("BRANCH_SUMMARY_MARKER");
+    const head = summary.slice(0, summary.indexOf("\n---\n"));
+    expect(head).toContain("[Early Session Requests]\n- Fix the login bug");
+    expect(head).not.toContain("BRANCH_SUMMARY_MARKER");
   });
 });
 
@@ -904,7 +859,7 @@ describe("compaction hook: skipForProviders (#27)", () => {
     mock.ctx.model = { provider: "anthropic" };
     const own = mock.invokeBefore(makeEvent(entries(), undefined, { reason: "threshold" }));
     await mock.invokeCompact({ type: "session_compact", fromExtension: true, compactionEntry: { details: own.compaction.details } });
-    await new Promise((r) => setTimeout(r, 550));
+    jest.runAllTimers();
     const notifiesAfterVcc = mock.notifyCalls.length;
     expect(notifiesAfterVcc).toBe(1); // stats toast for omp-vcc's own compaction
 
@@ -912,7 +867,7 @@ describe("compaction hook: skipForProviders (#27)", () => {
     mock.ctx.model = { provider: "openai" };
     expect(mock.invokeBefore(makeEvent(entries(), "continue", { reason: "threshold" }))).toBeUndefined();
     await mock.invokeCompact({ type: "session_compact", fromExtension: true, compactionEntry: { details: { compactor: "other-compaction" } } });
-    await new Promise((r) => setTimeout(r, 550));
+    jest.runAllTimers();
 
     // No stale toast or follow-up on someone else's compaction.
     expect(mock.notifyCalls.length).toBe(notifiesAfterVcc);
@@ -933,7 +888,7 @@ describe("compaction hook: skipForProviders (#27)", () => {
     expect(mock.invokeBefore(makeEvent(entries(), "continue"))?.compaction).toBeTruthy();
     // ...but the other extension loaded later and its entry was persisted.
     await mock.invokeCompact({ type: "session_compact", fromExtension: true, compactionEntry: { details: { compactor: "other-compaction" } } });
-    await new Promise((r) => setTimeout(r, 550));
+    jest.runAllTimers();
 
     expect(mock.notifyCalls).toEqual([]); // no stats toast for someone else's compaction
     expect(mock.userMessages).toEqual([]);
@@ -944,20 +899,16 @@ describe("compaction hook: skipForProviders (#27)", () => {
     const mock = createMockOmp();
     register(mock.pi);
     expect(mock.invokeBefore(makeEvent(entries(), "continue"))?.compaction).toBeTruthy();
-    await mock.invokeCompact({ type: "session_compact", fromExtension: true, compactionEntry: { details: { compactor: "omp-vcc" } } });
-    await new Promise((r) => setTimeout(r, 550));
+    await mock.invokeCompact({ type: "session_compact", fromExtension: true, compactionEntry: { details: { compactor: "pi-vcc" } } });
+    jest.runAllTimers();
     expect(mock.userMessages).toEqual(["continue"]);
   });
 
 });
 
 describe("compaction hook: skipCustomTypes", () => {
-  beforeEach(() => {
-    if (existsSync(DEBUG_PATH)) unlinkSync(DEBUG_PATH);
-  });
   afterEach(() => {
     if (existsSync(CONFIG_PATH)) unlinkSync(CONFIG_PATH);
-    if (existsSync(DEBUG_PATH)) unlinkSync(DEBUG_PATH);
   });
 
   // Smart-keep lifts the tail to ~2 user turns, so entries before u2 land
@@ -979,16 +930,17 @@ describe("compaction hook: skipCustomTypes", () => {
   // Uses the /compact path (no customInstructions) so session_compact emits
   // the stats toast — the /omp-vcc path shows its own onComplete toast instead.
   const runCompact = (skipCustomTypes: unknown) => {
-    setConfig({ debug: true, overrideDefaultCompaction: true, skipCustomTypes });
+    setConfig({ overrideDefaultCompaction: true, skipCustomTypes });
     const { pi, invokeBefore, invokeCompact, notifyCalls } = createMockOmp();
     register(pi);
     const result = invokeBefore(makeEvent(baseEntries()));
-    const snap = JSON.parse(readFileSync(DEBUG_PATH, "utf-8"));
-    if (existsSync(DEBUG_PATH)) unlinkSync(DEBUG_PATH);
-    return { result, snap, invokeCompact, notifyCalls };
+    return { result, summary: result.compaction.summary as string, invokeCompact, notifyCalls };
   };
 
-  test("listed customType is excluded from summarizer input, others still pass", () => {
+  // custom_message text reaches the summary (the hook reads it as user
+  // content), which is what makes skipping worthwhile.
+  test("a listed customType is left out of the summary; others, and every one when none is listed, stay", () => {
+    expect(runCompact([]).summary).toContain("INJECTED_BOILERPLATE_XYZ");
     const entries = [
       custom("c1", "memory-inject", "INJECTED_BOILERPLATE_XYZ"),
       custom("c2", "other-ext-note", "KEEP_ME_MARKER", { display: true }),
@@ -999,23 +951,17 @@ describe("compaction hook: skipCustomTypes", () => {
       msg("u3", "user", "more"),
       msg("a3", "assistant", "ok"),
     ];
-    setConfig({ debug: true, overrideDefaultCompaction: false, skipCustomTypes: ["memory-inject"] });
+    setConfig({ overrideDefaultCompaction: false, skipCustomTypes: ["memory-inject"] });
     const { pi, invokeBefore } = createMockOmp();
     register(pi);
-    const result = invokeBefore(makeEvent(entries, OMP_VCC_COMPACT_INSTRUCTION));
-    expect(result.cancel).toBeUndefined();
-    const snap = JSON.parse(readFileSync(DEBUG_PATH, "utf-8"));
-    const raw = JSON.stringify(snap);
-    expect(raw).not.toContain("INJECTED_BOILERPLATE_XYZ");
-    expect(raw).toContain("KEEP_ME_MARKER");
+    const { summary } = invokeBefore(makeEvent(entries, OMP_VCC_COMPACT_INSTRUCTION)).compaction;
+    expect(summary).not.toContain("INJECTED_BOILERPLATE_XYZ");
+    expect(summary).toContain("KEEP_ME_MARKER");
   });
 
-  // lastStats is module state — the stats toast must fire before the next
-  // runCompact() overwrites it, so interleave compact→toast per run.
   const keptToastOf = async (run: ReturnType<typeof runCompact>) => {
     await run.invokeCompact({ type: "session_compact", fromExtension: true, compactionEntry: { details: { compactor: "omp-vcc", reason: "threshold", willRetry: false } } });
-    // Stats notify is scheduled via setTimeout(500) — wait past it.
-    await new Promise((resolve) => setTimeout(resolve, 550));
+    jest.runAllTimers();
     return run.notifyCalls.find((c: { msg: string }) => c.msg.startsWith("omp-vcc: kept"))?.msg;
   };
 
@@ -1024,39 +970,27 @@ describe("compaction hook: skipCustomTypes", () => {
     const onToast = await keptToastOf(on);
     const off = runCompact([]);
     const offToast = await keptToastOf(off);
+    const summarized = (run: ReturnType<typeof runCompact>): number => run.result.compaction.details.sourceMessageCount;
 
     expect(on.result.compaction.firstKeptEntryId).toBe(off.result.compaction.firstKeptEntryId);
-    expect(on.snap.messagesToSummarize).toBe(off.snap.messagesToSummarize - 1);
+    expect(summarized(on)).toBe(summarized(off) - 1);
     // Kept-turn counting is upstream of the filter → identical toast prefix.
     expect(onToast?.match(/kept \d+\/\d+ turns/)?.[0]).toBe(offToast?.match(/kept \d+\/\d+ turns/)?.[0]);
     // And the summarized count reflects the filtered input.
-    expect(onToast).toContain(`summarized ${on.snap.messagesToSummarize}`);
-    expect(offToast).toContain(`summarized ${off.snap.messagesToSummarize}`);
+    expect(onToast).toContain(`summarized ${summarized(on)}`);
+    expect(offToast).toContain(`summarized ${summarized(off)}`);
   });
 
   test("malformed skipCustomTypes (bare string) fails closed: nothing skipped", () => {
-    const { snap } = runCompact("memory-inject");
-    expect(JSON.stringify(snap)).toContain("INJECTED_BOILERPLATE_XYZ");
+    expect(runCompact("memory-inject").summary).toContain("INJECTED_BOILERPLATE_XYZ");
   });
 
   test("default (no setting) keeps current behavior: nothing skipped", () => {
-    setConfig({ debug: true, overrideDefaultCompaction: false });
+    setConfig({ overrideDefaultCompaction: false });
     const { pi, invokeBefore } = createMockOmp();
     register(pi);
-    invokeBefore(makeEvent(baseEntries(), OMP_VCC_COMPACT_INSTRUCTION));
-    const snap = JSON.parse(readFileSync(DEBUG_PATH, "utf-8"));
-    expect(JSON.stringify(snap)).toContain("INJECTED_BOILERPLATE_XYZ");
-  });
-
-  // The tests above check the summarizer input; this one checks the summary
-  // itself. custom_message text does reach it (the hook's convertToLlm turns it
-  // into user content), which is what makes skipping worthwhile.
-  test("summary text: listed customType is absent, present when not listed", () => {
-    const off = runCompact([]);
-    const on = runCompact(["memory-inject"]);
-    expect(off.result.compaction.summary).toContain("INJECTED_BOILERPLATE_XYZ");
-    expect(on.result.compaction.summary.length).toBeGreaterThan(0);
-    expect(on.result.compaction.summary).not.toContain("INJECTED_BOILERPLATE_XYZ");
+    const { summary } = invokeBefore(makeEvent(baseEntries(), OMP_VCC_COMPACT_INSTRUCTION)).compaction;
+    expect(summary).toContain("INJECTED_BOILERPLATE_XYZ");
   });
 });
 
@@ -1103,14 +1037,14 @@ describe("compaction hook: growth guard", () => {
   });
 
   test("summaryGrowth: net growth past a fixed margin or a quarter of the prefix", async () => {
-    const { summaryGrowth } = await import("../src/hooks/compaction");
-    expect(summaryGrowth(400, 0, 10)).toMatchObject({ grows: false, netChars: 390, allowedChars: 500 });
-    expect(summaryGrowth(2_000, 0, 100)).toMatchObject({ grows: true, netChars: 1_900 });
+    const { summaryGrowth } = await import("../src/compaction/assemble");
+    expect(summaryGrowth(400, 0, 10, 500)).toMatchObject({ grows: false, netChars: 390, allowedChars: 500 });
+    expect(summaryGrowth(2_000, 0, 100, 500)).toMatchObject({ grows: true, netChars: 1_900 });
     // The previous summary is replaced, so only what the new one adds counts.
-    expect(summaryGrowth(9_000, 8_000, 100)).toMatchObject({ grows: true, netChars: 900 });
-    expect(summaryGrowth(9_000, 8_500, 4_000)).toMatchObject({ grows: false });
+    expect(summaryGrowth(9_000, 8_000, 100, 500)).toMatchObject({ grows: true, netChars: 900 });
+    expect(summaryGrowth(9_000, 8_500, 4_000, 500)).toMatchObject({ grows: false });
     // A big prefix allows a quarter of itself.
-    expect(summaryGrowth(12_000, 0, 10_000)).toMatchObject({ grows: false, allowedChars: 2_500 });
+    expect(summaryGrowth(12_000, 0, 10_000, 500)).toMatchObject({ grows: false, allowedChars: 2_500 });
   });
 
   const pinned = (n: number) => Array.from({ length: n }, (_, i) => ({
@@ -1180,5 +1114,56 @@ describe("compaction hook: section sizes follow the window", () => {
     const out = small.invokeBefore(makeEvent(session(), "keep:1"));
     expect(userLines(out.compaction.summary)).toBe(5);
     expect(out.compaction.details.limits).toMatchObject({ contextWindow: 16_384, summaryScale: 0.36 });
+  });
+});
+
+describe("what a compaction stores for the next one", () => {
+  test("details name the sections shown, and hold the carried sections the next compaction merges into", () => {
+    const { pi, invokeBefore } = createMockOmp();
+    register(pi);
+    const first = [
+      msg("u1", "user", "fix the login bug"),
+      msg("a1", "assistant", "looking"),
+      msg("u2", "user", "and the signup form"),
+      msg("a2", "assistant", "done"),
+    ];
+    const one = invokeBefore(makeEvent(first, `${OMP_VCC_COMPACT_INSTRUCTION} keep:1`));
+    const { details, summary } = one.compaction;
+    // The brief's [user] and [assistant] blocks are not sections.
+    expect(details.sections).toEqual(["Early Session Requests"]);
+    expect(details.summaryState.earlyRequests).toEqual(["fix the login bug"]);
+
+    // The next compaction merges into that state, not the text: a summary text that
+    // says something else is not read when the stored state is there.
+    const compaction = { id: "c1", type: "compaction", summary, firstKeptEntryId: "u2", details };
+    const event = makeEvent([...first, compaction, msg("u3", "user", "now the password reset"), msg("a3", "assistant", "ok")], `${OMP_VCC_COMPACT_INSTRUCTION} keep:1`);
+    event.preparation.previousSummary = "[Early Session Requests]\n- something the text alone says" as any;
+    const two = invokeBefore(event);
+    expect(two.compaction.details.summaryState.earlyRequests).toEqual(["fix the login bug", "and the signup form"]);
+    expect(two.compaction.summary).not.toContain("something the text alone says");
+  });
+});
+
+describe("what the hook tells the user", () => {
+  test("a cancel's reason goes to the UI, or to stderr where there is none (print and json modes)", () => {
+    const entries = [msg("u1", "user", "hi"), msg("a1", "assistant", "hello")];
+    const ui = createMockOmp();
+    register(ui.pi);
+    expect(ui.invokeBefore(makeEvent(entries, OMP_VCC_COMPACT_INSTRUCTION)).cancel).toBe(true);
+    expect(ui.notifyCalls.map((c) => c.msg)).toEqual(["omp-vcc: Too few messages to compact"]);
+
+    const written: string[] = [];
+    const write = process.stderr.write;
+    (process.stderr as any).write = (chunk: string) => (written.push(String(chunk)), true);
+    try {
+      const print = createMockOmp();
+      register(print.pi);
+      print.ctx.hasUI = false;
+      print.invokeBefore(makeEvent(entries, OMP_VCC_COMPACT_INSTRUCTION));
+      expect(print.notifyCalls).toEqual([]);
+    } finally {
+      (process.stderr as any).write = write;
+    }
+    expect(written).toEqual(["omp-vcc: Too few messages to compact\n"]);
   });
 });

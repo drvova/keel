@@ -1,13 +1,12 @@
 // The omp entry (index.ts) against a fake omp extension API that hands it omp's
 // real convertToLlm. tests/omp-host.test.ts runs the same entry inside a real omp.
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, jest, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import registerOmp from "../index";
 import { ompConvertToLlm } from "./support/host";
 import { OMP_VCC_COMPACT_INSTRUCTION } from "../src/core/compact-args";
-import { setSettingsAgentDir } from "../src/core/settings";
 
 let dir: string;
 let previousConfig: string | undefined;
@@ -19,7 +18,6 @@ beforeAll(() => {
 });
 
 afterAll(() => {
-  setSettingsAgentDir();
   if (previousConfig === undefined) delete process.env.OMP_VCC_CONFIG_PATH;
   else process.env.OMP_VCC_CONFIG_PATH = previousConfig;
   rmSync(dir, { recursive: true, force: true });
@@ -145,13 +143,19 @@ describe("omp entry: /omp-vcc", () => {
       arg.onComplete();
     });
 
-    await omp.run("omp-vcc", "keep:2");
+    // The stats toast waits 500 ms; fake timers fire it at once.
+    jest.useFakeTimers();
+    try {
+      await omp.run("omp-vcc", "keep:2");
+      jest.runAllTimers();
+    } finally {
+      jest.useRealTimers();
+    }
 
     expect(typeof omp.compactCalls[0]).toBe("object");
     expect(hookResult.compaction.details.compactor).toBe("omp-vcc");
     // keep:2 reached the hook: the tail starts at the second user turn.
     expect(hookResult.compaction.firstKeptEntryId).toBe(entries[2].id);
-    await Bun.sleep(600);
     expect(omp.notices.some((x) => x.msg.startsWith("omp-vcc: kept 2/3 turns"))).toBe(true);
     // The marker is only for the pass the command started.
     expect(omp.beforeCompact(undefined)?.compaction.details.reason).toBe("manual");
@@ -398,6 +402,64 @@ describe("omp entry: the model's real window", () => {
     rmSync(limitsFile(), { force: true });
   });
 
+  test("no compaction of its own before omp's policy is known: the user may have turned compaction off", async () => {
+    recordLimit(32_768, null);
+    const omp = createOmp();
+    omp.ctx.model = model;
+    omp.ctx.isIdle = () => true;
+    omp.ctx.getContextUsage = () => ({ tokens: 30_000, contextWindow: 128_000, percent: 23 });
+    omp.setEntries(big());
+    omp.setCompact(async () => {});
+    omp.fire("agent_end", { messages: [] });
+    await new Promise((r) => setTimeout(r, 5));
+    expect(omp.compactCalls).toHaveLength(0);
+    // A compaction carries it, and it is kept beside the learned window for the next session.
+    omp.beforeCompact(undefined, { enabled: false });
+    expect(JSON.parse(readFileSync(limitsFile(), "utf8"))["electronhub/small-model"].hostPolicy).toEqual({ enabled: false });
+    const next = createOmp();
+    next.ctx.model = model;
+    next.ctx.isIdle = () => true;
+    next.ctx.getContextUsage = () => ({ tokens: 30_000, contextWindow: 128_000, percent: 23 });
+    next.setCompact(async () => {});
+    next.fire("agent_end", { messages: [] });
+    await new Promise((r) => setTimeout(r, 5));
+    expect(next.compactCalls).toHaveLength(0);
+    rmSync(limitsFile(), { force: true });
+  });
+
+  test("a pass it starts on a policy since turned off is cancelled, and the new policy kept", async () => {
+    recordLimit(32_768);
+    const omp = createOmp();
+    omp.ctx.model = model;
+    omp.ctx.isIdle = () => true;
+    omp.ctx.getContextUsage = () => ({ tokens: 30_000, contextWindow: 128_000, percent: 23 });
+    omp.setEntries(big());
+    let result: any;
+    omp.setCompact(async () => { result = omp.beforeCompact(undefined, { enabled: false }); });
+    omp.fire("agent_end", { messages: [] });
+    await new Promise((r) => setTimeout(r, 5));
+    expect(omp.compactCalls).toHaveLength(1);
+    expect(result).toEqual({ cancel: true });
+    expect(JSON.parse(readFileSync(limitsFile(), "utf8"))["electronhub/small-model"].hostPolicy).toEqual({ enabled: false });
+    rmSync(limitsFile(), { force: true });
+  });
+
+  test("no compaction of its own for a provider in skipForProviders: omp's own would run", async () => {
+    writeFileSync(process.env.OMP_VCC_CONFIG_PATH!, JSON.stringify({ skipForProviders: [model.provider] }));
+    recordLimit(32_768);
+    const omp = createOmp();
+    omp.ctx.model = model;
+    omp.ctx.isIdle = () => true;
+    omp.ctx.getContextUsage = () => ({ tokens: 30_000, contextWindow: 128_000, percent: 23 });
+    omp.setEntries(big());
+    omp.setCompact(async () => {});
+    omp.fire("agent_end", { messages: [] });
+    await new Promise((r) => setTimeout(r, 5));
+    expect(omp.compactCalls).toHaveLength(0);
+    rmSync(limitsFile(), { force: true });
+    writeFileSync(process.env.OMP_VCC_CONFIG_PATH!, JSON.stringify({}));
+  });
+
   test("no compaction of its own with overrideDefaultCompaction off, or when omp's window is right", async () => {
     writeFileSync(process.env.OMP_VCC_CONFIG_PATH!, JSON.stringify({ overrideDefaultCompaction: false }));
     recordLimit(32_768);
@@ -446,6 +508,7 @@ describe("omp entry: the model's real window", () => {
     rmSync(limitsFile(), { force: true });
   });
 
-  const recordLimit = (n: number) =>
-    writeFileSync(limitsFile(), JSON.stringify({ "electronhub/small-model": { contextWindow: n, source: "overflow-error", at: "2026-11-01T00:00:00.000Z" } }));
+  /** A limit an overflow error stated, with omp's policy as the compaction that answered it carried it (`hostPolicy`), unless a test says none. */
+  const recordLimit = (n: number, hostPolicy: object | null = { enabled: true }) =>
+    writeFileSync(limitsFile(), JSON.stringify({ "electronhub/small-model": { contextWindow: n, source: "overflow-error", at: "2026-11-01T00:00:00.000Z", ...(hostPolicy ? { hostPolicy } : {}) } }));
 });

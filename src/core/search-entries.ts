@@ -1,20 +1,16 @@
-import type { Message, ToolCall } from "@oh-my-pi/pi-ai";
+import type { Message } from "@oh-my-pi/pi-ai";
 import { fileMentionPaths, type RenderedEntry } from "./render-entries";
-import { textOf, isContentBearing, extractToolCallText, extractToolCallArgsText, clip } from "./content";
-import { extractPaths, hashlineEditPaths, isUrlPath } from "./tool-args";
+import type { LoadedEntry } from "./load-messages";
+import { textOf, clip } from "./content";
+import { argsText, isOwnTool, toolCallsOf } from "./tools";
+import { RECALL_TOOL } from "../names";
 
 export interface SearchHit extends RenderedEntry {
   /** Context snippet around the first matched term (only when query provided) */
   snippet?: string;
-  /** Number of query terms matched (for ranking) */
-  matchCount?: number;
 }
 
-/**
- * Result of a search, with enough metadata for a caller to report truncation
- * honestly (see `searchEntriesDetailed`). `searchEntries` stays `SearchHit[]`
- * for existing call sites that only need the hits themselves.
- */
+/** Result of a search, with enough metadata for a caller to report truncation honestly. */
 export interface SearchResult {
   hits: SearchHit[];
   /** Genuine matches found before the hard cap was applied (after any
@@ -22,19 +18,8 @@ export interface SearchResult {
   totalBeforeCap: number;
   /** True when the hard cap discarded matches (`totalBeforeCap > hits.length`). */
   truncated: boolean;
-}
-/** A file touched in one entry — used by mode:touched aggregation. */
-export interface FileTouch {
-  index: number;
-  toolName: string;
-  /** False when the call names the file but carries no file content to drill into (a multi-path script edit). */
-  drillable?: false;
-}
-
-/** Aggregated view of a file touched across multiple entries. */
-export interface TouchedFile {
-  path: string;
-  entries: FileTouch[];
+  /** Why the search stopped before it finished (its time budget); no hits then. */
+  aborted?: string;
 }
 const escapeRegex = (s: string): string =>
   s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -56,7 +41,7 @@ const quantifierAt = (p: string, i: number): { len: number; unbounded: boolean }
  * Detect an unbounded quantifier applied to a group that already contains one,
  * e.g. `(a+)+` or `(\w*)*`. That shape makes the engine explore exponentially
  * many splits on a non-matching input. Alternation overlap like `(a|a)+` is not
- * covered here; the search budget in `searchEntries` is the backstop.
+ * covered here; the search budget in `search` is the backstop.
  */
 const hasNestedQuantifier = (pattern: string): boolean => {
   const groups: boolean[] = []; // per open group: contains an unbounded quantifier
@@ -84,8 +69,6 @@ const hasNestedQuantifier = (pattern: string): boolean => {
   return false;
 };
 
-/** Try to compile as regex; fall back to escaped literal. Patterns with nested
- *  unbounded quantifiers are treated as literals rather than compiled. */
 const safeRegex = (pattern: string): RegExp => {
   if (hasNestedQuantifier(pattern)) return new RegExp(escapeRegex(pattern), "i");
   try {
@@ -108,11 +91,13 @@ const safeRegex = (pattern: string): RegExp => {
  */
 const SEARCH_BUDGET_MS = 3000;
 
+class SearchAborted extends Error {}
+
 const startBudget = (): (() => void) => {
   const deadline = Date.now() + SEARCH_BUDGET_MS;
   return () => {
     if (Date.now() > deadline) {
-      throw new Error(
+      throw new SearchAborted(
         `Search aborted: query exceeded ${SEARCH_BUDGET_MS}ms. Use fewer or more specific words; ` +
         "for a regex, avoid nested quantifiers such as (a+)+.",
       );
@@ -120,17 +105,9 @@ const startBudget = (): (() => void) => {
   };
 };
 
-/** Detect if the query looks like a single regex pattern (contains regex metacharacters). */
 const looksLikeRegex = (query: string): boolean =>
   /[|*+?{}()[\]\\^$.]/.test(query);
 
-/** Build a regex for snippet highlighting — matches first available term. */
-const snippetRegex = (terms: string[]): RegExp => {
-  const alts = terms.map((t) => safeRegex(t).source);
-  return new RegExp(alts.join("|"), "i");
-};
-
-// ── Stopwords for natural language queries ──
 const STOPWORDS = new Set([
   // English
   "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
@@ -145,14 +122,12 @@ const STOPWORDS = new Set([
   "this", "what", "which", "who", "whom", "these", "those",
 ]);
 
-/** Remove stopwords, keep meaningful terms. */
 const filterStopwords = (terms: string[]): string[] => {
   const meaningful = terms.filter((t) => !STOPWORDS.has(t.toLowerCase()) && t.length > 1);
-  // If all terms were stopwords, return original (don't lose everything)
+  // Nothing left: search the query as given rather than for nothing.
   return meaningful.length > 0 ? meaningful : terms;
 };
 
-// ── BM25-lite scoring ──
 const BM25_K = 1.2;
 const BM25_B = 0.75;
 
@@ -163,7 +138,7 @@ const BM25_B = 0.75;
  */
 interface Term {
   term: string;
-  re: RegExp;      // safeRegex(term): case-insensitive, first match
+  re: RegExp;      // the term or its stem (compileTerms), case-insensitive, first match
   global: RegExp;  // same source with "gi", for counting occurrences
 }
 
@@ -180,7 +155,7 @@ export const stemOf = (term: string): string | undefined => {
   for (const suffix of SUFFIXES) {
     if (!lower.endsWith(suffix)) continue;
     let stem = lower.slice(0, -suffix.length);
-    // "running" -> "runn" -> "run"
+    // "stopping" -> "stopp" -> "stop"
     if (stem.length > MIN_STEM && stem[stem.length - 1] === stem[stem.length - 2]) stem = stem.slice(0, -1);
     return stem.length >= MIN_STEM ? stem : undefined;
   }
@@ -194,7 +169,6 @@ const compileTerms = (terms: string[]): Term[] =>
     return { term, re, global: new RegExp(re.source, "gi") };
   });
 
-/** Count occurrences of a term in text. */
 const termFreq = (text: string, t: Term): number => {
   const matches = text.match(t.global);
   return matches ? matches.length : 0;
@@ -230,11 +204,10 @@ interface BM25Context {
   n: number;         // total docs
   avgDl: number;     // average doc length (words)
   df: Map<string, number>; // term -> number of docs containing it
-  /** Per doc, the terms it contains: found once here, reused for matchCount and scoring. */
+  /** Per doc, the terms it contains: found once here, reused for scoring. */
   matched: Term[][];
 }
 
-/** Precompute IDF and avgDl across all docs. */
 const buildBM25Context = (docs: string[], docLens: number[], terms: Term[], checkBudget: () => void): BM25Context => {
   const n = docs.length;
   const df = new Map<string, number>();
@@ -257,7 +230,6 @@ const buildBM25Context = (docs: string[], docLens: number[], terms: Term[], chec
   return { n, avgDl: totalLen / Math.max(n, 1), df, matched };
 };
 
-/** BM25 score for a single doc against query terms. */
 const bm25Score = (doc: string, dl: number, terms: Term[], ctx: BM25Context): number => {
   let score = 0;
 
@@ -266,7 +238,6 @@ const bm25Score = (doc: string, dl: number, terms: Term[], ctx: BM25Context): nu
     if (tf === 0) continue;
 
     const docFreq = ctx.df.get(t.term) ?? 0;
-    // IDF: log((N - df + 0.5) / (df + 0.5) + 1)
     const idf = Math.log((ctx.n - docFreq + 0.5) / (docFreq + 0.5) + 1);
     // TF saturation with length normalization
     const tfNorm = (tf * (BM25_K + 1)) / (tf + BM25_K * (1 - BM25_B + BM25_B * dl / ctx.avgDl));
@@ -327,7 +298,7 @@ const lineSnippet = (text: string, regex: RegExp, contextLines = 2): string | un
 const TOOL_ARGS_BUDGET = 2000;
 
 /**
- * Tool name of the recall tool itself (src/tools/recall.ts). A search
+ * The recall tool (RECALL_TOOL, src/names.ts) is left out of search. A search
  * operation must not match its own query or its own prior output: the
  * vcc_recall invocation is persisted as an ordinary assistant toolCall (its
  * `{ query }` argument, excluded below in `toolCallArgsText`) followed by an
@@ -337,17 +308,14 @@ const TOOL_ARGS_BUDGET = 2000;
  * This is a targeted introspection invariant for one named tool, not a
  * general allowlist/blocklist over tool names or tool results.
  */
-const RECALL_TOOL_NAME = "vcc_recall";
 
 /** Text of every toolCall's arguments in a message's content, for search —
  *  bounded once, in aggregate, by TOOL_ARGS_BUDGET. Excludes the recall
- *  tool's own arguments (see RECALL_TOOL_NAME). */
-const toolCallArgsText = (content: Message["content"]): string => {
-  if (!content || typeof content === "string") return "";
-  const raw = (content as { type: string }[])
-    .filter((part): part is ToolCall => part.type === "toolCall")
-    .filter((part) => part.name?.toLowerCase() !== RECALL_TOOL_NAME)
-    .map((part) => extractToolCallArgsText(part.arguments))
+ *  tool's own arguments (see above). */
+const toolCallArgsText = (msg: Message): string => {
+  const raw = toolCallsOf(msg)
+    .filter((call) => !isOwnTool(call.name, RECALL_TOOL))
+    .map((call) => argsText(call.args))
     .filter(Boolean)
     .join("\n");
   return clip(raw, TOOL_ARGS_BUDGET);
@@ -362,10 +330,9 @@ const toolCallArgsText = (content: Message["content"]): string => {
  * The recall tool's own toolResult is excluded (searchable text ""): it
  * echoes back `N matches for "<query>"` from the *previous* recall call, so
  * indexing it would make a repeated query self-match and grow with every
- * search. This only affects search indexing — browse/no-query returns
- * entries before fullText runs (see `searchEntries`), and #N expand reads
- * the message/entry directly, not through this function, so the toolResult
- * is still fully visible there.
+ * search. This only affects search indexing: #N expand reads the message
+ * directly, not through this function, so the toolResult is still fully
+ * visible there.
  */
 const fullText = (msg: Message): string => {
   if ((msg as any).role === "bashExecution") {
@@ -375,75 +342,14 @@ const fullText = (msg: Message): string => {
     return `${(msg as any).code ?? ""} ${(msg as any).output ?? ""}`;
   }
   if ((msg as any).role === "fileMention") return fileMentionPaths(msg).join(" ");
-  if (msg.role === "toolResult" && msg.toolName?.toLowerCase() === RECALL_TOOL_NAME) {
+  if (msg.role === "toolResult" && isOwnTool(msg.toolName, RECALL_TOOL)) {
     return "";
   }
   const text = textOf(msg.content);
-  const argsText = toolCallArgsText(msg.content);
-  return argsText ? `${text}\n${argsText}` : text;
+  const args = toolCallArgsText(msg);
+  return args ? `${text}\n${args}` : text;
 };
 
-/**
- * Compute file indicators from a message, counting non-empty content lines
- * per content-bearing file call. Shape-based — no tool-name allowlist.
- *
- * Ported from pi-blackhole (https://github.com/k0valik/pi-blackhole, MIT) by
- * k0valik — a pi-vcc derivative.
- */
-export function getFileIndicators(msg: Message): { toolName: string; path: string; lineCount: number; drillable: boolean }[] {
-  if (!msg?.content || typeof msg.content === "string") return [];
-  const indicators: { toolName: string; path: string; lineCount: number; drillable: boolean }[] = [];
-  for (const part of msg.content) {
-    if (!part || typeof part !== "object" || part.type !== "toolCall") continue;
-    const args = part.arguments as Record<string, unknown>;
-    const drillable = isContentBearing(args);
-    // A multi-path edit tool: a script (`code`) edits the listed `paths`, so there is no per-file content.
-    // Likewise omp's hashline edit, whose `input` patches the files named in its section headers.
-    const multiPathEdit = (typeof args.code === "string" && Array.isArray(args.paths)) || hashlineEditPaths(args).length > 0;
-    if (!drillable && !multiPathEdit) continue;
-    const totalText = extractToolCallText(args);
-    const nonEmpty = totalText.split("\n").filter((l) => l.trim().length > 0);
-    for (const path of extractPaths(args)) {
-      indicators.push({
-        toolName: part.name || "",
-        path,
-        lineCount: nonEmpty.length,
-        drillable,
-      });
-    }
-  }
-  return indicators;
-}
-
-/**
- * Aggregate file operations across all entries for mode:touched.
- *
- * Ported from pi-blackhole (https://github.com/k0valik/pi-blackhole, MIT) by
- * k0valik — a pi-vcc derivative.
- */
-export function getTouchedFiles(
-  messages: Message[],
-  rendered: RenderedEntry[],
-): TouchedFile[] {
-  const map = new Map<string, TouchedFile>();
-  for (let i = 0; i < messages.length; i++) {
-    const msg = messages[i];
-    const indicators = getFileIndicators(msg);
-    for (const fm of indicators) {
-      if (isUrlPath(fm.path)) continue;
-      const index = rendered[i]?.index ?? i;
-      if (!map.has(fm.path)) {
-        map.set(fm.path, { path: fm.path, entries: [] });
-      }
-      (map.get(fm.path) as TouchedFile).entries.push({
-        index,
-        toolName: fm.toolName,
-        ...(!fm.drillable && { drillable: false as const }),
-      });
-    }
-  }
-  return Array.from(map.values());
-}
 
 /**
  * Relative BM25 noise floor for MULTI-TERM natural-language queries only:
@@ -454,8 +360,8 @@ export function getTouchedFiles(
  *
  * Applied only when the query has >=2 DISTINCT effective terms after
  * stopword filtering and case/duplicate normalization (see the
- * `effectiveTermCount >= 2` gate below `searchEntriesDetailed` uses before
- * calling `applyRelativeFloor`). Distinct, not raw count: "auth auth" or
+ * `effectiveTermCount >= 2` gate `search` uses below before calling
+ * `applyRelativeFloor`). Distinct, not raw count: "auth auth" or
  * "Auth AUTH" is semantically a single-term query and must bypass the floor
  * like any other single term — repeating or casing a word doesn't turn it
  * into the multi-term OR-tail noise this floor targets. The normalization is
@@ -519,13 +425,14 @@ const BM25_RELATIVE_FLOOR = 0.2;
 const SEARCH_RESULT_CAP = 50;
 
 /**
- * Tuning overrides for `searchEntriesDetailed`. Exists only so the offline
- * bench (scripts/benchmark-recall-quality.ts) and targeted tests can
- * exercise the real scoring/capping pipeline against candidate constants —
- * production call sites (`searchEntries`, the recall tool) never pass this
- * and always get `BM25_RELATIVE_FLOOR`/`SEARCH_RESULT_CAP`.
+ * Tuning overrides for `searchEntries`. Exists so the offline bench
+ * (scripts/benchmark-recall-quality.ts) and targeted tests can exercise the
+ * real scoring/capping pipeline against candidate constants, and so
+ * [Working Set] can take only the top few hits (core/working-set.ts, `cap`).
+ * Recall never passes this and always gets
+ * `BM25_RELATIVE_FLOOR`/`SEARCH_RESULT_CAP`.
  */
-export interface SearchTuning {
+interface SearchTuning {
   relativeFloor?: number;
   cap?: number;
 }
@@ -551,10 +458,7 @@ const applyRelativeFloor = (
  * highest-score-first, so `slice(0, cap)` keeps the top `cap` hits. For the
  * regex path there is no score — hits are collected in entry/chronological
  * iteration order, so `slice(0, cap)` keeps the OLDEST `cap` matches, not
- * the most recent or most relevant ones. That is an explicit, documented
- * preservation choice for this change, not a new selection/ranking policy —
- * changing which matches a truncated regex search keeps (e.g. newest-first)
- * is a separate decision, out of scope here.
+ * the most recent or most relevant ones.
  */
 const capHits = (hits: SearchHit[], cap: number): SearchResult => {
   const totalBeforeCap = hits.length;
@@ -562,23 +466,38 @@ const capHits = (hits: SearchHit[], cap: number): SearchResult => {
   return { hits: capped, totalBeforeCap, truncated: capped.length < totalBeforeCap };
 };
 
-/**
- * Full search with truncation metadata. `searchEntries` below is a thin
- * `.hits`-only wrapper kept for existing call sites; use this directly when
- * a caller (the recall tool) needs to report a capped result set honestly.
- */
-export const searchEntriesDetailed = (
-  entries: RenderedEntry[],
-  messages: Message[],
-  query?: string,
+/** Full search with truncation metadata, so a caller can report a capped result set honestly. */
+export const searchEntries = (
+  items: readonly LoadedEntry[],
+  query: string,
   tuning?: SearchTuning,
 ): SearchResult => {
-  if (!query?.trim()) return { hits: entries, totalBeforeCap: entries.length, truncated: false };
+  try {
+    return search(items.map((i) => i.entry), items.map((i) => i.message), query, tuning);
+  } catch (err) {
+    if (err instanceof SearchAborted) return { hits: [], totalBeforeCap: 0, truncated: false, aborted: err.message };
+    throw err;
+  }
+};
+
+const search = (
+  entries: RenderedEntry[],
+  messages: Message[],
+  query: string,
+  tuning?: SearchTuning,
+): SearchResult => {
+  if (!query.trim()) return { hits: [], totalBeforeCap: 0, truncated: false };
 
   const relativeFloor = tuning?.relativeFloor ?? BM25_RELATIVE_FLOOR;
   const cap = tuning?.cap ?? SEARCH_RESULT_CAP;
   const rawQuery = query.trim();
   const checkBudget = startBudget();
+  // What each entry is found by (snippets come from it), and the document scored: with its role and files.
+  const texts = messages.map((msg, i) => {
+    checkBudget();
+    return searchableText(msg, entries[i]);
+  });
+  const docs = entries.map((e, i) => `${e.role} ${texts[i]} ${e.files?.join(" ") ?? ""}`);
 
   // If the query looks like a single regex pattern (contains metacharacters),
   // treat the whole thing as one pattern — don't split into terms.
@@ -596,35 +515,17 @@ export const searchEntriesDetailed = (
     const hits: SearchHit[] = [];
     for (let i = 0; i < entries.length; i++) {
       checkBudget();
-      const e = entries[i];
-      const msg = messages[i];
-      const text = searchableText(msg, e);
-      const filePart = e.files?.join(" ") ?? "";
-      const hay = `${e.role} ${text} ${filePart}`;
-      if (regex.test(hay)) {
-        const snip = lineSnippet(text, regex);
-        hits.push({ ...e, snippet: snip, matchCount: 1 });
-      }
+      if (regex.test(docs[i])) hits.push({ ...entries[i], snippet: lineSnippet(texts[i], regex) });
     }
     if (hits.length > 0) return capHits(hits, cap);
   }
 
-  // Natural language / multi-word query: BM25 scoring
   const rawTerms = rawQuery.split(/\s+/);
   const terms = filterStopwords(rawTerms);
-  const snipRe = snippetRegex(terms);
-
-  // Build all docs for BM25 context
-  const docs: string[] = [];
-  for (let i = 0; i < entries.length; i++) {
-    const e = entries[i];
-    const msg = messages[i];
-    const text = searchableText(msg, e);
-    const filePart = e.files?.join(" ") ?? "";
-    docs.push(`${e.role} ${text} ${filePart}`);
-  }
 
   const compiled = compileTerms(terms);
+  // The snippet shows where a term matched as matching does, its stem included.
+  const snipRe = new RegExp(compiled.map((c) => c.re.source).join("|"), "i");
   const docLens = docs.map(wordCount);
   const ctx = buildBM25Context(docs, docLens, compiled, checkBudget);
 
@@ -634,35 +535,21 @@ export const searchEntriesDetailed = (
     const e = entries[i];
     const hay = docs[i];
     const here = ctx.matched[i];
-    const mc = here.length;
-    if (mc === 0) continue;
+    if (here.length === 0) continue;
     // Terms absent from the doc add 0, so scoring only the matched ones gives the same sum in the same order.
     const score = bm25Score(hay, docLens[i], here, ctx);
-    const text = searchableText(messages[i], e);
-    const snip = lineSnippet(text, snipRe);
+    const snip = lineSnippet(texts[i], snipRe);
     scored.push({
-      hit: { ...e, snippet: snip, matchCount: mc },
+      hit: { ...e, snippet: snip },
       score,
     });
   }
 
-  // Sort by BM25 score desc, then drop the noisy long tail relative to the
-  // top score (multi-term queries only — see BM25_RELATIVE_FLOOR), then
-  // apply the hard cap.
   scored.sort((a, b) => b.score - a.score);
-  // Gate on DISTINCT normalized terms, not raw term count: "auth auth" or
-  // "Auth AUTH" is semantically a single-term query and must bypass the
-  // floor like any other single term — repeating/casing a word doesn't turn
-  // it into the multi-term OR-tail noise this floor targets. This is a
-  // gate-only normalization; it does not change `terms` itself or the BM25
-  // scoring above, which already matches case-insensitively.
+  // The floor is for multi-term queries only, counted as DISTINCT normalized
+  // terms: "auth auth" is one term (see BM25_RELATIVE_FLOOR).
   const effectiveTermCount = new Set(terms.map((t) => t.toLowerCase())).size;
   const floored = effectiveTermCount >= 2 ? applyRelativeFloor(scored, relativeFloor) : scored;
   return capHits(floored.map((s) => s.hit), cap);
 };
 
-export const searchEntries = (
-  entries: RenderedEntry[],
-  messages: Message[],
-  query?: string,
-): SearchHit[] => searchEntriesDetailed(entries, messages, query).hits;

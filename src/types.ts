@@ -1,15 +1,14 @@
-import type { Message } from "@oh-my-pi/pi-ai";
-
 /** What started a compaction: omp's auto_compaction_start reason or Pi's session_before_compact reason, or manual (/compact, /omp-vcc, /pi-vcc). Pi's are manual, threshold and overflow. */
 export type CompactionReason = "manual" | "threshold" | "overflow" | "idle" | "incomplete";
 
+/** An overflow, or a reply cut off at the limit: the context must shrink, and the host retries the turn. */
+export const isRecoveryReason = (reason: CompactionReason): boolean => reason === "overflow" || reason === "incomplete";
+
+/** What the host says the summarized turns did to files (its preparation.fileOps). */
 export interface FileOps {
-  readFiles?: string[];
-  /** Edited. */
-  modifiedFiles?: string[];
-  createdFiles?: string[];
-  /** Written whole, new or not (omp's fileOps.written). */
-  writtenFiles?: string[];
+  read?: string[];
+  /** Edited or written whole; whether a file is new, the blocks tell. */
+  changed?: string[];
 }
 
 export type NormalizedBlock =
@@ -19,7 +18,8 @@ export type NormalizedBlock =
   | { kind: "user"; text: string; sourceIndex?: number; injected?: boolean }
   | { kind: "assistant"; text: string; sourceIndex?: number }
   // `failed`: the call's result came back as an error (toolResult isError).
-  | { kind: "tool_call"; name: string; args: Record<string, unknown>; sourceIndex?: number; failed?: true }
-  | { kind: "tool_result"; name: string; text: string; sourceIndex?: number }
+  | { kind: "tool_call"; id?: string; name: string; args: Record<string, unknown>; sourceIndex?: number; failed?: true }
+  // `callId`: the id of the call this is the result of.
+  | { kind: "tool_result"; callId?: string; name: string; text: string; sourceIndex?: number }
   // A command the user ran themselves: `!cmd`, or (lang "python") a python cell.
   | { kind: "bash"; command: string; output: string; exitCode: number | undefined; sourceIndex?: number; lang?: "python" };

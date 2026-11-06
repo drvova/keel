@@ -28,12 +28,14 @@
 // rewritten. Nothing depends on wording: paths, failure flags, recency and
 // recall's own ranking.
 import type { Message } from "@oh-my-pi/pi-ai";
-import { isContentBearing, textOf } from "./content";
-import { renderMessage, type RenderedEntry } from "./render-entries";
-import { searchEntriesDetailed } from "./search-entries";
-import { extractPaths, isUrlPath, stripReadSelector } from "./tool-args";
+import { textOf } from "./content";
+import { renderMessage } from "./render-entries";
+import type { LoadedEntry } from "./load-messages";
+import { searchEntries } from "./search-entries";
+import { callKind, callSubject, filesOf, fileWriteOf, readsPart, toolCallsOf } from "./tools";
+import { recallExpandCall } from "../names";
 
-export interface WorkingSetInput {
+interface WorkingSetInput {
   /**
    * Everything out of context once this compaction lands (what it summarizes and
    * what earlier ones did, since /clear), the originals of what omp rewrote put back.
@@ -46,9 +48,9 @@ export interface WorkingSetInput {
   maxChars: number;
 }
 
-export type WorkingSetReason = "file" | "failure" | "relevant";
+type WorkingSetReason = "file" | "failure" | "relevant";
 
-export interface WorkingSetItem {
+interface WorkingSetItem {
   index: number;
   reason: WorkingSetReason;
   /** `read "src/a.ts"`, `bash "bun test"`. */
@@ -67,8 +69,6 @@ interface Call {
   name: string;
   args: Record<string, unknown>;
   paths: string[];
-  /** The path as the call gave it, a read's line selector kept (`src/a.ts:50-100`). */
-  rawPath?: string;
   pos: number;
 }
 
@@ -91,40 +91,42 @@ const MAX_RELEVANT_CANDIDATES = 400;
 const asRecord = (v: unknown): Record<string, any> => (v && typeof v === "object" ? (v as Record<string, any>) : {});
 
 const callsOf = (message: Record<string, any>, pos: number): Call[] =>
-  message.role === "assistant" && Array.isArray(message.content)
-    ? message.content
-        .filter((p: any) => p?.type === "toolCall" && typeof p.id === "string")
-        .map((p: any) => {
-          const args = asRecord(p.arguments);
-          const raw = extractPaths(args).filter((x) => !isUrlPath(x));
-          return {
-            id: p.id,
-            name: typeof p.name === "string" ? p.name : "tool",
-            args,
-            paths: raw.map(stripReadSelector),
-            rawPath: raw[0],
-            pos,
-          };
-        })
+  message.role === "assistant"
+    ? toolCallsOf(message)
+        .filter((c) => c.id !== undefined)
+        .map((c) => ({
+          id: c.id!,
+          name: c.name,
+          args: c.args,
+          paths: filesOf(c),
+          pos,
+        }))
     : [];
 
-/** The argument a call is told apart by: its path, else its command or query. */
-const primaryArg = (call: Call): string =>
-  call.paths[0] ?? (typeof call.args.command === "string" ? call.args.command : typeof call.args.query === "string" ? call.args.query : "");
+/**
+ * What a call is a run of: a read of a file is one of that file whatever lines
+ * it showed; any other call is one of the same tool on the same subject (its
+ * file, command, pattern or query). A later run stands for the earlier ones.
+ */
+const runOf = (call: Call): string =>
+  `${reads(call) ? "read" : call.name}\u0000${call.paths[0] ?? callSubject(call)?.value ?? ""}`;
 
+/** A call as its item's head names it: the tool and what it is about, as the call gave it (a read's selector kept). */
 const titleOf = (call: Call | undefined): string => {
   if (!call) return "tool result";
-  const arg = call.rawPath ?? primaryArg(call);
+  const arg = callSubject(call)?.value;
   return arg ? `${call.name} ${JSON.stringify(arg.length > 80 ? `${arg.slice(0, 80)}…` : arg)}` : call.name;
 };
 
+/** What a call that writes one file whole puts in it (tools.ts fileWriteOf): the file. */
+const wholeText = (call: Call): string | undefined =>
+  callKind(call) === "write" && call.paths.length === 1 ? fileWriteOf(call)?.content : undefined;
 /** A call that writes a file whole: its content is the file. */
-const writes = (call: Call): boolean => call.paths.length === 1 && typeof call.args.content === "string";
+const writes = (call: Call): boolean => wholeText(call) !== undefined;
 /** A call that changes part of a file. */
-const edits = (call: Call): boolean => !writes(call) && (isContentBearing(call.args) || typeof call.args.input === "string");
-/** A call that shows a file: the read tool on one path (omp's and Pi's are `read`); not a search over a directory. */
-const reads = (call: Call): boolean => call.name === "read" && call.paths.length === 1;
-/** A call on a file: a read, a write or an edit. */
+const edits = (call: Call): boolean => !writes(call) && (callKind(call) === "edit" || callKind(call) === "write");
+/** A call that shows a file: a read of one path; not a search over a directory. */
+const reads = (call: Call): boolean => callKind(call) === "read" && call.paths.length === 1;
 const onFile = (call: Call): boolean => reads(call) || writes(call) || edits(call);
 /** The request names this path as a whole token, not as part of a longer one (`src/a.ts` in `src/a.tsx`), and a path names a file, not `.`. */
 const mentions = (text: string, path: string): boolean => {
@@ -132,12 +134,15 @@ const mentions = (text: string, path: string): boolean => {
   const esc = path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`(?:^|[^\\w./-])${esc}(?![\\w/-]|\\.\\w)`).test(text);
 };
-/** A read of part of a file: a line selector, or an offset or limit. */
-const ranged = (call: Call): boolean =>
-  (call.rawPath !== undefined && /:\d/.test(call.rawPath.slice(call.paths[0]?.length ?? 0))) || call.args.offset !== undefined || call.args.limit !== undefined;
-/** What an excerpt of this text costs, as formatWorkingSet counts it: each line clipped at 300 chars, plus its indent. */
+/** An excerpt's line as it is quoted: clipped at 300 chars. */
+const quotedLine = (line: string): string => (line.length > 300 ? `${line.slice(0, 300)}…` : line);
+/** What a quoted line takes of the section: the line, its indent and its newline. */
+const lineCost = (line: string): number => quotedLine(line).length + 5;
+/** The most one item takes of a section of `maxChars`. */
+const itemCap = (maxChars: number): number => Math.max(MIN_ITEM_CHARS, Math.round(maxChars * MAX_ITEM_SHARE));
+/** What an excerpt of this text costs, as formatWorkingSet counts it. */
 const excerptChars = (text: string): number =>
-  text.split("\n").filter((l) => l.trim() !== "").reduce((n, l) => n + Math.min(l.length, 301) + 5, 0);
+  text.split("\n").filter((l) => l.trim() !== "").reduce((n, l) => n + lineCost(l), 0);
 /** Room for an item's head line (`- #N read "path", note:`) when sizing its body. */
 const HEAD_ALLOWANCE = 200;
 /** Below this many lines, what a call showed of a file says too little to bring back (`ok`, `Successfully replaced`). */
@@ -207,21 +212,22 @@ export const selectWorkingSet = (input: WorkingSetInput): WorkingSetItem[] => {
     // Its last whole view: a write's content, or the result of a read of all of it.
     let base: { call: Call; text: string; index: number | undefined } | undefined;
     for (const c of touching) {
-      if (writes(c)) base = { call: c, text: String(c.args.content), index: input.indices[c.pos] };
-      else if (reads(c) && !ranged(c)) {
+      const whole = wholeText(c);
+      if (whole !== undefined) base = { call: c, text: whole, index: input.indices[c.pos] };
+      else if (reads(c) && !readsPart(c)) {
         const r = resultOf(c);
         if (r) base = { call: c, text: r.text, index: r.index };
       }
     }
     // What showed it after that: omp's edit results (the changed lines, numbered) and range reads.
-    const after = touching.filter((c) => c.pos > (base?.call.pos ?? -1) && (edits(c) || (reads(c) && ranged(c))));
+    const after = touching.filter((c) => c.pos > (base?.call.pos ?? -1) && (edits(c) || (reads(c) && readsPart(c))));
     const views = after
       .map((c) => ({ call: c, r: resultOf(c) }))
       .filter((v): v is { call: Call; r: Result } => !!v.r && v.r.index !== undefined && !used.has(v.r.index) && lineCount(v.r.text) >= MIN_VIEW_LINES);
     // A file comes back whole, or as the lines shown of it since, never as its
     // first lines: in real runs, after part of a file came back, the agent read it
     // again anyway. The lines shown since come first, newest first, while they fit.
-    let left = Math.min(input.maxChars, Math.max(MIN_ITEM_CHARS, Math.round(input.maxChars * MAX_ITEM_SHARE))) - HEAD_ALLOWANCE;
+    let left = Math.min(input.maxChars, itemCap(input.maxChars)) - HEAD_ALLOWANCE;
     const shownViews: Array<{ call: Call; r: Result; part: string }> = [];
     for (const v of [...views].reverse()) {
       const part = `[#${v.r.index} ${titleOf(v.call)}]\n${v.r.text}`;
@@ -253,8 +259,8 @@ export const selectWorkingSet = (input: WorkingSetInput): WorkingSetItem[] => {
   for (let k = results.length - 1; k >= 0; k--) {
     const r = results[k];
     if (!r.isError || r.index === undefined || used.has(r.index) || !r.text.trim()) continue;
-    const key = r.call ? `${r.call.name}\u0000${primaryArg(r.call)}` : undefined;
-    const sameLater = (c: Call) => key !== undefined && `${c.name}\u0000${primaryArg(c)}` === key;
+    const key = r.call ? runOf(r.call) : undefined;
+    const sameLater = (c: Call) => key !== undefined && runOf(c) === key;
     const fixedHere = results.some((x) => x.pos > r.pos && !x.isError && x.call && sameLater(x.call));
     const fixedInKept = keptCalls.some((c) => sameLater(c) && keptResults.get(c.id) === false);
     if (!fixedHere && !fixedInKept) {
@@ -266,23 +272,21 @@ export const selectWorkingSet = (input: WorkingSetInput): WorkingSetItem[] => {
 
   // 3. What recall ranks highest for the latest request.
   if (request.trim()) {
-    const entries: RenderedEntry[] = [];
-    const msgs: Message[] = [];
-    // A file's latest read, by position.
-    const latestRead = new Map<string, number>();
-    for (const r of results) if (r.call && reads(r.call)) for (const p of r.call.paths) latestRead.set(p, r.pos);
+    const candidates: LoadedEntry[] = [];
+    // Each run's latest result, by position: an earlier one is out of date.
+    const latestRun = new Map<string, number>();
+    for (const r of results) if (r.call) latestRun.set(runOf(r.call), r.pos);
     for (const r of results.slice(-MAX_RELEVANT_CANDIDATES)) {
       if (r.index === undefined || used.has(r.index) || r.isError || !r.text.trim()) continue;
       // An edit's or a write's result is the agent's own change: a file's changes are rule 1's.
       if (r.call && (edits(r.call) || writes(r.call))) continue;
-      const paths = r.call?.paths ?? [];
-      if (paths.some((p) => inContext.has(p) || chosenPaths.has(p) || latestRead.get(p) !== r.pos)) continue;
-      const m = input.history[r.pos] as Message;
-      entries.push(renderMessage(m, r.index));
-      msgs.push(m);
+      if (r.call && latestRun.get(runOf(r.call)) !== r.pos) continue;
+      if ((r.call?.paths ?? []).some((p) => inContext.has(p) || chosenPaths.has(p))) continue;
+      const message = input.history[r.pos] as Message;
+      candidates.push({ entry: renderMessage(message, r.index), message });
     }
-    if (entries.length > 0) {
-      const { hits } = searchEntriesDetailed(entries, msgs, request.slice(0, 2_000), { cap: MAX_RELEVANT });
+    if (candidates.length > 0) {
+      const { hits } = searchEntries(candidates, request.slice(0, 2_000), { cap: MAX_RELEVANT });
       for (const hit of hits) {
         const r = results.find((x) => x.index === hit.index);
         if (!r || used.has(hit.index)) continue;
@@ -301,13 +305,27 @@ const excerpt = (text: string, max: number, fromEnd: boolean): { lines: string[]
   let size = 0;
   const order = fromEnd ? [...all].reverse() : all;
   for (const line of order) {
-    const clipped = line.length > 300 ? `${line.slice(0, 300)}…` : line;
-    if (size + clipped.length + 5 > max) break;
-    lines.push(clipped);
-    size += clipped.length + 5;
+    if (size + lineCost(line) > max) break;
+    lines.push(quotedLine(line));
+    size += lineCost(line);
   }
   if (fromEnd) lines.reverse();
   return { lines, omitted: all.length - lines.length };
+};
+
+/** [Working Set] brings back at most this share of what a compaction removes, so the compaction always frees room. */
+const SHARE_OF_REMOVED = 0.5;
+
+/**
+ * The working set for a compaction that removes `removedChars` from context,
+ * within `budgetChars` (compactionBudgets' workingSetTokens): its lines, and
+ * the #N of the items they show.
+ */
+export const buildWorkingSet = (
+  input: Omit<WorkingSetInput, "maxChars"> & { budgetChars: number; removedChars: number },
+): { lines: string[]; shown: number[] } => {
+  const maxChars = Math.round(Math.min(input.budgetChars, input.removedChars * SHARE_OF_REMOVED));
+  return formatWorkingSet(selectWorkingSet({ ...input, maxChars }), maxChars);
 };
 
 /**
@@ -315,21 +333,23 @@ const excerpt = (text: string, max: number, fromEnd: boolean): { lines: string[]
  * A section has no blank line inside (the summary's sections are told apart by
  * them), and an indented line never reads as a section header or a separator.
  */
-export const formatWorkingSet = (items: readonly WorkingSetItem[], maxChars: number): string[] => {
+export const formatWorkingSet = (items: readonly WorkingSetItem[], maxChars: number): { lines: string[]; shown: number[] } => {
   const lines: string[] = [];
+  const shown: number[] = [];
   let left = maxChars;
   for (const item of items) {
     const head = `- #${item.index} ${item.title}${item.note ? `, ${item.note}` : ""}:`;
-    const room = Math.min(left - head.length, Math.max(MIN_ITEM_CHARS, Math.round(maxChars * MAX_ITEM_SHARE)));
+    const room = Math.min(left - head.length, itemCap(maxChars));
     if (room < MIN_ITEM_CHARS) break;
     const { lines: body, omitted } = excerpt(item.text, room, item.fromEnd);
     if (body.length === 0 || (item.whole && omitted > 0)) continue;
     // Where the rest is: after the excerpt, or before it when the excerpt is the end.
-    const more = omitted > 0 ? `    …[${omitted} ${item.fromEnd ? "earlier" : "more"} lines: vcc_recall expand:[${item.index}]]` : "";
+    const more = omitted > 0 ? `    …[${omitted} ${item.fromEnd ? "earlier" : "more"} lines: ${recallExpandCall(item.index)}]` : "";
     const quoted = body.map((l) => `    ${l}`);
     const block = [head, ...(more && item.fromEnd ? [more] : []), ...quoted, ...(more && !item.fromEnd ? [more] : [])];
     lines.push(...block);
+    shown.push(item.index);
     left -= block.reduce((n, l) => n + l.length + 1, 0);
   }
-  return lines;
+  return { lines, shown };
 };

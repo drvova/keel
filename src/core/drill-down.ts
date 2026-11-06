@@ -14,63 +14,27 @@
  * - Inline queries like "check #42:auth.ts" are NOT drill-down — the ^ anchor
  *   requires the entire query to be the drill-down pattern.
  */
-import { isContentBearing, newTextOf, oldTextOf } from "./content";
-import { extractPath } from "./tool-args";
-import { loadAllMessages } from "./load-messages";
+import { fileWriteOf, toolCallsOf, type FileWrite } from "./tools";
 
-// ── Types ─────────────────────────────────────────────────────────────────
+/** A message's writes and edits, each with the file it changes and what it puts there. */
+const fileWritesOf = (message: unknown): Array<FileWrite & { name: string }> =>
+  toolCallsOf(message).flatMap((call) => {
+    const write = fileWriteOf(call);
+    return write ? [{ ...write, name: call.name }] : [];
+  });
 
-interface ContentBearingCall {
-  name: string;
-  path: string;
-  content?: string;
-  oldText?: string;
-  newText?: string;
-  edits?: Array<{ oldText?: string; newText?: string }>;
-}
-
-// ── Helpers ───────────────────────────────────────────────────────────────
+/** A full view's closing line, besides the path and `via` it names. */
+const CLOSING_LINE_CHARS = 160;
 
 /**
- * Find content-bearing tool calls that have a `path` argument and at least
- * one content field (content, edits, oldText, newText).
- * Uses the shared isContentBearing() heuristic from content.ts.
- */
-function findContentBearingCalls(content: unknown[]): ContentBearingCall[] {
-  if (!Array.isArray(content)) return [];
-  const results: ContentBearingCall[] = [];
-  for (const part of content) {
-    if (!part || (part as any).type !== "toolCall") continue;
-    const args = (part as any).arguments ?? {};
-    if (!isContentBearing(args)) continue;
-    const path = extractPath(args);
-    if (!path) continue;
-    const entry: ContentBearingCall = { name: (part as any).name ?? "", path };
-    if (typeof args.content === "string") entry.content = args.content;
-    if (Array.isArray(args.edits)) {
-      entry.edits = args.edits
-        .filter((e: unknown): e is Record<string, unknown> => e !== null && typeof e === "object")
-        .map((e: Record<string, unknown>) => ({ oldText: oldTextOf(e), newText: newTextOf(e) }));
-    }
-    if (!Array.isArray(args.edits)) {
-      entry.oldText = oldTextOf(args);
-      entry.newText = newTextOf(args);
-    }
-    results.push(entry);
-  }
-  return results;
-}
-
-/** Format content for display with optional offset/limit slicing.
- *
- * When full=true, shows everything ignoring offset/limit.
- * When offset/limit given, shows a window with "Lines X-Y (of Z)" header.
+ * When full=true, shows everything up to `maxChars`, ignoring offset/limit.
+ * When offset is given, shows `limit` lines (30 by default) under a "Lines X-Y (of Z)" header.
  * When neither, shows preview (first 30 lines) with truncation hint.
  */
 function formatToolCallContent(
-  tc: ContentBearingCall,
+  tc: FileWrite & { name: string },
   entryIndex: number,
-  options?: { full?: boolean; offset?: number; limit?: number },
+  options: { full?: boolean; offset?: number; limit?: number; maxChars: number; via: string },
 ): string {
   let body: string;
   if (tc.content) {
@@ -79,33 +43,35 @@ function formatToolCallContent(
     body = tc.edits
       .map(
         (e, i) =>
-          `--- edit ${i + 1} ---\n${e.oldText ?? ""}\n--- becomes ---\n${e.newText ?? ""}`,
+          `--- edit ${i + 1} ---\n${e.oldText}\n--- becomes ---\n${e.newText}`,
       )
       .join("\n\n");
-  } else if (tc.oldText && tc.newText) {
-    body = `--- old ---\n${tc.oldText}\n--- new ---\n${tc.newText}`;
+  } else if (tc.replace) {
+    body = `--- old ---\n${tc.replace.oldText}\n--- new ---\n${tc.replace.newText}`;
   } else {
     body = "(no file content found in tool call arguments)";
   }
 
-  const full = options?.full ?? false;
-  const offset = options?.offset;
-  const limit = options?.limit;
+  const { full = false, offset, limit, maxChars, via } = options;
   const allLines = body.split("\n");
   const totalLines = allLines.length;
   const previewLimit = 30;
-  const MAX_FULL_BYTES = 50 * 1024;
 
   if (full) {
-    // Full content: capped at 50KB
-    if (Buffer.byteLength(body, "utf8") > MAX_FULL_BYTES) {
-      const truncated = body.slice(0, MAX_FULL_BYTES);
+    // All of it, within `maxChars` (what recall leaves after its own notes):
+    // past it, where the next lines are. The header and that line come out of
+    // the same share.
+    const frame = `File: ${tc.path}\nTool: ${tc.name}\n\n`.length + CLOSING_LINE_CHARS + tc.path.length + via.length;
+    const room = Math.max(0, maxChars - frame);
+    if (body.length > room) {
+      const shown = body.slice(0, room);
+      const next = shown.split("\n").length - 1;
       return `File: ${tc.path}
 Tool: ${tc.name}
 
-${truncated}
+${shown}
 
-... (${Buffer.byteLength(body, "utf8") - MAX_FULL_BYTES} more bytes — file exceeds 50KB display limit. Use #${entryIndex}:${tc.path}:${previewLimit} for next page.)`;
+... (${body.length - room} more chars than this result has room for. Use #${entryIndex}:${tc.path}:${next}${via} for the lines from ${next + 1} on.)`;
     }
     return `File: ${tc.path}
 Tool: ${tc.name}
@@ -114,7 +80,6 @@ ${body}`;
   }
 
   if (offset !== undefined) {
-    // Offset-based window: show slice
     const startLine = Math.max(0, offset);
     const maxLines = limit ?? 30;
     const endLine = Math.min(startLine + maxLines, totalLines);
@@ -122,7 +87,7 @@ ${body}`;
     const displayStart = startLine + 1; // 1-indexed for user display
 
     if (visible.length === 0) {
-      return `Offset ${startLine} is beyond file length ${totalLines}. Use #${entryIndex}:${tc.path} for the first ${previewLimit} lines.`;
+      return `Offset ${startLine} is beyond file length ${totalLines}. Use #${entryIndex}:${tc.path}${via} for the first ${previewLimit} lines.`;
     }
 
     let result = `File: ${tc.path}
@@ -133,7 +98,7 @@ Lines ${displayStart}-${endLine} (of ${totalLines}):
     result += visible.join("\n");
 
     if (endLine < totalLines) {
-      result += `\n\n--- Use #${entryIndex}:${tc.path}:${endLine} or #${entryIndex}:${tc.path}:${endLine}:${maxLines} for next ${maxLines} lines, #${entryIndex}:${tc.path}:full for complete ---`;
+      result += `\n\n--- Use #${entryIndex}:${tc.path}:${endLine} or #${entryIndex}:${tc.path}:${endLine}:${maxLines} for next ${maxLines} lines, #${entryIndex}:${tc.path}:full for complete${via} ---`;
     } else if (offset > 0) {
       result += `\n\n(End of file)`;
     }
@@ -141,7 +106,6 @@ Lines ${displayStart}-${endLine} (of ${totalLines}):
     return result;
   }
 
-  // Default preview mode: first ${previewLimit} lines
   if (totalLines > previewLimit) {
     const preview = allLines.slice(0, previewLimit).join("\n");
     return `File: ${tc.path}
@@ -149,7 +113,7 @@ Tool: ${tc.name}
 
 ${preview}
 
-...(${totalLines - previewLimit} more lines — use #${entryIndex}:${tc.path}:full for complete content, or #${entryIndex}:${tc.path}:${previewLimit} for next ${previewLimit} lines)`;
+...(${totalLines - previewLimit} more lines — use #${entryIndex}:${tc.path}:full for complete content, or #${entryIndex}:${tc.path}:${previewLimit} for next ${previewLimit} lines${via})`;
   }
 
   return `File: ${tc.path}
@@ -157,8 +121,6 @@ Tool: ${tc.name}
 
 ${body}`;
 }
-
-// ── Parse drill-down query ────────────────────────────────────────────────
 
 /**
  * Pattern: #N:path, #N:path:full, #N:path:offset, or #N:path:offset:limit
@@ -202,7 +164,6 @@ export function parseDrillDown(query: string): {
   }
 
   if (suffix !== undefined) {
-    // Parse "offset" or "offset:limit"
     const parts = suffix.split(":");
     const offset = parseInt(parts[0], 10);
     const limit = parts[1] !== undefined ? parseInt(parts[1], 10) : undefined;
@@ -220,8 +181,6 @@ export function parseDrillDown(query: string): {
   };
 }
 
-// ── Main export ───────────────────────────────────────────────────────────
-
 /**
  * Expand a drill-down query (#N:path) to tool call content.
  *
@@ -231,34 +190,28 @@ export function parseDrillDown(query: string): {
  *   #42:auth.ts:30      → lines 31-60 (default limit 30)
  *   #42:auth.ts:30:20   → lines 31-50 (custom limit 20)
  *
- * @param sessionFile - Path to the JSONL session file
+ * @param message - The message at #N (undefined when there is none)
  * @param entryIndex - The message index (#N)
  * @param pathPattern - File path substring to match (or "file" keyword)
- * @param full - If true, return complete content without truncation
+ * @param full - If true, return all of the content, up to what the view may take of one result
  * @param offset - Line offset (0-indexed) for windowed content
  * @param limit - Max lines to show (default 30 for windowed, ignored if full=true)
- * @returns Formatted content string
  */
 export function expandEntryFile(
-  sessionFile: string,
+  message: unknown,
   entryIndex: number,
   pathPattern: string,
-  full = false,
-  offset?: number,
-  limit?: number,
+  full: boolean,
+  offset: number | undefined,
+  limit: number | undefined,
+  /** What the view may take of one recall result, and what follow-up calls add (session:'id' in an earlier session). */
+  output: { maxChars: number; via: string },
 ): string {
-  const { rendered, rawMessages } = loadAllMessages(sessionFile, true);
-  // Look up by `#N` index, not array position: skipped entries (system
-  // messages) keep their index but are absent from the arrays.
-  const pos = rendered.findIndex((r) => r.index === entryIndex);
-
-  if (pos < 0) {
+  if (message === undefined) {
     return `Entry #${entryIndex} not found in session history.`;
   }
 
-  const msg = rawMessages[pos];
-  const content = msg.content as unknown[];
-  const calls = findContentBearingCalls(content);
+  const calls = fileWritesOf(message);
 
   // Special case: #42:file keyword
   if (pathPattern === "file") {
@@ -266,17 +219,12 @@ export function expandEntryFile(
       return `No file content found in entry #${entryIndex}.`;
     }
     if (calls.length === 1) {
-      return formatToolCallContent(calls[0], entryIndex, {
-        full,
-        offset,
-        limit,
-      });
+      return formatToolCallContent(calls[0], entryIndex, { full, offset, limit, ...output });
     }
-    // Multiple content-bearing calls — list them
     const items = calls.map(
       (tc) => `  [#${entryIndex}:${tc.path}] ${tc.name}(${tc.path})`,
     );
-    return `Entry #${entryIndex} has ${calls.length} file operations:\n${items.join("\n")}\n\nUse #${entryIndex}:path to drill into a specific file.`;
+    return `Entry #${entryIndex} has ${calls.length} file operations:\n${items.join("\n")}\n\nUse #${entryIndex}:path${output.via} to drill into a specific file.`;
   }
 
   const matched = calls.filter((tc) => tc.path.includes(pathPattern));
@@ -293,8 +241,8 @@ export function expandEntryFile(
     return `Entry #${entryIndex} has ${matched.length} file operations matching "${pathPattern}":
 ${items.join("\n")}
 
-Use #${entryIndex}:<more-specific-path> to drill into a specific file.`;
+Use #${entryIndex}:<more-specific-path>${output.via} to drill into a specific file.`;
   }
 
-  return formatToolCallContent(matched[0], entryIndex, { full, offset, limit });
+  return formatToolCallContent(matched[0], entryIndex, { full, offset, limit, ...output });
 }

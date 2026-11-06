@@ -16,15 +16,8 @@
 import type { ExtensionAPI as PiExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { convertToLlm, getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
-import { scaffoldSettings, setSettingsAgentDir } from "./src/core/settings";
-import { createCompactionState, registerCompactionHook, type CompactionHost, type CompactionTrigger } from "./src/hooks/compaction";
-import { registerWindowTracking } from "./src/hooks/window-limits";
-import { registerOmpVccCommand } from "./src/commands/omp-vcc";
-import { registerVccRecallCommand } from "./src/commands/vcc-recall";
-import { registerPinCommands } from "./src/commands/pin";
-import { registerRecallTool } from "./src/tools/recall";
-import { registerPinTool } from "./src/tools/pin";
-import { PI_HOST } from "./src/host";
+import { register } from "./src/register";
+import { PI_HOST, type CompactionTrigger } from "./src/host";
 
 /** The trigger Pi's session_before_compact carries: manual /compact, its threshold, or overflow recovery. */
 const piCompactionTrigger = (event: unknown): CompactionTrigger => {
@@ -35,21 +28,10 @@ const piCompactionTrigger = (event: unknown): CompactionTrigger => {
   };
 };
 
-export default (piApi: PiExtensionAPI) => {
-  setSettingsAgentDir(getAgentDir);
-  scaffoldSettings();
-  const pi = piApi as unknown as ExtensionAPI;
-  const state = createCompactionState();
-  const host: CompactionHost = {
+export default (pi: PiExtensionAPI) =>
+  register(pi as unknown as ExtensionAPI, {
+    ...PI_HOST,
     convertToLlm: (messages) => convertToLlm(messages) as any[],
-    compactionTrigger: piCompactionTrigger,
-    rule: PI_HOST.rule,
-  };
-  registerCompactionHook(pi, host, state);
-  registerWindowTracking(pi, state, PI_HOST);
-  registerOmpVccCommand(pi, state, PI_HOST);
-  registerVccRecallCommand(pi, PI_HOST);
-  registerRecallTool(pi);
-  registerPinTool(pi);
-  registerPinCommands(pi, PI_HOST);
-};
+    agentDir: getAgentDir,
+    triggerOf: piCompactionTrigger,
+  });

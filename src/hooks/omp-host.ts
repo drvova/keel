@@ -1,7 +1,8 @@
-// The compaction hook's view of omp.
+// omp as a host of omp-vcc, built from what omp hands an extension (`pi.pi`),
+// so nothing here imports an omp package at runtime.
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
-import type { CompactionHost, CompactionTrigger } from "./compaction";
-import { OMP_TRIGGER_RULE } from "../core/window";
+import { MANUAL_TRIGGER, OMP_HOST, type CompactionTrigger, type Host } from "../host";
+import { isRecoveryReason } from "../types";
 
 /**
  * omp's session_before_compact carries no trigger. Every automatic pass emits
@@ -11,13 +12,13 @@ import { OMP_TRIGGER_RULE } from "../core/window";
  * after an overflow or a cut-off ("incomplete") reply, never after threshold or
  * idle maintenance.
  */
-export const trackOmpCompactionTrigger = (pi: ExtensionAPI): (() => CompactionTrigger) => {
+const trackOmpCompactionTrigger = (pi: ExtensionAPI): (() => CompactionTrigger) => {
   let pending: CompactionTrigger | undefined;
   pi.on("auto_compaction_start", (event) => {
     const reason = event?.reason;
     pending = {
       reason: reason === "overflow" || reason === "idle" || reason === "incomplete" ? reason : "threshold",
-      willRetry: reason === "overflow" || reason === "incomplete",
+      willRetry: isRecoveryReason(reason),
     };
   });
   pi.on("auto_compaction_end", () => {
@@ -26,22 +27,23 @@ export const trackOmpCompactionTrigger = (pi: ExtensionAPI): (() => CompactionTr
   // Read once per hook run: a pass that ends without auto_compaction_end must
   // not leave its reason behind for a later manual compaction.
   return () => {
-    const trigger = pending ?? { reason: "manual", willRetry: false };
+    const trigger = pending ?? MANUAL_TRIGGER;
     pending = undefined;
     return trigger;
   };
 };
 
 /**
- * omp's own convertToLlm, read from pi.pi so the extension imports no omp
- * package at runtime. No continue of omp-vcc's own: omp resumes the run itself
- * after automatic maintenance (`compaction.autoContinue`).
+ * omp: its own convertToLlm and agent directory from `pi.pi`. No continue of
+ * omp-vcc's own: omp resumes the run itself after automatic maintenance
+ * (`compaction.autoContinue`).
  */
-export const createOmpCompactionHost = (
-  pi: ExtensionAPI,
-  compactionTrigger: () => CompactionTrigger,
-): CompactionHost => ({
-  convertToLlm: (messages) => pi.pi.convertToLlm(messages),
-  compactionTrigger: () => compactionTrigger(),
-  rule: OMP_TRIGGER_RULE,
-});
+export const ompHost = (pi: ExtensionAPI): Host => {
+  const trigger = trackOmpCompactionTrigger(pi);
+  return {
+    ...OMP_HOST,
+    convertToLlm: (messages) => pi.pi.convertToLlm(messages),
+    agentDir: () => pi.pi.getAgentDir(),
+    triggerOf: () => trigger(),
+  };
+};

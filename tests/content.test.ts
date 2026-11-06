@@ -1,12 +1,10 @@
 import { describe, it, expect } from "bun:test";
-import { textParts, textOf, clip, firstLine, extractToolCallArgsText } from "../src/core/content";
+import { textParts, textOf } from "../src/core/content";
+import { argsText } from "../src/core/tools";
 
 describe("textParts", () => {
-  it("returns [] for undefined content", () => {
+  it("returns [] for missing content", () => {
     expect(textParts(undefined as any)).toEqual([]);
-  });
-
-  it("returns [] for null content", () => {
     expect(textParts(null as any)).toEqual([]);
   });
 
@@ -30,30 +28,25 @@ describe("textOf", () => {
   });
 });
 
-describe("extractToolCallArgsText", () => {
+describe("argsText", () => {
   it("extracts top-level string scalars (e.g. bash command)", () => {
-    expect(extractToolCallArgsText({ command: "grep -rn foo src" })).toBe("grep -rn foo src");
+    expect(argsText({ command: "grep -rn foo src" })).toBe("grep -rn foo src");
   });
 
   it("extracts strings from array-of-object fields (e.g. edits[])", () => {
     const args = { path: "a.ts", edits: [{ oldText: "old", newText: "new" }] };
-    const text = extractToolCallArgsText(args);
+    const text = argsText(args);
     expect(text).toContain("a.ts");
     expect(text).toContain("old");
     expect(text).toContain("new");
   });
 
   it("ignores non-string scalars (numbers/booleans)", () => {
-    expect(extractToolCallArgsText({ limit: 50, verbose: true })).toBe("");
-  });
-
-  it("returns '' for missing/invalid args", () => {
-    expect(extractToolCallArgsText(undefined as any)).toBe("");
-    expect(extractToolCallArgsText(null as any)).toBe("");
+    expect(argsText({ limit: 50, verbose: true })).toBe("");
   });
 
   it("does not clip on its own — extraction is unbounded; the caller (search-entries.ts) owns the budget", () => {
-    const text = extractToolCallArgsText({ content: "x".repeat(10_000) });
+    const text = argsText({ content: "x".repeat(10_000) });
     expect(text.length).toBe(10_000);
   });
 });

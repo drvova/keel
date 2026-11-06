@@ -11,11 +11,11 @@
 // `<session>.jsonl.vcc-raw` beside it (not a `.jsonl`: omp lists those as
 // sessions), and recall reads the copy for the entries omp rewrote. Nothing in
 // omp's settings needs changing for it.
-import { appendFileSync, closeSync, existsSync, openSync, readdirSync, readSync } from "fs";
-import { dirname, isAbsolute, join } from "path";
+import { appendFileSync } from "fs";
 import { forEachJsonlLine } from "./jsonl";
+import { sessionLineage } from "./session-file";
 
-export const RAW_STORE_SUFFIX = ".vcc-raw";
+const RAW_STORE_SUFFIX = ".vcc-raw";
 
 export const rawStorePath = (sessionFile: string): string => sessionFile + RAW_STORE_SUFFIX;
 
@@ -75,7 +75,8 @@ export interface RawRecord {
 
 export const appendRawStore = (sessionFile: string, records: RawRecord[]): void => {
   if (records.length === 0) return;
-  appendFileSync(rawStorePath(sessionFile), records.map((r) => JSON.stringify(r)).join("\n") + "\n");
+  // `id` first, whatever the caller built: the scans below read it from each line's start.
+  appendFileSync(rawStorePath(sessionFile), records.map((r) => JSON.stringify({ id: r.id, content: r.content })).join("\n") + "\n");
 };
 
 const ID_AT_START = /^\{"id":"((?:[^"\\]|\\.)*)"/;
@@ -90,62 +91,6 @@ export const rawStoreIds = (sessionFile: string): Set<string> => {
     });
   } catch {}
   return ids;
-};
-
-const HEADER_BYTES = 64 * 1024;
-
-/** The session header's `parentSession`, as a file: a path, or a session id in the same directory. */
-export const parentSessionFile = (sessionFile: string): string | undefined => {
-  let parent: unknown;
-  try {
-    const fd = openSync(sessionFile, "r");
-    try {
-      const buf = Buffer.alloc(HEADER_BYTES);
-      const n = readSync(fd, buf, 0, HEADER_BYTES, 0);
-      // omp writes a title slot line before the header: the header is the first `session` line.
-      for (const line of buf.subarray(0, n).toString("utf8").split("\n").slice(0, 8)) {
-        let record: { type?: unknown; parentSession?: unknown } | undefined;
-        try {
-          record = JSON.parse(line);
-        } catch {
-          continue;
-        }
-        if (record?.type !== "session") continue;
-        parent = record.parentSession;
-        break;
-      }
-    } finally {
-      closeSync(fd);
-    }
-  } catch {
-    return undefined;
-  }
-  if (typeof parent !== "string" || !parent) return undefined;
-  if (isAbsolute(parent)) return existsSync(parent) ? parent : undefined;
-  // A fork names its parent by session id: omp's files are `<timestamp>_<id>.jsonl`.
-  try {
-    const dir = dirname(sessionFile);
-    const name = readdirSync(dir).find((n) => n.endsWith(`_${parent}.jsonl`));
-    return name ? join(dir, name) : undefined;
-  } catch {
-    return undefined;
-  }
-};
-
-/** How far up a fork's parents recall looks for originals. */
-const MAX_PARENTS = 8;
-
-/**
- * The session and the ones it was forked or branched from, nearest first. A
- * fork carries its parent's entries (same ids) as they were when it forked, some
- * already rewritten; their originals are in the parent's store.
- */
-export const sessionLineage = (sessionFile: string): string[] => {
-  const files = [sessionFile];
-  for (let parent = parentSessionFile(sessionFile); parent && files.length <= MAX_PARENTS && !files.includes(parent); parent = parentSessionFile(parent)) {
-    files.push(parent);
-  }
-  return files;
 };
 
 const readOneStore = (sessionFile: string, wanted: Set<string>, found: Map<string, unknown>): void => {
@@ -164,7 +109,12 @@ const readOneStore = (sessionFile: string, wanted: Set<string>, found: Map<strin
   } catch {}
 };
 
-/** The kept content of these entries (the first copy of each), from the session's store and then its parents'. */
+/**
+ * The kept content of these entries (the first copy of each), from the
+ * session's store and then its parents': a fork carries its parent's entries
+ * (same ids) as they were when it forked, some already rewritten, and their
+ * originals are in the parent's store.
+ */
 export const readRawStore = (sessionFile: string, wanted: Set<string>): Map<string, unknown> => {
   const found = new Map<string, unknown>();
   if (wanted.size === 0) return found;

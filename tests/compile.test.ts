@@ -1,11 +1,19 @@
 import { describe, it, expect } from "bun:test";
-import { compile } from "../src/core/summarize";
+import { compile as compileAt, compileSummary, type CompileInput } from "../src/core/summarize";
+import { DEFAULT_SUMMARY_LIMITS } from "../src/core/window";
 import {
   userMsg,
   assistantText,
   assistantWithToolCall,
   toolResult,
 } from "./fixtures";
+/**
+ * compile at a ~128K window's section limits unless a test sets its own. A
+ * `previousSummary` is read from its text (core/legacy-summary.ts), as one an
+ * older version wrote; the hook merges into the state the previous compaction
+ * stored (`previous`, tests/summary-state.test.ts).
+ */
+const compile = (input: Omit<CompileInput, "limits"> & { limits?: CompileInput["limits"] }) => compileAt({ limits: DEFAULT_SUMMARY_LIMITS, ...input });
 
 // A section's body, with wrapped lines (wrapLongLines, 120 chars) rejoined.
 const sectionOf = (s: string, h: string) =>
@@ -26,8 +34,7 @@ describe("compile", () => {
     });
     expect(r).toContain("[Early Session Requests]");
     expect(r).toContain("Fix login bug");
-    expect(r).toContain("---");
-    expect(r).toContain("[user]\nFix login bug");
+    expect(r).toContain("\n\n---\n\n[user]\nFix login bug");
     expect(r).toContain('* Read "auth.ts"');
     expect(r).toContain("Found the issue.");
   });
@@ -87,6 +94,22 @@ describe("compile", () => {
     expect(r.slice(0, r.indexOf("\n\n---\n\n"))).toBe(
       "[Early Session Requests]\n- Original goal\n\n[Commits]\n- abc1234: first\n\n[User Messages]\n- continue please",
     );
+  });
+
+  it("an older summary's paths, listed without their shared directory, are the files this window touches by full path", () => {
+    const previousSummary = "[Files And Changes]\n- Modified: f0.ts, f3.ts\n- Read: src/a.ts\n\n---\n\n[user]\nhi";
+    const r = compile({
+      previousSummary,
+      messages: [
+        userMsg("again"),
+        assistantWithToolCall("Edit", { path: "/repo/f3.ts", oldText: "a", newText: "b" }),
+        assistantWithToolCall("Read", { path: "/repo/src/a.ts" }),
+        assistantWithToolCall("Read", { path: "/other/f0.ts" }),
+        assistantWithToolCall("Read", { path: "/elsewhere/f0.ts" }),
+      ],
+    });
+    // f3.ts and src/a.ts are listed once, by the full path; f0.ts matches two files, so it is left as it was.
+    expect(sectionOf(r, "Files And Changes")).toBe("- Modified: f0.ts, /repo/f3.ts\n- Read: /repo/src/a.ts, /other/f0.ts, /elsewhere/f0.ts");
   });
 
   it("user messages keep the newest, and a repeated message moves to the end", () => {
@@ -149,8 +172,7 @@ describe("compile merge of wrapped header sections", () => {
   });
 
   it("keeps wrapped items of the new turn", () => {
-    // The fresh summary is wrapped before the merge too. Both sides need the
-    // section: with one side empty the merge returns the other unchanged.
+    // Long items of the new turn come out whole, wrapped only where the summary is rendered.
     const goal =
       "Please migrate the billing service from the legacy cron scheduler to the new queue workers and keep the retry semantics identical for failed invoices";
     const paths = Array.from({ length: 8 }, (_, i) => `src/some/deeply/nested/module-${i}/implementation-${i}.ts`);
@@ -218,10 +240,7 @@ describe("compile with trackCommands", () => {
       messages: [userMsg("now check another host"), assistantWithToolCall("bash", { command: "ssh build-mac 'uptime'" })],
       trackCommands: ["ssh"],
     });
-    expect(r).toContain("[Tracked Commands]");
-    expect(r).toContain("ssh prod-server");
-    expect(r).toContain("ssh staging-server");
-    expect(r).toContain("ssh build-mac");
+    expect(sectionOf(r, "Tracked Commands")).toBe("- ssh: ssh prod-server | ssh staging-server | ssh build-mac 'uptime'");
   });
 
   it("does not corrupt an entry containing a literal pipe-adjacent comma across a merge round-trip", () => {
@@ -262,7 +281,6 @@ describe("compile with trackCommands", () => {
       trackCommands: ["docker"],
     });
     expect(first).toMatch(/\n  \S.*service-5/); // really wrapped
-    // The new turn must also have a docker entry: that is what forces a re-parse.
     const r = compile({
       previousSummary: first,
       messages: [userMsg("next"), assistantWithToolCall("bash", { command: "docker ps" })],
@@ -298,8 +316,8 @@ describe("compile with trackCommands", () => {
       ],
       trackCommands: ["ssh", "docker", "kubectl"],
     });
-    expect(r).toContain("docker restart web");
-    expect(r).toContain("kubectl get pods -n prod");
+    // The section, not the brief, which shows the command too.
+    expect(sectionOf(r, "Tracked Commands")).toBe("- ssh: ssh prod-server 'docker restart web'\n- docker: docker restart web\n- kubectl: kubectl get pods -n prod");
   });
 });
 
@@ -369,7 +387,7 @@ describe("compile fileOps wiring", () => {
     // Without it the hook's authoritative read/modified sets are silently dropped.
     const out = compile({
       messages: [userMsg("check the config")],
-      fileOps: { readFiles: ["src/only-from-hook.ts"], modifiedFiles: ["src/changed-by-hook.ts"] },
+      fileOps: { read: ["src/only-from-hook.ts"], changed: ["src/changed-by-hook.ts"] },
     });
     expect(out).toContain("only-from-hook.ts");
     expect(out).toContain("changed-by-hook.ts");
@@ -400,42 +418,59 @@ describe("compile: the recall note across compactions", () => {
     expect(notes(out)).toBe(1);
     expect(out).toContain("[user]\nfix the bucket\n\n[assistant]\ndone");
   });
+});
 
-  describe("file lists follow recent work", () => {
-    const touch = (n: number, from = 0) =>
-      Array.from({ length: n }, (_, i) => assistantWithToolCall("Edit", { path: `/repo/src/f${from + i}.ts` }));
+describe("file lists follow recent work", () => {
+  const touch = (n: number, from = 0) =>
+    Array.from({ length: n }, (_, i) => assistantWithToolCall("Edit", { path: `/repo/src/f${from + i}.ts` }));
 
-    it("keeps the newest files with an earlier-count marker on a first compaction", () => {
-      const r = compile({ messages: [userMsg("work"), ...touch(15)] });
-      expect(r).toContain("(+5 earlier)");
-      expect(r).toContain("f14.ts");
-      expect(r).not.toContain("f4.ts");
+  it("keeps the newest files with an earlier-count marker on a first compaction", () => {
+    const r = compile({ messages: [userMsg("work"), ...touch(15)] });
+    expect(r).toContain("(+5 earlier)");
+    expect(r).toContain("f14.ts");
+    expect(r).not.toContain("f4.ts");
+  });
+
+  it("keeps adding new files across merges instead of freezing on the first ones", () => {
+    const first = compile({ messages: [userMsg("work"), ...touch(10)] });
+    const second = compile({ messages: [userMsg("more"), ...touch(10, 10)], previousSummary: first });
+    expect(second).toContain("f19.ts");
+    expect(second).toContain("(+10 earlier)");
+    expect(second).not.toContain("f0.ts");
+  });
+
+  it("moves a re-edited file back to the newest end", () => {
+    // Merged as the hook merges, into the stored state: the brief names f0.ts too, so look in the section.
+    const first = compileSummary({ messages: [userMsg("work"), ...touch(10)], limits: DEFAULT_SUMMARY_LIMITS });
+    const second = compileSummary({
+      messages: [userMsg("more"), ...touch(1, 0), ...touch(5, 10)],
+      previous: first.state,
+      limits: DEFAULT_SUMMARY_LIMITS,
     });
+    expect(sectionOf(second.text, "Files And Changes")).toBe("- Modified: (+5 earlier) f6.ts, f7.ts, f8.ts, f9.ts, f0.ts, f10.ts, f11.ts, f12.ts, f13.ts, f14.ts");
+  });
 
-    it("keeps adding new files across merges instead of freezing on the first ones", () => {
-      const first = compile({ messages: [userMsg("work"), ...touch(10)] });
-      const second = compile({ messages: [userMsg("more"), ...touch(10, 10)], previousSummary: first });
-      expect(second).toContain("f19.ts");
-      expect(second).toContain("(+10 earlier)");
-      expect(second).not.toContain("f0.ts");
-    });
+  it("keeps two tracked commands that share their first 80 characters apart, through a merge", () => {
+    const base = `kubectl get pods --namespace=production-cluster-eu-west --output=wide --selector=app=`;
+    const run = (cmd: string) => [assistantWithToolCall("bash", { command: cmd })];
+    const opts = { trackCommands: ["kubectl"], limits: DEFAULT_SUMMARY_LIMITS };
+    const first = compileSummary({ messages: [userMsg("check"), ...run(`${base}api`)], ...opts });
+    const second = compileSummary({ messages: [userMsg("again"), ...run(`${base}worker`)], previous: first.state, ...opts });
+    expect(second.state.tracked).toEqual([{ name: "kubectl", entries: [`${base}api`, `${base}worker`] }]);
+  });
 
-    it("moves a re-edited file back to the newest end", () => {
-      const first = compile({ messages: [userMsg("work"), ...touch(10)] });
-      const second = compile({
-        messages: [userMsg("more"), ...touch(1, 0), ...touch(5, 10)],
-        previousSummary: first,
-      });
-      expect(second).toContain("f0.ts");
-      expect(second).not.toContain("f1.ts");
-    });
+  it("carries another compactor's summary wrapped, with none of the next requests as early ones", () => {
+    const llm = `## Goal\n${"The user is building a payments service with a ledger and refunds. ".repeat(30)}`;
+    const r = compileSummary({ messages: [userMsg("now add the refunds endpoint")], previousSummary: llm, previousSummaryForeign: true, limits: DEFAULT_SUMMARY_LIMITS });
+    expect(Math.max(...r.state.brief.split("\n").map((l) => l.length))).toBeLessThanOrEqual(120);
+    expect(r.state.earlyRequests).toEqual([]);
+  });
 
-    // Summaries written before this fix end the list with "(+N more)".
-    it("drops the old (+N more) marker when merging a summary from an older version", () => {
-      const old = "[Files And Changes]\n- Modified: src/a.ts, src/b.ts (+7 more)";
-      const out = compile({ messages: [userMsg("more"), ...touch(1, 50)], previousSummary: old });
-      expect(out).toContain("- Modified: src/a.ts, src/b.ts, /repo/src/f50.ts");
-      expect(out).not.toContain("more)");
-    });
+  // Summaries written before this fix end the list with "(+N more)".
+  it("drops the old (+N more) marker when merging a summary from an older version", () => {
+    const old = "[Files And Changes]\n- Modified: src/a.ts, src/b.ts (+7 more)";
+    const out = compile({ messages: [userMsg("more"), ...touch(1, 50)], previousSummary: old });
+    expect(out).toContain("- Modified: src/a.ts, src/b.ts, /repo/src/f50.ts");
+    expect(out).not.toContain("more)");
   });
 });

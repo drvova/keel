@@ -5,9 +5,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:tes
 import { assertRealPi, piInstalled } from "./support/pi";
 import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
-import { join } from "path";
+import { join, dirname } from "path";
 import { recordLearnedWindow } from "../src/core/model-limits";
-import { setSettingsAgentDir } from "../src/core/settings";
 
 
 
@@ -23,7 +22,6 @@ beforeAll(() => {
 });
 
 afterAll(() => {
-  setSettingsAgentDir();
   for (const [key, value] of Object.entries(saved)) {
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;
@@ -110,6 +108,10 @@ describe.skipIf(!piInstalled())("Pi entry", () => {
     expect([...pi.handlers.keys()].sort()).toEqual(["agent_settled", "message_end", "session_before_compact", "session_compact"]);
     expect([...pi.commands.keys()].sort()).toEqual(["pi-vcc", "pi-vcc-pin", "pi-vcc-recall", "pi-vcc-unpin"]);
     expect(pi.tools.map((t: any) => t.name)).toEqual(["vcc_recall", "vcc_pin"]);
+    // The tools name Pi's commands: vcc_pin told the agent the user pins with /omp-vcc-pin.
+    const pin = pi.tools.find((t: any) => t.name === "vcc_pin");
+    expect(pin.description).toContain("/pi-vcc-pin");
+    expect(pin.description).not.toContain("omp-vcc");
   });
 
   test("the trigger is the one Pi's event carries, and the budgets are sized for Pi's own threshold", async () => {
@@ -129,6 +131,8 @@ describe.skipIf(!piInstalled())("Pi entry", () => {
     await pi.run("pi-vcc", "keep:1");
     expect(pi.compactCalls).toHaveLength(1);
     expect(pi.compactCalls[0].customInstructions).toContain("keep:1");
+    // Pi's compact() returned at once; the command came back only after Pi's onComplete, which reports the outcome.
+    expect(pi.notices).toEqual(["Compacted with omp-vcc"]);
     // The hook gets the marker from Pi's event, so it compacts with omp-vcc even when overriding is off.
     writeFileSync(process.env.OMP_VCC_CONFIG_PATH!, JSON.stringify({ overrideDefaultCompaction: false }));
     const result = pi.beforeCompact({ reason: "manual", willRetry: false, customInstructions: pi.compactCalls[0].customInstructions });
@@ -137,7 +141,7 @@ describe.skipIf(!piInstalled())("Pi entry", () => {
 
   test("past its own trigger on a model whose window Pi overestimates, omp-vcc compacts once Pi settles", async () => {
     const model = { provider: "local", id: "small-model", contextWindow: 128_000 };
-    recordLearnedWindow("local/small-model", 32_768);
+    recordLearnedWindow(dirname(process.env.OMP_VCC_CONFIG_PATH!), "local/small-model", 32_768);
     const pi = await createPi(model);
     pi.setEntries(conversation());
     // Pi's reserve, once a compaction has carried it.

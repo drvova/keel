@@ -13,18 +13,22 @@ import { existsSync, unlinkSync, writeFileSync, mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import {
-  buildGlobalIndexById,
-  isCountedMessageEntry,
-  loadGlobalIndexById,
-} from "../src/core/global-indices";
+  indexById,
+  isCountedEntry,
+  readEntries,
+} from "../src/core/session-file";
 import { normalize } from "../src/core/normalize";
-import { compile } from "../src/core/summarize";
-import { OMP_VCC_COMPACT_INSTRUCTION } from "../src/hooks/compaction";
+import { compile as compileAt, type CompileInput } from "../src/core/summarize";
+import { DEFAULT_SUMMARY_LIMITS } from "../src/core/window";
+import { OMP_VCC_COMPACT_INSTRUCTION } from "../src/core/compact-args";
 import { registerHook } from "./support/host";
 import { userMsg, assistantWithToolCall, toolResult } from "./fixtures";
+/** compile at a ~128K window's section limits unless a test sets its own. */
+const compile = (input: Omit<CompileInput, "limits"> & { limits?: CompileInput["limits"] }) => compileAt({ limits: DEFAULT_SUMMARY_LIMITS, ...input });
 
 let tmpDir: string;
 let CONFIG_PATH: string;
+const savedConfigPath = process.env.OMP_VCC_CONFIG_PATH;
 
 beforeAll(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "omp-vcc-gidx-"));
@@ -33,7 +37,8 @@ beforeAll(() => {
 });
 
 afterAll(() => {
-  delete process.env.OMP_VCC_CONFIG_PATH;
+  if (savedConfigPath === undefined) delete process.env.OMP_VCC_CONFIG_PATH;
+  else process.env.OMP_VCC_CONFIG_PATH = savedConfigPath;
   rmSync(tmpDir, { recursive: true, force: true });
 });
 
@@ -46,9 +51,9 @@ function setConfig(cfg: Record<string, unknown>) {
   writeFileSync(CONFIG_PATH, JSON.stringify(cfg));
 }
 
-// ── global-indices unit ─────────────────────────────────────────────────
+// ── #N by entry id (src/core/session-file.ts) ──────────────────────────
 
-describe("buildGlobalIndexById", () => {
+describe("indexById", () => {
   test("counts only message entries in order", () => {
     const entries = [
       { type: "session", id: "header" },
@@ -58,7 +63,7 @@ describe("buildGlobalIndexById", () => {
       { id: "m2", type: "message", message: { role: "assistant" } },
       { id: "m3", type: "message", message: { role: "toolResult" } },
     ];
-    const map = buildGlobalIndexById(entries);
+    const map = indexById(entries);
     expect(map.get("m1")).toBe(0);
     expect(map.get("m2")).toBe(1);
     expect(map.get("m3")).toBe(2);
@@ -72,7 +77,7 @@ describe("buildGlobalIndexById", () => {
       { id: "a", type: "message", message: { role: "assistant" } },
       { id: "b", type: "message", message: { role: "assistant" } },
     ];
-    const map = buildGlobalIndexById(entries);
+    const map = indexById(entries);
     expect(map.has("a")).toBe(false);
     expect(map.get("b")).toBe(2);
   });
@@ -82,18 +87,18 @@ describe("buildGlobalIndexById", () => {
       { type: "message", message: { role: "user" } },
       { id: "x", type: "message", message: { role: "assistant" } },
     ];
-    expect(buildGlobalIndexById(entries).get("x")).toBe(1);
+    expect(indexById(entries).get("x")).toBe(1);
   });
 
-  test("isCountedMessageEntry requires a message payload", () => {
-    expect(isCountedMessageEntry({ type: "message", message: {} })).toBe(true);
-    expect(isCountedMessageEntry({ type: "message" })).toBe(false);
-    expect(isCountedMessageEntry({ type: "compaction" })).toBe(false);
-    expect(isCountedMessageEntry(null)).toBe(false);
+  test("isCountedEntry requires a message payload", () => {
+    expect(isCountedEntry({ type: "message", message: {} })).toBe(true);
+    expect(isCountedEntry({ type: "message" })).toBe(false);
+    expect(isCountedEntry({ type: "compaction" })).toBe(false);
+    expect(isCountedEntry(null)).toBe(false);
   });
 });
 
-describe("loadGlobalIndexById (streaming file fallback)", () => {
+describe("#N from the session file (the hook's fallback)", () => {
   test("counts message entries in file order across non-message lines", () => {
     const file = join(tmpDir, "session.jsonl");
     const lines = [
@@ -104,14 +109,14 @@ describe("loadGlobalIndexById (streaming file fallback)", () => {
       { id: "m2", type: "message", message: { role: "assistant" } },
     ];
     writeFileSync(file, lines.map((l) => (typeof l === "string" ? l : JSON.stringify(l))).join("\n") + "\n");
-    const map = loadGlobalIndexById(file);
+    const map = indexById(readEntries(file)!);
     expect(map?.get("m1")).toBe(0);
     expect(map?.get("m2")).toBe(1);
     expect(map?.has("c1")).toBe(false);
   });
 
   test("returns undefined for a missing file", () => {
-    expect(loadGlobalIndexById(join(tmpDir, "does-not-exist.jsonl"))).toBeUndefined();
+    expect(readEntries(join(tmpDir, "does-not-exist.jsonl"))).toBeUndefined();
   });
 });
 

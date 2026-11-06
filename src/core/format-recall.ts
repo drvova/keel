@@ -1,77 +1,20 @@
-import type { SearchHit, TouchedFile } from "./search-entries";
+import type { SearchHit } from "./search-entries";
 
-// ── Path shortening ───────────────────────────────────────────────────────
+/** A follow-up call's params after the call: ` with session:'a' and scope:'all'`, "" for none. */
+export const withParams = (...params: Array<string | undefined>): string => {
+  const set = params.filter((p): p is string => !!p);
+  return set.length > 0 ? ` with ${set.join(" and ")}` : "";
+};
 
-const CWD = process.cwd();
+/** session:'id' for a call into an earlier session; nothing for this one. */
+export const sessionParam = (short?: string): string | undefined => (short ? `session:'${short}'` : undefined);
 
-/**
- * Shorten an absolute file path for display:
- * - If within cwd, return `./relative/path`
- * - Otherwise, show last 3 path components with `.../` prefix
- * - Short paths (≤3 components) returned as-is
- *
- * Ported from pi-blackhole (https://github.com/k0valik/pi-blackhole, MIT) by
- * k0valik — a pi-vcc derivative.
- */
-export function shortPath(fullPath: string): string {
-  const normalized = fullPath.replace(/\\/g, "/");
-  const cwdNormalized = CWD.replace(/\\/g, "/");
-  if (normalized.startsWith(cwdNormalized + "/")) {
-    return "." + normalized.slice(cwdNormalized.length);
-  }
-  const parts = normalized.split("/");
-  if (parts.length > 3) {
-    return ".../" + parts.slice(-3).join("/");
-  }
-  return normalized;
-}
+/** scope:'…' for any scope but the default. */
+export const scopeParam = (scope: string): string | undefined => (scope === "lineage" ? undefined : `scope:'${scope}'`);
 
-// ── Touched file output ───────────────────────────────────────────────────
-
-export const TOUCHED_PAGE_SIZE = 5;
-
-/**
- * Format aggregated "files touched" output.
- *
- * Ported from pi-blackhole (https://github.com/k0valik/pi-blackhole, MIT) by
- * k0valik — a pi-vcc derivative.
- */
-export function formatTouchedOutput(
-  touched: TouchedFile[],
-  page?: number,
-  pageSize?: number,
-): string {
-  if (touched.length === 0) {
-    return "No file operations found in session history.";
-  }
-
-  const ps = pageSize ?? TOUCHED_PAGE_SIZE;
-  const totalPages = Math.ceil(touched.length / ps);
-  const currentPage = Math.max(1, page ?? 1);
-  const start = (currentPage - 1) * ps;
-  const pageFiles = touched.slice(start, start + ps);
-
-  const header =
-    totalPages > 1
-      ? `Page ${currentPage}/${totalPages} (${touched.length} total files)`
-      : `${touched.length} files touched`;
-
-  const lines = pageFiles.map((tf) => {
-    const displayPath = shortPath(tf.path);
-    const indices = tf.entries
-      .map((e) => `#${e.index} (${e.toolName})`)
-      .join(", ");
-    return `  ${displayPath}    ${indices}`;
-  });
-
-  let result = `${header}:\n\n${lines.join("\n")}`;
-
-  if (currentPage < totalPages) {
-    result += `\n\n--- Use page:${currentPage + 1} for more results ---`;
-  }
-
-  return result;
-}
+/** The one answer for a page past the last of a paged listing. */
+export const outsidePage = (page: number, totalPages: number, what: string): string =>
+  `Page ${page} is outside the available range 1-${totalPages} (${what}).`;
 
 export const formatRecallOutput = (
   entries: SearchHit[],
@@ -84,11 +27,10 @@ export const formatRecallOutput = (
       : "No entries in session history.";
   }
 
+  // Search, range and touched pass their own header (count, page, scope).
   const header = headerOverride
     ? `${headerOverride}${query ? ` for "${query}"` : ""}:`
-    : query
-      ? `Found ${entries.length} matches for "${query}":`
-      : `Session history (${entries.length} entries):`;
+    : `Session history (${entries.length} entries):`;
 
   const lines = entries.map((e) => {
     const fileSuffix = e.files?.length ? ` files:[${e.files.join(", ")}]` : "";

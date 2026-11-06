@@ -10,7 +10,7 @@ describe("sanitize", () => {
     expect(sanitize("a\r\nb\r\n")).toBe("a\nb\n");
   });
 
-  it("strips bare CR", () => {
+  it("turns a bare CR into LF", () => {
     expect(sanitize("a\rb")).toBe("a\nb");
   });
 

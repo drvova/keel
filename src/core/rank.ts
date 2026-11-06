@@ -1,11 +1,12 @@
 import type { NormalizedBlock, FileOps } from "../types";
-import { extractPath } from "./tool-args";
-import { compileBrief, heredocCloseIndex } from "./brief";
+import { callKind, callSubject, commandOf, filesOf } from "./tools";
+import { compileBrief, heredocCloseIndex, TRIVIAL_LINE_RE } from "./brief";
+import { DEFAULT_BUDGETS } from "./window";
 
 export interface BriefRankingOptions {
   /** Maximum normalized blocks used to build the brief transcript. */
   maxBlocks?: number;
-  /** Always keep this many latest blocks to preserve local continuity. */
+  /** Keep this many latest blocks to preserve local continuity (within the char budget, when one is set). */
   preserveRecentBlocks?: number;
   /** Hook-provided file activity, used as structural signal instead of prose guessing. */
   fileOps?: FileOps;
@@ -32,18 +33,15 @@ export interface BriefRankingOptions {
   briefCharsPerBlock?: number;
 }
 
-export interface RankedBlock {
+interface RankedBlock {
   block: NormalizedBlock;
   index: number;
   score: number;
   reasons: string[];
 }
 
-const DEFAULT_MAX_BLOCKS = 80;
 const DEFAULT_RECENT_BLOCKS = 16;
 
-const EDIT_TOOL_RE = /^(edit|write|multiedit|quick_edit|target_edit|apply_patch)$/i;
-const READ_TOOL_RE = /^(read|glob|grep|ls|find|semantic_query|semantic_grep|semantic_show)$/i;
 const TEST_COMMAND_RE = /\b(?:bun|npm|pnpm|yarn|node|pytest|cargo|go|mvn|gradle)\b[^\n]*(?:test|spec|check|lint|build|tsc)/i;
 const GH_PR_POLL_RE = /(?:^|\s)gh\s+pr\s+(?:view|checks)\s+(\d+)\b/i;
 // Durable workflow facts: which PR/issue was acted on, and git state changes.
@@ -56,8 +54,10 @@ const MIN_SEGMENT_CLOSING_ASSISTANT_CHARS = 120;
 // export, ls, echo, sleep, pwd, comments, heredoc bodies) carries no durable
 // fact. Such blocks get a score penalty so the size-relative budget never
 // pulls them in ahead of real edits/commands when spare chars appear.
-const TRIVIAL_BASH_LINE_RE =
-  /^(?:set\s+[-+]|cd(?:\s+\S+)?$|export\s+\w+=|(?:source|\.)\s+\S+|pwd$|true$|:$|#|ls(?:\s|$)|echo\b|clear$|sleep\b)/;
+// The brief's preamble lines (TRIVIAL_LINE_RE), and looking around: the brief
+// still shows an `ls` as the command, but it is not what a turn did.
+const LOOKING_AROUND_RE = /^(?:cd$|ls(?:\s|$)|echo\b|clear$|sleep\b)/;
+const isScaffoldingLine = (line: string): boolean => TRIVIAL_LINE_RE.test(line) || LOOKING_AROUND_RE.test(line);
 const TRIVIAL_BASH_PENALTY = 16;
 
 const isTrivialOnlyBash = (raw: string): boolean => {
@@ -71,22 +71,18 @@ const isTrivialOnlyBash = (raw: string): boolean => {
     const close = heredocCloseIndex(lines, i);
     if (close !== -1) i = close;
   }
-  const meaningful = kept.map((l) => l.trim()).filter(Boolean).filter((l) => !TRIVIAL_BASH_LINE_RE.test(l));
+  const meaningful = kept.map((l) => l.trim()).filter(Boolean).filter((l) => !isScaffoldingLine(l));
   return meaningful.length === 0;
 };
 
 const asPathSet = (paths?: string[]): Set<string> => new Set((paths ?? []).filter(Boolean));
 
-const bashCommandFromBlock = (block: NormalizedBlock): string | undefined => {
-  if (block.kind === "bash") return block.command;
-  if (block.kind === "tool_call" && /^bash$/i.test(block.name) && typeof block.args.command === "string") {
-    return block.args.command;
-  }
-  return undefined;
-};
+/** The code a block ran: a shell command (the agent's or the user's `!cmd`), or a python cell the user ran. */
+const ranCode = (block: NormalizedBlock): string | undefined =>
+  block.kind === "bash" ? block.command : commandOf(block);
 
 const pathFromBlock = (block: NormalizedBlock): string | undefined => {
-  if (block.kind === "tool_call") return extractPath(block.args) ?? undefined;
+  if (block.kind === "tool_call") return filesOf(block)[0];
   if (block.kind === "bash") {
     const match = block.command.match(/(?:^|\s)([\w./-]+\.[\w-]+)(?:\s|$)/);
     return match?.[1];
@@ -115,10 +111,11 @@ const scoreBlock = (
   if (block.kind === "tool_result") add(ranked, 1, "tool-result-low-value");
 
   if (block.kind === "tool_call") {
-    const command = bashCommandFromBlock(block);
-    if (EDIT_TOOL_RE.test(block.name)) add(ranked, 34, "edit-tool");
+    const command = commandOf(block);
+    const kind = callKind(block);
+    if (kind === "edit" || kind === "write") add(ranked, 34, "edit-tool");
     else if (command && TEST_COMMAND_RE.test(command)) add(ranked, 26, "test-command");
-    else if (READ_TOOL_RE.test(block.name)) add(ranked, 6, "read-tool");
+    else if (kind === "read" || kind === "search") add(ranked, 6, "read-tool");
     else add(ranked, 12, "tool-call");
     if (command && WORKFLOW_COMMAND_RE.test(command)) add(ranked, 14, "workflow-command");
     // An error state is the fact most worth carrying forward (as nonzero-exit for a user-run command).
@@ -195,7 +192,7 @@ const boostSegmentClosingAssistants = (ranked: RankedBlock[]) => {
 };
 
 const dedupKey = (block: NormalizedBlock): string | undefined => {
-  const command = bashCommandFromBlock(block);
+  const command = ranCode(block);
   const ghPrPoll = command?.match(GH_PR_POLL_RE);
   if (ghPrPoll) return `gh-pr-poll:${ghPrPoll[1]}`;
   if (command) {
@@ -203,15 +200,15 @@ const dedupKey = (block: NormalizedBlock): string | undefined => {
     return normalized ? `bash:${normalized}` : undefined;
   }
   if (block.kind === "tool_call") {
-    const path = pathFromBlock(block);
-    return path ? `tool:${block.name.toLowerCase()}:${path}` : undefined;
+    const subject = callSubject(block);
+    return subject ? `tool:${block.name.toLowerCase()}:${subject.value}` : undefined;
   }
   return undefined;
 };
 
 export const rankBriefBlocks = (blocks: NormalizedBlock[], options: BriefRankingOptions = {}): RankedBlock[] => {
-  const modifiedFiles = asPathSet([...(options.fileOps?.modifiedFiles ?? []), ...(options.fileOps?.writtenFiles ?? [])]);
-  const readFiles = asPathSet(options.fileOps?.readFiles);
+  const modifiedFiles = asPathSet(options.fileOps?.changed);
+  const readFiles = asPathSet(options.fileOps?.read);
   const ranked = blocks.map((block, index) => scoreBlock(block, index, blocks.length, modifiedFiles, readFiles));
   boostAdjacency(ranked);
   boostSegmentClosingAssistants(ranked);
@@ -222,7 +219,7 @@ export const selectRankedBriefBlocks = (
   blocks: NormalizedBlock[],
   options: BriefRankingOptions = {},
 ): NormalizedBlock[] => {
-  const maxBlocks = options.maxBlocks ?? DEFAULT_MAX_BLOCKS;
+  const maxBlocks = options.maxBlocks ?? DEFAULT_BUDGETS.briefMaxBlocks;
   // Size-relative budget: when a ceiling + slope are provided, the effective
   // char budget scales with transcript length (block count) between the floor
   // (maxBriefChars) and the ceiling. Larger transcripts carry more high-value
@@ -236,7 +233,6 @@ export const selectRankedBriefBlocks = (
           ),
         )
       : options.maxBriefChars;
-  // Fast path: nothing to trim by count and no char budget to enforce.
   if (blocks.length <= maxBlocks && maxBriefChars == null) return blocks;
 
   const preserveRecentBlocks = Math.min(options.preserveRecentBlocks ?? DEFAULT_RECENT_BLOCKS, maxBlocks);

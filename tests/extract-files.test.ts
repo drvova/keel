@@ -1,9 +1,5 @@
-import { afterEach, describe, it, expect } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { describe, it, expect } from "bun:test";
 import { extractFiles } from "../src/extract/files";
-import { DEFAULT_SETTINGS, loadSettings } from "../src/core/settings";
 import type { NormalizedBlock } from "../src/types";
 
 describe("extractFiles", () => {
@@ -12,7 +8,7 @@ describe("extractFiles", () => {
       { kind: "tool_call", name: "read", args: { path: "a.ts" } },
       { kind: "tool_call", name: "Read", args: { path: "b.ts" } },
       { kind: "tool_call", name: "Write", args: { path: "c.ts" } },
-      { kind: "tool_call", name: "MultiEdit", args: { path: "d.ts" } },
+      { kind: "tool_call", name: "Edit", args: { path: "d.ts" } },
     ];
     const r = extractFiles(blocks);
     expect([...r.read].sort()).toEqual(["a.ts", "b.ts"]);
@@ -32,7 +28,7 @@ describe("extractFiles", () => {
       { kind: "tool_call", name: "write", args: { path: "notes.md" } },
       { kind: "tool_call", name: "write", args: { path: "broken.md" }, failed: true },
     ];
-    const r = extractFiles(blocks, { writtenFiles: ["src/money.py", "README.md", "gen/out.txt"], modifiedFiles: ["src/money.py"] });
+    const r = extractFiles(blocks, { changed: ["src/money.py", "README.md", "gen/out.txt", "src/money.py"] });
     expect([...r.created]).toEqual(["src/money.py", "notes.md"]);
     expect([...r.modified]).toEqual(["README.md", "gen/out.txt"]);
   });
@@ -42,17 +38,20 @@ describe("extractFiles", () => {
       { kind: "tool_call", name: "read", args: { path: "src/money.py" } },
       { kind: "tool_call", name: "read", args: { path: "artifact://0" } },
     ];
-    const r = extractFiles(blocks, { readFiles: ["artifact://0", "skill://x/SKILL.md"] });
+    const r = extractFiles(blocks, { read: ["artifact://0", "skill://x/SKILL.md"] });
     expect([...r.read]).toEqual(["src/money.py"]);
   });
 
-  it("records modern edit tools as modifications", () => {
+  it("records omp's ast_edit, and another extension's tool by its edit arguments, as modifications", () => {
     const blocks: NormalizedBlock[] = [
-      { kind: "tool_call", name: "quick_edit", args: { path: "a.ts" } },
-      { kind: "tool_call", name: "target_edit", args: { path: "b.ts" } },
+      { kind: "tool_call", name: "ast_edit", args: { ops: [{ pat: "a", out: "b" }], paths: ["c.ts"] } },
+      { kind: "tool_call", name: "quick_edit", args: { path: "a.ts", old_string: "x", new_string: "y" } },
+      { kind: "tool_call", name: "target_edit", args: { path: "b.ts", edits: [{ oldText: "x", newText: "y" }] } },
+      { kind: "tool_call", name: "lookup", args: { path: "d.ts" } },
     ];
     const r = extractFiles(blocks);
-    expect([...r.modified].sort()).toEqual(["a.ts", "b.ts"]);
+    expect([...r.modified].sort()).toEqual(["a.ts", "b.ts", "c.ts"]);
+    expect([...r.read]).toEqual([]);
   });
 
   it("records every path of a multi-path edit tool", () => {
@@ -62,43 +61,17 @@ describe("extractFiles", () => {
     expect([...extractFiles(blocks).modified].sort()).toEqual(["a.ts", "b.ts"]);
   });
 
+  it("a write or edit that failed changed nothing, though the host's list names it", () => {
+    const failed = (name: string, args: Record<string, unknown>): NormalizedBlock => ({ kind: "tool_call", name, args, failed: true });
+    const r = extractFiles([failed("edit", { path: "a.ts", oldText: "x", newText: "y" }), failed("write", { path: "b.ts", content: "z" })], { changed: ["a.ts", "b.ts", "c.ts"] });
+    // c.ts is a call the blocks do not show: the host's word stands.
+    expect([...r.modified]).toEqual(["c.ts"]);
+    expect([...r.created]).toEqual([]);
+  });
+
   it("seeds activity from hook-provided fileOps", () => {
-    const r = extractFiles([], { readFiles: ["x.ts"], modifiedFiles: ["y.ts"], createdFiles: [] });
+    const r = extractFiles([], { read: ["x.ts"], changed: ["y.ts"] });
     expect([...r.read]).toEqual(["x.ts"]);
     expect([...r.modified]).toEqual(["y.ts"]);
-  });
-});
-
-describe("settings defaults", () => {
-  it("overrides pi core compaction by default", () => {
-    expect(DEFAULT_SETTINGS.overrideDefaultCompaction).toBe(true);
-  });
-
-  it("trackCommands is empty (feature off) by default", () => {
-    expect(DEFAULT_SETTINGS.trackCommands).toEqual([]);
-  });
-});
-
-describe("loadSettings coercion", () => {
-  // OMP_VCC_CONFIG_PATH is settings.ts' existing override — point it at a
-  // tmp file so the real ~/.omp/agent/omp-vcc-config.json is never touched.
-  const writeConfig = (value: unknown) => {
-    const dir = mkdtempSync(join(tmpdir(), "omp-vcc-cfg-"));
-    const path = join(dir, "config.json");
-    writeFileSync(path, JSON.stringify({ trackCommands: value }));
-    process.env.OMP_VCC_CONFIG_PATH = path;
-  };
-
-  afterEach(() => delete process.env.OMP_VCC_CONFIG_PATH);
-
-  it("malformed trackCommands values coerce fail-closed to string[]", () => {
-    for (const bad of ["ssh", 42, [1, " kubectl ", null, "kubectl"], null, { 0: "ssh" }]) {
-      writeConfig(bad);
-      const got = loadSettings().trackCommands;
-      expect(Array.isArray(got)).toBe(true);
-      for (const x of got) expect(typeof x).toBe("string");
-    }
-    writeConfig(["ssh", "kubectl"]);
-    expect(loadSettings().trackCommands).toEqual(["ssh", "kubectl"]);
   });
 });

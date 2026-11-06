@@ -1,11 +1,10 @@
+import { ompBinding } from "./support/binding";
 import { describe, it, expect } from "bun:test";
 import { mkdtempSync, writeFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { registerRecallTool } from "../src/tools/recall";
 import { parseDrillDown } from "../src/core/drill-down";
-import { formatTouchedOutput, TOUCHED_PAGE_SIZE } from "../src/core/format-recall";
-import type { TouchedFile } from "../src/core/search-entries";
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -34,7 +33,7 @@ const makeSession = (entries: any[]) => {
 
 const register = () => {
   let tool: any;
-  registerRecallTool({ registerTool: (t: any) => { tool = t; } } as any);
+  registerRecallTool({ registerTool: (t: any) => { tool = t; } } as any, ompBinding);
   return tool;
 };
 
@@ -158,14 +157,17 @@ describe("vcc_recall mode:touched", () => {
       const tool = register();
       const page1 = await invoke(tool, file, ids, { mode: "touched" });
       expect(page1).toContain("Page 1/2 (7 total files)");
-      expect(page1).toContain("--- Use page:2 for more results ---");
+      // The hint is the call that reads the next page: without mode it would be another listing.
+      expect(page1).toContain("--- Use mode:'touched' page:2 for more results ---");
       expect(page1).toContain("src/f0.ts");
       expect(page1).not.toContain("src/f5.ts");
 
       const page2 = await invoke(tool, file, ids, { mode: "touched", page: 2 });
       expect(page2).toContain("Page 2/2 (7 total files)");
       expect(page2).toContain("src/f5.ts");
-      expect(page2).not.toContain("--- Use page:3");
+      expect(page2).not.toContain("page:3");
+      // Past the last page: said, not an empty page.
+      expect(await invoke(tool, file, ids, { mode: "touched", page: 5 })).toBe("Page 5 is outside the available range 1-2 (7 files touched).");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -224,6 +226,47 @@ describe("vcc_recall drill-down", () => {
     }
   });
 
+  it("#N:path:full of a file past the cap says where its next lines are, within the cap", async () => {
+    const huge = Array.from({ length: 4000 }, (_, i) => `line ${i} ${"x".repeat(30)}`).join("\n");
+    const entries = [toolMsg("m1", "write", { path: "/w/big.txt", content: huge })];
+    const { dir, file, ids } = makeSession(entries);
+    try {
+      const tool = register();
+      // A long note in front (here an unknown param 700 chars long) comes out of the same result.
+      const out = await invoke(tool, file, ids, { query: "#0:/w/big.txt:full", range: [0, 0], note: "n".repeat(700) });
+      expect(out).toStartWith("Ignored: note");
+      expect(out).toMatch(/Use #0:\/w\/big\.txt:\d+ for the lines from \d+ on\.\)$/);
+      expect(out).not.toContain("output clipped");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("expand clips a call's arguments at the cap's share, whatever goes in front of it", async () => {
+    const entries = [toolMsg("m1", "write", { path: "/w/long.txt", content: "y".repeat(9000) })];
+    const { dir, file, ids } = makeSession(entries);
+    try {
+      const tool = register();
+      // No context window: the 50 KB cap, whose expand clip is 4,000; an Ignored: note goes in front.
+      const out = await invoke(tool, file, ids, { expand: [0], limit: 1 });
+      expect(out).toStartWith("Ignored: limit");
+      expect(out).toContain("...[arguments of #0 clipped at 4000 of");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("#N:path of an edit that deletes text shows what it removed", async () => {
+    const entries = [toolMsg("m1", "edit", { path: "src/a.ts", old_string: "const unused = 1;", new_string: "" })];
+    const { dir, file, ids } = makeSession(entries);
+    try {
+      const out = await invoke(register(), file, ids, { query: "#0:src/a.ts" });
+      expect(out).toContain("--- old ---\nconst unused = 1;\n--- new ---\n");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("inline mention is treated as a normal search, not drill-down", async () => {
     const entries = [toolMsg("m1", "write", { path: "src/big.ts", content: bigContent })];
     const { dir, file, ids } = makeSession(entries);
@@ -254,22 +297,6 @@ describe("parseDrillDown", () => {
   });
 });
 
-// ── Unit: formatTouchedOutput paging ──────────────────────────────────────
-
-describe("formatTouchedOutput", () => {
-  const tf = (path: string, index: number): TouchedFile => ({ path, entries: [{ index, toolName: "edit" }] });
-
-  it("shows page header and footer when there are more pages", () => {
-    const files = Array.from({ length: TOUCHED_PAGE_SIZE + 2 }, (_, i) => tf(`src/f${i}.ts`, i));
-    const out = formatTouchedOutput(files, 1);
-    expect(out).toContain(`Page 1/2 (${files.length} total files)`);
-    expect(out).toContain("--- Use page:2 for more results ---");
-  });
-
-  it("returns empty-state message when no files", () => {
-    expect(formatTouchedOutput([])).toContain("No file operations found in session history.");
-  });
-});
 describe("drill-down scope", () => {
   it("labels #N:path on off-lineage entries by default, plain with scope all", async () => {
     const entries = [

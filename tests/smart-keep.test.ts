@@ -12,16 +12,19 @@ const tokenContent = (n: number): string => "a".repeat(n * 4);
 
 describe("resolveSmartKeepUserTurns", () => {
   test("smart disabled → old behavior, keep base (1)", () => {
+    // Three user turns: enabled, it would boost to 2 (as below).
     const entries = [
       msg("u1", "user", tokenContent(3)),
       msg("a1", "assistant", tokenContent(3)),
       msg("u2", "user", tokenContent(3)),
       msg("a2", "assistant", tokenContent(3)),
+      msg("u3", "user", tokenContent(3)),
+      msg("a3", "assistant", tokenContent(3)),
     ];
     const r = resolveSmartKeepUserTurns({
       branchEntries: entries,
       requestedKeepUserTurns: null,
-      explicit: false,
+      skipCustomTypes: [],
       smartKeepTail: false,
       minTokens: 10,
       maxTokens: 40,
@@ -39,15 +42,16 @@ describe("resolveSmartKeepUserTurns", () => {
       msg("u3", "user", tokenContent(3)),
       msg("a3", "assistant", tokenContent(3)),
     ];
+    // keep:1 has a 6-token tail: the default path would boost it to 2 (as below).
     const r = resolveSmartKeepUserTurns({
       branchEntries: entries,
-      requestedKeepUserTurns: 2,
-      explicit: true,
+      requestedKeepUserTurns: 1,
+      skipCustomTypes: [],
       smartKeepTail: true,
       minTokens: 10,
       maxTokens: 40,
     });
-    expect(r.keepUserTurns).toBe(2);
+    expect(r.keepUserTurns).toBe(1);
     expect(r.smartAdjusted).toBe(false);
   });
 
@@ -68,14 +72,13 @@ describe("resolveSmartKeepUserTurns", () => {
     const r = resolveSmartKeepUserTurns({
       branchEntries: entries,
       requestedKeepUserTurns: null,
-      explicit: false,
+      skipCustomTypes: [],
       smartKeepTail: true,
       minTokens: 10,
       maxTokens: 40,
     });
     expect(r.keepUserTurns).toBe(2);
     expect(r.smartAdjusted).toBe(true);
-    expect(r.fromKeep).toBe(1);
   });
 
   test("keep:1 tail <= min but keep:2 > max → keep 1", () => {
@@ -92,7 +95,7 @@ describe("resolveSmartKeepUserTurns", () => {
     const r = resolveSmartKeepUserTurns({
       branchEntries: entries,
       requestedKeepUserTurns: null,
-      explicit: false,
+      skipCustomTypes: [],
       smartKeepTail: true,
       minTokens: 10,
       maxTokens: 11,
@@ -102,17 +105,19 @@ describe("resolveSmartKeepUserTurns", () => {
   });
 
   test("keep:1 tail > min → no boost (already above threshold)", () => {
-    // keep:1 tail = 8+8 = 16 tokens (> min 10).
+    // keep:1 tail = 8+8 = 16 tokens (> min 10); keep:2 (22) would fit max 100.
     const entries = [
       msg("u1", "user", tokenContent(3)),
       msg("a1", "assistant", tokenContent(3)),
-      msg("u2", "user", tokenContent(8)),
-      msg("a2", "assistant", tokenContent(8)),
+      msg("u2", "user", tokenContent(3)),
+      msg("a2", "assistant", tokenContent(3)),
+      msg("u3", "user", tokenContent(8)),
+      msg("a3", "assistant", tokenContent(8)),
     ];
     const r = resolveSmartKeepUserTurns({
       branchEntries: entries,
       requestedKeepUserTurns: null,
-      explicit: false,
+      skipCustomTypes: [],
       smartKeepTail: true,
       minTokens: 10,
       maxTokens: 100,
@@ -132,7 +137,7 @@ describe("resolveSmartKeepUserTurns", () => {
     const r = resolveSmartKeepUserTurns({
       branchEntries: entries,
       requestedKeepUserTurns: null,
-      explicit: false,
+      skipCustomTypes: [],
       smartKeepTail: true,
       minTokens: 10,
       maxTokens: 40,
@@ -153,7 +158,7 @@ describe("resolveSmartKeepUserTurns", () => {
     const r = resolveSmartKeepUserTurns({
       branchEntries: entries,
       requestedKeepUserTurns: null,
-      explicit: false,
+      skipCustomTypes: [],
       smartKeepTail: true,
       minTokens: 10,
       maxTokens: 100,
@@ -175,14 +180,13 @@ describe("resolveSmartKeepUserTurns", () => {
     const r = resolveSmartKeepUserTurns({
       branchEntries: entries,
       requestedKeepUserTurns: null,
-      explicit: false,
+      skipCustomTypes: [],
       smartKeepTail: true,
       // use default thresholds
     });
     // keep:3 would cross the compact-all boundary, so boost only to 2.
     expect(r.keepUserTurns).toBe(2);
     expect(r.smartAdjusted).toBe(true);
-    expect(r.fromKeep).toBe(1);
   });
 
   test("uses calibrated chars/token ratio when estimating tail size", () => {
@@ -197,7 +201,7 @@ describe("resolveSmartKeepUserTurns", () => {
     const r = resolveSmartKeepUserTurns({
       branchEntries: entries,
       requestedKeepUserTurns: null,
-      explicit: false,
+      skipCustomTypes: [],
       smartKeepTail: true,
       minTokens: 10,
       maxTokens: 20,
@@ -208,5 +212,16 @@ describe("resolveSmartKeepUserTurns", () => {
     // Calibrated 2 chars/token makes keep:1 already 12 tokens (> minTokens=10), so it stays at 1.
     expect(r.keepUserTurns).toBe(1);
     expect(r.smartAdjusted).toBe(false);
+  });
+});
+
+describe("smart keep and skipped custom messages", () => {
+  // A custom message the user skips renders nothing, so a cut that keeps every
+  // user turn would leave a prefix with nothing to summarize.
+  test("does not grow keep:N to a cut whose prefix is only a skipped custom message", () => {
+    const custom = { type: "custom_message", id: "c0", customType: "boiler", content: "per-turn boilerplate", display: false, timestamp: new Date().toISOString() };
+    const entries = [custom, msg("u1", "user", "first request"), msg("a1", "assistant", "done"), msg("u2", "user", "second request"), msg("a2", "assistant", "done too")];
+    const r = resolveSmartKeepUserTurns({ branchEntries: entries, requestedKeepUserTurns: null, skipCustomTypes: ["boiler"], smartKeepTail: true, charsPerToken: 4, minTokens: 1000, maxTokens: 5000 });
+    expect(r.keepUserTurns).toBe(1);
   });
 });
