@@ -38,7 +38,8 @@ export interface CompileInput {
 }
 
 export interface RankedCompileInput extends CompileInput {
-  ranking?: BriefRankingOptions;
+  /** How the brief is ranked; its file activity is `fileOps`. */
+  ranking?: Omit<BriefRankingOptions, "fileOps">;
 }
 
 export interface CompiledSummary {
@@ -56,7 +57,7 @@ export const compileSummary = (input: RankedCompileInput): CompiledSummary => {
   const previous = input.previous ?? legacy;
   const fresh = freshState({
     blocks,
-    briefBlocks: selectRankedBriefBlocks(blocks, { ...input.ranking, fileOps: input.ranking?.fileOps ?? input.fileOps }),
+    briefBlocks: selectRankedBriefBlocks(blocks, { ...input.ranking, fileOps: input.fileOps }),
     fileOps: input.fileOps,
     trackCommands: input.trackCommands,
     earlySlots: previous?.earlySlots ?? EARLY_REQUESTS_KEPT,

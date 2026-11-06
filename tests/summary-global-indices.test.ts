@@ -20,7 +20,7 @@ import {
 import { normalize } from "../src/core/normalize";
 import { compile as compileAt, type RankedCompileInput } from "../src/core/summarize";
 import { DEFAULT_SUMMARY_LIMITS } from "../src/core/window";
-import { OMP_VCC_COMPACT_INSTRUCTION } from "../src/hooks/compaction";
+import { OMP_VCC_COMPACT_INSTRUCTION } from "../src/core/compact-args";
 import { registerHook } from "./support/host";
 import { userMsg, assistantWithToolCall, toolResult } from "./fixtures";
 /** compile at a ~128K window's section limits unless a test sets its own. */

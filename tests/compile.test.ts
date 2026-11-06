@@ -388,7 +388,7 @@ describe("compile fileOps wiring", () => {
     // Without it the hook's authoritative read/modified sets are silently dropped.
     const out = compile({
       messages: [userMsg("check the config")],
-      fileOps: { readFiles: ["src/only-from-hook.ts"], modifiedFiles: ["src/changed-by-hook.ts"] },
+      fileOps: { read: ["src/only-from-hook.ts"], changed: ["src/changed-by-hook.ts"] },
     });
     expect(out).toContain("only-from-hook.ts");
     expect(out).toContain("changed-by-hook.ts");

@@ -28,7 +28,7 @@ describe("extractFiles", () => {
       { kind: "tool_call", name: "write", args: { path: "notes.md" } },
       { kind: "tool_call", name: "write", args: { path: "broken.md" }, failed: true },
     ];
-    const r = extractFiles(blocks, { writtenFiles: ["src/money.py", "README.md", "gen/out.txt"], modifiedFiles: ["src/money.py"] });
+    const r = extractFiles(blocks, { changed: ["src/money.py", "README.md", "gen/out.txt", "src/money.py"] });
     expect([...r.created]).toEqual(["src/money.py", "notes.md"]);
     expect([...r.modified]).toEqual(["README.md", "gen/out.txt"]);
   });
@@ -38,7 +38,7 @@ describe("extractFiles", () => {
       { kind: "tool_call", name: "read", args: { path: "src/money.py" } },
       { kind: "tool_call", name: "read", args: { path: "artifact://0" } },
     ];
-    const r = extractFiles(blocks, { readFiles: ["artifact://0", "skill://x/SKILL.md"] });
+    const r = extractFiles(blocks, { read: ["artifact://0", "skill://x/SKILL.md"] });
     expect([...r.read]).toEqual(["src/money.py"]);
   });
 
@@ -62,7 +62,7 @@ describe("extractFiles", () => {
   });
 
   it("seeds activity from hook-provided fileOps", () => {
-    const r = extractFiles([], { readFiles: ["x.ts"], modifiedFiles: ["y.ts"], createdFiles: [] });
+    const r = extractFiles([], { read: ["x.ts"], changed: ["y.ts"] });
     expect([...r.read]).toEqual(["x.ts"]);
     expect([...r.modified]).toEqual(["y.ts"]);
   });

@@ -97,9 +97,7 @@ export interface PinHost {
   appendEntry: (customType: string, data?: unknown) => void;
 }
 
-export type PinSession = SessionManagerLike;
-
-const branchOf = (session: PinSession): any[] => hostBranch(session) ?? [];
+const branchOf = (session: SessionManagerLike): any[] => hostBranch(session) ?? [];
 
 /** "3", "#3", "[3]", 3 -> 3. */
 const toPinId = (value: unknown): number | undefined => {
@@ -110,7 +108,7 @@ const toPinId = (value: unknown): number | undefined => {
 };
 
 /** Pin a note; `done` says whether it was pinned, `text` what happened. */
-export const addPin = (host: PinHost, session: PinSession, raw: string, by: PinAuthor): PinResult => {
+export const addPin = (host: PinHost, session: SessionManagerLike, raw: string, by: PinAuthor): PinResult => {
   const { text, clipped } = pinText(raw);
   if (!text) return { done: false, text: "Nothing to pin: give the note text." };
   const branch = branchOf(session);
@@ -126,7 +124,7 @@ export const addPin = (host: PinHost, session: PinSession, raw: string, by: PinA
 const withAt = (at: number | undefined) => (at != null ? { at } : {});
 
 /** Unpin a note by its id ("3", "#3", "[3]", 3). */
-export const removePin = (host: PinHost, session: PinSession, idValue: unknown): PinResult => {
+export const removePin = (host: PinHost, session: SessionManagerLike, idValue: unknown): PinResult => {
   const id = toPinId(idValue);
   const notes = readPins(branchOf(session));
   const note = id == null ? undefined : notes.find((n) => n.id === id);
@@ -135,7 +133,7 @@ export const removePin = (host: PinHost, session: PinSession, idValue: unknown):
   return { done: true, text: `Unpinned ${formatPin(note)}.` };
 };
 
-export const listPins = (session: PinSession): string => formatPinList(readPins(branchOf(session)));
+export const listPins = (session: SessionManagerLike): string => formatPinList(readPins(branchOf(session)));
 
 /** What a pin or unpin did: `done` when the note changed, `text` what to tell. */
 interface PinResult {

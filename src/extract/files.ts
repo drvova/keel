@@ -11,8 +11,8 @@ interface FileActivity {
  * Files read, modified and created in these blocks, in order. A `write` to a
  * path not read, edited or written before it here creates the file; one after
  * them rewrites a file that existed. A file created here stays Created when it is
- * edited afterwards: it is still new. omp reports `write`s without saying which
- * kind (`fileOps.writtenFiles`), so one the blocks did not show counts as
+ * edited afterwards: it is still new. The host reports writes without saying
+ * which kind (`fileOps.changed`), so one the blocks did not show counts as
  * modified.
  */
 export const extractFiles = (
@@ -46,11 +46,8 @@ export const extractFiles = (
     }
   }
 
-  for (const p of fileOps?.readFiles ?? []) if (!isUrlPath(p)) act.read.add(p);
-  for (const p of fileOps?.createdFiles ?? []) if (!isUrlPath(p) && !act.modified.has(p)) act.created.add(p);
-  for (const p of [...(fileOps?.modifiedFiles ?? []), ...(fileOps?.writtenFiles ?? [])]) {
-    if (!isUrlPath(p)) change(p);
-  }
+  for (const p of fileOps?.read ?? []) if (!isUrlPath(p)) act.read.add(p);
+  for (const p of fileOps?.changed ?? []) if (!isUrlPath(p)) change(p);
 
   return act;
 };

@@ -57,8 +57,8 @@ const toolHints = (short?: string): RecallPagingHints => {
       : `Use a page between 1 and ${totalPages}, or refine your query.`,
     nextPage: (_query, scope, page) =>
       `\n--- Use page:${page}${short ? `${at}${scope === "all" ? " and scope:'all'" : ""}` : scope === "all" ? " with scope:'all'" : ""} for more results ---`,
-    // The agent has its current turn in context, and its question would match itself.
-    skipCurrentTurn: !short,
+    // The agent has its current turn in context, and its question would match itself (an earlier session has none).
+    skipCurrentTurn: true,
     aroundHit: (n, scope) => short
       ? `\n--- Read around a hit: session:'${short}', range:[${Math.max(0, n - 3)}, ${n + 3}]; full text: session:'${short}', expand:[${n}] ---`
       : `\n--- Read around a hit: range:[${Math.max(0, n - 3)}, ${n + 3}]; full text: expand:[${n}]${scope === "all" ? " (with scope:'all')" : ""} ---`,

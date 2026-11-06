@@ -107,7 +107,8 @@ export const assembleSummary = (input: AssembleInput): Assembled => {
   // originals with the compaction (core/working-set.ts), so the agent does not
   // spend its next requests fetching it again.
   let workingSet: { lines: string[]; shown: number[] } | undefined;
-  if (settings.workingSet && budgets.workingSetTokens > 0) {
+  // The budgets give it no room when the setting is off.
+  if (budgets.workingSetTokens > 0) {
     const keptAt = cut.firstKeptEntryId ? branchEntries.findIndex((e: any) => e.id === cut.firstKeptEntryId) : -1;
     const kept = keptAt >= 0 ? branchEntries.slice(keptAt).map(toLiveMessage).filter(Boolean) : [];
     // Everything out of context once this lands, since /clear: what this

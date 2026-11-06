@@ -95,7 +95,8 @@ export const pointPlaceholders = (messages: unknown[], state: RawCaptureState, s
 };
 
 /** Keep originals for the session this binding serves (`keepOriginals`, default on). */
-export const registerRawCapture = (pi: ExtensionAPI, config: Config, state: RawCaptureState = createRawCaptureState()): void => {
+export const registerRawCapture = (pi: ExtensionAPI, config: Config): void => {
+  const state = createRawCaptureState();
   const capture = (ctx: unknown) => {
     try {
       if (!config.load().keepOriginals) return;

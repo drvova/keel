@@ -3,7 +3,8 @@
 import { OMP_HOST } from "../src/host";
 import { describe, expect, test } from "bun:test";
 import { registerOmpVccCommand } from "../src/commands/omp-vcc";
-import { createCompactionState, OMP_VCC_COMPACT_INSTRUCTION } from "../src/hooks/compaction";
+import { createCompactionState } from "../src/hooks/compaction";
+import { OMP_VCC_COMPACT_INSTRUCTION } from "../src/core/compact-args";
 
 type CompactOptions = {
   suppressContinuation?: boolean;

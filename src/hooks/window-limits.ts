@@ -2,9 +2,8 @@
 // where omp-vcc compacts on its own because the host's trigger is above the real limit.
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { modelKey, recordLearnedWindow, type WindowInfo } from "../core/model-limits";
-import type { Config } from "../core/settings";
 import { limitFromOverflowError, type TriggerRule } from "../core/window";
-import { compactAndWait, tell, type Binding, type CompactionTrigger, type HostProfile } from "../host";
+import { compactAndWait, tell, type Binding, type CompactionTrigger } from "../host";
 import { isRecoveryReason, type CompactionReason } from "../types";
 
 /** What window tracking learns over a binding's sessions, and the compaction it starts itself. */

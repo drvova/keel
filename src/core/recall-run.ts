@@ -20,7 +20,6 @@ const RECENT_COUNT = 25;
  * every action reads through it. Loads are cached per call.
  */
 interface RecallView {
-  sessionFile: string;
   scope: RecallScope;
   /** This project's other sessions (mode:'sessions', scope:'project'); unset when unknown. */
   project?: ProjectSessions;
@@ -45,7 +44,6 @@ interface RecallView {
 
 /** The project's other session files, listed once per recall call. */
 interface ProjectSessions {
-  dir: string;
   /** The newest MAX_LISTED_SESSIONS; `more` when there are older ones. */
   list(): SessionInfo[] & { more: boolean };
   /** Every one: an id older than the listed ones still names its session. */
@@ -56,7 +54,6 @@ const projectSessions = (dir: string, currentFile: string): ProjectSessions => {
   let listed: ReturnType<typeof listProjectSessions> | undefined;
   let all: SessionInfo[] | undefined;
   return {
-    dir,
     list: () => (listed ??= listProjectSessions(dir, currentFile)),
     all: () => (all ??= listProjectSessions(dir, currentFile, Infinity)),
   };
@@ -90,7 +87,6 @@ const openRecallView = (
   let wide: RecallView | undefined;
   let turn: Set<number> | undefined;
   const view: RecallView = {
-    sessionFile,
     scope,
     ...(options.project ? { project: options.project } : {}),
     ...(options.session ? { session: options.session } : {}),

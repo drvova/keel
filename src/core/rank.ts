@@ -205,8 +205,8 @@ const dedupKey = (block: NormalizedBlock): string | undefined => {
 };
 
 export const rankBriefBlocks = (blocks: NormalizedBlock[], options: BriefRankingOptions = {}): RankedBlock[] => {
-  const modifiedFiles = asPathSet([...(options.fileOps?.modifiedFiles ?? []), ...(options.fileOps?.writtenFiles ?? [])]);
-  const readFiles = asPathSet(options.fileOps?.readFiles);
+  const modifiedFiles = asPathSet(options.fileOps?.changed);
+  const readFiles = asPathSet(options.fileOps?.read);
   const ranked = blocks.map((block, index) => scoreBlock(block, index, blocks.length, modifiedFiles, readFiles));
   boostAdjacency(ranked);
   boostSegmentClosingAssistants(ranked);

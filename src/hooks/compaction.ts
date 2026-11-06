@@ -12,13 +12,11 @@ import type { VccSettings } from "../core/settings";
 import { calibrateCharsPerToken, DEFAULT_CHARS_PER_TOKEN, estimateMessageChars, estimateTokensFromChars } from "../core/token-estimate";
 import { compactionBudgets } from "../core/window";
 import { isRecovery, tell, type Binding } from "../host";
-export type { CompactionTrigger } from "../host";
 import { applyContextEdits } from "../core/context-edits";
 import { modelKey } from "../core/model-limits";
 import { triggerFor, type WindowState } from "./window-limits";
 import { vccDetailsOf, type VccCompactionDetails } from "../details";
 import { COMPACTOR } from "../names";
-import type { CompactionReason } from "../types";
 import {
   applyTailBudget,
   buildOwnCut,
@@ -31,8 +29,6 @@ import {
 } from "../compaction/cut";
 import { assembleSummary } from "../compaction/assemble";
 import { tellCompactionStats, type CompactionStats } from "../compaction/stats";
-
-export { OMP_VCC_COMPACT_INSTRUCTION } from "../core/compact-args";
 
 /** What the compaction hook needs of its host. */
 export type CompactionHost = Pick<Binding, "name" | "rule" | "convertToLlm" | "triggerOf" | "config" | "window">;
@@ -243,11 +239,7 @@ export const registerCompactionHook = (
       sessionFile: (ctx as any)?.sessionManager?.getSessionFile?.(),
       indexById: globalIndexById,
       previousSummary,
-      fileOps: {
-        readFiles: [...preparation.fileOps.read],
-        modifiedFiles: [...preparation.fileOps.edited],
-        writtenFiles: [...preparation.fileOps.written],
-      },
+      fileOps: { read: [...preparation.fileOps.read], changed: [...preparation.fileOps.edited, ...preparation.fileOps.written] },
       settings,
       budgets,
       charsPerToken: tokenEstimate.charsPerToken,

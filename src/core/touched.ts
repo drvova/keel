@@ -3,7 +3,7 @@
 import type { LoadedEntry } from "./load-messages";
 import { callKind, filesOf, fileWriteOf, toolCallsOf, writtenText } from "./tools";
 
-export const TOUCHED_PAGE_SIZE = 5;
+const TOUCHED_PAGE_SIZE = 5;
 
 /** One entry that changed a file. */
 interface FileTouch {
@@ -13,7 +13,7 @@ interface FileTouch {
   drillable?: false;
 }
 
-export interface TouchedFile {
+interface TouchedFile {
   path: string;
   entries: FileTouch[];
 }
