@@ -24,7 +24,7 @@ import {
 import { resolveThresholdTokens } from "@oh-my-pi/pi-agent-core/compaction";
 import { learnedWindow, recordLearnedWindow } from "../src/core/model-limits";
 import type { CompactionReason } from "../src/types";
-import { createWindowState, triggerFor as triggerForRule, type WindowState } from "../src/hooks/window-limits";
+import { triggerFor as triggerForRule } from "../src/hooks/window-limits";
 import { windowOf as windowOfHost } from "../src/core/model-limits";
 import type { HostName } from "../src/host";
 
@@ -33,17 +33,8 @@ const configDir = () => dirname(process.env.OMP_VCC_CONFIG_PATH!);
 /** omp's unless a test names Pi's. */
 const windowOf = (model: Parameters<typeof windowOfHost>[0], host: HostName = "omp") => windowOfHost(model, host, configDir());
 /** As the hook runs a compaction, omp's rule unless a test names another. */
-const triggerFor = (
-  w: ReturnType<typeof windowOfHost>,
-  state: WindowState,
-  key: string,
-  reason: CompactionReason,
-  before: number,
-  policy?: object,
-  rule: TriggerRule = OMP_TRIGGER_RULE,
-) => {
-  return triggerForRule(w, state, key, reason, before, policy, rule);
-};
+const triggerFor = (w: ReturnType<typeof windowOfHost>, reason: CompactionReason, before: number, policy?: object, rule: TriggerRule = OMP_TRIGGER_RULE) =>
+  triggerForRule(w, reason, before, policy, rule);
 
 let dir: string;
 const prev = process.env.OMP_VCC_CONFIG_PATH;
@@ -187,25 +178,25 @@ describe("triggerFor", () => {
   const model = { provider: "p", id: "m", contextWindow: 128_000 };
 
   it("an overflow pass is bounded by the context that overflowed", () => {
-    expect(triggerFor(windowOf(model), createWindowState(), "p/m", "overflow", 30_000)).toBe(30_000);
+    expect(triggerFor(windowOf(model), "overflow", 30_000)).toBe(30_000);
   });
 
   it("omp's policy, as its compactions carry it, places the trigger; without one, omp's default for the window", () => {
     const w = windowOf(model);
-    expect(triggerFor(w, createWindowState(), "p/m", "threshold", 70_000, { thresholdPercent: 50 })).toBe(64_000);
-    expect(triggerFor(w, createWindowState(), "p/m", "manual", 40_000)).toBe(108_800);
-    expect(triggerFor(w, createWindowState(), "p/m", "manual", 40_000, { thresholdTokens: 90_000 })).toBe(90_000);
-    expect(triggerFor(w, createWindowState(), "p/m", "overflow", 30_000, { thresholdTokens: 90_000 })).toBe(30_000);
+    expect(triggerFor(w, "threshold", 70_000, { thresholdPercent: 50 })).toBe(64_000);
+    expect(triggerFor(w, "manual", 40_000)).toBe(108_800);
+    expect(triggerFor(w, "manual", 40_000, { thresholdTokens: 90_000 })).toBe(90_000);
+    expect(triggerFor(w, "overflow", 30_000, { thresholdTokens: 90_000 })).toBe(30_000);
   });
 
   it("when a smaller real window is known, omp's trigger is above it and omp-vcc's own applies", () => {
     recordLearnedWindow(configDir(), "p/m", 32_768);
     const w = windowOf(model);
     expect(w).toMatchObject({ host: 128_000, learned: 32_768, effective: 32_768, source: "overflow-error" });
-    expect(triggerFor(w, createWindowState(), "p/m", "threshold", 100_000)).toBe(16_384);
+    expect(triggerFor(w, "threshold", 100_000)).toBe(16_384);
     // The user's own policy, on the real window: 80% of it, and a fixed 90K past it falls back as omp's does.
-    expect(triggerFor(w, createWindowState(), "p/m", "threshold", 100_000, { thresholdPercent: 80 })).toBe(26_214);
-    expect(triggerFor(w, createWindowState(), "p/m", "threshold", 100_000, { thresholdTokens: 90_000 })).toBe(16_384);
+    expect(triggerFor(w, "threshold", 100_000, { thresholdPercent: 80 })).toBe(26_214);
+    expect(triggerFor(w, "threshold", 100_000, { thresholdTokens: 90_000 })).toBe(16_384);
   });
 });
 
@@ -229,8 +220,8 @@ describe("Pi's trigger rule", () => {
     const w = windowOf(model, "pi");
     expect(w).toMatchObject({ host: 128_000, effective: 128_000, source: "pi" });
     const policy = PI_TRIGGER_RULE.policyOf({ enabled: true, reserveTokens: 20_000, keepRecentTokens: 20_000 });
-    expect(triggerFor(w, createWindowState(), "p/pi-m", "threshold", 110_000, policy, PI_TRIGGER_RULE)).toBe(108_000);
-    expect(triggerFor(w, createWindowState(), "p/pi-m", "overflow", 90_000, policy, PI_TRIGGER_RULE)).toBe(90_000);
+    expect(triggerFor(w, "threshold", 110_000, policy, PI_TRIGGER_RULE)).toBe(108_000);
+    expect(triggerFor(w, "overflow", 90_000, policy, PI_TRIGGER_RULE)).toBe(90_000);
   });
 });
 

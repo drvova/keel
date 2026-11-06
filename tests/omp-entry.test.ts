@@ -402,6 +402,31 @@ describe("omp entry: the model's real window", () => {
     rmSync(limitsFile(), { force: true });
   });
 
+  test("no compaction of its own before omp's policy is known: the user may have turned compaction off", async () => {
+    recordLimit(32_768, null);
+    const omp = createOmp();
+    omp.ctx.model = model;
+    omp.ctx.isIdle = () => true;
+    omp.ctx.getContextUsage = () => ({ tokens: 30_000, contextWindow: 128_000, percent: 23 });
+    omp.setEntries(big());
+    omp.setCompact(async () => {});
+    omp.fire("agent_end", { messages: [] });
+    await new Promise((r) => setTimeout(r, 5));
+    expect(omp.compactCalls).toHaveLength(0);
+    // A compaction carries it, and it is kept beside the learned window for the next session.
+    omp.beforeCompact(undefined, { enabled: false });
+    expect(JSON.parse(readFileSync(limitsFile(), "utf8"))["electronhub/small-model"].hostPolicy).toEqual({ enabled: false });
+    const next = createOmp();
+    next.ctx.model = model;
+    next.ctx.isIdle = () => true;
+    next.ctx.getContextUsage = () => ({ tokens: 30_000, contextWindow: 128_000, percent: 23 });
+    next.setCompact(async () => {});
+    next.fire("agent_end", { messages: [] });
+    await new Promise((r) => setTimeout(r, 5));
+    expect(next.compactCalls).toHaveLength(0);
+    rmSync(limitsFile(), { force: true });
+  });
+
   test("no compaction of its own for a provider in skipForProviders: omp's own would run", async () => {
     writeFileSync(process.env.OMP_VCC_CONFIG_PATH!, JSON.stringify({ skipForProviders: [model.provider] }));
     recordLimit(32_768);
@@ -466,6 +491,7 @@ describe("omp entry: the model's real window", () => {
     rmSync(limitsFile(), { force: true });
   });
 
-  const recordLimit = (n: number) =>
-    writeFileSync(limitsFile(), JSON.stringify({ "electronhub/small-model": { contextWindow: n, source: "overflow-error", at: "2026-11-01T00:00:00.000Z" } }));
+  /** A limit an overflow error stated, with omp's policy as the compaction that answered it carried it (`hostPolicy`), unless a test says none. */
+  const recordLimit = (n: number, hostPolicy: object | null = { enabled: true }) =>
+    writeFileSync(limitsFile(), JSON.stringify({ "electronhub/small-model": { contextWindow: n, source: "overflow-error", at: "2026-11-01T00:00:00.000Z", ...(hostPolicy ? { hostPolicy } : {}) } }));
 });

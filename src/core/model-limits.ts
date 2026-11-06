@@ -26,7 +26,22 @@ interface LearnedLimit {
   contextWindow: number;
   source: "overflow-error";
   at: string;
+  /**
+   * The host's compaction policy as the latest compaction for this model
+   * carried it (preparation.settings, read by its TriggerRule): where omp-vcc
+   * compacts in the host's stead (hooks/window-limits.ts), in a later session too.
+   */
+  hostPolicy?: object;
 }
+
+const writeLimits = (dir: string, limits: Record<string, LearnedLimit>): boolean => {
+  try {
+    writeFileSync(join(dir, LIMITS_FILE), `${JSON.stringify(limits, null, 2)}\n`);
+    return true;
+  } catch {
+    return false;
+  }
+};
 
 const readLimits = (dir: string): Record<string, LearnedLimit> => {
   try {
@@ -52,13 +67,24 @@ export const recordLearnedWindow = (dir: string, key: string | undefined, contex
   const limits = readLimits(dir);
   const known = limits[key]?.contextWindow;
   if (typeof known === "number" && known <= contextWindow) return false;
-  limits[key] = { contextWindow, source: "overflow-error", at: now.toISOString() };
-  try {
-    writeFileSync(join(dir, LIMITS_FILE), `${JSON.stringify(limits, null, 2)}\n`);
-    return true;
-  } catch {
-    return false;
-  }
+  limits[key] = { ...limits[key], contextWindow, source: "overflow-error", at: now.toISOString() };
+  return writeLimits(dir, limits);
+};
+
+/** The host's policy for a model with a learned window, as a compaction last carried it; undefined before one did. */
+export const learnedHostPolicy = (dir: string, key: string | undefined): object | undefined => {
+  const policy = key ? readLimits(dir)[key]?.hostPolicy : undefined;
+  return policy && typeof policy === "object" ? policy : undefined;
+};
+
+/** Keep the policy a compaction carried, for a model with a learned window only (where it is read); written when it changed. */
+export const recordHostPolicy = (dir: string, key: string | undefined, policy: object | undefined): void => {
+  if (!key || !policy) return;
+  const limits = readLimits(dir);
+  const known = limits[key];
+  if (!known || JSON.stringify(known.hostPolicy) === JSON.stringify(policy)) return;
+  limits[key] = { ...known, hostPolicy: policy };
+  writeLimits(dir, limits);
 };
 
 export interface WindowInfo<Host extends string = string> {

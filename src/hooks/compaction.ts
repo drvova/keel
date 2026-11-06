@@ -13,7 +13,7 @@ import { calibrateCharsPerToken, DEFAULT_CHARS_PER_TOKEN, estimateMessageChars, 
 import { compactionBudgets } from "../core/window";
 import { isRecovery, tell, type Binding } from "../host";
 import { applyContextEdits } from "../core/context-edits";
-import { modelKey } from "../core/model-limits";
+import { modelKey, recordHostPolicy } from "../core/model-limits";
 import { triggerFor, type WindowState } from "./window-limits";
 import { vccDetailsOf, type VccCompactionDetails } from "../details";
 import { COMPACTOR } from "../names";
@@ -149,7 +149,10 @@ export const registerCompactionHook = (
     // Budgets from the model's real window and where the next compaction comes (core/window.ts).
     const window = host.window(ctx?.model);
     const key = modelKey(ctx?.model);
-    const trigger = triggerFor(window, windows, key, reason, preparation.tokensBefore, rule.policyOf((preparation as { settings?: unknown }).settings), rule);
+    const policy = rule.policyOf((preparation as { settings?: unknown }).settings);
+    // Kept beside the learned window, for the compaction omp-vcc starts in the host's stead (window-limits.ts).
+    recordHostPolicy(host.config.dir(), key, policy);
+    const trigger = triggerFor(window, reason, preparation.tokensBefore, policy, rule);
     const budgets = compactionBudgets(trigger, overheadTokens, settings.workingSet);
     const cutOptions = { charsPerToken: tokenEstimate.charsPerToken, skipCustomTypes: settings.skipCustomTypes, maxTokens: budgets.maxTailTokens };
 
