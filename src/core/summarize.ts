@@ -2,8 +2,7 @@
 // summary's (core/summary-state.ts), rendered once (core/format.ts).
 import type { Message } from "@oh-my-pi/pi-ai";
 import type { FileOps } from "../types";
-import { normalize } from "./normalize";
-import { filterNoise } from "./filter-noise";
+import { summaryBlocks } from "./normalize";
 import { EARLY_REQUESTS_KEPT } from "../extract/user-messages";
 import { renderSummary } from "./format";
 import { legacyPrevious } from "./legacy-summary";
@@ -55,7 +54,7 @@ export interface CompiledSummary {
  * previous one's end around it; the unranked one caps both at the line limit.
  */
 const compileWith = (input: RankedCompileInput, ranked: boolean): CompiledSummary => {
-  const blocks = filterNoise(normalize(input.messages, input.sourceIndices));
+  const blocks = summaryBlocks(input.messages, input.sourceIndices);
   const previous = input.previous ?? (input.previousSummary ? legacyPrevious(input.previousSummary) : undefined);
   const fresh = freshState({
     blocks,

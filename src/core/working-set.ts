@@ -311,6 +311,21 @@ const excerpt = (text: string, max: number, fromEnd: boolean): { lines: string[]
  * A section has no blank line inside (the summary's sections are told apart by
  * them), and an indented line never reads as a section header or a separator.
  */
+/** [Working Set] brings back at most this share of what a compaction removes, so the compaction always frees room. */
+const SHARE_OF_REMOVED = 0.5;
+
+/**
+ * The working set for a compaction that removes `removedChars` from context,
+ * within `budgetChars` (compactionBudgets' workingSetTokens): its lines, and
+ * the #N of the items they show.
+ */
+export const buildWorkingSet = (
+  input: Omit<WorkingSetInput, "maxChars"> & { budgetChars: number; removedChars: number },
+): { lines: string[]; shown: number[] } => {
+  const maxChars = Math.round(Math.min(input.budgetChars, input.removedChars * SHARE_OF_REMOVED));
+  return formatWorkingSet(selectWorkingSet({ ...input, maxChars }), maxChars);
+};
+
 export const formatWorkingSet = (items: readonly WorkingSetItem[], maxChars: number): { lines: string[]; shown: number[] } => {
   const lines: string[] = [];
   const shown: number[] = [];

@@ -2,19 +2,16 @@
 // tests that drive the hook or the cut helpers without a running omp.
 import { DEFAULT_BUDGETS } from "../../src/core/window";
 import { convertToLlm } from "@oh-my-pi/pi-coding-agent/session/messages";
+import { createCompactionState, registerCompactionHook, type CompactionHost, type CompactionState } from "../../src/hooks/compaction";
 import {
   applyTailBudget as applyTailBudgetFor,
   buildOwnCut as buildOwnCutFor,
-  createCompactionState,
-  registerCompactionHook,
   resolveSmartKeepUserTurns as resolveSmartKeepFor,
-  toSummaryMessage,
-  type CompactionHost,
-  type CompactionState,
-  type CompactionStats,
   type OwnCutResult,
   type ResolveSmartKeepOptions,
-} from "../../src/hooks/compaction";
+} from "../../src/compaction/cut";
+import { toSummaryMessage } from "../../src/compaction/summary-input";
+import type { CompactionStats } from "../../src/compaction/stats";
 import { createOmpCompactionHost, trackOmpCompactionTrigger } from "../../src/hooks/omp-host";
 import { normalize } from "../../src/core/normalize";
 import type { CompactionReason } from "../../src/types";
@@ -26,20 +23,20 @@ export const testHost: CompactionHost = { convertToLlm: ompConvertToLlm };
 
 /** The blocks the summarizer gets for these messages: the hook's toSummaryMessage, then normalize. */
 export const renderedBlocks = (messages: any[]) =>
-  normalize(messages.map((m) => toSummaryMessage(m, testHost)).filter((m) => m != null));
+  normalize(messages.map((m) => toSummaryMessage(m, ompConvertToLlm)).filter((m) => m != null));
 
 export const buildOwnCut = (branchEntries: any[], keepUserTurns?: number, skipCustomTypes?: readonly string[]): OwnCutResult =>
-  buildOwnCutFor(testHost, branchEntries, keepUserTurns, skipCustomTypes);
+  buildOwnCutFor(ompConvertToLlm, branchEntries, keepUserTurns, skipCustomTypes);
 
 /** The tail functions at a ~128K window's budgets unless a test sets its own. */
 export const applyTailBudget = (
   branchEntries: any[],
   cut: OwnCutResult,
   opts: Partial<Parameters<typeof applyTailBudgetFor>[3]> = {},
-): OwnCutResult => applyTailBudgetFor(testHost, branchEntries, cut, { maxTokens: DEFAULT_BUDGETS.maxTailTokens, ...opts });
+): OwnCutResult => applyTailBudgetFor(ompConvertToLlm, branchEntries, cut, { maxTokens: DEFAULT_BUDGETS.maxTailTokens, ...opts });
 
-export const resolveSmartKeepUserTurns = (opts: Omit<ResolveSmartKeepOptions, "host" | "minTokens" | "maxTokens"> & Partial<Pick<ResolveSmartKeepOptions, "minTokens" | "maxTokens">>) =>
-  resolveSmartKeepFor({ minTokens: DEFAULT_BUDGETS.minTailTokens, maxTokens: DEFAULT_BUDGETS.maxTailTokens, ...opts, host: testHost });
+export const resolveSmartKeepUserTurns = (opts: Omit<ResolveSmartKeepOptions, "convert" | "minTokens" | "maxTokens"> & Partial<Pick<ResolveSmartKeepOptions, "minTokens" | "maxTokens">>) =>
+  resolveSmartKeepFor({ minTokens: DEFAULT_BUDGETS.minTailTokens, maxTokens: DEFAULT_BUDGETS.maxTailTokens, ...opts, convert: ompConvertToLlm });
 
 export interface RegisteredHook {
   state: CompactionState;

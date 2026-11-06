@@ -7,7 +7,9 @@ import { assertRealPi, piInstalled } from "./support/pi";
 import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { buildOwnCut, createCompactionState, registerCompactionHook, toSummaryMessage, type CompactionHost } from "../src/hooks/compaction";
+import { createCompactionState, registerCompactionHook, type CompactionHost } from "../src/hooks/compaction";
+import { buildOwnCut } from "../src/compaction/cut";
+import { toSummaryMessage } from "../src/compaction/summary-input";
 import { normalize } from "../src/core/normalize";
 import { extractFiles } from "../src/extract/files";
 import { getTouchedFiles } from "../src/core/search-entries";
@@ -42,7 +44,7 @@ describe.skipIf(!piInstalled())("Pi shapes", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  const summaryOf = (message: any) => toSummaryMessage(message, host);
+  const summaryOf = (message: any) => toSummaryMessage(message, host.convertToLlm);
 
   describe("Pi's message roles in the summary", () => {
     test("a user-run command stays one line; one run with !! (kept out of Pi's context) is left out", () => {
@@ -118,7 +120,7 @@ describe.skipIf(!piInstalled())("Pi shapes", () => {
     });
 
     test("a compact-all keeps nothing, which Pi reads from an empty firstKeptEntryId", () => {
-      const cut = buildOwnCut(host, branch(), 0, []);
+      const cut = buildOwnCut(host.convertToLlm, branch(), 0, []);
       expect(cut.ok && cut.compactAll).toBe(true);
       // Pi's buildContextEntries keeps nothing before a compaction whose kept id is not on the path.
       const compaction = { type: "compaction", id: "cmp", parentId: "a2", timestamp: "2026-11-06T00:00:00.000Z", summary: "s", firstKeptEntryId: "", tokensBefore: 1 };

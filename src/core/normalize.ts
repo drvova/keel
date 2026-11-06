@@ -2,6 +2,7 @@ import type { SessionMessageEntry } from "@oh-my-pi/pi-coding-agent";
 import type { NormalizedBlock } from "../types";
 import { isObject, readableMessage, textOf } from "./content";
 import { sanitize } from "./sanitize";
+import { filterNoise } from "./filter-noise";
 import { toolCallOf } from "./tools";
 
 const normalizeOne = (
@@ -12,6 +13,7 @@ const normalizeOne = (
   if (msg.role === "user") {
     const blocks: NormalizedBlock[] = [];
     const text = sanitize(textOf(msg.content));
+    // Marked by the compaction's summary input (src/compaction/summary-input.ts toSummaryMessage).
     const injected = (msg as { injected?: boolean }).injected === true;
     if (text) blocks.push({ kind: "user", text, sourceIndex: msgIndex, ...(injected ? { injected } : {}) });
     if (msg.content && typeof msg.content !== "string") {
@@ -98,4 +100,8 @@ export const normalize = (
   return readable.flatMap((msg, i) => (msg ? normalizeOne(msg, sourceIndices ? sourceIndices[i] : i, failedCallIds) : []));
 };
 
-
+/** The blocks a summary is made of: every part of it (the sections, the brief, [History Index]) reads these. */
+export const summaryBlocks = (
+  messages: SessionMessageEntry["message"][],
+  sourceIndices?: Array<number | undefined>,
+): NormalizedBlock[] => filterNoise(normalize(messages, sourceIndices));

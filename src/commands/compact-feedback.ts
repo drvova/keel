@@ -1,7 +1,7 @@
 // What omp-vcc's commands tell the user, and what /omp-vcc says once a
 // compaction it asked for ends.
 import { afterReset, type SessionManagerLike } from "../core/session-file";
-import { formatCompactionStats, scheduleCompactionStatsNotify, type CompactionStats } from "../hooks/compaction";
+import { formatCompactionStats, scheduleCompactionStatsNotify, type CompactionStats } from "../compaction/stats";
 
 export interface NotifyCtx {
   /** False in omp's print and json modes, whose extension UI drops notify. */

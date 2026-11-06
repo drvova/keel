@@ -16,8 +16,7 @@
 import type { Message } from "@oh-my-pi/pi-ai";
 import type { NormalizedBlock } from "../types";
 import { clip } from "./content";
-import { normalize } from "./normalize";
-import { filterNoise } from "./filter-noise";
+import { summaryBlocks } from "./normalize";
 import { extractFiles } from "../extract/files";
 import { extractCommits } from "../extract/commits";
 import { extractUserMessages } from "../extract/user-messages";
@@ -61,7 +60,7 @@ export const rangeOfWindow = (
 ): HistoryRange | undefined => {
   const known = sourceIndices.filter((n): n is number => typeof n === "number");
   if (known.length === 0) return undefined;
-  const blocks: NormalizedBlock[] = filterNoise(normalize(messages, sourceIndices));
+  const blocks: NormalizedBlock[] = summaryBlocks(messages, sourceIndices);
   const files = extractFiles(blocks);
   const changed = [...new Set([...files.modified, ...files.created])];
   const commits = extractCommits(blocks).map((c) => clip(c.hash ? `${c.hash} ${c.message}` : c.message, COMMIT_CHARS));

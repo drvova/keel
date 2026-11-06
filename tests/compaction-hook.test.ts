@@ -2,7 +2,8 @@ import { describe, test, expect, beforeEach, afterEach, beforeAll, afterAll } fr
 import { existsSync, unlinkSync, writeFileSync, readFileSync, mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { OMP_VCC_COMPACT_INSTRUCTION, formatCompactionStats } from "../src/hooks/compaction";
+import { OMP_VCC_COMPACT_INSTRUCTION } from "../src/hooks/compaction";
+import { formatCompactionStats } from "../src/compaction/stats";
 import { applyTailBudget, buildOwnCut, getLastCompactionStats, registerHook, type RegisteredHook } from "./support/host";
 
 let tmpDir: string;
@@ -782,8 +783,8 @@ describe("compaction hook: custom_message reaches the summarizer", () => {
     if (existsSync(DEBUG_PATH)) unlinkSync(DEBUG_PATH);
   });
 
-  test("custom message content appears in the debug summarize-input preview", () => {
-    setConfig({ debug: true, overrideDefaultCompaction: false });
+  test("custom message content reaches the summary", () => {
+    setConfig({ overrideDefaultCompaction: false });
     const { pi, invokeBefore } = createMockOmp();
     register(pi);
     const entries = [
@@ -795,10 +796,7 @@ describe("compaction hook: custom_message reaches the summarizer", () => {
     ];
     const result = invokeBefore(makeEvent(entries, OMP_VCC_COMPACT_INSTRUCTION));
     expect(result.cancel).toBeUndefined();
-    expect(existsSync(DEBUG_PATH)).toBe(true);
-    const snapshot = JSON.parse(readFileSync(DEBUG_PATH, "utf-8"));
-    expect(snapshot.usedOwnCut).toBe(true);
-    expect(JSON.stringify(snapshot)).toContain("INJECTED_CTX_9999");
+    expect(result.compaction.summary).toContain("INJECTED_CTX_9999");
   });
 });
 
@@ -1026,12 +1024,13 @@ describe("compaction hook: skipCustomTypes", () => {
     const offToast = await keptToastOf(off);
 
     expect(on.result.compaction.firstKeptEntryId).toBe(off.result.compaction.firstKeptEntryId);
-    expect(on.snap.messagesToSummarize).toBe(off.snap.messagesToSummarize - 1);
+    const summarized = (run: ReturnType<typeof runCompact>) => run.result.compaction.details.sourceMessageCount;
+    expect(summarized(on)).toBe(summarized(off) - 1);
     // Kept-turn counting is upstream of the filter → identical toast prefix.
     expect(onToast?.match(/kept \d+\/\d+ turns/)?.[0]).toBe(offToast?.match(/kept \d+\/\d+ turns/)?.[0]);
     // And the summarized count reflects the filtered input.
-    expect(onToast).toContain(`summarized ${on.snap.messagesToSummarize}`);
-    expect(offToast).toContain(`summarized ${off.snap.messagesToSummarize}`);
+    expect(onToast).toContain(`summarized ${summarized(on)}`);
+    expect(offToast).toContain(`summarized ${summarized(off)}`);
   });
 
   test("malformed skipCustomTypes (bare string) fails closed: nothing skipped", () => {
@@ -1103,7 +1102,7 @@ describe("compaction hook: growth guard", () => {
   });
 
   test("summaryGrowth: net growth past a fixed margin or a quarter of the prefix", async () => {
-    const { summaryGrowth } = await import("../src/hooks/compaction");
+    const { summaryGrowth } = await import("../src/compaction/assemble");
     expect(summaryGrowth(400, 0, 10, 500)).toMatchObject({ grows: false, netChars: 390, allowedChars: 500 });
     expect(summaryGrowth(2_000, 0, 100, 500)).toMatchObject({ grows: true, netChars: 1_900 });
     // The previous summary is replaced, so only what the new one adds counts.
