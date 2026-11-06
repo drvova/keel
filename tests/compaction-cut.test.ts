@@ -186,7 +186,6 @@ describe("buildOwnCut", () => {
     expect(r.messages).toHaveLength(4);
     expect(r.keptUserTurns).toBe(0);
     expect(r.totalUserTurns).toBe(2);
-    expect(r.requestedKeepUserTurns).toBe(2);
     expect(r.keepFallbackToCompactAll).toBe(true);
   });
 
@@ -362,6 +361,6 @@ describe("a user's !cmd output in the kept tail counts", () => {
       msg("u2", "user", "second request"), reply("a2", "ok"),
       msg("u3", "user", "look at the log"), bash("b1", "x".repeat(100_000)), reply("a3", "it fails"),
     ];
-    expect(resolveSmartKeepUserTurns({ branchEntries: entries, requestedKeepUserTurns: null, explicit: false, smartKeepTail: true, charsPerToken: 4 })).toMatchObject({ keepUserTurns: 1, smartAdjusted: false });
+    expect(resolveSmartKeepUserTurns({ branchEntries: entries, requestedKeepUserTurns: null, smartKeepTail: true, skipCustomTypes: [], charsPerToken: 4 })).toMatchObject({ keepUserTurns: 1, smartAdjusted: false });
   });
 });

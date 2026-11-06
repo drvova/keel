@@ -43,7 +43,7 @@ export type OwnCutResult =
       compactAll: boolean;
       keptUserTurns: number;
       totalUserTurns: number;
-      requestedKeepUserTurns: number;
+      /** Compact-all because keep:N found no boundary, not because keep:0 asked for it: a tail budget may still keep some. */
       keepFallbackToCompactAll: boolean;
       budgetCut?: BudgetCutKind;
     }
@@ -97,6 +97,39 @@ export const collectLiveMessages = (branchEntries: any[]): EntryWithMessage[] =>
   return liveMessages;
 };
 
+type Cut = Extract<OwnCutResult, { ok: true }>;
+
+const userTurns = (live: readonly EntryWithMessage[]): number => live.filter((m) => m.message.role === "user").length;
+
+/** Everything before live index `idx` summarized, the rest kept. */
+const cutAt = (live: EntryWithMessage[], idx: number, budgetCut?: BudgetCutKind): Cut => ({
+  ok: true,
+  messages: live.slice(0, idx).map((m) => m.message),
+  selectedIds: live.slice(0, idx).map((m) => m.entry.id),
+  firstKeptEntryId: live[idx].entry.id,
+  compactAll: false,
+  keptUserTurns: userTurns(live.slice(idx)),
+  totalUserTurns: userTurns(live),
+  keepFallbackToCompactAll: false,
+  ...(budgetCut ? { budgetCut } : {}),
+});
+
+/**
+ * The whole live window summarized. firstKeptEntryId "" is a sentinel: omp's
+ * buildSessionContext matches no entry (none kept from before the compaction),
+ * and the next cut starts after the compaction entry (liveWindowStart).
+ */
+const compactAllOf = (live: EntryWithMessage[], keepFallbackToCompactAll: boolean): Cut => ({
+  ok: true,
+  messages: live.map((e) => e.message),
+  selectedIds: live.map((e) => e.entry.id),
+  firstKeptEntryId: "",
+  compactAll: true,
+  keptUserTurns: 0,
+  totalUserTurns: userTurns(live),
+  keepFallbackToCompactAll,
+});
+
 export function buildOwnCut(
   convert: ConvertToLlm,
   branchEntries: any[],
@@ -117,19 +150,8 @@ export function buildOwnCut(
     if (e.message.role === "user") acc.push(i);
     return acc;
   }, []);
-  const compactAll = (keepFallbackToCompactAll: boolean) => ({
-    ok: true as const,
-    messages: liveMessages.map((e) => e.message),
-    selectedIds: liveMessages.map((e) => e.entry.id),
-    firstKeptEntryId: "",
-    compactAll: true,
-    keptUserTurns: 0,
-    totalUserTurns: userIndices.length,
-    requestedKeepUserTurns: normalizedKeepUserTurns,
-    keepFallbackToCompactAll,
-  });
 
-  if (normalizedKeepUserTurns <= 0) return compactAll(false);
+  if (normalizedKeepUserTurns <= 0) return compactAllOf(liveMessages, false);
 
   // Summarize all messages before the requested kept user-turn tail.
   const targetUserIdx = userIndices.length - normalizedKeepUserTurns;
@@ -137,10 +159,8 @@ export function buildOwnCut(
 
   if (cutIdx <= 0) {
     // Keep request cannot form a safe boundary (single user prompt, no user prompt,
-    // or keep larger than available user turns), so compact EVERYTHING and keep no tail.
-    // firstKeptEntryId="" is a sentinel: omp's buildSessionContext won't match it
-    // (so 0 kept from pre-compaction), and next buildOwnCut triggers orphan recovery.
-    return compactAll(true);
+    // or keep larger than available user turns), so compact everything and keep no tail.
+    return compactAllOf(liveMessages, true);
   }
 
   // A prefix that renders no block would compile to "", storing an empty summary
@@ -151,19 +171,9 @@ export function buildOwnCut(
   // a custom_message listed in skipCustomTypes does the same. Fall back to
   // compact-all, the same path already used when no safe boundary exists;
   // applyTailBudget then decides the tail.
-  if (!prefixHasRenderableContent(liveMessages.slice(0, cutIdx), skipCustomTypes, convert)) return compactAll(true);
+  if (!prefixHasRenderableContent(liveMessages.slice(0, cutIdx), skipCustomTypes, convert)) return compactAllOf(liveMessages, true);
 
-  return {
-    ok: true,
-    messages: liveMessages.slice(0, cutIdx).map((e) => e.message),
-    selectedIds: liveMessages.slice(0, cutIdx).map((e) => e.entry.id),
-    firstKeptEntryId: liveMessages[cutIdx].entry.id,
-    compactAll: false,
-    keptUserTurns: userIndices.length - targetUserIdx,
-    totalUserTurns: userIndices.length,
-    requestedKeepUserTurns: normalizedKeepUserTurns,
-    keepFallbackToCompactAll: false,
-  };
+  return cutAt(liveMessages, cutIdx);
 }
 
 // Token-budget tail cut: rescue default-path sessions when the user-turn
@@ -191,20 +201,6 @@ const findBudgetCutIndex = (
   }
   return -1;
 };
-
-/** The cut at live index `idx`: everything before it summarized, the rest kept. */
-const cutAt = (live: EntryWithMessage[], idx: number, cut: Extract<OwnCutResult, { ok: true }>, budgetCut: BudgetCutKind): OwnCutResult => ({
-  ok: true,
-  messages: live.slice(0, idx).map((m) => m.message),
-  selectedIds: live.slice(0, idx).map((m) => m.entry.id),
-  firstKeptEntryId: live[idx].entry.id,
-  compactAll: false,
-  keptUserTurns: live.slice(idx).filter((m) => m.message.role === "user").length,
-  totalUserTurns: live.filter((m) => m.message.role === "user").length,
-  requestedKeepUserTurns: cut.requestedKeepUserTurns,
-  keepFallbackToCompactAll: false,
-  budgetCut,
-});
 
 /**
  * A recovery pass (an overflow, a cut-off reply) on a turn still running whose
@@ -234,7 +230,7 @@ export const runningTurnCut = (
     if (live[i].message.role !== "toolResult") best = i;
   }
   if (best < 1 || !prefixHasRenderableContent(live.slice(0, best), opts.skipCustomTypes ?? [], convert)) return undefined;
-  return cutAt(live, best, cut, "running_turn");
+  return cutAt(live, best, "running_turn");
 };
 
 /**
@@ -245,17 +241,7 @@ export const runningTurnCut = (
 export const wholeWindowCut = (convert: ConvertToLlm, branchEntries: any[], skipCustomTypes: readonly string[] = []): OwnCutResult | undefined => {
   const live = collectLiveMessages(branchEntries);
   if (live.length === 0 || !prefixHasRenderableContent(live, skipCustomTypes, convert)) return undefined;
-  return {
-    ok: true,
-    messages: live.map((e) => e.message),
-    selectedIds: live.map((e) => e.entry.id),
-    firstKeptEntryId: "",
-    compactAll: true,
-    keptUserTurns: 0,
-    totalUserTurns: live.filter((e) => e.message.role === "user").length,
-    requestedKeepUserTurns: 0,
-    keepFallbackToCompactAll: false,
-  };
+  return compactAllOf(live, false);
 };
 
 /** An assistant message that ends a turn: text, and no tool call still waiting for its result. */
@@ -269,30 +255,16 @@ export const applyTailBudget = (
   convert: ConvertToLlm,
   branchEntries: any[],
   cut: OwnCutResult,
-  opts: { maxTokens: number; oversizedFactor?: number; charsPerToken?: number; skipCustomTypes?: readonly string[] },
+  opts: { maxTokens: number; charsPerToken?: number; skipCustomTypes?: readonly string[] },
 ): OwnCutResult => {
   if (!cut.ok) return cut;
   const maxTokens = opts.maxTokens;
-  const factor = opts.oversizedFactor ?? OVERSIZED_TAIL_FACTOR;
   const live = collectLiveMessages(branchEntries);
   // Same guard as buildOwnCut, for the compact-all re-cut: a budget cut right
   // after a lone system entry (first user message alone over budget) would
   // summarize nothing. Case B never needs it: its cut extends a prefix that
   // already renders.
   const renders = (idx: number) => prefixHasRenderableContent(live.slice(0, idx), opts.skipCustomTypes ?? [], convert);
-
-  const budgetResult = (idx: number, budgetCut: BudgetCutKind): OwnCutResult => ({
-    ok: true,
-    messages: live.slice(0, idx).map((m) => m.message),
-    selectedIds: live.slice(0, idx).map((m) => m.entry.id),
-    firstKeptEntryId: live[idx].entry.id,
-    compactAll: false,
-    keptUserTurns: live.slice(idx).filter((m) => m.message.role === "user").length,
-    totalUserTurns: live.filter((m) => m.message.role === "user").length,
-    requestedKeepUserTurns: cut.requestedKeepUserTurns,
-    keepFallbackToCompactAll: false,
-    budgetCut,
-  });
 
   // Case A: no user anchor → compact-all. Re-cut to a token budget unless the
   // compact-all came from explicit keep:0 (which must be respected absolutely).
@@ -302,14 +274,14 @@ export const applyTailBudget = (
     // A cut that keeps only the turn's final answer kept a finished turn's reply, not part of a running one.
     if (idx >= 0) {
       if (!renders(idx)) return cut;
-      return budgetResult(idx, idx === live.length - 1 && isFinalAnswer(live[idx].message) ? "final_reply" : "no_anchor");
+      return cutAt(live, idx, idx === live.length - 1 && isFinalAnswer(live[idx].message) ? "final_reply" : "no_anchor");
     }
     // The whole window fits the budget. When it ends with the turn's final
     // answer, keep that answer and summarize the rest: compact-all would take the
     // reply out of context too, and omp's print mode, which prints the last
     // assistant message, would then have nothing.
     const last = live.length - 1;
-    if (last > 0 && isFinalAnswer(live[last].message) && renders(last)) return budgetResult(last, "final_reply");
+    if (last > 0 && isFinalAnswer(live[last].message) && renders(last)) return cutAt(live, last, "final_reply");
     return cut;
   }
 
@@ -319,19 +291,19 @@ export const applyTailBudget = (
   for (let i = tailStart; i < live.length; i++) {
     tailTokens += estimateMessageTokens(live[i].message, opts.charsPerToken);
   }
-  if (tailTokens <= maxTokens * factor) return cut;
+  if (tailTokens <= maxTokens * OVERSIZED_TAIL_FACTOR) return cut;
   const idx = findBudgetCutIndex(live, maxTokens, opts.charsPerToken);
   if (idx <= tailStart) return cut;
-  return budgetResult(idx, "oversized_tail");
+  return cutAt(live, idx, "oversized_tail");
 };
 
 export interface ResolveSmartKeepOptions {
   branchEntries: any[];
-  /** Requested keep:N; null when user did not specify (default path). */
+  /** keep:N the user typed, always respected; null when none was (the default path). */
   requestedKeepUserTurns: number | null;
-  /** True when user typed keep:N explicitly — always respected. */
-  explicit: boolean;
   smartKeepTail: boolean;
+  /** As the cut takes them: a tail measured without them can grow past a prefix that renders nothing. */
+  skipCustomTypes: readonly string[];
   /** The budgets' minTailTokens and maxTailTokens. */
   minTokens: number;
   maxTokens: number;
@@ -350,13 +322,9 @@ interface ResolveSmartKeepResult {
  * resolver can stop growing instead of selecting a value that discards the
  * tail entirely.
  */
-const tailTokensForKeep = (
-  branchEntries: any[],
-  keepUserTurns: number,
-  charsPerToken: number | undefined,
-  convert: ConvertToLlm,
-): number | null => {
-  const cut = buildOwnCut(convert, branchEntries, keepUserTurns, []);
+const tailTokensForKeep = (opts: ResolveSmartKeepOptions, keepUserTurns: number): number | null => {
+  const { branchEntries, charsPerToken } = opts;
+  const cut = buildOwnCut(opts.convert, branchEntries, keepUserTurns, opts.skipCustomTypes);
   if (!cut.ok || cut.compactAll) return null;
   const idx = branchEntries.findIndex((e: any) => e.id === cut.firstKeptEntryId);
   if (idx < 0) return null;
@@ -374,22 +342,22 @@ export const resolveSmartKeepUserTurns = (opts: ResolveSmartKeepOptions): Resolv
   const { minTokens, maxTokens } = opts;
   const baseKeep = opts.requestedKeepUserTurns ?? 1;
 
-  if (opts.explicit || !opts.smartKeepTail) {
+  if (opts.requestedKeepUserTurns !== null || !opts.smartKeepTail) {
     return { keepUserTurns: baseKeep, smartAdjusted: false };
   }
 
-  const baseTokens = tailTokensForKeep(opts.branchEntries, baseKeep, opts.charsPerToken, opts.convert);
+  const baseTokens = tailTokensForKeep(opts, baseKeep);
   // base tail already above min (or unmeasurable / compact-all) → don't grow.
   if (baseTokens == null || baseTokens > minTokens) {
     return { keepUserTurns: baseKeep, smartAdjusted: false };
   }
 
-  const baseCut = buildOwnCut(opts.convert, opts.branchEntries, baseKeep, []);
+  const baseCut = buildOwnCut(opts.convert, opts.branchEntries, baseKeep, opts.skipCustomTypes);
   const totalUserTurns = baseCut.ok ? baseCut.totalUserTurns : 0;
 
   let selected = baseKeep;
   for (let k = baseKeep + 1; k <= totalUserTurns; k++) {
-    const tokens = tailTokensForKeep(opts.branchEntries, k, opts.charsPerToken, opts.convert);
+    const tokens = tailTokensForKeep(opts, k);
     if (tokens == null || tokens > maxTokens) break;
     selected = k;
   }

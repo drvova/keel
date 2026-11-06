@@ -10,8 +10,8 @@ const KEEP_RE = /^keep:(\d+)$/;
 
 interface ParsedCompactionArgs {
   followUpPrompt: string;
+  /** keep:N as typed; null when none was. */
   keepUserTurns: number | null;
-  keepUserTurnsExplicit: boolean;
 }
 
 /** keep:N as a number; more digits than a safe integer keeps more turns than any session has. */
@@ -22,13 +22,13 @@ export const parseKeepAndPrompt = (args?: string): ParsedCompactionArgs => {
   const trimmed = args?.trim() ?? "";
   const first = trimmed.match(/^(\S+)(?:\s+([\s\S]*))?$/);
   const firstKeep = first?.[1].match(KEEP_RE);
-  if (firstKeep) return { followUpPrompt: (first![2] ?? "").trim(), keepUserTurns: keepOf(firstKeep[1]), keepUserTurnsExplicit: true };
+  if (firstKeep) return { followUpPrompt: (first![2] ?? "").trim(), keepUserTurns: keepOf(firstKeep[1]) };
   const last = trimmed.match(/(?:^|\s)(\S+)$/);
   const lastKeep = last?.[1].match(KEEP_RE);
   if (lastKeep) {
-    return { followUpPrompt: trimmed.slice(0, trimmed.length - last![1].length).trim(), keepUserTurns: keepOf(lastKeep[1]), keepUserTurnsExplicit: true };
+    return { followUpPrompt: trimmed.slice(0, trimmed.length - last![1].length).trim(), keepUserTurns: keepOf(lastKeep[1]) };
   }
-  return { followUpPrompt: trimmed, keepUserTurns: null, keepUserTurnsExplicit: false };
+  return { followUpPrompt: trimmed, keepUserTurns: null };
 };
 
 export const buildVccCustomInstructions = (keepUserTurns: number | null): string =>
@@ -37,8 +37,8 @@ export const buildVccCustomInstructions = (keepUserTurns: number | null): string
 interface CompactionInstructions {
   /** The pass is /omp-vcc's, which the hook always handles and the command reports. */
   fromCommand: boolean;
-  keepUserTurns: number;
-  keepUserTurnsExplicit: boolean;
+  /** keep:N the user typed, always respected; null for the default cut. */
+  keepUserTurns: number | null;
   /** /compact's prompt to send once the compaction is done; /omp-vcc sends its own. */
   followUpPrompt: string | null;
 }
@@ -48,13 +48,8 @@ export const parseInstructions = (customInstructions?: string): CompactionInstru
   const trimmed = customInstructions?.trim();
   if (trimmed === OMP_VCC_COMPACT_INSTRUCTION || trimmed?.startsWith(`${OMP_VCC_COMPACT_INSTRUCTION} `)) {
     const parsed = parseKeepAndPrompt(trimmed.slice(OMP_VCC_COMPACT_INSTRUCTION.length));
-    return { fromCommand: true, keepUserTurns: parsed.keepUserTurns ?? 1, keepUserTurnsExplicit: parsed.keepUserTurnsExplicit, followUpPrompt: null };
+    return { fromCommand: true, keepUserTurns: parsed.keepUserTurns, followUpPrompt: null };
   }
   const parsed = parseKeepAndPrompt(customInstructions);
-  return {
-    fromCommand: false,
-    keepUserTurns: parsed.keepUserTurns ?? 1,
-    keepUserTurnsExplicit: parsed.keepUserTurnsExplicit,
-    followUpPrompt: parsed.followUpPrompt || null,
-  };
+  return { fromCommand: false, keepUserTurns: parsed.keepUserTurns, followUpPrompt: parsed.followUpPrompt || null };
 };

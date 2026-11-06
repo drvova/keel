@@ -145,7 +145,7 @@ export const registerCompactionHook = (
     const settings = host.config.load();
     const previousSummary = typeof preparation.previousSummary === "string" ? preparation.previousSummary : undefined;
 
-    const { fromCommand, keepUserTurns, keepUserTurnsExplicit, followUpPrompt } = parseInstructions(customInstructions);
+    const { fromCommand, keepUserTurns, followUpPrompt } = parseInstructions(customInstructions);
     state.pendingFollowUpPrompt = null;
     if (!fromCommand && !settings.overrideDefaultCompaction) return;
     // Provider-level opt-out (#27): defer to the provider's own compaction
@@ -169,9 +169,9 @@ export const registerCompactionHook = (
     // Explicit keep:N from the user is always respected (resolver no-ops).
     const smartKeep = resolveSmartKeepUserTurns({
       branchEntries,
-      requestedKeepUserTurns: keepUserTurnsExplicit ? keepUserTurns : null,
-      explicit: keepUserTurnsExplicit,
+      requestedKeepUserTurns: keepUserTurns,
       smartKeepTail: settings.smartKeepTail,
+      skipCustomTypes: settings.skipCustomTypes,
       charsPerToken: tokenEstimate.charsPerToken,
       minTokens: budgets.minTailTokens,
       maxTokens: budgets.maxTailTokens,
@@ -180,7 +180,7 @@ export const registerCompactionHook = (
     let ownCut = buildOwnCut(convert, branchEntries, smartKeep.keepUserTurns, settings.skipCustomTypes);
     // Default path only: rescue autonomous / oversized-tail sessions with a
     // token-budget cut. Explicit keep:N is respected absolutely (no-op here).
-    if (ownCut.ok && !keepUserTurnsExplicit) ownCut = applyTailBudget(convert, branchEntries, ownCut, cutOptions);
+    if (ownCut.ok && keepUserTurns === null) ownCut = applyTailBudget(convert, branchEntries, ownCut, cutOptions);
     // A recovery pass (an overflow, a cut-off reply) must shrink the context.
     // omp-vcc answers it itself: stepping aside hands it to the method omp picked
     // (snapcompact, handoff, server compaction, an LLM summary). What is kept and
