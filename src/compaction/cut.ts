@@ -15,9 +15,9 @@ import { prefixHasRenderableContent, toLiveMessage, type ConvertToLlm, type Entr
  * whole: everything but its final reply is summarized.
  */
 export type BudgetCutKind = "no_anchor" | "oversized_tail" | "final_reply" | "running_turn";
-export const OVERSIZED_TAIL_FACTOR = 2.5;
+const OVERSIZED_TAIL_FACTOR = 2.5;
 
-export const normalizeKeepUserTurns = (keepUserTurns: number): number => {
+const normalizeKeepUserTurns = (keepUserTurns: number): number => {
   if (!Number.isFinite(keepUserTurns)) return 0;
   return Math.max(0, Math.floor(keepUserTurns));
 };
@@ -68,7 +68,7 @@ const lastIndexOfType = (entries: any[], type: string): number => {
  *   looked for. This mirrors omp's prepareCompaction, which also drops the
  *   previous summary in the first case.
  */
-export const liveWindowStart = (branchEntries: any[]): number => {
+const liveWindowStart = (branchEntries: any[]): number => {
   const resetIdx = lastResetIndex(branchEntries);
   const compactionIdx = lastIndexOfType(branchEntries, "compaction");
   if (resetIdx > compactionIdx) return resetIdx + 1;
@@ -170,7 +170,7 @@ export function buildOwnCut(
 // anchored tail is absent (autonomous: no user boundary in the live window)
 // or oversized (a single giant last user turn). Cuts at the nearest valid
 // non-toolResult boundary, like omp's own cut point.
-export const findBudgetCutIndex = (
+const findBudgetCutIndex = (
   live: EntryWithMessage[],
   maxTokens: number,
   charsPerToken?: number,
@@ -344,7 +344,7 @@ export interface ResolveSmartKeepOptions {
   convert: ConvertToLlm;
 }
 
-export interface ResolveSmartKeepResult {
+interface ResolveSmartKeepResult {
   keepUserTurns: number;
   smartAdjusted: boolean;
   /** Original base keep, for toast like "1→3". */

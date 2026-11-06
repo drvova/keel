@@ -5,9 +5,9 @@ import { COMPACTOR, LEGACY_COMPACTOR } from "./names";
 import type { HostName } from "./host";
 
 /** Compactions stored before the rename say "pi-vcc"; both are read as this extension's. */
-export type VccCompactor = typeof COMPACTOR | typeof LEGACY_COMPACTOR;
+type VccCompactor = typeof COMPACTOR | typeof LEGACY_COMPACTOR;
 
-export const isVccCompactor = (value: unknown): value is VccCompactor => value === COMPACTOR || value === LEGACY_COMPACTOR;
+const isVccCompactor = (value: unknown): value is VccCompactor => value === COMPACTOR || value === LEGACY_COMPACTOR;
 
 export interface VccCompactionDetails {
   compactor: VccCompactor;

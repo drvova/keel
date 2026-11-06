@@ -35,7 +35,7 @@ import { searchEntriesDetailed } from "./search-entries";
 import { callKind, callSubject, filesOf, readsPart, toolCallsOf } from "./tools";
 import { RECALL_TOOL } from "../names";
 
-export interface WorkingSetInput {
+interface WorkingSetInput {
   /**
    * Everything out of context once this compaction lands (what it summarizes and
    * what earlier ones did, since /clear), the originals of what omp rewrote put back.
@@ -48,9 +48,9 @@ export interface WorkingSetInput {
   maxChars: number;
 }
 
-export type WorkingSetReason = "file" | "failure" | "relevant";
+type WorkingSetReason = "file" | "failure" | "relevant";
 
-export interface WorkingSetItem {
+interface WorkingSetItem {
   index: number;
   reason: WorkingSetReason;
   /** `read "src/a.ts"`, `bash "bun test"`. */

@@ -45,13 +45,12 @@ export const formatCompactionStats = (stats: CompactionStats): string => {
   return `omp-vcc: kept ${stats.keptUserTurns}/${stats.totalUserTurns} turns, ~${formatTokens(stats.keptTokensEst)} tok (${notes.join(", ")}).`;
 };
 
+/** The hook returns before the host applies the compaction and shows its own status; the line comes after it. */
+const AFTER_HOST_STATUS_MS = 500;
+
 export const scheduleCompactionStatsNotify = (ctx: any, stats: CompactionStats) => {
   setTimeout(() => {
-    try {
-      ctx?.ui?.notify?.(
-        formatCompactionStats(stats),
-        "info",
-      );
-    } catch {}
-  }, 500);
+    // The session may have ended or the UI gone by then.
+    try { ctx?.ui?.notify?.(formatCompactionStats(stats), "info"); } catch {}
+  }, AFTER_HOST_STATUS_MS);
 };

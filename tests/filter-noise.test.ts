@@ -22,14 +22,12 @@ describe("filterNoise", () => {
     expect((result[0] as any).text).toBe("Fix the login");
   });
 
-  it("removes known noise strings", () => {
+  it("keeps what the user wrote, whatever it says: only a host's block is noise", () => {
     const blocks: NormalizedBlock[] = [
       { kind: "user", text: "Continue from where you left off." },
-      { kind: "user", text: "real task" },
+      { kind: "user", text: "<ide_opened_file>a.ts</ide_opened_file> look at this" },
     ];
-    const result = filterNoise(blocks);
-    expect(result).toHaveLength(1);
-    expect((result[0] as any).text).toBe("real task");
+    expect(filterNoise(blocks)).toEqual(blocks);
   });
 
   it("preserves non-noise tool calls", () => {

@@ -41,30 +41,6 @@ export const clip = (text: string, max = 200): string => {
   return text.slice(0, end);
 };
 
-/**
- * Clip text to last sentence boundary at or before `max` chars.
- * Falls back to word boundary (clip()) if no sentence end is found in the
- * acceptable range. Trailing whitespace stripped.
- */
-export const clipSentence = (text: string, max = 200): string => {
-  if (text.length <= max) return text;
-  // Look for sentence terminators followed by space/newline within [max*0.5, max]
-  const window = text.slice(0, max);
-  const matches = [...window.matchAll(/[.!?](?:\s|$)/g)];
-  if (matches.length > 0) {
-    const last = matches[matches.length - 1];
-    const end = (last.index ?? 0) + 1; // include the punctuation
-    if (end >= max * 0.5) return text.slice(0, end);
-  }
-  return clip(text, max);
-};
-
-export const nonEmptyLines = (text: string): string[] =>
-  text.split("\n").map((line) => line.trim()).filter(Boolean);
-
-export const firstLine = (text: string, max = 200): string =>
-  clip(text.split("\n")[0] ?? "", max);
-
 export const textParts = (content: Message["content"]): string[] => {
   if (!content) return [];
   if (typeof content === "string") return [content];

@@ -32,7 +32,7 @@ export interface BriefRankingOptions {
   briefCharsPerBlock?: number;
 }
 
-export interface RankedBlock {
+interface RankedBlock {
   block: NormalizedBlock;
   index: number;
   score: number;

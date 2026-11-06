@@ -49,24 +49,18 @@ export interface CompiledSummary {
   sections: string[];
 }
 
-/**
- * The ranked compile (the hook's) keeps the fresh brief whole and fits the
- * previous one's end around it; the unranked one caps both at the line limit.
- */
-const compileWith = (input: RankedCompileInput, ranked: boolean): CompiledSummary => {
+/** The summary, and what to store for the next compaction. */
+export const compileSummary = (input: RankedCompileInput): CompiledSummary => {
   const blocks = summaryBlocks(input.messages, input.sourceIndices);
   const previous = input.previous ?? (input.previousSummary ? legacyPrevious(input.previousSummary) : undefined);
   const fresh = freshState({
     blocks,
-    briefBlocks: ranked
-      ? selectRankedBriefBlocks(blocks, { ...input.ranking, fileOps: input.ranking?.fileOps ?? input.fileOps })
-      : undefined,
+    briefBlocks: selectRankedBriefBlocks(blocks, { ...input.ranking, fileOps: input.ranking?.fileOps ?? input.fileOps }),
     fileOps: input.fileOps,
     trackCommands: input.trackCommands,
     earlySlots: previous?.earlySlots ?? EARLY_REQUESTS_KEPT,
-    capBriefLines: ranked ? undefined : input.limits.briefLines,
   });
-  const merged = mergeStates(previous, fresh, input.limits, ranked);
+  const merged = mergeStates(previous, fresh, input.limits);
   const { text, sections } = renderSummary({
     state: merged,
     limits: input.limits,
@@ -77,9 +71,5 @@ const compileWith = (input: RankedCompileInput, ranked: boolean): CompiledSummar
   return { text, state: capState(merged, input.limits), sections };
 };
 
-export const compile = (input: CompileInput): string => compileWith(input, false).text;
-
-export const compileRanked = (input: RankedCompileInput): string => compileWith(input, true).text;
-
-/** The hook's compile: the text, and what to store for the next one. */
-export const compileSummary = (input: RankedCompileInput): CompiledSummary => compileWith(input, true);
+/** The summary's text. */
+export const compile = (input: RankedCompileInput): string => compileSummary(input).text;

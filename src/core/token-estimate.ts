@@ -1,10 +1,10 @@
 export const DEFAULT_CHARS_PER_TOKEN = 4;
-export const MIN_CHARS_PER_TOKEN = 2;
-export const MAX_CHARS_PER_TOKEN = 6;
+const MIN_CHARS_PER_TOKEN = 2;
+const MAX_CHARS_PER_TOKEN = 6;
 
-export type TokenEstimateMode = "heuristic" | "calibrated";
+type TokenEstimateMode = "heuristic" | "calibrated";
 
-export interface TokenEstimateCalibration {
+interface TokenEstimateCalibration {
   mode: TokenEstimateMode;
   charsPerToken: number;
   sourceChars?: number;
@@ -46,7 +46,7 @@ export const estimateTokensFromChars = (
  * Chars attributed to one image part: the usual agent-harness estimate of
  * about 1200 tokens per image (4800 chars at 4 chars/token).
  */
-export const IMAGE_CONTENT_CHARS = 4800;
+const IMAGE_CONTENT_CHARS = 4800;
 
 const safeJsonStringify = (value: unknown): string => {
   try {
@@ -124,7 +124,3 @@ export const estimateMessageChars = (message: unknown): number => {
 export const estimateMessageTokens = (message: unknown, charsPerToken = DEFAULT_CHARS_PER_TOKEN): number =>
   estimateTokensFromChars(estimateMessageChars(message), charsPerToken);
 
-export const estimateMessageContentTokens = (
-  content: unknown,
-  charsPerToken = DEFAULT_CHARS_PER_TOKEN,
-): number => estimateTokensFromChars(estimateMessageContentChars(content), charsPerToken);

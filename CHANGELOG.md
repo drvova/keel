@@ -75,6 +75,7 @@ All notable changes to `@drvova/omp-vcc` are documented in this file. Entries fr
 - **Why a compaction was not written reaches print and json modes** — omp-vcc's reasons (too few messages, a summary that would be bigger than what it replaces) went to the host's notify, which those modes drop, so only `/omp-vcc` said why there. They go to stderr there for every compaction, as the commands' output does.
 - **`vcc_pin` names Pi's command on Pi** — its description told the agent that the user pins with `/omp-vcc-pin`, a command Pi does not have; on Pi it says `/pi-vcc-pin`.
 - **An earlier session's pins are those of its active branch** — `mode:'sessions'` replayed every pin in another session's file, so a note pinned on a branch that was later edited away was still listed. It now replays them along that session's own branch, as the current session's are.
+- **A request that mentions certain phrases is no longer dropped** — the summary left out any user message containing `Continue from where you left off.`, `No response requested.` or a TodoWrite reminder (strings from pi-vcc's old auto-continue and other agents), so `Continue from where you left off. Also fix the login` vanished from `[User Messages]`; and it cut `<ide_opened_file>` and other editors' tags from what the user wrote. Only omp's `<system-reminder>` blocks are cut now; the user's words are kept.
 
 Found by running omp-vcc on omp with a real model:
 

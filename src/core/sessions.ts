@@ -46,7 +46,7 @@ const parse = (line: Buffer): any => {
  * title, pins (replayed along its active branch). Only the lines those need
  * are parsed; the rest are read by their heads (session-file.ts entryHead).
  */
-export const scanSession = (file: string): SessionInfo | undefined => {
+const scanSession = (file: string): SessionInfo | undefined => {
   let stat;
   try { stat = statSync(file); } catch { return undefined; }
   const header = readHeader(file);

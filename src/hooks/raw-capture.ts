@@ -11,12 +11,12 @@
 // before omp could rewrite it.
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { appendRawStore, keptContent, mayBeRewritten, rawStoreIds, type RawRecord } from "../core/raw-store";
-import { indexById, sessionLineage, type SessionManagerLike } from "../core/session-file";
+import { hostBranch, hostEntries, indexById, sessionLineage, type SessionManagerLike } from "../core/session-file";
 import type { Config } from "../core/settings";
 import { RECALL_TOOL } from "../names";
 
 /** One binding's place in its session: which file, how many entries it has looked at, which are kept. */
-export interface RawCaptureState {
+interface RawCaptureState {
   file?: string;
   seen: number;
   kept: Set<string>;
@@ -36,7 +36,7 @@ export const captureNewEntries = (state: RawCaptureState, sessionManager: Sessio
     state.seen = 0;
     state.kept = new Set(sessionLineage(file).flatMap((f) => [...rawStoreIds(f)]));
   }
-  const entries = sessionManager?.getEntries?.() ?? [];
+  const entries = hostEntries(sessionManager) ?? [];
   if (entries.length < state.seen) state.seen = 0;
   const records: RawRecord[] = [];
   for (let i = state.seen; i < entries.length; i++) {
@@ -78,10 +78,10 @@ export const pointPlaceholders = (messages: unknown[], state: RawCaptureState, s
   if (hits.length === 0 || state.kept.size === 0) return undefined;
   // The tool result each call id names on the active path (a reused id after an interrupted call: the latest).
   const byCall = new Map<string, string>();
-  for (const e of sessionManager?.getBranch?.() ?? []) {
+  for (const e of hostBranch(sessionManager) ?? []) {
     if (e?.type === "message" && e.message?.role === "toolResult" && typeof e.message.toolCallId === "string") byCall.set(e.message.toolCallId, e.id);
   }
-  const index = indexById(sessionManager?.getEntries?.() ?? []);
+  const index = indexById(hostEntries(sessionManager) ?? []);
   let out: unknown[] | undefined;
   for (const { i, text, callId } of hits) {
     const id = byCall.get(callId);

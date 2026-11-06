@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import {
   calibrateCharsPerToken,
   estimateMessageContentChars,
-  estimateMessageContentTokens,
   estimateTokensFromChars,
 } from "../src/core/token-estimate";
 
@@ -16,7 +15,6 @@ describe("token estimate", () => {
 
   test("supports calibrated chars/token ratios", () => {
     expect(estimateTokensFromChars(5, 2)).toBe(3);
-    expect(estimateMessageContentTokens("abcde", 2)).toBe(3);
   });
 
   test("calibrates chars/token from source chars and tokens", () => {
@@ -65,10 +63,6 @@ describe("token estimate", () => {
       null,                               // 0
       "not-an-object",                    // 0
     ] as any)).toBe(0 + 6 + 1 + 0 + 0);
-  });
-
-  test("estimates message content tokens through the shared char estimator", () => {
-    expect(estimateMessageContentTokens("abcde")).toBe(2);
   });
 });
 

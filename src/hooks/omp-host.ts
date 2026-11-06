@@ -12,7 +12,7 @@ import { isRecoveryReason } from "../types";
  * after an overflow or a cut-off ("incomplete") reply, never after threshold or
  * idle maintenance.
  */
-export const trackOmpCompactionTrigger = (pi: ExtensionAPI): (() => CompactionTrigger) => {
+const trackOmpCompactionTrigger = (pi: ExtensionAPI): (() => CompactionTrigger) => {
   let pending: CompactionTrigger | undefined;
   pi.on("auto_compaction_start", (event) => {
     const reason = event?.reason;

@@ -7,19 +7,19 @@ import { EXPAND_DETAIL_CHARS } from "./render-entries";
 import { ignoredNote, type RecallRequest, type RecallScope } from "./recall-request";
 import type { Message } from "@oh-my-pi/pi-ai";
 import { describeSession, listProjectSessions, MAX_LISTED_SESSIONS, resolveSession, sessionDirOf, type SessionInfo } from "./sessions";
-import { currentBranchIds, type SessionManagerLike } from "./session-file";
+import { currentBranchIds, hostBranch, type SessionManagerLike } from "./session-file";
 import { toolCallsOf } from "./tools";
 import { DEFAULT_CHARS_PER_TOKEN } from "./token-estimate";
 
 export const SEARCH_PAGE_SIZE = 5;
 export const RANGE_PAGE_SIZE = 20;
-export const RECENT_COUNT = 25;
+const RECENT_COUNT = 25;
 
 /**
  * The session as one recall call sees it. Scope is applied here, once, and
  * every action reads through it. Loads are cached per call.
  */
-export interface RecallView {
+interface RecallView {
   sessionFile: string;
   scope: RecallScope;
   /** This project's other sessions (mode:'sessions', scope:'project'); unset when unknown. */
@@ -44,7 +44,7 @@ export interface RecallView {
 }
 
 /** The project's other session files, listed once per recall call. */
-export interface ProjectSessions {
+interface ProjectSessions {
   dir: string;
   /** The newest MAX_LISTED_SESSIONS; `more` when there are older ones. */
   list(): SessionInfo[] & { more: boolean };
@@ -52,7 +52,7 @@ export interface ProjectSessions {
   all(): SessionInfo[];
 }
 
-export const projectSessions = (dir: string, currentFile: string): ProjectSessions => {
+const projectSessions = (dir: string, currentFile: string): ProjectSessions => {
   let listed: ReturnType<typeof listProjectSessions> | undefined;
   let all: SessionInfo[] | undefined;
   return {
@@ -76,7 +76,7 @@ const once = <T>(f: () => T): (() => T) => {
   return () => (value ??= { v: f() }).v;
 };
 
-export const openRecallView = (
+const openRecallView = (
   sessionFile: string,
   scope: RecallScope,
   sessionManager: SessionManagerLike,
@@ -120,7 +120,7 @@ export const openRecallView = (
 };
 
 /** A view over one of the project's earlier sessions, on its own active branch. */
-export const openSessionView = (session: SessionInfo, scope: RecallScope, project?: ProjectSessions, maxChars?: number): RecallView => {
+const openSessionView = (session: SessionInfo, scope: RecallScope, project?: ProjectSessions, maxChars?: number): RecallView => {
   const read = once(() => readSession(session.file));
   const ids = read().branchIds;
   // A file without entry ids (an old format) has no branch to follow: read all of it.
@@ -133,7 +133,7 @@ export const openSessionView = (session: SessionInfo, scope: RecallScope, projec
 const inSession = (view: RecallView): string => (view.session ? ` with session:'${view.session.short}'` : "");
 
 /** "Session 01a194d8 · …" line that opens output read from an earlier session. */
-export const sessionHeader = (s: SessionInfo): string => `Session ${describeSession(s)}\n\n`;
+const sessionHeader = (s: SessionInfo): string => `Session ${describeSession(s)}\n\n`;
 
 /**
  * Walk the active path back to the last user message. The tool runs from an
@@ -143,8 +143,7 @@ export const sessionHeader = (s: SessionInfo): string => `Session ${describeSess
  */
 const findCurrentTurn = (messages: readonly RecallMessage[], sessionManager: SessionManagerLike): Set<number> => {
   const none = new Set<number>();
-  let branch: any[] = [];
-  try { branch = sessionManager.getBranch?.() ?? []; } catch { return none; }
+  const branch = hostBranch(sessionManager) ?? [];
   for (let i = branch.length - 1; i >= 0; i--) {
     const e = branch[i];
     if (e?.type === "compaction") return none;
@@ -214,7 +213,7 @@ const capOutput = (text: string, max: number): string => {
 };
 
 /** Where a recall call came from: how its follow-up hints are written, for this session or an earlier one (`short`). */
-export type RecallSurface = (short?: string) => RecallPagingHints;
+type RecallSurface = (short?: string) => RecallPagingHints;
 
 export interface RecallInput {
   request: RecallRequest;
@@ -398,8 +397,7 @@ const searchBefore = (view: RecallView, query: string, skip: Set<number> | undef
 /** A search of this session found nothing: name the project's earlier sessions, which it did not search. */
 const otherSessionsNote = (view: RecallView, hints: RecallPagingHints): string => {
   if (!hints.otherSessions || !view.project || view.session || view.scope === "project") return "";
-  let count = 0;
-  try { count = view.project.list().length; } catch {}
+  const count = view.project.list().length;
   return count > 0 ? `\n${hints.otherSessions(count)}` : "";
 };
 
@@ -467,9 +465,9 @@ const runTouched = (page: number, view: RecallView): string =>
 
 // ── Earlier sessions of this project ──────────────────────────────────────
 
-export const SESSIONS_PAGE_SIZE = 10;
+const SESSIONS_PAGE_SIZE = 10;
 /** scope:'project' searches at most this much: the newest sessions first. */
-export const PROJECT_SEARCH_SESSIONS = 20;
+const PROJECT_SEARCH_SESSIONS = 20;
 const PROJECT_SEARCH_BYTES = 24 * 1024 * 1024;
 const PROJECT_SEARCH_ENTRIES = 40_000;
 

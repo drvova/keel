@@ -13,15 +13,15 @@
 // or retried turn drops the ones made after the edit point. omp's /clear (a
 // reset_boundary) hides earlier pins, as it does omp's own context notes.
 import { clip } from "./content";
-import { afterReset, lastIndex } from "./session-file";
+import { afterReset, hostBranch, hostEntries, lastIndex, type SessionManagerLike } from "./session-file";
 import { PIN_ENTRY_TYPE, PIN_TOOL } from "../names";
 
 /** One note is clipped to this many characters. */
 export const PIN_CHARS = 300;
 /** Notes shown in a summary; past this the newest are shown and the count says so. */
-export const PINS_SHOWN = 20;
+const PINS_SHOWN = 20;
 
-export type PinAuthor = "user" | "agent";
+type PinAuthor = "user" | "agent";
 
 export interface PinnedNote {
   id: number;
@@ -31,7 +31,7 @@ export interface PinnedNote {
   at?: number;
 }
 
-export type PinOp =
+type PinOp =
   | { v: 1; op: "add"; id: number; text: string; by: PinAuthor; at?: number }
   | { v: 1; op: "remove"; id: number };
 
@@ -66,7 +66,7 @@ export const nextPinId = (branch: readonly any[]): number => {
 };
 
 /** Normalize note text: one line, clipped. Empty when there is nothing to pin. */
-export const pinText = (text: string): { text: string; clipped: boolean } => {
+const pinText = (text: string): { text: string; clipped: boolean } => {
   const flat = text.replace(/\s+/g, " ").trim();
   return { text: clip(flat, PIN_CHARS), clipped: flat.length > PIN_CHARS };
 };
@@ -85,7 +85,7 @@ export const formatPinLines = (notes: readonly PinnedNote[]): string[] => {
 };
 
 /** The pin list as tool or command output. */
-export const formatPinList = (notes: readonly PinnedNote[]): string =>
+const formatPinList = (notes: readonly PinnedNote[]): string =>
   notes.length === 0
     ? "No pinned notes."
     : `Pinned notes (kept at the top of every summary):\n${notes.map((n) => `- ${formatPin(n)}`).join("\n")}`;
@@ -97,17 +97,12 @@ export interface PinHost {
   appendEntry: (customType: string, data?: unknown) => void;
 }
 
-export interface PinSession {
-  getBranch: () => any[];
-  getEntries?: () => any[];
-}
+export type PinSession = SessionManagerLike;
 
-const branchOf = (session: PinSession): any[] => {
-  try { return session.getBranch() ?? []; } catch { return []; }
-};
+const branchOf = (session: PinSession): any[] => hostBranch(session) ?? [];
 
 /** "3", "#3", "[3]", 3 -> 3. */
-export const toPinId = (value: unknown): number | undefined => {
+const toPinId = (value: unknown): number | undefined => {
   if (typeof value === "number") return Number.isInteger(value) ? value : undefined;
   if (typeof value !== "string") return undefined;
   const m = value.trim().match(/^\[?#?(\d+)\]?$/);
@@ -121,8 +116,7 @@ export const addPin = (host: PinHost, session: PinSession, raw: string, by: PinA
   const branch = branchOf(session);
   const existing = readPins(branch).find((n) => n.text === text);
   if (existing) return { done: false, text: `Already pinned: ${formatPin(existing)}.` };
-  let entries: any[] = branch;
-  try { entries = session.getEntries?.() ?? branch; } catch {}
+  const entries = hostEntries(session) ?? branch;
   const op: PinOp = { v: 1, op: "add", id: nextPinId(branch), text, by, ...withAt(lastIndex(entries)) };
   host.appendEntry(PIN_ENTRY_TYPE, op);
   const note = { id: op.id, text, by, ...withAt(op.at) };
@@ -144,7 +138,7 @@ export const removePin = (host: PinHost, session: PinSession, idValue: unknown):
 export const listPins = (session: PinSession): string => formatPinList(readPins(branchOf(session)));
 
 /** What a pin or unpin did: `done` when the note changed, `text` what to tell. */
-export interface PinResult {
+interface PinResult {
   done: boolean;
   text: string;
 }

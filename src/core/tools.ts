@@ -31,7 +31,7 @@ export const toolCallsOf = (message: unknown): ToolCall[] => {
 };
 
 /** What a call does to the project. */
-export type CallKind = "read" | "write" | "edit" | "search" | "shell" | "other";
+type CallKind = "read" | "write" | "edit" | "search" | "shell" | "other";
 
 const KIND_BY_NAME: Readonly<Record<string, CallKind>> = {
   read: "read",
@@ -159,7 +159,7 @@ export const commandOf = (block: NormalizedBlock): string | undefined => {
  * search's pattern, else its file (and how many more it names), command or
  * query. `keys` are the arguments it shows.
  */
-export interface CallSubject {
+interface CallSubject {
   label: "path" | "command" | "pattern" | "query";
   value: string;
   more: number;

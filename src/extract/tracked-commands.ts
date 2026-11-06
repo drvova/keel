@@ -121,7 +121,7 @@ const sshRemoteCommand = (afterSsh: string): string | undefined => {
   return rest || undefined;
 };
 
-export interface TrackedCommandActivity {
+interface TrackedCommandActivity {
   /** Command name (as configured in settings.trackCommands) -> entries seen. */
   byCommand: Map<string, Set<string>>;
 }
@@ -172,7 +172,7 @@ export const extractTrackedCommands = (
         // bounds are segment starts (incl. wrappers); the ssh token itself
         // sits at skipToCommand — slice past it for the remote parser.
         const seg = cmd.slice(bound);
-        const remote = sshRemoteCommand(seg.slice(skipToCommand(seg, 0) + 3));
+        const remote = sshRemoteCommand(seg.slice(skipToCommand(seg, 0) + "ssh".length));
         if (!remote) continue;
         // The remote string's quotes were the LOCAL shell's syntax, not
         // the remote command's — a leftover stray ' would open a phantom

@@ -1,20 +1,20 @@
 // A recall call as one request, from the tool's params or the command's text.
 import { parseDrillDown } from "./drill-down";
 
-export type DrillTarget = NonNullable<ReturnType<typeof parseDrillDown>>;
+type DrillTarget = NonNullable<ReturnType<typeof parseDrillDown>>;
 
 /**
  * lineage: the current conversation path. all: every branch of this session.
  * project: search also covers this project's earlier sessions (core/sessions.ts).
  */
-export const SCOPES = ["lineage", "all", "project"] as const;
+const SCOPES = ["lineage", "all", "project"] as const;
 export type RecallScope = (typeof SCOPES)[number];
 /** hybrid: the default, a query, range, expand or the latest entries. */
-export const MODES = ["hybrid", "touched", "sessions"] as const;
-export type RecallMode = (typeof MODES)[number];
+const MODES = ["hybrid", "touched", "sessions"] as const;
+type RecallMode = (typeof MODES)[number];
 
 /** The one thing a recall call does. Exactly one action runs per call. */
-export type RecallAction =
+type RecallAction =
   | { kind: "drill"; target: DrillTarget }
   | { kind: "touched"; page: number }
   | { kind: "sessions"; page: number }
@@ -24,7 +24,7 @@ export type RecallAction =
   | { kind: "recent" };
 
 /** A param the call set that its action does not use, and why. */
-export interface IgnoredParam {
+interface IgnoredParam {
   param: string;
   why: string;
 }
@@ -54,7 +54,7 @@ export interface RecallToolParams {
 }
 
 /** Where normalizeToolParams records values it had to drop; read by parseToolRequest. */
-export const DROPPED_KEY = "_vccDropped";
+const DROPPED_KEY = "_vccDropped";
 
 const isScope = (v: unknown): v is RecallScope => (SCOPES as readonly unknown[]).includes(v);
 const isMode = (v: unknown): v is RecallMode => (MODES as readonly unknown[]).includes(v);

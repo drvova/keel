@@ -44,7 +44,7 @@ export const trackedEntry = (entry: string): string => {
  * leading "(+N earlier)": keeping the oldest froze a merged list on its first
  * entries.
  */
-export const capItems = (items: readonly string[], limit: number, joinWith: string): string => {
+const capItems = (items: readonly string[], limit: number, joinWith: string): string => {
   if (items.length <= limit) return items.join(joinWith);
   return `(+${items.length - limit} earlier) ` + items.slice(-limit).join(joinWith);
 };
@@ -118,7 +118,7 @@ const fileLines = (files: SummaryState["files"], limit: number): string[] => {
     .map(([label, list]) => `${label}: ${capItems(list.map(trim), limit, ", ")}`);
 };
 
-export interface RenderInput {
+interface RenderInput {
   state: SummaryState;
   limits: SummaryLimits;
   /** [Pinned Notes] lines (core/pins.ts formatPinLines). */

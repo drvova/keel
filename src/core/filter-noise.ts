@@ -1,35 +1,14 @@
+// Text a host put into a user message that the user did not write: omp's
+// <system-reminder> blocks (Pi writes none). A message that held only that is
+// left out; otherwise the block is cut and the user's words kept.
 import type { NormalizedBlock } from "../types";
 
-const NOISE_STRINGS = [
-  "Continue from where you left off.",
-  "No response requested.",
-  "IMPORTANT: TodoWrite was not called yet.",
-];
+const HOST_BLOCK_RE = /<system-reminder\b[^>]*>[\s\S]*?<\/system-reminder>/g;
 
-const XML_WRAPPER_RE = /<(system-reminder|ide_opened_file|command-message|context-window-usage)[^>]*>[\s\S]*?<\/\1>/g;
-
-const isNoiseUserBlock = (text: string): boolean => {
-  const trimmed = text.trim();
-  if (NOISE_STRINGS.some((s) => trimmed.includes(s))) return true;
-  const stripped = trimmed.replace(XML_WRAPPER_RE, "").trim();
-  return stripped.length === 0;
-};
-
-const cleanUserText = (text: string): string =>
-  text.replace(XML_WRAPPER_RE, "").trim();
-
-export const filterNoise = (blocks: NormalizedBlock[]): NormalizedBlock[] => {
-  const out: NormalizedBlock[] = [];
-  for (const b of blocks) {
-    if (b.kind === "user") {
-      if (isNoiseUserBlock(b.text)) continue;
-      const cleaned = cleanUserText(b.text);
-      if (!cleaned) continue;
-      // Keep sourceIndex: a clipped request names the #N that reads all of it.
-      out.push({ ...b, text: cleaned });
-      continue;
-    }
-    out.push(b);
-  }
-  return out;
-};
+export const filterNoise = (blocks: NormalizedBlock[]): NormalizedBlock[] =>
+  blocks.flatMap((b): NormalizedBlock[] => {
+    if (b.kind !== "user") return [b];
+    const text = b.text.replace(HOST_BLOCK_RE, "").trim();
+    // Keep sourceIndex: a clipped request names the #N that reads all of it.
+    return text ? [{ ...b, text }] : [];
+  });

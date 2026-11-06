@@ -8,7 +8,7 @@ export const OMP_VCC_COMPACT_INSTRUCTION = "__omp_vcc__";
 
 const KEEP_RE = /^keep:(\d+)$/;
 
-export interface ParsedCompactionArgs {
+interface ParsedCompactionArgs {
   followUpPrompt: string;
   keepUserTurns: number | null;
   keepUserTurnsExplicit: boolean;
@@ -34,7 +34,7 @@ export const parseKeepAndPrompt = (args?: string): ParsedCompactionArgs => {
 export const buildVccCustomInstructions = (keepUserTurns: number | null): string =>
   keepUserTurns == null ? OMP_VCC_COMPACT_INSTRUCTION : `${OMP_VCC_COMPACT_INSTRUCTION} keep:${keepUserTurns}`;
 
-export interface CompactionInstructions {
+interface CompactionInstructions {
   /** The pass is /omp-vcc's, which the hook always handles and the command reports. */
   fromCommand: boolean;
   keepUserTurns: number;

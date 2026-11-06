@@ -20,7 +20,7 @@ import type { OwnCutResult } from "./cut";
  * budgets' growthMarginChars), or this share of what it replaces. */
 const GROWTH_MARGIN_SHARE = 0.25;
 
-export interface SummaryGrowth {
+interface SummaryGrowth {
   /** What the new summary adds beyond the previous one it replaces, less the messages it summarizes. */
   netChars: number;
   allowedChars: number;
@@ -45,7 +45,7 @@ export const summaryGrowth = (
   return { netChars, allowedChars, grows: netChars > allowedChars };
 };
 
-export interface AssembleInput {
+interface AssembleInput {
   /** The branch as the context holds it. */
   branchEntries: any[];
   cut: Extract<OwnCutResult, { ok: true }>;
@@ -63,7 +63,7 @@ export interface AssembleInput {
   charsPerToken: number;
 }
 
-export interface Assembled {
+interface Assembled {
   compiled: CompiledSummary;
   /** Messages the summary covers (the cut's, less skipped custom types). */
   summarized: number;

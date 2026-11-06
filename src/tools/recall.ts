@@ -13,9 +13,9 @@ import { RANGE_PAGE_SIZE, RECALL_OUTPUT_CHARS, recall, SEARCH_PAGE_SIZE, type Re
 import { SESSION_REF_MIN_CHARS } from "../core/sessions";
 import { RECALL_TOOL } from "../names";
 
-export const RECALL_TOOL_LABEL = "VCC Recall";
+const RECALL_TOOL_LABEL = "VCC Recall";
 
-export const RECALL_TOOL_DESCRIPTION = [
+const RECALL_TOOL_DESCRIPTION = [
   "Recall earlier parts of this session, including anything dropped by compaction.",
   "Use it before saying the context is gone.",
   "",
@@ -40,7 +40,7 @@ export const RECALL_TOOL_DESCRIPTION = [
 ].join("\n");
 
 /** Per-parameter descriptions, one per RECALL_PARAMS entry. */
-export const RECALL_PARAM_DESCRIPTIONS: Record<(typeof RECALL_PARAMS)[number], string> = {
+const RECALL_PARAM_DESCRIPTIONS: Record<(typeof RECALL_PARAMS)[number], string> = {
   query: "What to recall, in plain keywords (e.g. 'redis cache decision'). Multi-word queries are ranked by relevance. A regex pattern also works. '#N:path' instead shows a file's content from entry N.",
   range: `[from, to]: every entry from #from to #to (inclusive) in order, ${RANGE_PAGE_SIZE} per page. #N is the number in summary refs like (#12) and in recall results.`,
   expand: "#N indices to return full content for (from summary refs like (#12) or recall results).",
@@ -51,7 +51,7 @@ export const RECALL_PARAM_DESCRIPTIONS: Record<(typeof RECALL_PARAMS)[number], s
 };
 
 /** Follow-up hints in the tool's own params; inside an earlier session they carry session:'id'. */
-export const toolHints = (short?: string): RecallPagingHints => {
+const toolHints = (short?: string): RecallPagingHints => {
   const at = short ? ` with session:'${short}'` : "";
   return {
     outOfRange: (_query, _scope, totalPages, truncated) => truncated
@@ -93,7 +93,7 @@ const SCHEMA: Record<(typeof RECALL_PARAMS)[number], object> = {
   session: { type: "string" },
 };
 
-export const RECALL_PARAMETERS = {
+const RECALL_PARAMETERS = {
   type: "object",
   properties: Object.fromEntries(RECALL_PARAMS.map((p) => [p, { ...SCHEMA[p], description: RECALL_PARAM_DESCRIPTIONS[p] }])),
 } as const;

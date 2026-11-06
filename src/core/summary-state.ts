@@ -46,7 +46,7 @@ export const previousOf = (state: SummaryState): PreviousSummary => ({
   earlySlots: Math.max(0, EARLY_REQUESTS_KEPT - state.earlyRequests.length),
 });
 
-export interface FreshInput {
+interface FreshInput {
   blocks: NormalizedBlock[];
   /** The blocks the brief covers (the ranked selection); all of them when omitted. */
   briefBlocks?: NormalizedBlock[];
@@ -55,8 +55,6 @@ export interface FreshInput {
   trackCommands?: readonly string[];
   /** Early requests this window may add: the previous summary's room, all of it without one. */
   earlySlots: number;
-  /** Cap the brief at the line limit here (the unranked compile); the ranked one is sized by its budget. */
-  capBriefLines?: number;
 }
 
 /** This window's sections. Lists are whole; capState and the render cap them. */
@@ -77,7 +75,8 @@ export const freshState = (input: FreshInput): SummaryState => {
       .filter(([, entries]) => entries.size > 0)
       .map(([name, entries]) => ({ name, entries: [...entries].map(trackedEntry) })),
     userMessages: messages.slice(early.length),
-    brief: wrapLongLines(input.capBriefLines !== undefined ? capBrief(brief, input.capBriefLines) : brief),
+    // Sized by the ranked selection's budget, not by lines.
+    brief: wrapLongLines(brief),
   };
 };
 
@@ -108,13 +107,9 @@ const mergeCommits = (commits: readonly Commit[]): Commit[] => {
   return out;
 };
 
-/**
- * Brief lines: the fresh brief whole and as much of the previous one's end as
- * the line limit leaves (the ranked compile), or both together capped at it.
- */
-const mergeBrief = (prev: string, fresh: string, maxLines: number, preserveFresh: boolean): string => {
+/** Brief lines: the fresh brief whole, and as much of the previous one's end as the line limit leaves. */
+const mergeBrief = (prev: string, fresh: string, maxLines: number): string => {
   if (!prev) return fresh;
-  if (!preserveFresh) return capBrief(fresh ? `${prev}\n\n${fresh}` : prev, maxLines);
   if (!fresh) return capBrief(prev, maxLines);
   const room = maxLines - fresh.split("\n").length;
   const tail = room > 0 ? capBrief(prev, room) : "";
@@ -122,7 +117,7 @@ const mergeBrief = (prev: string, fresh: string, maxLines: number, preserveFresh
 };
 
 /** The previous summary's sections with this window's merged in. */
-export const mergeStates = (previous: PreviousSummary | undefined, fresh: SummaryState, limits: SummaryLimits, preserveFreshBrief: boolean): SummaryState => {
+export const mergeStates = (previous: PreviousSummary | undefined, fresh: SummaryState, limits: SummaryLimits): SummaryState => {
   if (!previous) return fresh;
   const prev = previous.state;
   const modified = appendTouched(prev.files.modified, fresh.files.modified);
@@ -146,7 +141,7 @@ export const mergeStates = (previous: PreviousSummary | undefined, fresh: Summar
     commits: mergeCommits([...prev.commits, ...fresh.commits]),
     tracked,
     userMessages: appendTouched(prev.userMessages, fresh.userMessages),
-    brief: mergeBrief(prev.brief, fresh.brief, limits.briefLines, preserveFreshBrief),
+    brief: mergeBrief(prev.brief, fresh.brief, limits.briefLines),
   };
 };
 

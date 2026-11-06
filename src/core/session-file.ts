@@ -17,6 +17,22 @@ export interface SessionManagerLike {
   getBranch?(): any[];
 }
 
+/** The host's branch; undefined where it gives none or the call throws (a closed session). */
+export const hostBranch = (sessionManager: SessionManagerLike | undefined): any[] | undefined => {
+  try {
+    const branch = sessionManager?.getBranch?.();
+    return Array.isArray(branch) ? branch : undefined;
+  } catch { return undefined; }
+};
+
+/** The host's whole entry tree; undefined where it gives none or the call throws. */
+export const hostEntries = (sessionManager: SessionManagerLike | undefined): any[] | undefined => {
+  try {
+    const entries = sessionManager?.getEntries?.();
+    return Array.isArray(entries) ? entries : undefined;
+  } catch { return undefined; }
+};
+
 /** omp's `/clear`. */
 export const RESET_ENTRY_TYPE = "reset_boundary";
 
@@ -71,7 +87,7 @@ export const readEntries = (file: string): any[] | undefined => {
 };
 
 /** A message entry with its `#N`. */
-export interface IndexedMessage {
+interface IndexedMessage {
   index: number;
   id: string | undefined;
   message: Record<string, unknown>;
@@ -111,12 +127,9 @@ export const activeBranchIds = (entries: readonly any[]): Set<string> => {
 
 /** The ids on the branch the session manager is on (its whole tree when it gives no branch). */
 export const currentBranchIds = (sessionManager: SessionManagerLike): Set<string> => {
-  const ids = (entries: any[] | undefined) => new Set((entries ?? []).map((e) => e?.id).filter((id): id is string => typeof id === "string" && id !== ""));
-  try {
-    const branch = sessionManager.getBranch?.();
-    if (branch && branch.length > 0) return ids(branch);
-  } catch {}
-  try { return ids(sessionManager.getEntries?.()); } catch { return new Set(); }
+  const branch = hostBranch(sessionManager);
+  const entries = branch?.length ? branch : hostEntries(sessionManager) ?? [];
+  return new Set(entries.map((e) => e?.id).filter((id): id is string => typeof id === "string" && id !== ""));
 };
 
 /**
@@ -173,7 +186,7 @@ export const readHeader = (file: string): Record<string, unknown> | undefined =>
 };
 
 /** The session this one was forked or branched from, as a file: the header's `parentSession`, a path or a session id in the same directory. */
-export const parentSessionFile = (file: string): string | undefined => {
+const parentSessionFile = (file: string): string | undefined => {
   const parent = readHeader(file)?.parentSession;
   if (typeof parent !== "string" || !parent) return undefined;
   if (isAbsolute(parent)) return existsSync(parent) ? parent : undefined;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { compile as compileAt, compileRanked as compileRankedAt, type RankedCompileInput } from "../src/core/summarize";
+import { compile as compileAt, type RankedCompileInput } from "../src/core/summarize";
 import { DEFAULT_SUMMARY_LIMITS } from "../src/core/window";
 import { rankBriefBlocks, selectRankedBriefBlocks } from "../src/core/rank";
 import { compileBrief } from "../src/core/brief";
@@ -7,8 +7,6 @@ import type { NormalizedBlock } from "../src/types";
 import { assistantText, assistantWithToolCall, userMsg } from "./fixtures";
 /** compile at a ~128K window's section limits unless a test sets its own. */
 const compile = (input: Omit<RankedCompileInput, "limits"> & { limits?: RankedCompileInput["limits"] }) => compileAt({ limits: DEFAULT_SUMMARY_LIMITS, ...input });
-/** compileRanked at a ~128K window's section limits unless a test sets its own. */
-const compileRanked = (input: Omit<RankedCompileInput, "limits"> & { limits?: RankedCompileInput["limits"] }) => compileRankedAt({ limits: DEFAULT_SUMMARY_LIMITS, ...input });
 
 const briefPart = (summary: string): string => summary.split("\n\n---\n\n")[1] ?? "";
 
@@ -142,7 +140,7 @@ describe("section-aware brief ranking prototype", () => {
     expect(selected).toContain(blocks[3]);
   });
 
-  it("compileRanked reduces brief noise while keeping semantic sections from all blocks", () => {
+  it("compile reduces brief noise while keeping semantic sections from all blocks", () => {
     const exploration = Array.from({ length: 15 }, (_, i) => [
       userMsg(`look around ${i}`),
       assistantWithToolCall("Read", { file_path: `noise${i}.ts` }),
@@ -156,7 +154,7 @@ describe("section-aware brief ranking prototype", () => {
     ];
 
     const baseline = compile({ messages: [...exploration, ...critical] });
-    const ranked = compileRanked({
+    const ranked = compile({
       messages: [...exploration, ...critical],
       ranking: { maxBlocks: 10, preserveRecentBlocks: 4 },
     });
@@ -172,7 +170,7 @@ describe("section-aware brief ranking prototype", () => {
   it("keeps fresh ranked brief and gives previous brief the remaining budget", () => {
     const previousBrief = Array.from({ length: 200 }, (_, i) => `[user]\nold context ${i}`).join("\n\n");
     const previousSummary = `[Early Session Requests]\n- Original goal\n\n---\n\n${previousBrief}`;
-    const ranked = compileRanked({
+    const ranked = compile({
       previousSummary,
       messages: [
         userMsg("Fix fresh ranked bug"),
@@ -224,7 +222,7 @@ describe("section-aware brief ranking prototype", () => {
     );
     const maxBriefChars = 3000;
 
-    const ranked = compileRanked({
+    const ranked = compile({
       messages: [userMsg("start a big task"), ...huge],
       ranking: { maxBlocks: 80, preserveRecentBlocks: 10, maxBriefChars },
     });

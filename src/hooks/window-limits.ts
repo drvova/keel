@@ -26,7 +26,7 @@ export const createWindowState = (): WindowState => ({
   windowNoticeShown: false,
 });
 
-export interface WindowInfo {
+interface WindowInfo {
   /** What the host uses (ctx.model.contextWindow; omp's discovery fills it from the provider, Pi's catalog and models.json). */
   host?: number;
   /** What an overflow error said, in this or an earlier session. */
@@ -48,11 +48,11 @@ export const windowOf = (model: ModelLike | undefined, hostName: HostName, confi
 };
 
 /** The host's window is above the real one, so its trigger cannot fire before an overflow. */
-export const hostOverestimates = (w: WindowInfo): boolean =>
+const hostOverestimates = (w: WindowInfo): boolean =>
   w.host !== undefined && w.effective !== undefined && w.effective < w.host;
 
 /** The host's policy for this model as the last compaction carried it; undefined before one, or for another model. */
-export const knownHostPolicy = (state: WindowState, key: string | undefined): object | undefined =>
+const knownHostPolicy = (state: WindowState, key: string | undefined): object | undefined =>
   state.hostPolicy && state.hostPolicy.key === key ? state.hostPolicy.policy : undefined;
 
 const positive = (n: number | undefined): number | undefined => (typeof n === "number" && n > 0 ? n : undefined);

@@ -1,7 +1,7 @@
 import type { NormalizedBlock } from "../types";
 import { commandOf } from "../core/tools";
 
-export interface CommitInfo {
+interface CommitInfo {
   hash?: string;
   message: string;
 }

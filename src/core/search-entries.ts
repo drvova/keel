@@ -448,7 +448,7 @@ const SEARCH_RESULT_CAP = 50;
  * production call sites (`searchEntries`, the recall tool) never pass this
  * and always get `BM25_RELATIVE_FLOOR`/`SEARCH_RESULT_CAP`.
  */
-export interface SearchTuning {
+interface SearchTuning {
   relativeFloor?: number;
   cap?: number;
 }

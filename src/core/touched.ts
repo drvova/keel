@@ -6,7 +6,7 @@ import { callKind, filesOf, fileWriteOf, toolCallsOf, writtenText } from "./tool
 export const TOUCHED_PAGE_SIZE = 5;
 
 /** One entry that changed a file. */
-export interface FileTouch {
+interface FileTouch {
   index: number;
   toolName: string;
   /** False when the call names the file but carries no content to drill into (a multi-path or patch edit). */
@@ -22,7 +22,7 @@ export interface TouchedFile {
  * The files a message's writes and edits change, each with the lines the call
  * carries and whether the drill-down can show them (`#N:path`).
  */
-export const fileIndicators = (message: unknown): { toolName: string; path: string; lineCount: number; drillable: boolean }[] =>
+const fileIndicators = (message: unknown): { toolName: string; path: string; lineCount: number; drillable: boolean }[] =>
   toolCallsOf(message).flatMap((call) => {
     const kind = callKind(call);
     if (kind !== "write" && kind !== "edit") return [];

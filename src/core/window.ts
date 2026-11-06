@@ -71,7 +71,7 @@ export const effectiveWindow = (...windows: Array<number | undefined>): number |
  * CompactionSettings, with the model's `compaction.modelThresholds` entry
  * already applied). Only the fields that decide where omp compacts.
  */
-export interface OmpCompactionPolicy {
+interface OmpCompactionPolicy {
   enabled?: boolean;
   strategy?: string;
   /** Compact at this share of the window (1–99). */
@@ -104,7 +104,7 @@ export const ompPolicyOf = (settings: unknown): OmpCompactionPolicy | undefined 
 };
 
 /** Whether omp compacts on its own under this policy. */
-export const ompAutoCompacts = (policy: OmpCompactionPolicy | undefined): boolean =>
+const ompAutoCompacts = (policy: OmpCompactionPolicy | undefined): boolean =>
   policy?.enabled !== false && policy?.strategy !== "off";
 
 /** The reserve below the window omp keeps (pi-agent-core resolveBudgetReserveTokens). */
@@ -145,7 +145,7 @@ export const ompDefaultTrigger = (window: number): number => Math.max(1, ompTrig
  * CompactionSettings from settingsManager.getCompactionSettings(model)). Only
  * the fields that decide where Pi compacts.
  */
-export interface PiCompactionPolicy {
+interface PiCompactionPolicy {
   enabled?: boolean;
   /** Kept free below the window; Pi's DEFAULT_COMPACTION_SETTINGS has 16,384. */
   reserveTokens?: number;
@@ -177,7 +177,7 @@ export const piTrigger = (window: number, policy: PiCompactionPolicy = {}): numb
 };
 
 /** Whether Pi compacts on its own under this policy. */
-export const piAutoCompacts = (policy: PiCompactionPolicy | undefined): boolean => policy?.enabled !== false;
+const piAutoCompacts = (policy: PiCompactionPolicy | undefined): boolean => policy?.enabled !== false;
 
 /**
  * A host's compaction rule, from its own code: the policy it hands the hook
@@ -311,7 +311,7 @@ export const summaryScale = (trigger: number, briefCeilingTokens: number): numbe
     : Math.max(1, briefCeilingTokens / DEFAULT_BUDGETS.briefCeilingTokens);
 
 /** The default section sizes scaled by `scale`, each at or above its floor. */
-export const summaryLimits = (scale: number): SummaryLimits => {
+const summaryLimits = (scale: number): SummaryLimits => {
   const limits = { ...DEFAULT_SUMMARY_LIMITS };
   for (const key of Object.keys(limits) as Array<keyof SummaryLimits>) {
     limits[key] = Math.max(SUMMARY_LIMIT_FLOORS[key], Math.round(DEFAULT_SUMMARY_LIMITS[key] * scale));

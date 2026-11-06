@@ -117,7 +117,7 @@ const TRIVIAL_LINE_RE = /^(?:set\s+[-+]|cd\s+\S+$|export\s+\w+=|(?:source|\.)\s+
 // A real heredoc opener: `<<` at a command boundary — not preceded by a word
 // char or `)`, so shift ops (`8 << 20`, `Rd<<8`) are not misread — with an
 // identifier terminator starting [A-Za-z_], so numeric `<< 10` is rejected too.
-export const HEREDOC_OPEN_RE = /(?<![\w)])<<-?\s*["']?([A-Za-z_]\w*)["']?/;
+const HEREDOC_OPEN_RE = /(?<![\w)])<<-?\s*["']?([A-Za-z_]\w*)["']?/;
 // File-writer heredocs (`cat > f <<EOF`, tee, dd) already name their target, so
 // the opener alone is informative → body-only. EVERY other heredoc has a
 // content-free opener (interpreters python3/node, remote shells `ssh host <<CMD`,
@@ -263,7 +263,7 @@ const toolOneLiner = (name: string, args: Record<string, unknown>): string => {
  */
 type BriefItem = { text: string } | { call: string; refs: number[] } | { omitted: number };
 
-export interface BriefLine {
+interface BriefLine {
   /** Section header like "[user]" or "[assistant]" */
   header: string;
   lines: BriefItem[];

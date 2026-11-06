@@ -15,7 +15,7 @@ import { appendFileSync } from "fs";
 import { forEachJsonlLine } from "./jsonl";
 import { sessionLineage } from "./session-file";
 
-export const RAW_STORE_SUFFIX = ".vcc-raw";
+const RAW_STORE_SUFFIX = ".vcc-raw";
 
 export const rawStorePath = (sessionFile: string): string => sessionFile + RAW_STORE_SUFFIX;
 

@@ -51,7 +51,7 @@ export const toSummaryMessage = (message: any, convert: ConvertToLlm): any | nul
 };
 
 /** A custom_message the user listed in skipCustomTypes; dropped before summarizing. */
-export const isSkippedCustom = (m: any, skipCustomTypes: readonly string[]): boolean =>
+const isSkippedCustom = (m: any, skipCustomTypes: readonly string[]): boolean =>
   m?.role === "custom" && skipCustomTypes.includes(m?.customType);
 
 /**

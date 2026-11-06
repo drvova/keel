@@ -6,10 +6,10 @@ import type { HostProfile } from "../host";
 import { addPin, listPins, PIN_CHARS, removePin, type PinHost, type PinSession } from "../core/pins";
 import { PIN_TOOL } from "../names";
 
-export const PIN_TOOL_LABEL = "VCC Pin";
+const PIN_TOOL_LABEL = "VCC Pin";
 
 /** What the agent reads about vcc_pin; `command` is omp-vcc's command prefix on the host. */
-export const pinToolDescription = (command: string): string => [
+const pinToolDescription = (command: string): string => [
   "Pin a short note that must survive every compaction: a decision and its reason, a constraint, a fact",
   "the rest of the task depends on. Pinned notes are kept verbatim at the top of every summary until",
   "unpinned; everything else in a summary ages out on a long task.",
@@ -21,7 +21,7 @@ export const pinToolDescription = (command: string): string => [
   `Pin sparingly, what you would need if you lost the conversation; the user pins with /${command}-pin.`,
 ].join("\n");
 
-export const PIN_PARAM_DESCRIPTIONS = {
+const PIN_PARAM_DESCRIPTIONS = {
   note: "Text to pin: one self-contained line, e.g. 'Sessions live in SQLite, not Redis: the deploy host has no Redis.'",
   unpin: "The [N] of a pinned note to remove.",
 } as const;
@@ -36,7 +36,7 @@ export const executePin = (params: unknown, host: PinHost, session: PinSession):
   return listPins(session);
 };
 
-export const PIN_PARAMETERS = {
+const PIN_PARAMETERS = {
   type: "object",
   properties: {
     note: { type: "string", description: PIN_PARAM_DESCRIPTIONS.note },

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { textParts, textOf, clip, firstLine } from "../src/core/content";
+import { textParts, textOf, clip } from "../src/core/content";
 import { argsText } from "../src/core/tools";
 
 describe("textParts", () => {
