@@ -2,6 +2,7 @@
 // read by the hook (automatic and /compact passes) and /omp-vcc's feedback.
 import type { BudgetCutKind } from "./cut";
 import { tell, type NotifyCtx } from "../host";
+import { callCore } from "../core/lisp-core";
 
 /** What the outcome line says. */
 export interface CompactionStats {
@@ -21,6 +22,9 @@ const formatTokens = (n: number): string => {
 };
 
 export const formatCompactionStats = (stats: CompactionStats): string => {
+  // The Lisp core writes the same line (lisp/src/outcome.lisp, op outcome).
+  const inCore = callCore({ op: "outcome", stats });
+  if (inCore) return inCore.line as string;
   if (stats.budgetCut) {
     if (stats.budgetCut === "final_reply") {
       return `omp-vcc: kept the final reply (~${formatTokens(stats.keptTokensEst)} tok), summarized ${stats.summarized}.`;

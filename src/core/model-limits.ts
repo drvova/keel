@@ -10,6 +10,10 @@
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import { effectiveWindow } from "./window";
+import { callCore } from "./lisp-core";
+
+/** The Lisp core's answer for the limits file (lisp/src/limits.lisp, op limits), or undefined without it. */
+const limitsInCore = (request: Record<string, unknown>) => callCore({ op: "limits", ...request });
 
 export interface ModelLike {
   provider?: string;
@@ -61,6 +65,15 @@ export const learnedWindow = (dir: string, key: string | undefined): number | un
   return typeof n === "number" && n > 0 ? n : undefined;
 };
 
+/** Keep the limit an overflow error stated for `model`. A smaller one replaces a larger one, never the reverse. */
+export const learnWindow = (dir: string, model: ModelLike | undefined, contextWindow: number, now = new Date()): boolean => {
+  const inCore = limitsInCore({ action: "learn", model: modelOf(model), dir, window: contextWindow, now: now.toISOString() });
+  return inCore ? inCore.recorded === true : recordLearnedWindow(dir, modelKey(model), contextWindow, now);
+};
+
+/** What the core needs of a model: its provider, id and window. */
+const modelOf = (model: ModelLike | undefined) => (model ? { provider: model.provider, id: model.id, contextWindow: model.contextWindow } : null);
+
 /** Keep the limit an overflow error stated. A smaller one replaces a larger one, never the reverse. */
 export const recordLearnedWindow = (dir: string, key: string | undefined, contextWindow: number, now = new Date()): boolean => {
   if (!key || !(contextWindow > 0)) return false;
@@ -73,11 +86,18 @@ export const recordLearnedWindow = (dir: string, key: string | undefined, contex
 
 /** The host's policy for a model with a learned window, as a compaction last carried it; undefined before one did. */
 export const learnedHostPolicy = (dir: string, key: string | undefined): object | undefined => {
+  const inCore = key ? limitsInCore({ action: "policy", key, dir }) : undefined;
+  if (inCore) return (inCore.policy as object | undefined) ?? undefined;
   const policy = key ? readLimits(dir)[key]?.hostPolicy : undefined;
   return policy && typeof policy === "object" ? policy : undefined;
 };
 
 /** Keep the policy a compaction carried, for a model with a learned window only (where it is read); written when it changed. */
+export const keepHostPolicy = (dir: string, model: ModelLike | undefined, policy: object | undefined): void => {
+  if (limitsInCore({ action: "record-policy", model: modelOf(model), dir, policy: policy ?? null })) return;
+  recordHostPolicy(dir, modelKey(model), policy);
+};
+
 export const recordHostPolicy = (dir: string, key: string | undefined, policy: object | undefined): void => {
   if (!key || !policy) return;
   const limits = readLimits(dir);
@@ -99,6 +119,8 @@ export interface WindowInfo<Host extends string = string> {
 
 /** The window for this model: the host's, or the smaller one an overflow error stated (learned next to the config in `configDir`). */
 export const windowOf = <Host extends string>(model: ModelLike | undefined, hostName: Host, configDir: string): WindowInfo<Host> => {
+  const inCore = limitsInCore({ action: "window", model: modelOf(model), hostName, dir: configDir });
+  if (inCore) return inCore.window as WindowInfo<Host>;
   const host = typeof model?.contextWindow === "number" && model.contextWindow > 0 ? model.contextWindow : undefined;
   const learned = learnedWindow(configDir, modelKey(model));
   const effective = effectiveWindow(host, learned);

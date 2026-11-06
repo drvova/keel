@@ -3,6 +3,7 @@
 import { hostBranch, lastCompactionIndex } from "../core/session-file";
 import { tell, type HostProfile, type NotifyCtx } from "../host";
 import { tellCompactionStats, type CompactionStats } from "../compaction/stats";
+import { callCore } from "../core/lisp-core";
 
 /** The branch has a compaction still in effect (none, or one before omp's /clear, does not count). */
 const compactedBefore = (ctx: NotifyCtx): boolean => lastCompactionIndex(hostBranch(ctx.sessionManager) ?? []) >= 0;
@@ -29,6 +30,15 @@ export const reportCompactDone = (
  * failed: …", so there only the hint for a session still too short is added.
  */
 export const reportCompactError = (ctx: NotifyCtx & { mode?: string }, err: Error, cancelNotice: string | null | undefined, hostName: HostProfile["displayName"]): void => {
+  // The Lisp core decides what is told (lisp/src/outcome.lisp, op outcome).
+  const inCore = callCore({ op: "outcome", error: {
+    message: err.message, mode: ctx.mode ?? null, cancelNotice: cancelNotice ?? null, hostName,
+    branch: (hostBranch(ctx.sessionManager) ?? []).map((e: any) => ({ type: e?.type })),
+  } });
+  if (inCore) {
+    if (typeof inCore.text === "string") tell(ctx, inCore.text, inCore.severity as "warning" | "error");
+    return;
+  }
   if (ctx.mode === "tui" && !err.message.startsWith("Nothing to compact")) return;
   if (err.message === "Compaction cancelled" && cancelNotice) {
     return;

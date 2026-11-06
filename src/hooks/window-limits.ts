@@ -1,7 +1,7 @@
 // The model's context window as omp-vcc sizes compactions by, and the cases
 // where omp-vcc compacts on its own because the host's trigger is above the real limit.
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
-import { learnedHostPolicy, modelKey, recordLearnedWindow, type WindowInfo } from "../core/model-limits";
+import { learnedHostPolicy, learnWindow, modelKey, type WindowInfo } from "../core/model-limits";
 import { handlesHostCompactions } from "../core/settings";
 import { limitFromOverflowError, triggerFor, type TriggerRule } from "../core/window";
 import { compactAndWait, tell, type Binding, type CompactionTrigger } from "../host";
@@ -37,6 +37,22 @@ const hostTrigger = (rule: TriggerRule, window: number | undefined, policy: obje
   return { autoCompacts: rule.autoCompacts(policy), trigger: triggerFor(window, false, undefined, policy, rule) };
 };
 
+/**
+ * The Lisp core's decision once a run settles (lisp/src/limits.lisp, op limits
+ * action settled): the notice when omp-vcc compacts in the host's stead, null
+ * when it does not, undefined without the core.
+ */
+const settledInCore = (host: Pick<Binding, "rule" | "displayName" | "modelsFile" | "config" | "name">, ctx: any): { notice: string } | null | undefined => {
+  const m = ctx?.model;
+  const reply = callCore({
+    op: "limits", action: "settled", dir: host.config.dir(), configPath: host.config.path(), provider: m?.provider ?? null,
+    model: m ? { provider: m.provider, id: m.id, contextWindow: m.contextWindow } : null, ruleName: host.rule.name, hostName: host.name,
+    displayName: host.displayName, modelsFile: host.modelsFile, usedTokens: ctx?.getContextUsage?.()?.tokens ?? null,
+  });
+  if (!reply) return undefined;
+  return (reply.settled as { notice: string } | undefined) ?? null;
+};
+
 /** The host's window is above the real one, so its trigger cannot fire before an overflow. */
 const hostOverestimates = (w: WindowInfo): boolean =>
   w.host !== undefined && w.effective !== undefined && w.effective < w.host;
@@ -46,7 +62,7 @@ const hostOverestimates = (w: WindowInfo): boolean =>
  * own trigger on a model whose window the host overestimates (the host would
  * only notice at the overflow).
  */
-export const registerWindowTracking = (pi: ExtensionAPI, state: WindowState, host: Pick<Binding, "rule" | "settledEvent" | "displayName" | "modelsFile" | "config" | "window">): void => {
+export const registerWindowTracking = (pi: ExtensionAPI, state: WindowState, host: Pick<Binding, "rule" | "settledEvent" | "displayName" | "modelsFile" | "config" | "window" | "name">): void => {
   // One compaction of omp-vcc's own at a time, per binding.
   let scheduled = false;
 
@@ -55,11 +71,16 @@ export const registerWindowTracking = (pi: ExtensionAPI, state: WindowState, hos
     if (message?.role !== "assistant" || message.stopReason !== "error") return;
     const limit = overflowLimit([message.errorMessage, message.errorClassificationMessage]);
     const hostWindow = ctx?.model?.contextWindow;
-    if (limit && (typeof hostWindow !== "number" || !(hostWindow > 0) || limit < hostWindow)) recordLearnedWindow(host.config.dir(), modelKey(ctx?.model), limit);
+    if (limit && (typeof hostWindow !== "number" || !(hostWindow > 0) || limit < hostWindow)) learnWindow(host.config.dir(), ctx?.model, limit);
   });
 
   const onSettled = (event: { willContinue?: boolean; aborted?: boolean } | undefined, ctx: any) => {
     if (event?.willContinue || event?.aborted || scheduled) return;
+    const decided = settledInCore(host, ctx);
+    if (decided !== undefined) {
+      if (!decided) return;
+      return compactInHostsStead(ctx, decided.notice);
+    }
     // The host's own compaction would run instead of omp-vcc's: none was asked for.
     if (!handlesHostCompactions(host.config.load(), ctx?.model?.provider)) return;
     const w = host.window(ctx?.model);
@@ -76,15 +97,16 @@ export const registerWindowTracking = (pi: ExtensionAPI, state: WindowState, hos
     if (!autoCompacts || trigger === undefined) return;
     const used = ctx?.getContextUsage?.()?.tokens;
     if (!(typeof used === "number" && used >= trigger)) return;
+    compactInHostsStead(ctx,
+      `omp-vcc: ${modelKey(ctx.model)} holds ${w.effective} tokens (an overflow error said so), not the ${w.host} ${host.displayName} uses; ` +
+        `omp-vcc compacts at ${trigger}. Set its contextWindow in ${host.modelsFile} to make ${host.displayName} do the same.`);
+  };
+
+  /** Tell why once per binding, then compact once the host is idle. */
+  const compactInHostsStead = (ctx: any, notice: string) => {
     if (!state.windowNoticeShown) {
       state.windowNoticeShown = true;
-      try {
-        tell(
-          ctx,
-          `omp-vcc: ${modelKey(ctx.model)} holds ${w.effective} tokens (an overflow error said so), not the ${w.host} ${host.displayName} uses; ` +
-            `omp-vcc compacts at ${trigger}. Set its contextWindow in ${host.modelsFile} to make ${host.displayName} do the same.`,
-        );
-      } catch {}
+      try { tell(ctx, notice); } catch {}
     }
     // After this handler returns, once the host is idle: compacting from inside the event would race its settle.
     scheduled = true;

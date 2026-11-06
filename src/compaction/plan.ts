@@ -17,6 +17,8 @@ import { restoreOriginals } from "../core/raw-store";
 import { applyContextEdits, projectContextEdits } from "../core/context-edits";
 import { callCore } from "../core/lisp-core";
 import type { CompactionStats } from "./stats";
+import type { VccCompactionDetails } from "../details";
+import { COMPACTOR } from "../names";
 
 export interface PlanInput {
   /** The branch as the host has it; the plan reads it as the context holds it (Pi's context edits applied). */
@@ -32,8 +34,11 @@ export interface PlanInput {
   settings: Pick<VccSettings, "skipCustomTypes" | "trackCommands" | "smartKeepTail" | "workingSet">;
   /** The host's compaction rule (core/window.ts). */
   rule: TriggerRule;
-  /** The effective context window, when one is known. */
+  /** The effective context window, when one is known, and where it came from (model-limits.ts windowOf). */
   window: number | undefined;
+  windowSource?: string;
+  /** The host retries the turn once this lands (details.willRetry). */
+  willRetry?: boolean;
   /** The context as the host counted it. */
   tokensBefore: number;
   /** The host's compaction policy as it came with the event (`preparation.settings`). */
@@ -85,6 +90,8 @@ export type Plan = (
       writtenForRescue?: { growth: unknown; summarized: number };
       /** The running turn's newest steps were kept on a recovery pass. */
       runningTurnRecovery?: boolean;
+      /** What the compaction entry stores (details.ts). */
+      details: VccCompactionDetails;
     }
 ) & { sizing: Sizing };
 
@@ -173,10 +180,40 @@ export const planCompaction = (input: PlanInput): Plan => {
   // What the context holds: Pi's context edits applied, as Pi applies them. An omp branch has none.
   const context = { ...input, branchEntries: applyContextEdits(input.branchEntries) };
   const sizing = sizeCompaction(context);
-  return { ...planSized(context, sizing), sizing } as Plan;
+  const plan = planSized(context, sizing);
+  return { ...plan, ...(plan.kind === "compact" ? { details: detailsOf(input, plan, sizing) } : {}), sizing } as Plan;
 };
 
-type Unsized<T> = T extends unknown ? Omit<T, "sizing"> : never;
+/** What the compaction entry stores: its sections and state, what it summarized, and what it was sized from. */
+const detailsOf = (input: PlanInput, plan: Extract<Unsized<Plan>, { kind: "compact" }>, sizing: Sizing): VccCompactionDetails => {
+  const { trigger, overheadTokens, budgets } = sizing;
+  return {
+    compactor: COMPACTOR,
+    // version 2 = refs are session-global (recall index space); version 1
+    // summaries carried window-relative refs (issue #28).
+    version: 2,
+    sections: plan.sections,
+    summaryState: plan.summaryState as VccCompactionDetails["summaryState"],
+    sourceMessageCount: plan.summarized,
+    previousSummaryUsed: Boolean(input.previousSummary),
+    reason: input.reason,
+    willRetry: input.willRetry,
+    ...(plan.historyIndex ? { historyIndex: plan.historyIndex as VccCompactionDetails["historyIndex"] } : {}),
+    ...(plan.workingSet ? { workingSet: plan.workingSet } : {}),
+    // What the budgets were sized from, for debugging a compaction that kept too much or too little.
+    limits: {
+      ...(input.window ? { contextWindow: input.window, windowSource: input.windowSource as NonNullable<VccCompactionDetails["limits"]>["windowSource"] } : {}),
+      ...(trigger ? { trigger } : {}),
+      ...(overheadTokens ? { overheadTokens } : {}),
+      maxTailTokens: budgets.maxTailTokens,
+      briefCeilingTokens: budgets.briefCeilingTokens,
+      ...(budgets.summaryScale !== 1 ? { summaryScale: budgets.summaryScale } : {}),
+      workingSetTokens: budgets.workingSetTokens,
+    },
+  };
+};
+
+type Unsized<T> = T extends unknown ? Omit<T, "sizing" | "details"> : never;
 
 const planSized = (input: PlanInput, sizing: Sizing): Unsized<Plan> => {
   const { branchEntries, convert, settings, recovering } = input;

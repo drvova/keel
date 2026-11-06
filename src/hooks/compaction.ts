@@ -10,10 +10,9 @@ import { indexById, readEntries } from "../core/session-file";
 import { parseInstructions } from "../core/compact-args";
 import { handlesHostCompactions, type VccSettings } from "../core/settings";
 import { isRecovery, tell, type Binding } from "../host";
-import { modelKey, recordHostPolicy } from "../core/model-limits";
+import { keepHostPolicy } from "../core/model-limits";
 import type { WindowState } from "./window-limits";
-import { vccDetailsOf, type VccCompactionDetails } from "../details";
-import { COMPACTOR } from "../names";
+import { vccDetailsOf } from "../details";
 import { planCompaction } from "../compaction/plan";
 import { tellCompactionStats, type CompactionStats } from "../compaction/stats";
 
@@ -115,6 +114,8 @@ export const registerCompactionHook = (
       settings,
       rule,
       window: window.effective,
+      windowSource: window.source,
+      willRetry,
       tokensBefore: preparation.tokensBefore,
       hostSettings: (preparation as { settings?: unknown }).settings,
       // A pass omp-vcc started itself went by the policy as last recorded; this
@@ -128,7 +129,7 @@ export const registerCompactionHook = (
 
     const { policy, trigger, overheadTokens, tokenEstimate, budgets } = plan.sizing;
     // Kept beside the learned window, for the compaction omp-vcc starts in the host's stead (window-limits.ts).
-    recordHostPolicy(host.config.dir(), modelKey(ctx?.model), policy);
+    keepHostPolicy(host.config.dir(), ctx?.model, policy);
     if (plan.kind === "step_aside") {
       dbg(settings, { cancelled: false, reason: plan.cutReason, compaction: { reason, willRetry }, fromCommand, entries: branchEntries.length, liveRoles: plan.liveRoles });
       return;
@@ -165,30 +166,7 @@ export const registerCompactionHook = (
       sections: plan.sections,
     });
 
-    const details: VccCompactionDetails = {
-      compactor: COMPACTOR,
-      // version 2 = refs are session-global (recall index space); version 1
-      // summaries carried window-relative refs (issue #28).
-      version: 2,
-      sections: plan.sections,
-      summaryState: plan.summaryState as VccCompactionDetails["summaryState"],
-      sourceMessageCount: plan.summarized,
-      previousSummaryUsed: Boolean(previousSummary),
-      reason,
-      willRetry,
-      ...(plan.historyIndex ? { historyIndex: plan.historyIndex as VccCompactionDetails["historyIndex"] } : {}),
-      ...(plan.workingSet ? { workingSet: plan.workingSet } : {}),
-      // What the budgets were sized from, for debugging a compaction that kept too much or too little.
-      limits: {
-        ...(window.effective ? { contextWindow: window.effective, windowSource: window.source } : {}),
-        ...(trigger ? { trigger } : {}),
-        ...(overheadTokens ? { overheadTokens } : {}),
-        maxTailTokens: budgets.maxTailTokens,
-        briefCeilingTokens: budgets.briefCeilingTokens,
-        ...(budgets.summaryScale !== 1 ? { summaryScale: budgets.summaryScale } : {}),
-        workingSetTokens: budgets.workingSetTokens,
-      },
-    };
+    const { details } = plan;
 
     return {
       compaction: {

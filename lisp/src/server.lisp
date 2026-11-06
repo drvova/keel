@@ -75,6 +75,20 @@
 ;;;;   {"op":"args","command":TEXT} -> {"ok":true,"followUpPrompt":P,"keepUserTurns":N|null,"instructions":I}
 ;;;;   {"op":"args","instructions":TEXT|null} -> {"ok":true,"fromCommand":B,"keepUserTurns":N|null,"followUpPrompt":P|null}
 ;;;;
+;;;; limits: a model's learned window (src/core/model-limits.ts, src/hooks/window-limits.ts)
+;;;;   {"op":"limits","action":"window","model":M,"hostName":H,"dir":D} -> {"ok":true,"window":{host?,learned?,effective?,source}}
+;;;;   {"op":"limits","action":"learn","model":M,"dir":D,"window":N,"now":ISO?} -> {"ok":true,"recorded":B}
+;;;;   {"op":"limits","action":"policy","key":K|"model":M,"dir":D} -> {"ok":true,"policy":P?}
+;;;;   {"op":"limits","action":"record-policy","model":M,"dir":D,"policy":P} -> {"ok":true}
+;;;;   {"op":"limits","action":"settled","model":M,"dir":D,"configPath":C,"provider":P,"ruleName":R,
+;;;;    "hostName":H,"displayName":N,"modelsFile":F,"usedTokens":U} -> {"ok":true,"settled":{trigger, notice}?}
+;;;;
+;;;; outcome: what a compaction's outcome is told as (src/compaction/stats.ts, compact-feedback.ts, details.ts)
+;;;;   {"op":"outcome","stats":S} -> {"ok":true,"line":L}
+;;;;   {"op":"outcome","error":{message, mode, cancelNotice, hostName, branch:[{type}]}} -> {"ok":true,"text":T?,"severity":S?}
+;;;;   {"op":"outcome","details":D} -> {"ok":true,"own":DETAILS?}
+;;;;   {"op":"outcome","settings":S,"provider":P} -> {"ok":true,"handles":B}
+;;;;
 ;;;; window: the window rules (src/core/window.ts), case by case
 ;;;;   {"op":"window","cases":[{"error":TEXT} | {ruleName, window, hostSettings|policy,
 ;;;;    recovering, tokensBefore, overheadTokens, workingSet}...]}
@@ -264,6 +278,33 @@ parity test compares with JavaScript's own."
 (defun handle-placeholders (request)
   (json-object "ok" :true "replace" (coerce (point-placeholders (json-get request "input")) 'vector)))
 
+(defun handle-limits (request)
+  (let ((action (json-get request "action")) (model (json-get request "model")) (dir (json-get request "dir")))
+    (unless (stringp dir) (return-from handle-limits (json-object "ok" :false "error" "limits: no dir")))
+    (cond ((equal action "window") (json-object "ok" :true "window" (window-of model (json-get request "hostName") dir)))
+          ((equal action "learn")
+           (json-object "ok" :true "recorded"
+                        (if (record-learned-window dir (model-key model) (json-get request "window")
+                                                   (let ((now (json-get request "now"))) (if (stringp now) now (iso-now))))
+                            :true :false)))
+          ((equal action "policy")
+           (json-object "ok" :true "policy" (learned-host-policy dir (let ((k (json-get request "key"))) (if (stringp k) k (model-key model))))))
+          ((equal action "record-policy") (record-host-policy dir (model-key model) (json-get request "policy")) (json-object "ok" :true))
+          ((equal action "settled")
+           (let ((path (json-get request "configPath")))
+             (json-object "ok" :true "settled"
+                          (and (stringp path) (handles-host-compactions-p (load-settings path) (json-get request "provider"))
+                               (settled-compaction request)))))
+          (t (json-object "ok" :false "error" "limits: unknown action")))))
+
+(defun handle-outcome (request)
+  (cond ((nth-value 1 (gethash "stats" request)) (json-object "ok" :true "line" (format-compaction-stats (json-get request "stats"))))
+        ((nth-value 1 (gethash "error" request))
+         (multiple-value-bind (text severity) (compact-error-feedback (json-get request "error"))
+           (json-object "ok" :true "text" text "severity" severity)))
+        ((nth-value 1 (gethash "details" request)) (json-object "ok" :true "own" (vcc-details-of (json-get request "details"))))
+        (t (json-object "ok" :true "handles" (if (handles-host-compactions-p (json-get request "settings") (json-get request "provider")) :true :false)))))
+
 (defun handle-window (request)
   "The window rules on each of REQUEST's cases (window.lisp window-case)."
   (json-object "ok" :true "results" (map 'vector #'window-case (json-get request "cases" #()))))
@@ -283,6 +324,8 @@ parity test compares with JavaScript's own."
           ((equal op "pin") (handle-pin request))
           ((equal op "raw-capture") (handle-raw-capture request))
           ((equal op "args") (handle-args request))
+          ((equal op "limits") (handle-limits request))
+          ((equal op "outcome") (handle-outcome request))
           ((equal op "placeholders") (handle-placeholders request))
           ((equal op "context-edits") (handle-context-edits request))
           (t (json-object "ok" :false "error" (format nil "unknown op ~a" (json-string (or op :null))))))))

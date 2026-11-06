@@ -59,6 +59,9 @@
      (:file "raw-capture")
      ;; args: what /omp-vcc hands the hook, and the hook reads back.
      (:file "args")
+     ;; limits and outcome: a model's learned window, and what a compaction's outcome is told as.
+     (:file "limits")
+     (:file "outcome")
      ;; The rest of recall: the request, the project's sessions, the call.
      (:file "request")
      (:file "sessions")

@@ -123,7 +123,12 @@ const parseSettings = (parsed: Record<string, unknown> | null): VccSettings => {
  * provider or this one (#27). Read at each call: /model changes the provider
  * mid-session, and an unknown one never skips. /omp-vcc is answered regardless.
  */
-export const handlesHostCompactions = (settings: VccSettings, provider: unknown): boolean =>
+export const handlesHostCompactions = (settings: VccSettings, provider: unknown): boolean => {
+  const inCore = callCore({ op: "outcome", settings, provider: provider ?? null });
+  return inCore ? inCore.handles === true : handlesInTs(settings, provider);
+};
+
+const handlesInTs = (settings: VccSettings, provider: unknown): boolean =>
   settings.overrideDefaultCompaction &&
   !(typeof provider === "string" && settings.skipForProviders.some((p) => p.toLowerCase() === provider.toLowerCase()));
 

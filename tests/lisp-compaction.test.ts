@@ -120,6 +120,8 @@ const inputOf = (seed: number, r: () => number): PlanInput => {
     settings: { skipCustomTypes: some(r, ["notice", "other"]), trackCommands: some(r, ["git", "bun"]), smartKeepTail: r() < 0.6, workingSet: r() < 0.8 },
     rule: r() < 0.6 ? OMP_TRIGGER_RULE : PI_TRIGGER_RULE,
     window: pick(r, [undefined, 16_000, 40_000, 128_000, 200_000, 1_000_000]),
+    windowSource: pick(r, ["omp", "pi", "overflow-error", "unknown"]),
+    ...(r() < 0.8 ? { willRetry: r() < 0.3 } : {}),
     // The host's policy as it came, malformed now and then.
     hostSettings: pick(r, [undefined, {}, { enabled: true, reserveTokens: 16_384 }, { thresholdPercent: 70 }, { thresholdTokens: 30_000, reserveTokens: 8_000 },
       { baseWindowTokens: 64_000, thresholdPercent: 85 }, { reserveTokens: 4_000 }, { reserveTokens: "x", thresholdTokens: Number.NaN }, "settings"]),

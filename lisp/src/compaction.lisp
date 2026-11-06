@@ -507,8 +507,35 @@ holds it (Pi's context edits applied, context-edits.lisp), sized first
       (apply-context-edits (coerce (json-get input "branch" #()) 'vector) (coerce (json-get input "notes" #()) 'vector))
     (let* ((sizing (size-compaction input branch))
            (plan (plan-sized input branch notes sizing)))
+      (when (equal (json-get plan "kind") "compact") (setf (gethash "details" plan) (compaction-details input plan sizing)))
       (setf (gethash "sizing" plan) sizing)
       plan)))
+
+(defun compaction-details (input plan sizing)
+  "plan.ts detailsOf: what the compaction entry stores (details.ts): its sections
+and state, what it summarized, and what it was sized from."
+  (let ((budgets (json-get sizing "budgets")) (window (json-get input "window")))
+    (json-object
+     "compactor" "omp-vcc"
+     ;; version 2 = refs are session-global (recall index space); version 1
+     ;; summaries carried window-relative refs (issue #28).
+     "version" 2
+     "sections" (json-get plan "sections")
+     "summaryState" (json-get plan "summaryState")
+     "sourceMessageCount" (json-get plan "summarized")
+     "previousSummaryUsed" (if (truthy-p (json-get input "previousSummary")) :true :false)
+     "reason" (json-get input "reason")
+     "willRetry" (json-get input "willRetry")
+     "historyIndex" (json-get plan "historyIndex")
+     "workingSet" (json-get plan "workingSet")
+     "limits" (json-object "contextWindow" (and (truthy-p window) window)
+                           "windowSource" (and (truthy-p window) (json-get input "windowSource"))
+                           "trigger" (let ((tr (json-get sizing "trigger"))) (and (truthy-p tr) tr))
+                           "overheadTokens" (let ((o (json-get sizing "overheadTokens"))) (and (truthy-p o) o))
+                           "maxTailTokens" (json-get budgets "maxTailTokens")
+                           "briefCeilingTokens" (json-get budgets "briefCeilingTokens")
+                           "summaryScale" (let ((sc (json-get budgets "summaryScale"))) (and (not (eql sc 1)) sc))
+                           "workingSetTokens" (json-get budgets "workingSetTokens")))))
 
 (defun plan-sized (input branch notes sizing)
   "plan.ts planSized: the plan once SIZING (the policy, trigger, budgets) is known."
