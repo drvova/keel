@@ -1,6 +1,7 @@
 import type { NormalizedBlock, FileOps } from "../types";
 import { callKind, callSubject, commandOf, filesOf } from "./tools";
-import { compileBrief, heredocCloseIndex } from "./brief";
+import { compileBrief, heredocCloseIndex, TRIVIAL_LINE_RE } from "./brief";
+import { DEFAULT_BUDGETS } from "./window";
 
 export interface BriefRankingOptions {
   /** Maximum normalized blocks used to build the brief transcript. */
@@ -39,7 +40,6 @@ interface RankedBlock {
   reasons: string[];
 }
 
-const DEFAULT_MAX_BLOCKS = 80;
 const DEFAULT_RECENT_BLOCKS = 16;
 
 const TEST_COMMAND_RE = /\b(?:bun|npm|pnpm|yarn|node|pytest|cargo|go|mvn|gradle)\b[^\n]*(?:test|spec|check|lint|build|tsc)/i;
@@ -54,8 +54,10 @@ const MIN_SEGMENT_CLOSING_ASSISTANT_CHARS = 120;
 // export, ls, echo, sleep, pwd, comments, heredoc bodies) carries no durable
 // fact. Such blocks get a score penalty so the size-relative budget never
 // pulls them in ahead of real edits/commands when spare chars appear.
-const TRIVIAL_BASH_LINE_RE =
-  /^(?:set\s+[-+]|cd(?:\s+\S+)?$|export\s+\w+=|(?:source|\.)\s+\S+|pwd$|true$|:$|#|ls(?:\s|$)|echo\b|clear$|sleep\b)/;
+// The brief's preamble lines (TRIVIAL_LINE_RE), and looking around: the brief
+// still shows an `ls` as the command, but it is not what a turn did.
+const LOOKING_AROUND_RE = /^(?:cd$|ls(?:\s|$)|echo\b|clear$|sleep\b)/;
+const isScaffoldingLine = (line: string): boolean => TRIVIAL_LINE_RE.test(line) || LOOKING_AROUND_RE.test(line);
 const TRIVIAL_BASH_PENALTY = 16;
 
 const isTrivialOnlyBash = (raw: string): boolean => {
@@ -69,7 +71,7 @@ const isTrivialOnlyBash = (raw: string): boolean => {
     const close = heredocCloseIndex(lines, i);
     if (close !== -1) i = close;
   }
-  const meaningful = kept.map((l) => l.trim()).filter(Boolean).filter((l) => !TRIVIAL_BASH_LINE_RE.test(l));
+  const meaningful = kept.map((l) => l.trim()).filter(Boolean).filter((l) => !isScaffoldingLine(l));
   return meaningful.length === 0;
 };
 
@@ -217,7 +219,7 @@ export const selectRankedBriefBlocks = (
   blocks: NormalizedBlock[],
   options: BriefRankingOptions = {},
 ): NormalizedBlock[] => {
-  const maxBlocks = options.maxBlocks ?? DEFAULT_MAX_BLOCKS;
+  const maxBlocks = options.maxBlocks ?? DEFAULT_BUDGETS.briefMaxBlocks;
   // Size-relative budget: when a ceiling + slope are provided, the effective
   // char budget scales with transcript length (block count) between the floor
   // (maxBriefChars) and the ceiling. Larger transcripts carry more high-value

@@ -108,7 +108,7 @@ const PIPE_TAIL_RE = /\s*\|\s*(?:head|tail|sort|wc|column|tr|cut|awk|uniq|python
 // Preamble/boilerplate lines that carry no durable fact on their own. Dropped
 // when a script has more informative lines, so `set -euo pipefail\ngit commit`
 // renders the commit rather than the shell option.
-const TRIVIAL_LINE_RE = /^(?:set\s+[-+]|cd\s+\S+$|export\s+\w+=|(?:source|\.)\s+\S+|pwd$|true$|:$|#)/;
+export const TRIVIAL_LINE_RE = /^(?:set\s+[-+]|cd\s+\S+$|export\s+\w+=|(?:source|\.)\s+\S+|pwd$|true$|:$|#)/;
 // A real heredoc opener: `<<` at a command boundary — not preceded by a word
 // char or `)`, so shift ops (`8 << 20`, `Rd<<8`) are not misread — with an
 // identifier terminator starting [A-Za-z_], so numeric `<< 10` is rejected too.

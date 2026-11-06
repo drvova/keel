@@ -3,7 +3,8 @@
 // so the next compaction can merge into it like any other. Also what reads a
 // section of a summary's text (tests, reports).
 import { EARLY_REQUESTS_KEPT } from "../extract/user-messages";
-import type { Commit, PreviousSummary, SummaryState } from "./summary-state";
+import type { PreviousSummary, SummaryState } from "./summary-state";
+import type { Commit } from "../extract/commits";
 
 // The text older versions wrote, as they wrote it. Frozen here, not read from
 // core/format.ts: renaming a section or rewording the note there is a change

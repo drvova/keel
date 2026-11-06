@@ -1,10 +1,21 @@
 import type { NormalizedBlock } from "../types";
 import { commandOf } from "../core/tools";
 
-interface CommitInfo {
+export interface Commit {
   hash?: string;
   message: string;
 }
+
+/**
+ * One entry per commit, first seen first: the same message seen hashless
+ * (`-q` prints no hash) and hashed is one commit, kept hashed in the earlier
+ * place. The same message under two hashes is two commits.
+ */
+export const addCommit = (commits: Commit[], c: Commit): void => {
+  const dup = commits.find((o) => o.message === c.message && (!o.hash || !c.hash || o.hash === c.hash));
+  if (!dup) commits.push({ ...c });
+  else if (c.hash && !dup.hash) dup.hash = c.hash;
+};
 
 const COMMIT_MSG_RE = /git\s+commit[^\n]*?\s-[A-Za-z]*m\s+(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'|\$?'((?:[^'\\]|\\.)*)')/;
 // `-F -` / `--file=-` reads the message from stdin; the heredoc feeding it sits on the same command.
@@ -151,8 +162,8 @@ const outcomeOf = (blocks: NormalizedBlock[], i: number): { results: string[]; f
 };
 
 /** Git commits the session made (`git commit -m "..."`), each with the hash its output reported. */
-export const extractCommits = (blocks: NormalizedBlock[]): CommitInfo[] => {
-  const commits: CommitInfo[] = [];
+export const extractCommits = (blocks: NormalizedBlock[]): Commit[] => {
+  const commits: Commit[] = [];
 
   for (let i = 0; i < blocks.length; i++) {
     const segments = commitSegments(commandOf(blocks[i]) ?? "");
@@ -186,11 +197,7 @@ export const extractCommits = (blocks: NormalizedBlock[]): CommitInfo[] => {
       if (!message) continue;
       // With several commits one output cannot be split reliably, so a hash is taken only when its line names this subject.
       const hash = segments.length === 1 ? hashFromResults(results, message) : hashForSubject(results, message);
-
-      // One entry per commit: the same message seen hashless (`-q` prints no hash) and hashed is one commit, keep the hashed.
-      const dup = commits.find((c) => c.message === message && (!c.hash || !hash || c.hash === hash));
-      if (!dup) commits.push({ hash, message });
-      else if (hash && !dup.hash) dup.hash = hash;
+      addCommit(commits, { hash, message });
     }
   }
 

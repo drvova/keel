@@ -131,9 +131,15 @@ const mentions = (text: string, path: string): boolean => {
   const esc = path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`(?:^|[^\\w./-])${esc}(?![\\w/-]|\\.\\w)`).test(text);
 };
-/** What an excerpt of this text costs, as formatWorkingSet counts it: each line clipped at 300 chars, plus its indent. */
+/** An excerpt's line as it is quoted: clipped at 300 chars. */
+const quotedLine = (line: string): string => (line.length > 300 ? `${line.slice(0, 300)}…` : line);
+/** What a quoted line takes of the section: the line, its indent and its newline. */
+const lineCost = (line: string): number => quotedLine(line).length + 5;
+/** The most one item takes of a section of `maxChars`. */
+const itemCap = (maxChars: number): number => Math.max(MIN_ITEM_CHARS, Math.round(maxChars * MAX_ITEM_SHARE));
+/** What an excerpt of this text costs, as formatWorkingSet counts it. */
 const excerptChars = (text: string): number =>
-  text.split("\n").filter((l) => l.trim() !== "").reduce((n, l) => n + Math.min(l.length, 301) + 5, 0);
+  text.split("\n").filter((l) => l.trim() !== "").reduce((n, l) => n + lineCost(l), 0);
 /** Room for an item's head line (`- #N read "path", note:`) when sizing its body. */
 const HEAD_ALLOWANCE = 200;
 /** Below this many lines, what a call showed of a file says too little to bring back (`ok`, `Successfully replaced`). */
@@ -217,7 +223,7 @@ export const selectWorkingSet = (input: WorkingSetInput): WorkingSetItem[] => {
     // A file comes back whole, or as the lines shown of it since, never as its
     // first lines: in real runs, after part of a file came back, the agent read it
     // again anyway. The lines shown since come first, newest first, while they fit.
-    let left = Math.min(input.maxChars, Math.max(MIN_ITEM_CHARS, Math.round(input.maxChars * MAX_ITEM_SHARE))) - HEAD_ALLOWANCE;
+    let left = Math.min(input.maxChars, itemCap(input.maxChars)) - HEAD_ALLOWANCE;
     const shownViews: Array<{ call: Call; r: Result; part: string }> = [];
     for (const v of [...views].reverse()) {
       const part = `[#${v.r.index} ${titleOf(v.call)}]\n${v.r.text}`;
@@ -295,10 +301,9 @@ const excerpt = (text: string, max: number, fromEnd: boolean): { lines: string[]
   let size = 0;
   const order = fromEnd ? [...all].reverse() : all;
   for (const line of order) {
-    const clipped = line.length > 300 ? `${line.slice(0, 300)}…` : line;
-    if (size + clipped.length + 5 > max) break;
-    lines.push(clipped);
-    size += clipped.length + 5;
+    if (size + lineCost(line) > max) break;
+    lines.push(quotedLine(line));
+    size += lineCost(line);
   }
   if (fromEnd) lines.reverse();
   return { lines, omitted: all.length - lines.length };
@@ -330,7 +335,7 @@ export const formatWorkingSet = (items: readonly WorkingSetItem[], maxChars: num
   let left = maxChars;
   for (const item of items) {
     const head = `- #${item.index} ${item.title}${item.note ? `, ${item.note}` : ""}:`;
-    const room = Math.min(left - head.length, Math.max(MIN_ITEM_CHARS, Math.round(maxChars * MAX_ITEM_SHARE)));
+    const room = Math.min(left - head.length, itemCap(maxChars));
     if (room < MIN_ITEM_CHARS) break;
     const { lines: body, omitted } = excerpt(item.text, room, item.fromEnd);
     if (body.length === 0 || (item.whole && omitted > 0)) continue;

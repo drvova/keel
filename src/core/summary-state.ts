@@ -10,17 +10,12 @@
 import type { FileOps, NormalizedBlock } from "../types";
 import { extractFiles } from "../extract/files";
 import { EARLY_REQUESTS_KEPT, extractUserMessages } from "../extract/user-messages";
-import { extractCommits } from "../extract/commits";
+import { addCommit, extractCommits, type Commit } from "../extract/commits";
 import { extractTrackedCommands } from "../extract/tracked-commands";
 import { buildBriefSections, stringifyBrief } from "./brief";
 import { capBrief, trackedEntry, wrapLongLines } from "./format";
 import type { SummaryLimits } from "./window";
 import { isObject } from "./content";
-
-export interface Commit {
-  hash?: string;
-  message: string;
-}
 
 export interface SummaryState {
   /** The session's first requests, set by the first compactions and kept as they are. */
@@ -91,19 +86,9 @@ const appendTouched = (items: readonly string[], more: readonly string[]): strin
   return out;
 };
 
-/** One entry per commit, first seen first; a hashless one and a hashed one with its message are the same commit, kept hashed in the earlier place. */
 const mergeCommits = (commits: readonly Commit[]): Commit[] => {
   const out: Commit[] = [];
-  for (const c of commits) {
-    if (out.some((o) => o.message === c.message && o.hash === c.hash)) continue;
-    if (c.hash) {
-      const hashless = out.findIndex((o) => o.message === c.message && !o.hash);
-      if (hashless >= 0) out[hashless] = c;
-      else out.push(c);
-    } else if (!out.some((o) => o.message === c.message)) {
-      out.push(c);
-    }
-  }
+  for (const c of commits) addCommit(out, c);
   return out;
 };
 
