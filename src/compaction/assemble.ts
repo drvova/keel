@@ -8,6 +8,7 @@ import { mergeHistoryIndex, rangeOfWindow, readHistoryIndex, unindexedRange, typ
 import { readPins } from "../core/pins";
 import { lastCompactionIndex, lastResetIndex } from "../core/session-file";
 import { restoreOriginals } from "../core/raw-store";
+import { buildTaskState } from "../core/task-state";
 import { buildWorkingSet } from "../core/working-set";
 import { estimateMessageChars } from "../core/token-estimate";
 import type { CompactionBudgets } from "../core/window";
@@ -128,6 +129,20 @@ export const assembleSummary = (input: AssembleInput): Assembled => {
     if (built.lines.length > 0) workingSet = built;
   }
 
+  // [Task State]: where the work stands, from everything since /clear, the
+  // originals of what is summarized and what stays (core/task-state.ts).
+  const clearedAt = lastResetIndex(branchEntries);
+  const keptEntryAt = cut.firstKeptEntryId ? branchEntries.findIndex((e: any) => e.id === cut.firstKeptEntryId) : -1;
+  const sinceClear = branchEntries
+    .map((e: any, at: number) => ({ id: e.id as string, m: toLiveMessage(e), kept: keptEntryAt >= 0 && at >= keptEntryAt }))
+    .filter((x, at) => at > clearedAt && x.m);
+  const keptFrom = sinceClear.findIndex((x) => x.kept);
+  const taskState = buildTaskState({
+    messages: restoreOriginals(sinceClear.map((x) => x.m), sinceClear.map((x) => x.id), input.sessionFile),
+    indices: sinceClear.map((x) => input.indexById?.get(x.id)),
+    keptFrom: keptFrom >= 0 ? keptFrom : sinceClear.length,
+  });
+
   // The previous summary's sections: the state its compaction stored, or its
   // text when an older version or another compactor wrote it.
   const storedState = input.previousSummary !== undefined && previousCompaction ? readState(previousDetails?.summaryState) : undefined;
@@ -140,6 +155,7 @@ export const assembleSummary = (input: AssembleInput): Assembled => {
     historyIndex,
     pinnedNotes: readPins(branchEntries),
     workingSet: workingSet?.lines,
+    ...(taskState.length > 0 ? { taskState } : {}),
     fileOps: input.fileOps,
     trackCommands: settings.trackCommands,
     limits: budgets.summary,

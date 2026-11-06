@@ -64,7 +64,7 @@ interface WorkingSetItem {
   whole?: boolean;
 }
 
-interface Call {
+export interface Call {
   id: string;
   name: string;
   args: Record<string, unknown>;
@@ -90,7 +90,7 @@ const MAX_RELEVANT_CANDIDATES = 400;
 
 const asRecord = (v: unknown): Record<string, any> => (v && typeof v === "object" ? (v as Record<string, any>) : {});
 
-const callsOf = (message: Record<string, any>, pos: number): Call[] =>
+export const callsOf = (message: Record<string, any>, pos: number): Call[] =>
   message.role === "assistant"
     ? toolCallsOf(message)
         .filter((c) => c.id !== undefined)
@@ -108,11 +108,11 @@ const callsOf = (message: Record<string, any>, pos: number): Call[] =>
  * it showed; any other call is one of the same tool on the same subject (its
  * file, command, pattern or query). A later run stands for the earlier ones.
  */
-const runOf = (call: Call): string =>
+export const runOf = (call: Call): string =>
   `${reads(call) ? "read" : call.name}\u0000${call.paths[0] ?? callSubject(call)?.value ?? ""}`;
 
 /** A call as its item's head names it: the tool and what it is about, as the call gave it (a read's selector kept). */
-const titleOf = (call: Call | undefined): string => {
+export const titleOf = (call: Call | undefined): string => {
   if (!call) return "tool result";
   const arg = callSubject(call)?.value;
   return arg ? `${call.name} ${JSON.stringify(arg.length > 80 ? `${arg.slice(0, 80)}…` : arg)}` : call.name;
@@ -122,9 +122,9 @@ const titleOf = (call: Call | undefined): string => {
 const wholeText = (call: Call): string | undefined =>
   callKind(call) === "write" && call.paths.length === 1 ? fileWriteOf(call)?.content : undefined;
 /** A call that writes a file whole: its content is the file. */
-const writes = (call: Call): boolean => wholeText(call) !== undefined;
+export const writes = (call: Call): boolean => wholeText(call) !== undefined;
 /** A call that changes part of a file. */
-const edits = (call: Call): boolean => !writes(call) && (callKind(call) === "edit" || callKind(call) === "write");
+export const edits = (call: Call): boolean => !writes(call) && (callKind(call) === "edit" || callKind(call) === "write");
 /** A call that shows a file: a read of one path; not a search over a directory. */
 const reads = (call: Call): boolean => callKind(call) === "read" && call.paths.length === 1;
 const onFile = (call: Call): boolean => reads(call) || writes(call) || edits(call);

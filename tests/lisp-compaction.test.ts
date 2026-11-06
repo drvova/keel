@@ -53,7 +53,8 @@ const branch = (seed: number) => {
     if (i === 0 && r() < 0.15) push({ type: "message", message: { role: "user", content: `a long paste ${"z ".repeat(30_000)}` } });
     else if (roll < 0.15) push({ type: "message", message: { role: "user", content: r() < 0.15
       ? [{ type: "text", text: words(r, 6) }, { type: "image", mimeType: "image/png", data: "AAAA" }]
-      : pick(r, [words(r, 3 + Math.floor(r() * 20)), `look at ${pick(r, FILES)} and fix it`, "ok", `<system-reminder>x</system-reminder>`]) } });
+      : pick(r, [words(r, 3 + Math.floor(r() * 20)), `look at ${pick(r, FILES)} and fix it`, "ok", `<system-reminder>x</system-reminder>`, `<system-reminder>x</system-reminder> then fix ${pick(r, FILES)}`]),
+      ...(r() < 0.05 ? { attribution: "agent" } : {}) } });
     else if (roll < 0.45) {
       const parts: any[] = [];
       if (r() < 0.6) parts.push({ type: "text", text: words(r, 4 + Math.floor(r() * 40)) });
@@ -145,10 +146,11 @@ maybe("Lisp core compaction plan", () => {
       const lisp = withCore(core, () => planInCore(input));
       expect(lisp).toBeDefined();
       expect({ seed, ...lisp }).toEqual({ seed, ...ts });
-      const kind = ts.kind === "cancel" ? `cancel:${ts.why}` : ts.kind === "compact" ? `compact${ts.budgetCut ? `:${ts.budgetCut}` : ts.compactAll ? ":all" : ""}${ts.workingSet ? "+ws" : ""}` : ts.kind;
+      const kind = ts.kind === "cancel" ? `cancel:${ts.why}` : ts.kind === "compact" ? `compact${ts.budgetCut ? `:${ts.budgetCut}` : ts.compactAll ? ":all" : ""}${ts.workingSet ? "+ws" : ""}${ts.sections.includes("Task State") ? "+task" : ""}` : ts.kind;
       kinds[kind] = (kinds[kind] ?? 0) + 1;
     }
     // The generated branches reach every kind of plan.
+    expect(Object.keys(kinds).filter((k) => k.endsWith("+task")).reduce((n, k) => n + kinds[k], 0)).toBeGreaterThan(15);
     for (const k of ["compact", "compact+ws", "cancel:no_cut", "cancel:policy", "step_aside"]) expect(Object.keys(kinds).some((x) => x.startsWith(k))).toBe(true);
     expect(Object.keys(kinds).length).toBeGreaterThan(6);
   }, 300_000);
@@ -233,6 +235,17 @@ maybe("Lisp core compaction plan", () => {
     const unset = { ...tailInput, ...sizedFor(100_000, true) };
     delete (unset.settings as { workingSet?: boolean }).workingSet;
     expect(withCore(core, () => planInCore(unset))).toEqual(withCore(undefined, () => planCompaction(unset)));
+    // A request summarized away with more files changed since than the section names.
+    const many = { ...tailInput, ...sizedFor(100_000, false), reason: "manual" as const, keepUserTurns: 0, fromCommand: true, branchEntries: [
+      msg("t0", { role: "user", content: "rename the helper in every module" }),
+      ...Array.from({ length: 11 }, (_, i) => [
+        msg(`t${i}c`, { role: "assistant", content: [{ type: "toolCall", id: `tc${i}`, name: "edit", arguments: { path: `src/m${i}.ts`, edits: [{ oldText: "a", newText: "b" }] } }] }),
+        msg(`t${i}r`, { role: "toolResult", toolCallId: `tc${i}`, toolName: "edit", content: [{ type: "text", text: `${"changed line\n".repeat(30)}` }] }),
+      ]).flat(),
+    ] };
+    const manyPlan = withCore(undefined, () => planCompaction(many));
+    expect(manyPlan.kind === "compact" && manyPlan.summary).toContain("(+3 more)");
+    expect(withCore(core, () => planInCore(many))).toEqual(manyPlan);
     const tail = withCore(undefined, () => planCompaction(cases[4][1]));
     expect(tail.kind === "compact" && tail.budgetCut).toBe("oversized_tail");
   }, 120_000);

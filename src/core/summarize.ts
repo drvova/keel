@@ -36,6 +36,8 @@ export interface CompileInput {
   pinnedNotes?: readonly PinnedNote[];
   /** [Working Set] lines (core/working-set.ts). */
   workingSet?: readonly string[];
+  /** [Task State] lines (core/task-state.ts). */
+  taskState?: readonly string[];
   /** How many items each section keeps (core/window.ts: they follow the model's window). */
   limits: SummaryLimits;
   /** How the brief is ranked; its file activity is `fileOps`. */
@@ -74,6 +76,7 @@ export const compileSummary = (input: CompileInput): CompiledSummary => {
     pins: input.pinnedNotes && input.pinnedNotes.length > 0 ? formatPinLines(input.pinnedNotes) : undefined,
     history: input.historyIndex?.map(formatHistoryRange),
     workingSet: input.workingSet,
+    taskState: input.taskState,
   });
   return { text, state: capState(merged, input.limits), sections };
 };

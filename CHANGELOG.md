@@ -14,6 +14,10 @@ All notable changes to `@drvova/omp-vcc` are documented in this file. Entries fr
   - Compactions are stored with `compactor: "omp-vcc"`. Those pi-vcc stored on omp (`"pi-vcc"`) are still read as this extension's: their `[History Index]` carries on, and their stats toast and follow-up prompt still fire.
   - Toasts say `omp-vcc:`; pinned notes are `omp-vcc.pin` entries.
 
+### Added
+
+- **`[Task State]`** — when a compaction cuts into a turn (a long autonomous turn whose request is summarized away), the summary says where the work stands, after `[Pinned Notes]`: the request, how many tool calls followed and how many failed, the files they changed, the last result, and the failure no later run of the same call fixed, each with its `#N`. It is read off the transcript by rule and built again at every compaction, never carried; while the request is still in context it is absent, since everything after it is there too. The idea is the papers' separate task state (HyMem, arXiv:2608.15703; Context as a Tool, arXiv:2512.22087), whose models write it.
+
 ### Changes
 
 - **Pi, natively** — `pi.ts` (`pi.extensions` in `package.json`) runs omp-vcc on Pi 1.0 and later, written against Pi's own code: Pi's `convertToLlm` and agent directory come from Pi's package as Pi's extension API hands it (Pi's loader resolves it to the running Pi), and everything else is the shared core omp uses, with what differs between the hosts passed in:

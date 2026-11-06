@@ -198,9 +198,10 @@
       (loop for (label list) in (list (list "Modified" (state-modified s)) (list "Created" (state-created s)) (list "Read" (state-read s)))
             when list collect (format nil "~a: ~a" label (cap-items (mapcar #'trim list) per ", "))))))
 
-(defun render-summary (s limits pins history working-set)
+(defun render-summary (s limits pins history working-set &optional task-state)
   "The summary's text and the sections it shows: format.ts renderSummary."
   (let* ((parts (list (list "Pinned Notes" (section "Pinned Notes" pins))
+                      (list "Task State" (section "Task State" task-state))
                       (list "Early Session Requests" (section "Early Session Requests" (state-early-requests s)))
                       (list "Files And Changes" (section "Files And Changes" (file-lines s (limit limits "filesPerCategory"))))
                       (list "Commits" (section "Commits" (mapcar (lambda (c) (if (commit-hash c) (format nil "~a: ~a" (commit-hash c) (commit-message c)) (commit-message c)))
@@ -372,6 +373,7 @@ INPUT is its CompileInput as JSON. Returns (values TEXT STATE SECTIONS)."
          (merged (merge-states (if legacy (with-full-paths legacy fresh) previous) fresh limits))
          (pins (let ((notes (json-get input "pinnedNotes"))) (and (vectorp notes) (plusp (length notes)) (pin-lines (coerce notes 'list)))))
          (history (let ((h (json-get input "historyIndex"))) (and (vectorp h) (map 'list #'history-line h))))
-         (working-set (let ((w (strings-of (json-get input "workingSet")))) w)))
-    (multiple-value-bind (text sections) (render-summary merged limits pins history working-set)
+         (working-set (let ((w (strings-of (json-get input "workingSet")))) w))
+         (task-state (strings-of (json-get input "taskState"))))
+    (multiple-value-bind (text sections) (render-summary merged limits pins history working-set task-state)
       (values text (cap-state merged limits) sections))))

@@ -8,6 +8,7 @@ import { RECALL_TOOL } from "../names";
 
 export const SECTION = {
   pins: "Pinned Notes",
+  taskState: "Task State",
   early: "Early Session Requests",
   files: "Files And Changes",
   commits: "Commits",
@@ -127,11 +128,13 @@ interface RenderInput {
   history?: readonly string[];
   /** [Working Set] lines (core/working-set.ts formatWorkingSet): file excerpts, shown as they are. */
   workingSet?: readonly string[];
+  /** [Task State] lines (core/task-state.ts): where the work stands. */
+  taskState?: readonly string[];
 }
 
 /**
  * The summary: [Pinned Notes] first (the start of the context is where a model
- * attends best, arXiv:2307.03172), the carried sections, [History Index] and
+ * attends best, arXiv:2307.03172), then [Task State], the carried sections, [History Index] and
  * [Working Set] last in the header, next to the brief and the kept turns; then
  * the brief and the recall note. Empty when there is nothing to show.
  */
@@ -139,6 +142,7 @@ export const renderSummary = (input: RenderInput): { text: string; sections: str
   const { state, limits } = input;
   const parts: Array<[string, string]> = [
     [SECTION.pins, section(SECTION.pins, input.pins ?? [])],
+    [SECTION.taskState, section(SECTION.taskState, input.taskState ?? [])],
     [SECTION.early, section(SECTION.early, state.earlyRequests)],
     [SECTION.files, section(SECTION.files, fileLines(state.files, limits.filesPerCategory))],
     [SECTION.commits, section(SECTION.commits, state.commits.slice(-limits.commits).map((c) => (c.hash ? `${c.hash}: ${c.message}` : c.message)))],

@@ -36,7 +36,7 @@ export const userWords = (text: string): { words: string; skills: string[] } => 
 };
 
 /** A user message as the summary lists it: its words behind a `[skill: name]` tag when it expanded one, clipped. */
-const userLine = (text: string, sourceIndex?: number): string => {
+export const userLine = (text: string, sourceIndex?: number): string => {
   const { words: rest, skills } = userWords(text);
   if (!rest) return "";
   const line = skills.length > 0 ? `[skill: ${skills.join(", ")}] ${rest}` : rest;

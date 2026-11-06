@@ -145,6 +145,7 @@ maybe("Lisp core summary", () => {
             { from: 51, to: 90, requests: 4, asks: ["z"], files: Array.from({ length: 24 }, (_, i) => `d${i % 8}/f${i}.ts`), commits: [], commitCount: 0, failed: 2 },
           ] } : {}),
           ...(r() < 0.3 ? { workingSet: ["--- src/money.ts (#4)", "const x = 1;"] } : {}),
+          ...(r() < 0.3 ? { taskState: ["Request (#9): fix the rounding", "Since then: 3 tool calls, 1 failed; changed src/money.ts.", "Unresolved failure (#12): bash \"bun test\": 1 fail"] } : {}),
         };
         const { ts, lisp, answered } = both(input);
         expect({ seed, pass, ...lisp }).toEqual({ seed, pass, ...ts });

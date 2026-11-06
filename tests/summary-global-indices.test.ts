@@ -226,7 +226,8 @@ describe("compaction hook emits session-global refs", () => {
       compactionEntry("c1", ""),
       msgEntry("m4", userMsg("Modify the beta fixture")),
       msgEntry("m5", betaEdit),
-      msgEntry("m6", toolResult("edit", "done")),
+      // A result of a real edit's size: a summary of a few bytes would be bigger than they are.
+      msgEntry("m6", toolResult("edit", `done\n${"beta line changed\n".repeat(40)}`)),
     ];
     const { invoke } = hookHarness(all);
     const result = invoke(all, {

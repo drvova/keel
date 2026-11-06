@@ -469,7 +469,19 @@
                                  (mapcar #'third past) kept
                                  (* (budget budgets "workingSetTokens") per-token) removed)
             (when lines (setf working-lines lines working-shown shown)))))
-      (let* ((previous-summary (let ((p (json-get input "previousSummary"))) (and (stringp p) p)))
+      (let* ((task-lines
+               ;; [Task State], from everything since /clear: what is summarized, then what stays.
+               (let* ((kept-at (if (plusp (length (cut-first-kept cut)))
+                                   (or (position (cut-first-kept cut) branch :key (lambda (e) (json-get e "id")) :test #'equal) -1)
+                                   -1))
+                      (since (loop for i from (1+ (last-reset-index branch)) below (length branch)
+                                   for m = (live-message (aref branch i))
+                                   when m collect (list (json-get (aref branch i) "id") m (json-get (aref notes i) "n")
+                                                        (and (>= kept-at 0) (>= i kept-at)))))
+                      (kept-from (or (position-if #'fourth since) (length since))))
+                 (build-task-state (restore-originals (mapcar #'second since) (mapcar #'first since) (json-get input "sessionFile"))
+                                   (mapcar #'third since) kept-from)))
+             (previous-summary (let ((p (json-get input "previousSummary"))) (and (stringp p) p)))
              (stored-state (and previous-summary previous-compaction (read-state (json-get details "summaryState"))))
              (summary-input
                (json-object "previous" stored-state
@@ -480,6 +492,7 @@
                             "historyIndex" (and history (coerce history 'vector))
                             "pinnedNotes" (coerce (read-pins branch) 'vector)
                             "workingSet" (and working-lines (coerce working-lines 'vector))
+                            "taskState" (and task-lines (coerce task-lines 'vector))
                             "fileOps" (json-get input "fileOps")
                             "trackCommands" (json-get (json-get input "settings") "trackCommands")
                             "limits" (budget budgets "summary")

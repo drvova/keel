@@ -122,6 +122,7 @@ A section only appears when it has something to say; a session with no git commi
 | Section | Contents |
 |---|---|
 | `[Pinned Notes]` | Notes pinned with `/omp-vcc-pin` (`/pi-vcc-pin`) or `vcc_pin`, verbatim, until unpinned (the newest 20 are shown) |
+| `[Task State]` | Where the work stands when a compaction cuts into a turn (the request it is on is summarized away): that request, how many tool calls followed and how many failed, the files they changed, the last result, and the failure no later run of the same call fixed, each with its `#N`. Read off the transcript, built again at every compaction; absent while the request is still in context |
 | `[Early Session Requests]` | The session's first 3 user messages, as written (one over 300 characters is clipped and ends with `… (#N)`). Kept for the whole session; they can be stale later in a long session |
 | `[Files And Changes]` | Files modified, created (first written in the session) or read (capped, paths trimmed to a common root), from each host's edit tool (omp's hashline and replace edits, Pi's `edits` lists) |
 | `[Commits]` | Last 8 commits made in the session (hash + subject) |
