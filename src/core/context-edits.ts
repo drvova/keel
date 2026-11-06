@@ -30,34 +30,36 @@ const replacedContent = (role: string, content: unknown): unknown =>
   (role === "assistant" || role === "toolResult") && typeof content === "string" ? [{ type: "text", text: content }] : content;
 
 /**
- * The branch as Pi's context holds it: entries an edit omits are left out,
- * replaced ones carry the new content, and the edit entries themselves are
- * dropped (they contribute no message). Each target takes the latest edit
- * aimed at it. Entries without edits are returned as they are, so a branch
- * with none (every omp branch) comes back as the same array.
+ * Each entry of the branch as Pi's context holds it, in place: undefined for
+ * one an edit omits and for the edit entries themselves (they contribute no
+ * message), the new content for a replaced one. Each target takes the latest
+ * edit aimed at it. Undefined when the branch has no edits (every omp branch).
  */
-export const applyContextEdits = <E>(branchEntries: E[]): E[] => {
+export const projectContextEdits = <E>(branchEntries: E[]): Array<E | undefined> | undefined => {
   const edits = new Map<string, ContextEdit>();
   for (const entry of branchEntries) if (isContextEdit(entry)) edits.set(entry.targetId, entry);
-  if (edits.size === 0) return branchEntries;
-  const projected: E[] = [];
-  for (const entry of branchEntries) {
+  if (edits.size === 0) return undefined;
+  return branchEntries.map((entry) => {
     const e = entry as any;
-    if (isContextEdit(e)) continue;
+    if (isContextEdit(e)) return undefined;
     const edit = typeof e?.id === "string" ? edits.get(e.id) : undefined;
-    if (!edit) {
-      projected.push(entry);
-      continue;
-    }
-    if (edit.replacement === null) continue;
+    if (!edit) return entry;
+    if (edit.replacement === null) return undefined;
     const content = edit.replacement?.content;
     if (e.type === "message" && e.message && EDITABLE_ROLES.has(e.message.role)) {
-      projected.push({ ...e, message: { ...e.message, content: replacedContent(e.message.role, content) } });
-    } else if (e.type === "custom_message") {
-      projected.push({ ...e, content });
-    } else {
-      projected.push(entry);
+      return { ...e, message: { ...e.message, content: replacedContent(e.message.role, content) } };
     }
-  }
-  return projected;
+    if (e.type === "custom_message") return { ...e, content };
+    return entry;
+  });
 };
+
+/**
+ * The branch as Pi's context holds it: entries an edit omits are left out,
+ * replaced ones carry the new content, and the edit entries themselves are
+ * dropped. Entries without edits are returned as they are, so a branch with
+ * none (every omp branch) comes back as the same array. The Lisp core applies
+ * the same projection (lisp/src/context-edits.lisp).
+ */
+export const applyContextEdits = <E>(branchEntries: E[]): E[] =>
+  projectContextEdits(branchEntries)?.filter((e): e is E => e !== undefined) ?? branchEntries;

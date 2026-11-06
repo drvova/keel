@@ -1,6 +1,6 @@
 // The Lisp core's compaction plan against plan.ts planCompaction, on omp's own
 // convertToLlm: generated branches (earlier compactions, /clear, custom
-// messages, branch summaries, pins, kept originals of what omp rewrote, every
+// messages, branch summaries, pins, kept originals of what omp rewrote, Pi's context edits, every
 // message shape) under every keep, reason and budget, the whole plan compared:
 // the cut, the summary, the stored state, the history index, the working set,
 // the stats, a cancel's notice. Skips without SBCL.
@@ -88,6 +88,10 @@ const branch = (seed: number) => {
           earlyRequests: ["first ask"], earlySlots: 2, files: { modified: ["src/a.ts"], created: [], read: ["src/money.ts"] },
           commits: [{ hash: "abc1234", message: "fix: earlier" }], tracked: [], userMessages: ["an earlier message"], brief: "[user]\nearlier",
         } : { files: "broken" }, historyIndex: r() < 0.7 ? [{ from: 0, to: 3, requests: 1, asks: ["first ask"], files: ["src/a.ts"], commits: [], commitCount: 0, failed: 0 }] : "broken" } : undefined });
+    } else if (roll < 0.94 && entries.length > 2) {
+      // Pi's context edits: an omission or a new content of an earlier entry.
+      push({ type: "context_edit", targetId: entries[Math.floor(r() * entries.length)].id,
+        replacement: pick(r, [null, { content: "[redacted]" }, { content: [{ type: "text", text: words(r, 8) }] }, { content: fileText(r) }]) });
     } else push({ type: "model_change", model: "x" });
   }
   const file = join(dir, `s${seed}.jsonl`);

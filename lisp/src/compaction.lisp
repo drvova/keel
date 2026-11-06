@@ -500,17 +500,19 @@
 (defun cut-reason-name (reason) (if (eq reason :no-live-messages) "no_live_messages" "too_few_live_messages"))
 
 (defun plan-compaction (input)
-  "plan.ts planCompaction: what the compaction does, sized first (window.lisp), as the plan's JSON."
-  (let* ((branch (coerce (json-get input "branch" #()) 'vector))
-         (sizing (size-compaction input branch))
-         (plan (plan-sized input branch sizing)))
-    (setf (gethash "sizing" plan) sizing)
-    plan))
+  "plan.ts planCompaction: what the compaction does, on the branch as the context
+holds it (Pi's context edits applied, context-edits.lisp), sized first
+(window.lisp), as the plan's JSON."
+  (multiple-value-bind (branch notes)
+      (apply-context-edits (coerce (json-get input "branch" #()) 'vector) (coerce (json-get input "notes" #()) 'vector))
+    (let* ((sizing (size-compaction input branch))
+           (plan (plan-sized input branch notes sizing)))
+      (setf (gethash "sizing" plan) sizing)
+      plan)))
 
-(defun plan-sized (input branch sizing)
+(defun plan-sized (input branch notes sizing)
   "plan.ts planSized: the plan once SIZING (the policy, trigger, budgets) is known."
-  (let* ((notes (coerce (json-get input "notes" #()) 'vector))
-         (settings (json-get input "settings"))
+  (let* ((settings (json-get input "settings"))
          (skip (strings-of (json-get settings "skipCustomTypes")))
          (budgets (json-get sizing "budgets"))
          (per-token (json-get (json-get sizing "tokenEstimate") "charsPerToken"))

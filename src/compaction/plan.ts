@@ -14,11 +14,12 @@ import { applyTailBudget, buildOwnCut, collectLiveMessages, keptChars, resolveSm
 import { assembleSummary } from "./assemble";
 import { toLiveMessage, toSummaryMessage } from "./summary-input";
 import { restoreOriginals } from "../core/raw-store";
+import { applyContextEdits, projectContextEdits } from "../core/context-edits";
 import { callCore } from "../core/lisp-core";
 import type { CompactionStats } from "./stats";
 
 export interface PlanInput {
-  /** The branch as the context holds it. */
+  /** The branch as the host has it; the plan reads it as the context holds it (Pi's context edits applied). */
   branchEntries: any[];
   convert: ConvertToLlm;
   /** keep:N the user typed; null when none was. */
@@ -141,8 +142,10 @@ const sizeCompaction = (input: PlanInput): Sizing => {
  * the rest (lisp/src/compaction.lisp).
  */
 const hostNotes = (input: PlanInput): Array<Record<string, unknown>> => {
-  const entries = input.branchEntries;
-  const live = entries.map((e) => toLiveMessage(e));
+  // Of each entry as the context holds it: the core drops what Pi's edits omit, and reads its replacements, itself.
+  const raw = input.branchEntries;
+  const entries = projectContextEdits(raw) ?? raw;
+  const live = entries.map((e) => (e ? toLiveMessage(e) : undefined));
   const at = live.flatMap((m, i) => (m ? [i] : []));
   const restored = restoreOriginals(at.map((i) => live[i]), at.map((i) => entries[i]?.id), input.sessionFile);
   const restoredAt = new Map(at.map((i, k) => [i, restored[k]]));
@@ -167,8 +170,10 @@ export const planInCore = (input: PlanInput): Plan | undefined => {
 export const planCompaction = (input: PlanInput): Plan => {
   const inCore = planInCore(input);
   if (inCore) return inCore;
-  const sizing = sizeCompaction(input);
-  return { ...planSized(input, sizing), sizing } as Plan;
+  // What the context holds: Pi's context edits applied, as Pi applies them. An omp branch has none.
+  const context = { ...input, branchEntries: applyContextEdits(input.branchEntries) };
+  const sizing = sizeCompaction(context);
+  return { ...planSized(context, sizing), sizing } as Plan;
 };
 
 type Unsized<T> = T extends unknown ? Omit<T, "sizing"> : never;

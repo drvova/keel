@@ -7,6 +7,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join, dirname } from "path";
 import { recordLearnedWindow } from "../src/core/model-limits";
+import { lispCore, withCore } from "./support/lisp-core";
 
 
 
@@ -123,6 +124,25 @@ describe.skipIf(!piInstalled())("Pi entry", () => {
     expect(threshold.compaction.details).toMatchObject({ reason: "threshold", willRetry: false });
     // Pi compacts past window less reserveTokens: 200,000 - 16,384.
     expect(threshold.compaction.details.limits).toMatchObject({ contextWindow: 200_000, windowSource: "pi", trigger: 183_616 });
+  });
+
+  test("the summary reads the branch as Pi's context holds it: an omitted attempt and a redacted result, in TS and in the Lisp core", async () => {
+    const core = lispCore();
+    for (const on of core ? [undefined, core] : [undefined]) {
+      const pi = await createPi();
+      const attempt = assistant("A first attempt that Pi retried away");
+      const call = entry({ role: "assistant", content: [{ type: "toolCall", id: "k1", name: "bash", arguments: { command: "cat .env" } }] });
+      const result = entry({ role: "toolResult", toolCallId: "k1", toolName: "bash", content: [{ type: "text", text: "API_KEY=hunter2" }], isError: false });
+      pi.setEntries([
+        user("Zeroth request: read the env file"), attempt, call, result,
+        { id: `p${++n}`, type: "context_edit", targetId: attempt.id, replacement: null },
+        { id: `p${++n}`, type: "context_edit", targetId: result.id, replacement: { content: "[redacted by the user]" } },
+        ...conversation(),
+      ]);
+      const summary: string = withCore(on, () => pi.beforeCompact({ reason: "threshold", willRetry: false })).compaction.summary;
+      expect({ on, has: summary.includes("Zeroth request") }).toEqual({ on, has: true });
+      expect({ on, secret: summary.includes("hunter2"), attempt: summary.includes("Pi retried away") }).toEqual({ on, secret: false, attempt: false });
+    }
   });
 
   test("/pi-vcc hands Pi the marker as customInstructions and waits for Pi's callback", async () => {

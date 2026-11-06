@@ -44,6 +44,10 @@
 ;;;;   convertToLlm makes of it (summary-input.ts toSummaryMessage), as it is and
 ;;;;   as its kept original, and its #N.
 ;;;;
+;;;; context-edits: a branch as Pi's context holds it (src/core/context-edits.ts), for the parity test
+;;;;   {"op":"context-edits","branch":[ENTRY...]} -> {"ok":true,"entries":[ENTRY...]}
+;;;;   (op compact applies the same projection to its BRANCH and NOTES)
+;;;;
 ;;;; window: the window rules (src/core/window.ts), case by case
 ;;;;   {"op":"window","cases":[{"error":TEXT} | {ruleName, window, hostSettings|policy,
 ;;;;    recovering, tokensBefore, overheadTokens, workingSet}...]}
@@ -204,6 +208,11 @@ parity test compares with JavaScript's own."
         (json-object "ok" :true "recall" (json-object "ok" (if ok :true :false) "text" text "severity" severity)))
     ((or left-to-ts regex-unsupported storage-condition) () (json-object "ok" :false "unsupported" "recall"))))
 
+(defun handle-context-edits (request)
+  "The branch REQUEST carries, Pi's context edits applied (context-edits.lisp)."
+  (let ((branch (coerce (json-get request "branch" #()) 'vector)))
+    (json-object "ok" :true "entries" (values (apply-context-edits branch (make-array (length branch) :initial-element nil))))))
+
 (defun handle-window (request)
   "The window rules on each of REQUEST's cases (window.lisp window-case)."
   (json-object "ok" :true "results" (map 'vector #'window-case (json-get request "cases" #()))))
@@ -219,6 +228,7 @@ parity test compares with JavaScript's own."
           ((equal op "compact") (handle-compact request))
           ((equal op "recall") (handle-recall request))
           ((equal op "window") (handle-window request))
+          ((equal op "context-edits") (handle-context-edits request))
           (t (json-object "ok" :false "error" (format nil "unknown op ~a" (json-string (or op :null))))))))
 
 (defun read-stdin ()

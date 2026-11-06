@@ -10,7 +10,6 @@ import { indexById, readEntries } from "../core/session-file";
 import { parseInstructions } from "../core/compact-args";
 import { handlesHostCompactions, type VccSettings } from "../core/settings";
 import { isRecovery, tell, type Binding } from "../host";
-import { applyContextEdits } from "../core/context-edits";
 import { modelKey, recordHostPolicy } from "../core/model-limits";
 import type { WindowState } from "./window-limits";
 import { vccDetailsOf, type VccCompactionDetails } from "../details";
@@ -75,9 +74,8 @@ export const registerCompactionHook = (
 
   pi.on("session_before_compact", (event, ctx) => {
     const { preparation } = event;
-    // What the context holds: Pi's context edits applied, as Pi applies them
-    // (core/context-edits.ts). An omp branch has none and comes back as it is.
-    const branchEntries = applyContextEdits(event.branchEntries as any[]) as any[];
+    // As the host has it: the plan reads it through Pi's context edits (core/context-edits.ts).
+    const branchEntries = event.branchEntries as any[];
     const { rule } = host;
     // Read on every run: omp's tracker forgets its trigger once read.
     const hostTrigger = host.triggerOf(event);
