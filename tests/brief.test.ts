@@ -19,6 +19,7 @@ describe("compileBrief", () => {
       call("vcc_recall", { query: "build tag", page: 2 }, 7),
       call("vcc_pin", { note: "The deploy host has no Redis" }, 5),
       call("vcc_pin", { unpin: 2 }, 6),
+      call("vcc_pin", { note: "refused", unpin: 3 }, 8),
     ]);
     expect(r).toContain(`* vcc_recall "build tag" scope:project (#1)`);
     expect(r).toContain("* vcc_recall mode:sessions (#2)");
@@ -28,6 +29,9 @@ describe("compileBrief", () => {
     expect(r).toContain(`* vcc_recall "build tag" page:2 (#7)`);
     expect(r).toContain(`* vcc_pin "The deploy host has no Redis" (#5)`);
     expect(r).toContain("* vcc_pin unpin:2 (#6)");
+    // The tool refused a call with both: it pinned nothing, and the brief does not say it did.
+    expect(r).toContain("* vcc_pin (#8)");
+    expect(r).not.toContain('"refused"');
     expect(r).not.toContain("intent text");
   });
 

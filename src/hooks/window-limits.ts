@@ -3,7 +3,7 @@
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { learnedHostPolicy, modelKey, recordLearnedWindow, type WindowInfo } from "../core/model-limits";
 import { handlesHostCompactions } from "../core/settings";
-import { limitFromOverflowError } from "../core/window";
+import { limitFromOverflowError, triggerFor } from "../core/window";
 import { compactAndWait, tell, type Binding, type CompactionTrigger } from "../host";
 
 /** What window tracking learns over a binding's sessions, and the compaction it starts itself. */
@@ -53,7 +53,9 @@ export const registerWindowTracking = (pi: ExtensionAPI, state: WindowState, hos
     // the host's stead: it cannot know the user wants it.
     const policy = learnedHostPolicy(host.config.dir(), modelKey(ctx?.model));
     if (!policy || !host.rule.autoCompacts(policy)) return;
-    const trigger = host.rule.trigger(w.effective!, policy);
+    // The trigger as the hook works it out for the pass this starts (which cancels when the context is under it).
+    const trigger = triggerFor(w.effective, false, undefined, policy, host.rule);
+    if (trigger === undefined) return;
     const used = ctx?.getContextUsage?.()?.tokens;
     if (!(typeof used === "number" && used >= trigger)) return;
     if (!state.windowNoticeShown) {

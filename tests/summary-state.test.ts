@@ -123,6 +123,23 @@ describe("carried sections merge from the stored state", () => {
     expect(r.state.files.created).not.toContain("/r/src/config.ts");
   });
 
+  it("writing a file another window read and edited leaves the files created around it as they were", () => {
+    const edited = windowOf(call("read", { path: "/r/src/x.ts" }, "2"), call("edit", { path: "/r/src/x.ts", old_string: "a", new_string: "b" }, "3"));
+    const r = chain(windowOf(call("write", { path: "/r/src/a.ts", content: "new" }, "1")), edited, windowOf(call("write", { path: "/r/src/x.ts", content: "x = 1" }, "4")));
+    expect(r.state.files).toMatchObject({ created: ["/r/src/a.ts"], modified: ["/r/src/x.ts"] });
+    const beside = chain(edited, windowOf(call("write", { path: "/r/src/new.ts", content: "y" }, "5"), call("write", { path: "/r/src/x.ts", content: "x = 1" }, "6")));
+    expect(beside.state.files.created).toEqual(["/r/src/new.ts"]);
+  });
+
+  it("a read that failed is no sign the file existed, in one window or across a compaction", () => {
+    const failedRead = (path: string, id: string) =>
+      [{ role: "assistant", content: [{ type: "toolCall", id, name: "read", arguments: { path } }] }, { role: "toolResult", toolCallId: id, toolName: "read", content: [{ type: "text", text: "ENOENT: no such file or directory" }], isError: true }];
+    const one = chain(windowOf(failedRead("/r/src/new.ts", "1"), call("write", { path: "/r/src/new.ts", content: "y" }, "2")));
+    const two = chain(windowOf(failedRead("/r/src/new.ts", "1")), windowOf(call("write", { path: "/r/src/new.ts", content: "y" }, "2")));
+    expect(one.state.files.created).toEqual(["/r/src/new.ts"]);
+    expect(two.state.files.created).toEqual(["/r/src/new.ts"]);
+  });
+
   it("after another compactor's summary, no later compaction takes a request for an early one", () => {
     const llm = "## Goal\nThe user is building a payments service.";
     const first = compileSummary({ messages: [{ role: "user", content: "now wire the refunds endpoint" }] as any, previousSummary: llm, previousSummaryForeign: true, limits: DEFAULT_SUMMARY_LIMITS });

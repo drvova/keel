@@ -18,7 +18,7 @@ import { formatPin, readPins, replaysPins } from "./pins";
 export interface SessionInfo {
   file: string;
   id: string;
-  /** The id's first 8 characters: what output shows and session:'…' takes. */
+  /** The shortest prefix of the id, 8 characters or more, that no other session of the project shares: what output shows and session:'…' takes. */
   short: string;
   /** Header timestamp (session start), ISO. */
   started?: string;
@@ -35,6 +35,8 @@ export const SESSION_REF_MIN_CHARS = 4;
 
 /** Sessions listed at most; the newest are kept. */
 export const MAX_LISTED_SESSIONS = 50;
+/** A session's short id is at least this long. */
+const SHORT_ID_CHARS = 8;
 
 const parse = (line: Buffer): any => {
   try { return JSON.parse(line.toString("utf8")); } catch { return undefined; }
@@ -56,7 +58,7 @@ const nameOf = (e: any): string | undefined => {
  * are parsed (compactions, the bulk of the rest, never); messages are read by
  * their heads (session-file.ts entryHead).
  */
-const scanSession = (file: string): SessionInfo | undefined => {
+const scanSession = (file: string, short: string): SessionInfo | undefined => {
   let stat;
   try { stat = statSync(file); } catch { return undefined; }
   const header = readHeader(file);
@@ -92,7 +94,7 @@ const scanSession = (file: string): SessionInfo | undefined => {
   return {
     file,
     id: header.id,
-    short: header.id.replace(/-/g, "").slice(0, 8),
+    short,
     started: typeof header.timestamp === "string" ? header.timestamp : undefined,
     bytes: stat.size,
     messages,
@@ -120,18 +122,34 @@ const projectFiles = (dir: string, currentFile?: string): string[] => {
     .map((x) => x.f);
 };
 
-/** The project's other sessions, newest first, from its newest `limit` session files; `more` when there are older files. */
-export const listProjectSessions = (dir: string, currentFile?: string, limit = MAX_LISTED_SESSIONS): SessionInfo[] & { more: boolean } => {
-  const files = projectFiles(dir, currentFile);
-  return Object.assign(files.slice(0, limit).map(scanSession).filter((s): s is SessionInfo => !!s), { more: files.length > limit });
+/** The project's other sessions, newest first, the newest MAX_LISTED_SESSIONS of them; `more` when there are older ones. */
+export const listProjectSessions = (dir: string, currentFile?: string): SessionInfo[] & { more: boolean } => {
+  const ids = projectIds(dir, currentFile);
+  const listed = ids.slice(0, MAX_LISTED_SESSIONS).map((s) => scanSession(s.file, s.short)).filter((s): s is SessionInfo => !!s);
+  return Object.assign(listed, { more: ids.length > MAX_LISTED_SESSIONS });
 };
 
-/** The project's other session files with their ids, newest first, read from each file's header alone. */
-const projectIds = (dir: string, currentFile?: string): Array<{ file: string; id: string; short: string }> =>
-  projectFiles(dir, currentFile).flatMap((file) => {
-    const id = readHeader(file)?.id;
-    return typeof id === "string" ? [{ file, id, short: id.replace(/-/g, "").slice(0, 8) }] : [];
+/** The shortest prefix (dashes left out) of SHORT_ID_CHARS or more that names each id alone among these. */
+const shortIds = (ids: readonly string[]): string[] => {
+  const keys = ids.map((id) => id.replace(/-/g, ""));
+  const lower = keys.map((k) => k.toLowerCase());
+  return keys.map((key, i) => {
+    let n = SHORT_ID_CHARS;
+    // omp's ids are UUIDv7: their first characters are a timestamp, the same for sessions a minute apart.
+    while (n < key.length && lower.some((k, j) => j !== i && k.startsWith(lower[i].slice(0, n)))) n++;
+    return key.slice(0, n);
   });
+};
+
+/** The project's other session files with their ids and shorts, newest first, read from each file's header alone. */
+const projectIds = (dir: string, currentFile?: string): Array<{ file: string; id: string; short: string }> => {
+  const found = projectFiles(dir, currentFile).flatMap((file) => {
+    const id = readHeader(file)?.id;
+    return typeof id === "string" ? [{ file, id }] : [];
+  });
+  const shorts = shortIds(found.map((s) => s.id));
+  return found.map((s, i) => ({ ...s, short: shorts[i] }));
+};
 
 /** How many other sessions the project has. */
 export const countProjectSessions = (dir: string, currentFile?: string): number => projectIds(dir, currentFile).length;
@@ -155,7 +173,7 @@ export const resolveSession = <S extends { id: string; short: string }>(ref: str
 export const findSession = (dir: string, currentFile: string, ref: string): SessionInfo | { error: string } => {
   const found = resolveSession(ref, projectIds(dir, currentFile));
   if ("error" in found) return found;
-  return scanSession(found.file) ?? { error: `Session ${found.short} could not be read.` };
+  return scanSession(found.file, found.short) ?? { error: `Session ${found.short} could not be read.` };
 };
 
 const date = (iso?: string): string => (iso ? iso.replace("T", " ").slice(0, 16) : "unknown start");

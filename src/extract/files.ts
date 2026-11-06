@@ -33,9 +33,11 @@ export const extractFiles = (
     for (const p of filesOf(b)) {
       shown.add(p);
       if (kind === "read") {
-        act.read.add(p);
-        // A read that failed says nothing about the file existing.
-        if (!b.failed) seen.add(p);
+        // A read that failed read nothing, and says nothing about the file existing.
+        if (!b.failed) {
+          act.read.add(p);
+          seen.add(p);
+        }
       } else if (kind === "write") {
         if (!b.failed) {
           if (seen.has(p)) change(p);
@@ -49,7 +51,7 @@ export const extractFiles = (
     }
   }
 
-  for (const p of fileOps?.read ?? []) if (!isUrlPath(p)) act.read.add(p);
+  for (const p of fileOps?.read ?? []) if (!isUrlPath(p) && !shown.has(p)) act.read.add(p);
   for (const p of fileOps?.changed ?? []) if (!isUrlPath(p) && !shown.has(p)) change(p);
 
   return act;

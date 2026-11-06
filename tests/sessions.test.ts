@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, utimesSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { listProjectSessions, MAX_LISTED_SESSIONS, resolveSession, type SessionInfo } from "../src/core/sessions";
+import { findSession, listProjectSessions, MAX_LISTED_SESSIONS, resolveSession, type SessionInfo } from "../src/core/sessions";
 import { executeRecall, toolHints as toolHintsOf } from "../src/tools/recall";
 import { recall } from "../src/core/recall-run";
 import { parseCommandRequest } from "../src/core/recall-request";
@@ -72,6 +72,22 @@ describe("listProjectSessions", () => {
       expect(listProjectSessions(skillDir)[0].firstRequest).toBe("Add refunds to the ledger");
     } finally {
       rmSync(skillDir, { recursive: true, force: true });
+    }
+  });
+
+  it("gives sessions started within a minute short ids that tell them apart, and each names its session", () => {
+    // omp's ids are UUIDv7: the first 8 characters are the start time's top bits.
+    const twinDir = mkdtempSync(join(tmpdir(), "omp-vcc-twins-"));
+    try {
+      const ids = ["01a1af12-0000-7000-8000-00000000000a", "01a1af12-0001-7000-8000-00000000000b"];
+      ids.forEach((id, i) => write(join(twinDir, `${i}.jsonl`), [header(id, "2026-10-06T10:00:00.000Z"), ...chain([["user", `twin request ${i}`]])], 6_000 + i));
+      const shorts = listProjectSessions(twinDir).map((s) => s.short);
+      expect(shorts).toEqual(["01a1af120001", "01a1af120000"]);
+      for (const [i, short] of [[1, shorts[0]], [0, shorts[1]]] as const) {
+        expect((findSession(twinDir, "", short) as SessionInfo).firstRequest).toBe(`twin request ${i}`);
+      }
+    } finally {
+      rmSync(twinDir, { recursive: true, force: true });
     }
   });
 

@@ -193,7 +193,7 @@ export function parseDrillDown(query: string): {
  * @param message - The message at #N (undefined when there is none)
  * @param entryIndex - The message index (#N)
  * @param pathPattern - File path substring to match (or "file" keyword)
- * @param full - If true, return all of the content, up to one recall result's cap
+ * @param full - If true, return all of the content, up to what the view may take of one result
  * @param offset - Line offset (0-indexed) for windowed content
  * @param limit - Max lines to show (default 30 for windowed, ignored if full=true)
  */
@@ -204,7 +204,7 @@ export function expandEntryFile(
   full: boolean,
   offset: number | undefined,
   limit: number | undefined,
-  /** One recall result's cap, and what follow-up calls add (session:'id' in an earlier session). */
+  /** What the view may take of one recall result, and what follow-up calls add (session:'id' in an earlier session). */
   output: { maxChars: number; via: string },
 ): string {
   if (message === undefined) {

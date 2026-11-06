@@ -14,7 +14,8 @@
 // reset_boundary) hides earlier pins, as it does omp's own context notes.
 import { clip } from "./content";
 import { afterReset, hostBranch, hostEntries, lastIndex, RESET_ENTRY_TYPE, type SessionManagerLike } from "./session-file";
-import { PIN_ENTRY_TYPE, PIN_TOOL } from "../names";
+import { PIN_ENTRY_TYPE, PIN_PARAMS, PIN_TOOL } from "../names";
+import { isUnset } from "./tools";
 
 /** One note is clipped to this many characters. */
 export const PIN_CHARS = 300;
@@ -108,6 +109,21 @@ const toPinId = (value: unknown): number | undefined => {
   if (typeof value !== "string") return undefined;
   const m = value.trim().match(/^\[?#?(\d+)\]?$/);
   return m ? Number(m[1]) : undefined;
+};
+
+/**
+ * A vcc_pin call as the tool runs it and the brief reads it: a note to pin,
+ * an [N] to unpin, both (refused), or neither (a listing). A param sent empty
+ * is not sent (tools.ts isUnset).
+ */
+export const pinCallOf = (args: Record<string, unknown>): { note: string } | { unpin: unknown } | { both: true } | { list: true } => {
+  const rawNote = args[PIN_PARAMS.note];
+  const note = typeof rawNote === "string" && !isUnset(rawNote) ? rawNote : undefined;
+  const unpin = isUnset(args[PIN_PARAMS.unpin]) ? undefined : args[PIN_PARAMS.unpin];
+  if (note !== undefined && unpin !== undefined) return { both: true };
+  if (note !== undefined) return { note };
+  if (unpin !== undefined) return { unpin };
+  return { list: true };
 };
 
 /** Pin a note; `done` says whether it was pinned, `text` what happened. */

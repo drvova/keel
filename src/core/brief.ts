@@ -3,6 +3,7 @@ import { clip } from "./content";
 import { callKind, callSubject, isOwnTool, isUnset } from "./tools";
 import { collapseSkillText } from "./skill-collapse";
 import { PIN_PARAMS, PIN_TOOL, RECALL_PARAMS, RECALL_TOOL } from "../names";
+import { pinCallOf } from "./pins";
 
 const TRUNCATE_USER = 256;
 const SEGMENT_CLOSING_ASSISTANT_HEAD_WORDS = 120;
@@ -234,10 +235,10 @@ const vccToolLine = (name: string, args: Record<string, unknown>): string | unde
     return parts.length > 0 ? `* ${name} ${parts.join(" ")}` : `* ${name}`;
   }
   if (isOwnTool(name, PIN_TOOL)) {
-    const note = args[PIN_PARAMS.note];
-    const unpin = args[PIN_PARAMS.unpin];
-    if (typeof note === "string" && !isUnset(note)) return `* ${name} "${clip(note, 60)}"`;
-    if (!isUnset(unpin)) return `* ${name} ${PIN_PARAMS.unpin}:${recallArg(unpin)}`;
+    // As the tool ran it: a call with both was refused, and pinned nothing.
+    const call = pinCallOf(args);
+    if ("note" in call) return `* ${name} "${clip(call.note, 60)}"`;
+    if ("unpin" in call) return `* ${name} ${PIN_PARAMS.unpin}:${recallArg(call.unpin)}`;
     return `* ${name}`;
   }
   return undefined;

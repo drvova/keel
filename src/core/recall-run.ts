@@ -26,7 +26,7 @@ interface RecallView {
   /** Set when the view is over one of those earlier sessions instead of the current one. */
   session?: SessionInfo;
   load(full: boolean): LoadedEntry[];
-  /** One recall result's cap (recallOutputChars). */
+  /** What the action may take of one recall result: the cap (recallOutputChars) less what recall puts in front. */
   maxChars: number;
   /** The message at `#N`, on any branch. */
   message(index: number): Message | undefined;

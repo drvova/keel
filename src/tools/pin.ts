@@ -3,9 +3,8 @@
 // number or a string and removePin (core/pins.ts) reads either form.
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import type { HostProfile } from "../host";
-import { addPin, listPins, PIN_CHARS, removePin, type PinHost } from "../core/pins";
+import { addPin, listPins, PIN_CHARS, pinCallOf, removePin, type PinHost } from "../core/pins";
 import type { SessionManagerLike } from "../core/session-file";
-import { isUnset } from "../core/tools";
 import { PIN_PARAMS, PIN_TOOL } from "../names";
 
 const PIN_TOOL_LABEL = "VCC Pin";
@@ -30,13 +29,10 @@ const PIN_PARAM_DESCRIPTIONS = {
 
 /** One vcc_pin call: note pins, unpin removes, neither lists. */
 export const executePin = (params: unknown, host: PinHost, session: SessionManagerLike): string => {
-  const p = (params && typeof params === "object" ? params : {}) as Record<string, unknown>;
-  // A param sent empty is not sent (tools.ts isUnset), as for vcc_recall.
-  const note = typeof p[PIN_PARAMS.note] === "string" && !isUnset(p[PIN_PARAMS.note]) ? (p[PIN_PARAMS.note] as string) : undefined;
-  const unpin = isUnset(p[PIN_PARAMS.unpin]) ? undefined : p[PIN_PARAMS.unpin];
-  if (note && unpin !== undefined) return "Send note or unpin, not both, in one call.";
-  if (note) return addPin(host, session, note, "agent").text;
-  if (unpin !== undefined) return removePin(host, session, unpin).text;
+  const call = pinCallOf((params && typeof params === "object" ? params : {}) as Record<string, unknown>);
+  if ("both" in call) return "Send note or unpin, not both, in one call.";
+  if ("note" in call) return addPin(host, session, call.note, "agent").text;
+  if ("unpin" in call) return removePin(host, session, call.unpin).text;
   return listPins(session);
 };
 

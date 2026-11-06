@@ -101,20 +101,20 @@ const mergeBrief = (prev: string, fresh: string, maxLines: number): string => {
 /** The previous summary's sections with this window's merged in. */
 export const mergeStates = (prev: SummaryState | undefined, fresh: SummaryState, limits: SummaryLimits): SummaryState => {
   if (!prev) return fresh;
-  let modified = appendTouched(prev.files.modified, fresh.files.modified);
-  const created = appendTouched(prev.files.created, fresh.files.created);
-  // A file in both: created earlier in the session and changed since, it is
-  // still new (Created); changed before a later write, it existed (Modified).
+  // One rule for whether a file existed before it was written, as within one
+  // window (extract/files.ts): created earlier in the session, it stays new
+  // (Created) however it is changed since; read or changed earlier, a write
+  // now rewrites it (Modified).
   const createdBefore = new Set(prev.files.created);
-  for (const p of modified.filter((p) => created.includes(p))) {
-    if (createdBefore.has(p)) modified.splice(modified.indexOf(p), 1);
-    else created.splice(created.indexOf(p), 1);
-  }
-  // Written whole in this window after an earlier one read it: it existed, as
-  // the same calls in one window say (extract/files.ts).
-  for (const p of fresh.files.created.filter((p) => prev.files.read.includes(p) && !createdBefore.has(p))) {
-    created.splice(created.indexOf(p), 1);
-    modified = appendTouched(modified, [p]);
+  const existedBefore = new Set([...prev.files.read, ...prev.files.modified]);
+  let modified = appendTouched(prev.files.modified, fresh.files.modified);
+  let created = appendTouched(prev.files.created, fresh.files.created);
+  for (const p of new Set([...created.filter((p) => modified.includes(p)), ...fresh.files.created.filter((p) => existedBefore.has(p))])) {
+    if (createdBefore.has(p)) modified = modified.filter((x) => x !== p);
+    else {
+      created = created.filter((x) => x !== p);
+      if (!modified.includes(p)) modified = appendTouched(modified, [p]);
+    }
   }
   const tracked = prev.tracked.map((t) => ({ name: t.name, entries: [...t.entries] }));
   for (const t of fresh.tracked) {
