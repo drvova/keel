@@ -13,8 +13,8 @@ export interface VccSettings {
    *   - automatic ones (threshold, overflow, idle, incomplete)
    *   - /omp-vcc (always handled regardless)
    *
-   * When false, omp-vcc only handles /omp-vcc; everything else falls back to
-   * omp's own LLM-based compaction. Existing config files keep their stored
+   * When false, omp-vcc only handles /omp-vcc (/pi-vcc on Pi); everything else
+   * falls back to the host's own LLM-based compaction. Existing config files keep their stored
    * value; the default applies to fresh installs only.
    */
   overrideDefaultCompaction: boolean;
@@ -31,7 +31,7 @@ export interface VccSettings {
   /**
    * Providers for which omp-vcc defers compaction entirely (issue #27), e.g.
    * providers whose own remote compaction should run instead. Matched
-   * case-insensitively against ctx.model.provider (omp's provider id — check
+   * case-insensitively against ctx.model.provider (the host's provider id — check
    * /model). Explicit /omp-vcc bypasses the skip. Unknown/undefined model never
    * skips.
    */
@@ -90,11 +90,9 @@ const readJson = (path: string): Record<string, unknown> | null => {
   }
 };
 
-/** Coerce a config value to string[], failing closed to []. */
 const coerceStringArray = (v: unknown): string[] =>
   Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
 
-/** The settings in a config file's text: defaults for what it leaves out, arrays coerced. */
 const parseSettings = (parsed: Record<string, unknown> | null): VccSettings => {
   if (!parsed || typeof parsed !== "object") return { ...DEFAULT_SETTINGS };
   const merged = { ...DEFAULT_SETTINGS, ...(parsed as Partial<VccSettings>) };

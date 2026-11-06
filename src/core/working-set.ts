@@ -124,7 +124,6 @@ const writes = (call: Call): boolean => callKind(call) === "write" && call.paths
 const edits = (call: Call): boolean => !writes(call) && (callKind(call) === "edit" || callKind(call) === "write");
 /** A call that shows a file: a read of one path; not a search over a directory. */
 const reads = (call: Call): boolean => callKind(call) === "read" && call.paths.length === 1;
-/** A call on a file: a read, a write or an edit. */
 const onFile = (call: Call): boolean => reads(call) || writes(call) || edits(call);
 /** The request names this path as a whole token, not as part of a longer one (`src/a.ts` in `src/a.tsx`), and a path names a file, not `.`. */
 const mentions = (text: string, path: string): boolean => {
@@ -305,11 +304,6 @@ const excerpt = (text: string, max: number, fromEnd: boolean): { lines: string[]
   return { lines, omitted: all.length - lines.length };
 };
 
-/**
- * The section's lines: one head line per item, its excerpt indented under it.
- * A section has no blank line inside (the summary's sections are told apart by
- * them), and an indented line never reads as a section header or a separator.
- */
 /** [Working Set] brings back at most this share of what a compaction removes, so the compaction always frees room. */
 const SHARE_OF_REMOVED = 0.5;
 
@@ -325,6 +319,11 @@ export const buildWorkingSet = (
   return formatWorkingSet(selectWorkingSet({ ...input, maxChars }), maxChars);
 };
 
+/**
+ * The section's lines: one head line per item, its excerpt indented under it.
+ * A section has no blank line inside (the summary's sections are told apart by
+ * them), and an indented line never reads as a section header or a separator.
+ */
 export const formatWorkingSet = (items: readonly WorkingSetItem[], maxChars: number): { lines: string[]; shown: number[] } => {
   const lines: string[] = [];
   const shown: number[] = [];

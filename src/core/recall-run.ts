@@ -137,7 +137,7 @@ const sessionHeader = (s: SessionInfo): string => `Session ${describeSession(s)}
 
 /**
  * Walk the active path back to the last user message. The tool runs from an
- * agent message pi has already written, so a turn is in progress only when
+ * agent message the host has already written, so a turn is in progress only when
  * something follows that user message; a compaction in between means the
  * start of the turn may have left the context.
  */
@@ -462,8 +462,6 @@ const pageOfHits = (
 /** Files worked on, plus a ready #N:path call for the first file on the page that was written. */
 const runTouched = (page: number, view: RecallView): string =>
   formatTouched(touchedFiles(view.load(false)), page, inSession(view));
-
-// ── Earlier sessions of this project ──────────────────────────────────────
 
 const SESSIONS_PAGE_SIZE = 10;
 /** scope:'project' searches at most this much: the newest sessions first. */

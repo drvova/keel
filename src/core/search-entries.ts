@@ -75,8 +75,6 @@ const hasNestedQuantifier = (pattern: string): boolean => {
   return false;
 };
 
-/** Try to compile as regex; fall back to escaped literal. Patterns with nested
- *  unbounded quantifiers are treated as literals rather than compiled. */
 const safeRegex = (pattern: string): RegExp => {
   if (hasNestedQuantifier(pattern)) return new RegExp(escapeRegex(pattern), "i");
   try {
@@ -113,11 +111,9 @@ const startBudget = (): (() => void) => {
   };
 };
 
-/** Detect if the query looks like a single regex pattern (contains regex metacharacters). */
 const looksLikeRegex = (query: string): boolean =>
   /[|*+?{}()[\]\\^$.]/.test(query);
 
-// ── Stopwords for natural language queries ──
 const STOPWORDS = new Set([
   // English
   "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
@@ -132,14 +128,12 @@ const STOPWORDS = new Set([
   "this", "what", "which", "who", "whom", "these", "those",
 ]);
 
-/** Remove stopwords, keep meaningful terms. */
 const filterStopwords = (terms: string[]): string[] => {
   const meaningful = terms.filter((t) => !STOPWORDS.has(t.toLowerCase()) && t.length > 1);
-  // If all terms were stopwords, return original (don't lose everything)
+  // Nothing left: search the query as given rather than for nothing.
   return meaningful.length > 0 ? meaningful : terms;
 };
 
-// ── BM25-lite scoring ──
 const BM25_K = 1.2;
 const BM25_B = 0.75;
 
@@ -150,7 +144,7 @@ const BM25_B = 0.75;
  */
 interface Term {
   term: string;
-  re: RegExp;      // safeRegex(term): case-insensitive, first match
+  re: RegExp;      // the term or its stem (compileTerms), case-insensitive, first match
   global: RegExp;  // same source with "gi", for counting occurrences
 }
 
@@ -167,7 +161,7 @@ export const stemOf = (term: string): string | undefined => {
   for (const suffix of SUFFIXES) {
     if (!lower.endsWith(suffix)) continue;
     let stem = lower.slice(0, -suffix.length);
-    // "running" -> "runn" -> "run"
+    // "stopping" -> "stopp" -> "stop"
     if (stem.length > MIN_STEM && stem[stem.length - 1] === stem[stem.length - 2]) stem = stem.slice(0, -1);
     return stem.length >= MIN_STEM ? stem : undefined;
   }
@@ -181,7 +175,6 @@ const compileTerms = (terms: string[]): Term[] =>
     return { term, re, global: new RegExp(re.source, "gi") };
   });
 
-/** Count occurrences of a term in text. */
 const termFreq = (text: string, t: Term): number => {
   const matches = text.match(t.global);
   return matches ? matches.length : 0;
@@ -221,7 +214,6 @@ interface BM25Context {
   matched: Term[][];
 }
 
-/** Precompute IDF and avgDl across all docs. */
 const buildBM25Context = (docs: string[], docLens: number[], terms: Term[], checkBudget: () => void): BM25Context => {
   const n = docs.length;
   const df = new Map<string, number>();
@@ -244,7 +236,6 @@ const buildBM25Context = (docs: string[], docLens: number[], terms: Term[], chec
   return { n, avgDl: totalLen / Math.max(n, 1), df, matched };
 };
 
-/** BM25 score for a single doc against query terms. */
 const bm25Score = (doc: string, dl: number, terms: Term[], ctx: BM25Context): number => {
   let score = 0;
 
@@ -253,7 +244,6 @@ const bm25Score = (doc: string, dl: number, terms: Term[], ctx: BM25Context): nu
     if (tf === 0) continue;
 
     const docFreq = ctx.df.get(t.term) ?? 0;
-    // IDF: log((N - df + 0.5) / (df + 0.5) + 1)
     const idf = Math.log((ctx.n - docFreq + 0.5) / (docFreq + 0.5) + 1);
     // TF saturation with length normalization
     const tfNorm = (tf * (BM25_K + 1)) / (tf + BM25_K * (1 - BM25_B + BM25_B * dl / ctx.avgDl));
@@ -314,7 +304,7 @@ const lineSnippet = (text: string, regex: RegExp, contextLines = 2): string | un
 const TOOL_ARGS_BUDGET = 2000;
 
 /**
- * Tool name of the recall tool itself (src/tools/recall.ts). A search
+ * The recall tool (RECALL_TOOL, src/names.ts) is left out of search. A search
  * operation must not match its own query or its own prior output: the
  * vcc_recall invocation is persisted as an ordinary assistant toolCall (its
  * `{ query }` argument, excluded below in `toolCallArgsText`) followed by an
@@ -327,7 +317,7 @@ const TOOL_ARGS_BUDGET = 2000;
 
 /** Text of every toolCall's arguments in a message's content, for search —
  *  bounded once, in aggregate, by TOOL_ARGS_BUDGET. Excludes the recall
- *  tool's own arguments (see RECALL_TOOL). */
+ *  tool's own arguments (see above). */
 const toolCallArgsText = (msg: Message): string => {
   const raw = toolCallsOf(msg)
     .filter((call) => call.name.toLowerCase() !== RECALL_TOOL)
@@ -347,7 +337,7 @@ const toolCallArgsText = (msg: Message): string => {
  * echoes back `N matches for "<query>"` from the *previous* recall call, so
  * indexing it would make a repeated query self-match and grow with every
  * search. This only affects search indexing — browse/no-query returns
- * entries before fullText runs (see `searchEntries`), and #N expand reads
+ * entries before fullText runs (see `search`), and #N expand reads
  * the message/entry directly, not through this function, so the toolResult
  * is still fully visible there.
  */
@@ -377,8 +367,8 @@ const fullText = (msg: Message): string => {
  *
  * Applied only when the query has >=2 DISTINCT effective terms after
  * stopword filtering and case/duplicate normalization (see the
- * `effectiveTermCount >= 2` gate below `searchEntriesDetailed` uses before
- * calling `applyRelativeFloor`). Distinct, not raw count: "auth auth" or
+ * `effectiveTermCount >= 2` gate `search` uses below before calling
+ * `applyRelativeFloor`). Distinct, not raw count: "auth auth" or
  * "Auth AUTH" is semantically a single-term query and must bypass the floor
  * like any other single term — repeating or casing a word doesn't turn it
  * into the multi-term OR-tail noise this floor targets. The normalization is
@@ -442,11 +432,12 @@ const BM25_RELATIVE_FLOOR = 0.2;
 const SEARCH_RESULT_CAP = 50;
 
 /**
- * Tuning overrides for `searchEntriesDetailed`. Exists only so the offline
- * bench (scripts/benchmark-recall-quality.ts) and targeted tests can
- * exercise the real scoring/capping pipeline against candidate constants —
- * production call sites (`searchEntries`, the recall tool) never pass this
- * and always get `BM25_RELATIVE_FLOOR`/`SEARCH_RESULT_CAP`.
+ * Tuning overrides for `searchEntriesDetailed`. Exists so the offline bench
+ * (scripts/benchmark-recall-quality.ts) and targeted tests can exercise the
+ * real scoring/capping pipeline against candidate constants, and so
+ * [Working Set] can take only the top few hits (core/working-set.ts, `cap`).
+ * Recall (`searchEntries`, the recall tool) never passes this and always gets
+ * `BM25_RELATIVE_FLOOR`/`SEARCH_RESULT_CAP`.
  */
 interface SearchTuning {
   relativeFloor?: number;
@@ -474,10 +465,7 @@ const applyRelativeFloor = (
  * highest-score-first, so `slice(0, cap)` keeps the top `cap` hits. For the
  * regex path there is no score — hits are collected in entry/chronological
  * iteration order, so `slice(0, cap)` keeps the OLDEST `cap` matches, not
- * the most recent or most relevant ones. That is an explicit, documented
- * preservation choice for this change, not a new selection/ranking policy —
- * changing which matches a truncated regex search keeps (e.g. newest-first)
- * is a separate decision, out of scope here.
+ * the most recent or most relevant ones.
  */
 const capHits = (hits: SearchHit[], cap: number): SearchResult => {
   const totalBeforeCap = hits.length;
@@ -545,11 +533,9 @@ const search = (
     if (hits.length > 0) return capHits(hits, cap);
   }
 
-  // Natural language / multi-word query: BM25 scoring
   const rawTerms = rawQuery.split(/\s+/);
   const terms = filterStopwords(rawTerms);
 
-  // Build all docs for BM25 context
   const docs: string[] = [];
   for (let i = 0; i < entries.length; i++) {
     const e = entries[i];
@@ -583,16 +569,9 @@ const search = (
     });
   }
 
-  // Sort by BM25 score desc, then drop the noisy long tail relative to the
-  // top score (multi-term queries only — see BM25_RELATIVE_FLOOR), then
-  // apply the hard cap.
   scored.sort((a, b) => b.score - a.score);
-  // Gate on DISTINCT normalized terms, not raw term count: "auth auth" or
-  // "Auth AUTH" is semantically a single-term query and must bypass the
-  // floor like any other single term — repeating/casing a word doesn't turn
-  // it into the multi-term OR-tail noise this floor targets. This is a
-  // gate-only normalization; it does not change `terms` itself or the BM25
-  // scoring above, which already matches case-insensitively.
+  // The floor is for multi-term queries only, counted as DISTINCT normalized
+  // terms: "auth auth" is one term (see BM25_RELATIVE_FLOOR).
   const effectiveTermCount = new Set(terms.map((t) => t.toLowerCase())).size;
   const floored = effectiveTermCount >= 2 ? applyRelativeFloor(scored, relativeFloor) : scored;
   return capHits(floored.map((s) => s.hit), cap);

@@ -19,7 +19,6 @@
 // past its trigger, so the landing below omp's recovery band suits it too. Pure
 // functions; the IO is in model-limits.ts.
 
-/** Clamp `value` to [floor, ceiling], rounded. */
 const clampTokens = (value: number, floor: number, ceiling: number): number =>
   Math.round(Math.max(floor, Math.min(ceiling, value)));
 
@@ -90,7 +89,7 @@ const OMP_DEFAULT_RESERVE_TOKENS = 16_384;
 const finitePositive = (value: unknown): number | undefined =>
   typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
 
-/** The policy fields in omp's `preparation.settings`, or undefined when there are none. */
+/** The policy fields in omp's `preparation.settings`, or undefined when it is not an object. */
 export const ompPolicyOf = (settings: unknown): OmpCompactionPolicy | undefined => {
   if (!isRecord(settings)) return undefined;
   const policy: OmpCompactionPolicy = {};
@@ -103,7 +102,6 @@ export const ompPolicyOf = (settings: unknown): OmpCompactionPolicy | undefined 
   return policy;
 };
 
-/** Whether omp compacts on its own under this policy. */
 const ompAutoCompacts = (policy: OmpCompactionPolicy | undefined): boolean =>
   policy?.enabled !== false && policy?.strategy !== "off";
 
@@ -154,7 +152,7 @@ interface PiCompactionPolicy {
 /** Pi's reserve when `reserveTokens` is unset (DEFAULT_COMPACTION_SETTINGS). */
 const PI_DEFAULT_RESERVE_TOKENS = 16_384;
 
-/** The policy fields in Pi's `preparation.settings`, or undefined when there are none. */
+/** The policy fields in Pi's `preparation.settings`, or undefined when it is not an object. */
 export const piPolicyOf = (settings: unknown): PiCompactionPolicy | undefined => {
   if (!isRecord(settings)) return undefined;
   const policy: PiCompactionPolicy = {};
@@ -176,7 +174,6 @@ export const piTrigger = (window: number, policy: PiCompactionPolicy = {}): numb
   return Math.max(1, Math.floor(window - reserve));
 };
 
-/** Whether Pi compacts on its own under this policy. */
 const piAutoCompacts = (policy: PiCompactionPolicy | undefined): boolean => policy?.enabled !== false;
 
 /**
@@ -310,7 +307,6 @@ export const summaryScale = (trigger: number, briefCeilingTokens: number): numbe
     ? Math.max(0.25, Math.sqrt(trigger / REFERENCE_TRIGGER))
     : Math.max(1, briefCeilingTokens / DEFAULT_BUDGETS.briefCeilingTokens);
 
-/** The default section sizes scaled by `scale`, each at or above its floor. */
 const summaryLimits = (scale: number): SummaryLimits => {
   const limits = { ...DEFAULT_SUMMARY_LIMITS };
   for (const key of Object.keys(limits) as Array<keyof SummaryLimits>) {
