@@ -28,6 +28,7 @@ const compile = (input: Omit<RankedCompileInput, "limits"> & { limits?: RankedCo
 
 let tmpDir: string;
 let CONFIG_PATH: string;
+const savedConfigPath = process.env.OMP_VCC_CONFIG_PATH;
 
 beforeAll(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "omp-vcc-gidx-"));
@@ -36,7 +37,8 @@ beforeAll(() => {
 });
 
 afterAll(() => {
-  delete process.env.OMP_VCC_CONFIG_PATH;
+  if (savedConfigPath === undefined) delete process.env.OMP_VCC_CONFIG_PATH;
+  else process.env.OMP_VCC_CONFIG_PATH = savedConfigPath;
   rmSync(tmpDir, { recursive: true, force: true });
 });
 
@@ -49,7 +51,7 @@ function setConfig(cfg: Record<string, unknown>) {
   writeFileSync(CONFIG_PATH, JSON.stringify(cfg));
 }
 
-// ── global-indices unit ─────────────────────────────────────────────────
+// ── #N by entry id (src/core/session-file.ts) ──────────────────────────
 
 describe("indexById", () => {
   test("counts only message entries in order", () => {

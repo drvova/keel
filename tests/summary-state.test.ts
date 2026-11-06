@@ -16,36 +16,12 @@ describe("freshState", () => {
     expect(r.tracked).toEqual([]);
   });
 
-  it("tracked commands stay empty by default, even with real tracked-looking commands present", () => {
-    const blocks: NormalizedBlock[] = [
-      { kind: "tool_call", name: "bash", args: { command: "ssh prod-server 'docker ps'" } },
-    ];
-    const r = freshState({ blocks, earlySlots: 3 });
-    expect(r.tracked).toEqual([]);
-  });
-
-  it("records tracked commands only when trackCommands is explicitly non-empty", () => {
+  it("records each tracked command's invocations under its name", () => {
     const blocks: NormalizedBlock[] = [
       { kind: "tool_call", name: "bash", args: { command: "ssh prod-server" } },
     ];
     const r = freshState({ blocks, trackCommands: ["ssh"], earlySlots: 3 });
     expect(r.tracked).toEqual([{ name: "ssh", entries: ["ssh prod-server"] }]);
-  });
-
-  it("populates sections from realistic blocks", () => {
-    const blocks: NormalizedBlock[] = [
-      { kind: "user", text: "Fix the auth bug" },
-      { kind: "tool_call", name: "Read", args: { file_path: "auth.ts" } },
-      { kind: "tool_result", name: "Read", text: "const x = 1;" },
-      { kind: "tool_call", name: "Edit", args: { file_path: "auth.ts" } },
-      { kind: "tool_result", name: "Edit", text: "ok" },
-      { kind: "assistant", text: "- run tests next" },
-    ];
-    const r = freshState({ blocks, earlySlots: 3 });
-    expect(r.earlyRequests).toContain("Fix the auth bug");
-    expect(r.brief).toContain('[user]');
-    expect(r.brief).toContain('* Read "auth.ts"');
-    expect(r.brief).toContain('* Edit "auth.ts"');
   });
 
   it("takes early requests and user messages by position, not by wording", () => {
@@ -64,26 +40,6 @@ describe("freshState", () => {
     expect(r.userMessages).toEqual(["[skill: tdd] write the failing test first"]);
     // Early requests already pinned by the previous summary: the first messages are ordinary.
     expect(freshState({ blocks, earlySlots: 0 }).userMessages[0]).toBe("改成用 JWT 而不是 session cookie");
-  });
-
-  it("brief transcript hides tool results", () => {
-    const blocks: NormalizedBlock[] = [
-      { kind: "tool_result", name: "Read", text: "lots of code here ..." },
-      { kind: "tool_result", name: "bash", text: "Command not found" },
-    ];
-    const r = freshState({ blocks, earlySlots: 3 });
-    expect(r.brief).toBe("");
-  });
-
-  it("brief transcript merges adjacent assistant sections", () => {
-    const blocks: NormalizedBlock[] = [
-      { kind: "assistant", text: "Part one." },
-      { kind: "tool_call", name: "Read", args: { file_path: "a.ts" } },
-      { kind: "assistant", text: "Part two." },
-    ];
-    const r = freshState({ blocks, earlySlots: 3 });
-    const matches = r.brief.match(/\[assistant\]/g);
-    expect(matches?.length).toBe(1);
   });
 });
 

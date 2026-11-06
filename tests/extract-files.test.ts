@@ -1,10 +1,5 @@
-import { afterEach, describe, it, expect } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { describe, it, expect } from "bun:test";
 import { extractFiles } from "../src/extract/files";
-import { DEFAULT_SETTINGS } from "../src/core/settings";
-import { testConfig } from "./support/binding";
 import type { NormalizedBlock } from "../src/types";
 
 describe("extractFiles", () => {
@@ -70,39 +65,5 @@ describe("extractFiles", () => {
     const r = extractFiles([], { readFiles: ["x.ts"], modifiedFiles: ["y.ts"], createdFiles: [] });
     expect([...r.read]).toEqual(["x.ts"]);
     expect([...r.modified]).toEqual(["y.ts"]);
-  });
-});
-
-describe("settings defaults", () => {
-  it("overrides pi core compaction by default", () => {
-    expect(DEFAULT_SETTINGS.overrideDefaultCompaction).toBe(true);
-  });
-
-  it("trackCommands is empty (feature off) by default", () => {
-    expect(DEFAULT_SETTINGS.trackCommands).toEqual([]);
-  });
-});
-
-describe("config coercion", () => {
-  // OMP_VCC_CONFIG_PATH is settings.ts' existing override — point it at a
-  // tmp file so the real ~/.omp/agent/omp-vcc-config.json is never touched.
-  const writeConfig = (value: unknown) => {
-    const dir = mkdtempSync(join(tmpdir(), "omp-vcc-cfg-"));
-    const path = join(dir, "config.json");
-    writeFileSync(path, JSON.stringify({ trackCommands: value }));
-    process.env.OMP_VCC_CONFIG_PATH = path;
-  };
-
-  afterEach(() => delete process.env.OMP_VCC_CONFIG_PATH);
-
-  it("malformed trackCommands values coerce fail-closed to string[]", () => {
-    for (const bad of ["ssh", 42, [1, " kubectl ", null, "kubectl"], null, { 0: "ssh" }]) {
-      writeConfig(bad);
-      const got = testConfig.load().trackCommands;
-      expect(Array.isArray(got)).toBe(true);
-      for (const x of got) expect(typeof x).toBe("string");
-    }
-    writeConfig(["ssh", "kubectl"]);
-    expect(testConfig.load().trackCommands).toEqual(["ssh", "kubectl"]);
   });
 });

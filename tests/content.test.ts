@@ -1,13 +1,10 @@
 import { describe, it, expect } from "bun:test";
-import { textParts, textOf, clip } from "../src/core/content";
+import { textParts, textOf } from "../src/core/content";
 import { argsText } from "../src/core/tools";
 
 describe("textParts", () => {
-  it("returns [] for undefined content", () => {
+  it("returns [] for missing content", () => {
     expect(textParts(undefined as any)).toEqual([]);
-  });
-
-  it("returns [] for null content", () => {
     expect(textParts(null as any)).toEqual([]);
   });
 

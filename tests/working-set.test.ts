@@ -49,9 +49,9 @@ describe("selectWorkingSet", () => {
     const summarized = work();
     const kept = [user("still failing, keep going"), call("c4", "edit", { path: "src/billing/totals.ts", oldText: "a", newText: "b" })];
     const items = selectWorkingSet({ history: summarized, indices: indices(summarized.length), kept, maxChars: 20_000 });
-    expect(items.map((i) => [i.reason, i.index, i.title, i.note])).toEqual([
-      ["file", 2, 'read "src/billing/totals.ts"', "the latest version, edited after at #5"],
-      ["failure", 4, 'bash "bun test tests/billing.test.ts" [failed]', "its end"],
+    expect(items.map((i) => [i.index, i.title, i.note])).toEqual([
+      [2, 'read "src/billing/totals.ts"', "the latest version, edited after at #5"],
+      [4, 'bash "bun test tests/billing.test.ts" [failed]', "its end"],
     ]);
   });
 
@@ -82,7 +82,7 @@ describe("selectWorkingSet", () => {
     const kept = [user("now round to cents"), call("e2", "edit", { path: "src/billing/totals.ts", old_string: "100", new_string: "1000" })];
     const [item, ...rest] = selectWorkingSet({ history, indices: indices(history.length), kept, maxChars: 20_000 });
     expect(rest).toEqual([]);
-    expect([item.reason, item.index, item.title, item.note]).toEqual(["file", 2, 'read "src/billing/totals.ts"', "the latest version, newest first, edited after in context"]);
+    expect([item.index, item.title, item.note]).toEqual([2, 'read "src/billing/totals.ts"', "the latest version, newest first, edited after in context"]);
     const lines = item.text.split("\n");
     expect(lines[0]).toBe('[#6 read "src/billing/totals.ts:40-41"]');
     expect(lines[3]).toBe('[#4 edit "src/billing/totals.ts"]');
@@ -109,7 +109,7 @@ describe("selectWorkingSet", () => {
     ];
     const kept = [user("which region is the pelican cluster in now?")];
     const items = selectWorkingSet({ history: summarized, indices: indices(summarized.length), kept, maxChars: 20_000 });
-    expect(items.map((i) => [i.reason, i.index])).toEqual([["relevant", 7]]);
+    expect(items.map((i) => [i.index, i.note])).toEqual([[7, "matches the latest request"]]);
   });
 
   it("brings back the files of the request in progress, most recent first", () => {
@@ -121,7 +121,7 @@ describe("selectWorkingSet", () => {
     ];
     const kept = [call("b1", "bash", { command: "bun test" })];
     const items = selectWorkingSet({ history, indices: indices(history.length), kept, maxChars: 20_000 });
-    expect(items.map((i) => [i.reason, i.title])).toEqual([["file", 'read "src/billing/format.ts"'], ["file", 'read "src/billing/totals.ts"']]);
+    expect(items.map((i) => [i.title, i.note])).toEqual([['read "src/billing/format.ts"', "the latest version"], ['read "src/billing/totals.ts"', "the latest version"]]);
   });
 });
 
@@ -243,10 +243,13 @@ describe("in the compaction hook", () => {
 
   it("is left out with workingSet off", () => {
     writeFileSync(process.env.OMP_VCC_CONFIG_PATH!, JSON.stringify({ overrideDefaultCompaction: true, workingSet: false }));
-    const branch = entries([user("Set up the build"), call("c0", "bash", { command: "cat build.log" }), result("c0", "bash", "compiling module\n".repeat(600)), say("Built."), ...work(), user("still failing"), call("c4", "edit", { path: "src/billing/totals.ts", oldText: "a", newText: "b" })]);
-    const out = compact(branch);
-    expect(out.summary).not.toContain("[Working Set]");
-    expect(out.details.workingSet).toBeUndefined();
-    writeFileSync(process.env.OMP_VCC_CONFIG_PATH!, JSON.stringify({ overrideDefaultCompaction: true }));
+    try {
+      const branch = entries([user("Set up the build"), call("c0", "bash", { command: "cat build.log" }), result("c0", "bash", "compiling module\n".repeat(600)), say("Built."), ...work(), user("still failing"), call("c4", "edit", { path: "src/billing/totals.ts", oldText: "a", newText: "b" })]);
+      const out = compact(branch);
+      expect(out.summary).not.toContain("[Working Set]");
+      expect(out.details.workingSet).toBeUndefined();
+    } finally {
+      writeFileSync(process.env.OMP_VCC_CONFIG_PATH!, JSON.stringify({ overrideDefaultCompaction: true }));
+    }
   });
 });

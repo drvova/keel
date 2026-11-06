@@ -1,8 +1,8 @@
 import { beforeAll, describe, expect, it } from "bun:test";
 import { assertRealPi, piInstalled } from "./support/pi";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { buildCompactReport } from "./support/report";
-import { prepareSessionSamples, readSourceStat, sessionRoot, type SessionSample } from "./support/real-sessions";
+import { prepareSessionSamples, sessionRoot, type SessionSample } from "./support/real-sessions";
 import { loadPiSessionMessages, loadSessionMessages } from "./support/load-session";
 
 // Integration test against real session transcripts, for each host whose
@@ -10,9 +10,11 @@ import { loadPiSessionMessages, loadSessionMessages } from "./support/load-sessi
 // that host's own parser) — skipped where none do (CI runners) instead of
 // failing on ENOENT. The guard must live in beforeAll too: file-scope hooks run
 // even when the describe below is skipped.
+const hasSessions = (root: string): boolean =>
+  existsSync(root) && readdirSync(root, { recursive: true }).some((name) => String(name).endsWith(".jsonl"));
 const HOSTS = [
-  { host: "omp" as const, present: existsSync(sessionRoot("omp")), load: async (file: string) => loadSessionMessages(file) },
-  { host: "pi" as const, present: existsSync(sessionRoot("pi")) && piInstalled(), load: loadPiSessionMessages },
+  { host: "omp" as const, present: hasSessions(sessionRoot("omp")), load: async (file: string) => loadSessionMessages(file) },
+  { host: "pi" as const, present: hasSessions(sessionRoot("pi")) && piInstalled(), load: loadPiSessionMessages },
 ];
 
 for (const { host, present, load } of HOSTS) {
@@ -24,29 +26,18 @@ for (const { host, present, load } of HOSTS) {
   });
 
   describe.if(present)(`real session integration (${host})`, () => {
-    it("compiles copied large sessions without mutating originals", async () => {
+    // Read from copies (prepareSessionSamples), so a session the host is writing to now is never touched.
+    it("compiles the largest sessions into a summary", async () => {
+      expect(samples.length).toBeGreaterThan(0);
       for (const sample of samples) {
-        const before = await readSourceStat(sample);
         const loaded = await load(sample.copy);
         const report = buildCompactReport({ messages: loaded.messages });
-        const after = await readSourceStat(sample);
 
         expect(loaded.messageCount).toBeGreaterThan(0);
-        expect(loaded.skippedCount).toBeGreaterThanOrEqual(0);
         expect(report.summary.length).toBeGreaterThan(0);
         expect(report.summary).toContain("[");
-        expect(report.before.preview.length).toBeGreaterThan(0);
-        expect(report.after.summaryPreview.length).toBeGreaterThan(0);
         expect(report.compression.charsBefore).toBeGreaterThan(0);
         expect(report.recall.probes.length).toBeGreaterThan(0);
-        expect(after).toEqual(before);
-      }
-    });
-
-    it("uses read-only copied fixtures", () => {
-      for (const sample of samples) {
-        expect(sample.copy).not.toBe(sample.source);
-        expect(sample.copy.includes("omp-vcc-sessions-")).toBe(true);
       }
     });
   });

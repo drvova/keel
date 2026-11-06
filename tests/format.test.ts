@@ -35,10 +35,7 @@ describe("renderSummary", () => {
       earlyRequests: ["goal"],
       brief: "[user]\ndo something",
     };
-    const r = formatSummary(data);
-    expect(r).toContain("[Early Session Requests]");
-    expect(r).toContain("---");
-    expect(r).toContain("[user]\ndo something");
+    expect(formatSummary(data)).toContain("[Early Session Requests]\n- goal\n\n---\n\n[user]\ndo something");
   });
 
   it("renders brief transcript alone when no header sections", () => {
@@ -46,8 +43,7 @@ describe("renderSummary", () => {
       ...empty,
       brief: "[user]\nhi\n\n[assistant]\nhello",
     };
-    const r = formatSummary(data);
-    expect(r).toContain("[user]\nhi\n\n[assistant]\nhello");
+    expect(formatSummary(data)).toStartWith("[user]\nhi\n\n[assistant]\nhello\n\n---\n\n");
   });
 
   it("joins multiple header sections with blank line", () => {
@@ -56,10 +52,7 @@ describe("renderSummary", () => {
       earlyRequests: ["goal"],
       userMessages: ["next step"],
     };
-    const r = formatSummary(data);
-    expect(r).toContain("[Early Session Requests]");
-    expect(r).toContain("[User Messages]");
-    expect(r).toContain("\n\n");
+    expect(formatSummary(data)).toStartWith("[Early Session Requests]\n- goal\n\n[User Messages]\n- next step\n\n---\n\n");
   });
 
   it("wraps long lines so compaction TUI rendering stays bounded", () => {

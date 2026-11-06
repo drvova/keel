@@ -153,28 +153,6 @@ describe("extractTrackedCommands", () => {
     expect([...act.byCommand.get("docker")!]).toEqual(["docker compose up -d"]);
     expect([...act.byCommand.get("kubectl")!]).toEqual(["kubectl get pods"]);
   });
-});
-
-describe("[Tracked Commands] lines", () => {
-  it("formats one line per command name that had a match, in insertion order", () => {
-    expect(trackedLines([bash("ssh prod-server"), bash("docker ps")], ["ssh", "docker"])).toEqual(["ssh: ssh prod-server", "docker: docker ps"]);
-  });
-
-  it("omits command names with zero matches", () => {
-    expect(trackedLines([bash("ssh prod-server")], ["ssh", "docker"])).toEqual(["ssh: ssh prod-server"]);
-  });
-
-  it("caps entries per command at 10 keeping the NEWEST (recency ledger)", () => {
-    const cmds = Array.from({ length: 12 }, (_, i) => bash(`ssh host${i}`));
-    const [line] = trackedLines(cmds, ["ssh"]);
-    expect(line).toContain("(+2 earlier)");
-    expect(line).toContain("ssh host11"); // newest kept
-    expect(line).not.toContain("ssh host0 "); // oldest overflowed
-  });
-
-  it("a quoted multi-line argument renders on one line", () => {
-    expect(trackedLines([bash("python3 -c 'import os\nprint(1)'")], ["python3"])).toEqual(["python3: python3 -c 'import os print(1)'"]);
-  });
 
   it("separators inside quotes are not boundaries — either direction", () => {
     // quoted prose must not false-positive…
@@ -220,5 +198,27 @@ describe("[Tracked Commands] lines", () => {
     const act = extractTrackedCommands([bash("cd db && psql -c 'select 1'"), bash(`ssh prod "docker ps"`)], ["psql", "ssh"]);
     expect([...act.byCommand.get("psql")!]).toEqual(["psql -c 'select 1'"]);
     expect([...act.byCommand.get("ssh")!]).toEqual(['ssh prod "docker ps"']);
+  });
+});
+
+describe("[Tracked Commands] lines", () => {
+  it("formats one line per command name that had a match, in insertion order", () => {
+    expect(trackedLines([bash("ssh prod-server"), bash("docker ps")], ["ssh", "docker"])).toEqual(["ssh: ssh prod-server", "docker: docker ps"]);
+  });
+
+  it("omits command names with zero matches", () => {
+    expect(trackedLines([bash("ssh prod-server")], ["ssh", "docker"])).toEqual(["ssh: ssh prod-server"]);
+  });
+
+  it("caps entries per command at 10 keeping the NEWEST (recency ledger)", () => {
+    const cmds = Array.from({ length: 12 }, (_, i) => bash(`ssh host${i}`));
+    const [line] = trackedLines(cmds, ["ssh"]);
+    expect(line).toContain("(+2 earlier)");
+    expect(line).toContain("ssh host11"); // newest kept
+    expect(line).not.toContain("ssh host0 "); // oldest overflowed
+  });
+
+  it("a quoted multi-line argument renders on one line", () => {
+    expect(trackedLines([bash("python3 -c 'import os\nprint(1)'")], ["python3"])).toEqual(["python3: python3 -c 'import os print(1)'"]);
   });
 });

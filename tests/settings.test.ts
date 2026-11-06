@@ -1,4 +1,4 @@
-// Where the config lives on omp, and the move from pi-vcc's file name.
+// Where the config lives on omp, the move from pi-vcc's file name, and what it reads.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
@@ -57,5 +57,23 @@ describe("settings", () => {
     process.env.OMP_VCC_CONFIG_PATH = join(dir, "omp-vcc-config.json");
     config.scaffold();
     expect(config.load().overrideDefaultCompaction).toBe(true);
+  });
+
+  test("omp-vcc takes over the host's compaction, and tracks no commands, by default", () => {
+    expect(DEFAULT_SETTINGS.overrideDefaultCompaction).toBe(true);
+    expect(DEFAULT_SETTINGS.trackCommands).toEqual([]);
+  });
+
+  test("malformed trackCommands values coerce fail-closed to string[]", () => {
+    const config = openConfig(() => dir);
+    const write = (trackCommands: unknown) => writeFileSync(join(dir, "omp-vcc-config.json"), JSON.stringify({ trackCommands }));
+    for (const bad of ["ssh", 42, [1, " kubectl ", null, "kubectl"], null, { 0: "ssh" }]) {
+      write(bad);
+      const got = config.load().trackCommands;
+      expect(Array.isArray(got)).toBe(true);
+      for (const x of got) expect(typeof x).toBe("string");
+    }
+    write(["ssh", "kubectl"]);
+    expect(config.load().trackCommands).toEqual(["ssh", "kubectl"]);
   });
 });

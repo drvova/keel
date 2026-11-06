@@ -30,7 +30,7 @@ describe("filterNoise", () => {
     expect(filterNoise(blocks)).toEqual(blocks);
   });
 
-  it("preserves non-noise tool calls", () => {
+  it("passes tool calls and results through", () => {
     const blocks: NormalizedBlock[] = [
       { kind: "tool_call", name: "Edit", args: { path: "a.ts" } },
       { kind: "tool_result", name: "Edit", text: "ok" },

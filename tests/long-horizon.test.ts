@@ -59,7 +59,7 @@ describe.skipIf(!realModel())(`long-horizon session, on a real model in ${sessio
     expect(Math.max(...runs.r120.sectionChars)).toBeLessThan(Math.max(...runs.r60.sectionChars) * 1.15);
   });
 
-  it("a note pinned at turn 9 leads the summary after every compaction", () => {
+  it("a note pinned at turn 9 still leads the last summary", () => {
     expect(runs.r120.finalSummary.startsWith(`[Pinned Notes]\n- [1] ${PIN} (agent`)).toBe(true);
   });
 

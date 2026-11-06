@@ -55,7 +55,7 @@ describe("token estimate", () => {
     ])).toBe(9 + 6 + 4 + JSON.stringify({ command: "ls" }).length);
   });
 
-  test("ignores non-token parts and unknown shapes without throwing", () => {
+  test("reads malformed and unknown parts without throwing, counting only the text they carry", () => {
     expect(estimateMessageContentChars([
       { type: "thinking" },              // missing thinking field → 0
       { type: "toolCall", name: "noop" }, // name(4) + stringify("")=('""'=2) → 6
