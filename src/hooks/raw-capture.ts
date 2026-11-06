@@ -13,7 +13,7 @@ import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { appendRawStore, keptContent, mayBeRewritten, rawStoreIds, type RawRecord } from "../core/raw-store";
 import { hostBranch, hostEntries, indexById, sessionLineage, type SessionManagerLike } from "../core/session-file";
 import type { Config } from "../core/settings";
-import { RECALL_TOOL } from "../names";
+import { recallExpandCall } from "../names";
 
 /** One binding's place in its session: which file, how many entries it has looked at, which are kept. */
 interface RawCaptureState {
@@ -89,7 +89,7 @@ export const pointPlaceholders = (messages: unknown[], state: RawCaptureState, s
     if (!id || n === undefined || !state.kept.has(id)) continue;
     out ??= [...messages];
     const m = messages[i] as Record<string, unknown>;
-    out[i] = { ...m, content: [{ type: "text", text: `${text} (the original: ${RECALL_TOOL} expand:[${n}])` }] };
+    out[i] = { ...m, content: [{ type: "text", text: `${text} (the original: ${recallExpandCall(n)})` }] };
   }
   return out;
 };

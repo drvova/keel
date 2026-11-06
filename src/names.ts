@@ -3,6 +3,10 @@
 
 /** The recall tool, named in the summary, in hints and in omp's placeholders. */
 export const RECALL_TOOL = "vcc_recall";
+/** vcc_recall's params: the one list of them, for its known keys, its JSON Schema and the brief; RecallToolParams (core/recall-request.ts) has a field for each. */
+export const RECALL_PARAMS = ["query", "range", "expand", "page", "scope", "mode", "session"] as const;
+/** The call that shows entry #N in full, as the summary and omp's placeholders point at it. */
+export const recallExpandCall = (n: number): string => `${RECALL_TOOL} expand:[${n}]`;
 export const PIN_TOOL = "vcc_pin";
 /** vcc_pin's params, as its schema (tools/pin.ts) declares them and the brief reads a pin call by them. */
 export const PIN_PARAMS = { note: "note", unpin: "unpin" } as const;

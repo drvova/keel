@@ -37,9 +37,6 @@ export interface CompileInput {
   workingSet?: readonly string[];
   /** How many items each section keeps (core/window.ts: they follow the model's window). */
   limits: SummaryLimits;
-}
-
-export interface RankedCompileInput extends CompileInput {
   /** How the brief is ranked; its file activity is `fileOps`. */
   ranking?: Omit<BriefRankingOptions, "fileOps">;
 }
@@ -53,7 +50,7 @@ export interface CompiledSummary {
 }
 
 /** The summary, and what to store for the next compaction. */
-export const compileSummary = (input: RankedCompileInput): CompiledSummary => {
+export const compileSummary = (input: CompileInput): CompiledSummary => {
   const blocks = summaryBlocks(input.messages, input.sourceIndices);
   // A summary read from its text: every rule for one is here (legacy-summary.ts).
   const legacy = !input.previous && input.previousSummary ? legacyPrevious(input.previousSummary, input.previousSummaryForeign) : undefined;
@@ -76,4 +73,5 @@ export const compileSummary = (input: RankedCompileInput): CompiledSummary => {
   return { text, state: capState(merged, input.limits), sections };
 };
 
-export const compile = (input: RankedCompileInput): string => compileSummary(input).text;
+/** The summary's text alone, for scripts and tests that read only it. */
+export const compile = (input: CompileInput): string => compileSummary(input).text;

@@ -1,5 +1,6 @@
 // A recall call as one request, from the tool's params or the command's text.
 import { parseDrillDown } from "./drill-down";
+import { RECALL_PARAMS } from "../names";
 
 type DrillTarget = NonNullable<ReturnType<typeof parseDrillDown>>;
 
@@ -40,8 +41,6 @@ export interface RecallRequest {
   dropped?: string[];
 }
 
-/** vcc_recall's params: the one list of them, for the known keys, the JSON Schema and the brief; RecallToolParams has a field for each. */
-export const RECALL_PARAMS = ["query", "range", "expand", "page", "scope", "mode", "session"] as const;
 
 /** The params as normalizeToolParams leaves them. */
 export interface RecallToolParams {

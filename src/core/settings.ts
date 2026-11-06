@@ -40,9 +40,9 @@ export interface VccSettings {
    * customType values whose custom_message entries are excluded from the
    * summarizer input. Opt-in (default []). Intended for per-turn boilerplate
    * injected by other extensions that is regenerated every turn.
-   * Exact match on customType. Filtering happens right before summarization:
-   * cut selection, token calibration, firstKeptEntryId and kept-user-turn
-   * counting are all unaffected.
+   * Exact match on customType. The cut still keeps and counts them; only when
+   * what a cut would summarize is nothing but skipped messages does it
+   * summarize the whole window instead, since that summary would be empty.
    */
   skipCustomTypes: string[];
   /**

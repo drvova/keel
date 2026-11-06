@@ -2,8 +2,7 @@ import type { NormalizedBlock } from "../types";
 import { clip } from "./content";
 import { callKind, callSubject, isOwnTool } from "./tools";
 import { collapseSkillText } from "./skill-collapse";
-import { PIN_PARAMS, PIN_TOOL, RECALL_TOOL } from "../names";
-import { RECALL_PARAMS } from "./recall-request";
+import { PIN_PARAMS, PIN_TOOL, RECALL_PARAMS, RECALL_TOOL } from "../names";
 
 const TRUNCATE_USER = 256;
 const SEGMENT_CLOSING_ASSISTANT_HEAD_WORDS = 120;

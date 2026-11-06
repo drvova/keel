@@ -5,7 +5,6 @@ import { learnedHostPolicy, modelKey, recordLearnedWindow, type WindowInfo } fro
 import { handlesHostCompactions } from "../core/settings";
 import { limitFromOverflowError, type TriggerRule } from "../core/window";
 import { compactAndWait, tell, type Binding, type CompactionTrigger } from "../host";
-import { isRecoveryReason, type CompactionReason } from "../types";
 
 /** What window tracking learns over a binding's sessions, and the compaction it starts itself. */
 export interface WindowState {
@@ -34,19 +33,19 @@ const positive = (n: number | undefined): number | undefined => (typeof n === "n
  * required from omp 18.14 and Pi 1.0 on), applied to the effective window as
  * the host applies it (`rule`: omp its threshold, reserve and the model's own
  * entry, Pi its reserve). When the host's window is too high, its trigger can
- * never fire, and the same policy on the real window applies. An overflow pass
- * is bounded by the context that overflowed.
+ * never fire, and the same policy on the real window applies. A recovery pass
+ * (the hook's `recovering`) is bounded by the context that overflowed.
  */
 export const triggerFor = (
   w: WindowInfo,
-  reason: CompactionReason,
+  recovering: boolean,
   tokensBefore: number | undefined,
   policy: object | undefined,
   rule: TriggerRule,
 ): number | undefined => {
   const trigger = w.effective ? rule.trigger(w.effective, policy) : undefined;
   const before = positive(tokensBefore);
-  return isRecoveryReason(reason) && before ? (trigger ? Math.min(trigger, before) : before) : trigger;
+  return recovering && before ? (trigger ? Math.min(trigger, before) : before) : trigger;
 };
 
 /**

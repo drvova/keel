@@ -152,7 +152,9 @@ export const registerCompactionHook = (
     const policy = rule.policyOf((preparation as { settings?: unknown }).settings);
     // Kept beside the learned window, for the compaction omp-vcc starts in the host's stead (window-limits.ts).
     recordHostPolicy(host.config.dir(), key, policy);
-    const trigger = triggerFor(window, reason, preparation.tokensBefore, policy, rule);
+    // A pass that must shrink the context: an overflow, a cut-off reply, one the host retries.
+    const recovering = !fromCommand && isRecovery({ reason, willRetry });
+    const trigger = triggerFor(window, recovering, preparation.tokensBefore, policy, rule);
     const budgets = compactionBudgets(trigger, overheadTokens, settings.workingSet);
     const cutOptions = { charsPerToken: tokenEstimate.charsPerToken, skipCustomTypes: settings.skipCustomTypes, maxTokens: budgets.maxTailTokens };
 
@@ -176,7 +178,6 @@ export const registerCompactionHook = (
     // omp-vcc answers it itself: stepping aside hands it to the method omp picked
     // (snapcompact, handoff, server compaction, an LLM summary). What is kept and
     // still too big, omp's rescue shakes after the compaction commits.
-    const recovering = !fromCommand && isRecovery({ reason, willRetry });
     // An automatic pass on a turn still running (its last message is a tool result:
     // omp compacts between the tool calls of one turn) whose live window has no
     // earlier user turn and fits the tail budget: the only cut left is compact-all,

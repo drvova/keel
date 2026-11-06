@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { compile as compileAt, compileSummary, type RankedCompileInput } from "../src/core/summarize";
+import { compile as compileAt, compileSummary, type CompileInput } from "../src/core/summarize";
 import { previousOf } from "../src/core/summary-state";
 import { DEFAULT_SUMMARY_LIMITS } from "../src/core/window";
 import {
@@ -14,7 +14,7 @@ import {
  * older version wrote; the hook merges into the state the previous compaction
  * stored (`previous`, tests/summary-state.test.ts).
  */
-const compile = (input: Omit<RankedCompileInput, "limits"> & { limits?: RankedCompileInput["limits"] }) => compileAt({ limits: DEFAULT_SUMMARY_LIMITS, ...input });
+const compile = (input: Omit<CompileInput, "limits"> & { limits?: CompileInput["limits"] }) => compileAt({ limits: DEFAULT_SUMMARY_LIMITS, ...input });
 
 // A section's body, with wrapped lines (wrapLongLines, 120 chars) rejoined.
 const sectionOf = (s: string, h: string) =>

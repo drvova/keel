@@ -33,8 +33,9 @@ const configDir = () => dirname(process.env.OMP_VCC_CONFIG_PATH!);
 /** omp's unless a test names Pi's. */
 const windowOf = (model: Parameters<typeof windowOfHost>[0], host: HostName = "omp") => windowOfHost(model, host, configDir());
 /** As the hook runs a compaction, omp's rule unless a test names another. */
+/** As the hook calls it: a pass of these reasons is a recovery (no host retries a threshold pass). */
 const triggerFor = (w: ReturnType<typeof windowOfHost>, reason: CompactionReason, before: number, policy?: object, rule: TriggerRule = OMP_TRIGGER_RULE) =>
-  triggerForRule(w, reason, before, policy, rule);
+  triggerForRule(w, reason === "overflow" || reason === "incomplete", before, policy, rule);
 
 let dir: string;
 const prev = process.env.OMP_VCC_CONFIG_PATH;

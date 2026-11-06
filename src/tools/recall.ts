@@ -7,11 +7,11 @@
 // them. A key that is no param reaches execute() too, and is named as ignored.
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import type { Binding } from "../host";
-import { parseToolRequest, RECALL_PARAMS, type RecallScope } from "../core/recall-request";
+import { parseToolRequest, type RecallScope } from "../core/recall-request";
 import { scopeParam, sessionParam, withParams } from "../core/format-recall";
 import { RANGE_PAGE_SIZE, RECALL_OUTPUT_CHARS, recall, SEARCH_PAGE_SIZE, type RecallInput, type RecallPagingHints } from "../core/recall-run";
 import { SESSION_REF_MIN_CHARS } from "../core/sessions";
-import { RECALL_TOOL } from "../names";
+import { RECALL_PARAMS, RECALL_TOOL } from "../names";
 
 const RECALL_TOOL_LABEL = "VCC Recall";
 
