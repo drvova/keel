@@ -1,0 +1,171 @@
+// What a compaction does, decided once the budgets are known: where it cuts
+// (smart keep-tail, the cut, its token-budget rescues, a running turn's newest
+// steps, the whole window), what it writes (assemble.ts) and whether that is
+// worth writing (the growth guard). Pure: the host's convertToLlm comes in,
+// and the hook (src/hooks/compaction.ts) acts on the plan. The Lisp core makes
+// the same plan (lisp/src/compaction.lisp, op compact).
+import type { FileOps, CompactionReason } from "../types";
+import type { CompactionBudgets } from "../core/window";
+import type { VccSettings } from "../core/settings";
+import type { ConvertToLlm } from "../host";
+import { estimateTokensFromChars } from "../core/token-estimate";
+import { applyTailBudget, buildOwnCut, collectLiveMessages, keptChars, resolveSmartKeepUserTurns, runningTurnCut, wholeWindowCut, type OwnCutCancelReason, type OwnCutResult } from "./cut";
+import { assembleSummary } from "./assemble";
+import type { CompactionStats } from "./stats";
+
+export interface PlanInput {
+  /** The branch as the context holds it. */
+  branchEntries: any[];
+  convert: ConvertToLlm;
+  /** keep:N the user typed; null when none was. */
+  keepUserTurns: number | null;
+  /** Started by /omp-vcc. */
+  fromCommand: boolean;
+  reason: CompactionReason;
+  /** A pass that must shrink the context (an overflow, a cut-off reply). */
+  recovering: boolean;
+  settings: Pick<VccSettings, "skipCustomTypes" | "trackCommands" | "smartKeepTail">;
+  budgets: CompactionBudgets;
+  charsPerToken: number;
+  sessionFile: string | undefined;
+  indexById: Map<string, number> | undefined;
+  previousSummary: string | undefined;
+  fileOps: FileOps;
+}
+
+export const CUT_CANCEL_NOTICES: Record<OwnCutCancelReason, string> = {
+  no_live_messages: "omp-vcc: Nothing to compact (no live messages)",
+  too_few_live_messages: "omp-vcc: Too few messages to compact",
+};
+
+export type Plan =
+  /** A recovery pass with nothing omp-vcc can summarize: the host's own method takes it. */
+  | { kind: "step_aside"; cutReason: OwnCutCancelReason; liveRoles: string[] }
+  /** Not compacted; `notice` says why, when the user should be told. */
+  | { kind: "cancel"; why: "running_turn" | "no_cut" | "growth"; notice?: string; cutReason?: OwnCutCancelReason; liveRoles?: string[]; growth?: unknown; summarized?: number }
+  | {
+      kind: "compact";
+      summary: string;
+      firstKeptEntryId: string;
+      sections: string[];
+      summaryState: unknown;
+      /** Messages the summary covers. */
+      summarized: number;
+      historyIndex?: unknown[];
+      workingSet?: number[];
+      stats: CompactionStats;
+      budgetCut?: string;
+      /** The cut summarized everything (no kept tail). */
+      compactAll: boolean;
+      /** Written although it grows the context: a recovery pass keeping part of the window. */
+      writtenForRescue?: { growth: unknown; summarized: number };
+      /** The running turn's newest steps were kept on a recovery pass. */
+      runningTurnRecovery?: boolean;
+    };
+
+const liveRoles = (branchEntries: any[]): string[] => {
+  const live = collectLiveMessages(branchEntries).map((m) => m.message.role);
+  return live.length <= 30 ? live : [...live.slice(0, 10), "...", ...live.slice(-10)];
+};
+
+export const planCompaction = (input: PlanInput): Plan => {
+  const { branchEntries, convert, settings, budgets, recovering } = input;
+  const cutOptions = { charsPerToken: input.charsPerToken, skipCustomTypes: settings.skipCustomTypes, maxTokens: budgets.maxTailTokens };
+
+  // Smart keep-tail: boost default keep when the tail is small.
+  // Explicit keep:N from the user is always respected (resolver no-ops).
+  const smartKeep = resolveSmartKeepUserTurns({
+    branchEntries,
+    requestedKeepUserTurns: input.keepUserTurns,
+    smartKeepTail: settings.smartKeepTail,
+    skipCustomTypes: settings.skipCustomTypes,
+    charsPerToken: input.charsPerToken,
+    minTokens: budgets.minTailTokens,
+    maxTokens: budgets.maxTailTokens,
+    convert,
+  });
+  let ownCut: OwnCutResult = buildOwnCut(convert, branchEntries, smartKeep.keepUserTurns, settings.skipCustomTypes);
+  // Default path only: rescue autonomous / oversized-tail sessions with a
+  // token-budget cut. Explicit keep:N is respected absolutely (no-op here).
+  if (ownCut.ok && input.keepUserTurns === null) ownCut = applyTailBudget(convert, branchEntries, ownCut, cutOptions);
+  // An automatic pass on a turn still running (its last message is a tool
+  // result: omp compacts between the tool calls of one turn) whose live window
+  // has no earlier user turn and fits the tail budget: the only cut left is
+  // compact-all, which would summarize away the request and tool output the
+  // agent is working from. A threshold or idle pass waits until the turn has
+  // ended; a recovery pass keeps the turn's newest steps and summarizes the rest.
+  let runningTurnRecovery = false;
+  if (
+    ownCut.ok && ownCut.compactAll && ownCut.keepFallbackToCompactAll && !input.fromCommand
+    && ownCut.messages[ownCut.messages.length - 1]?.role === "toolResult"
+    && input.reason !== "manual"
+  ) {
+    if (!recovering) return { kind: "cancel", why: "running_turn", summarized: ownCut.messages.length };
+    ownCut = runningTurnCut(convert, branchEntries, cutOptions) ?? ownCut;
+    runningTurnRecovery = true;
+  }
+  // One or two messages too big for the window: summarized whole on a recovery pass.
+  if (!ownCut.ok && recovering && ownCut.reason === "too_few_live_messages") {
+    ownCut = wholeWindowCut(convert, branchEntries, settings.skipCustomTypes) ?? ownCut;
+  }
+  if (!ownCut.ok) {
+    // Nothing live to summarize: no method of the host's can shrink it either, so a recovery pass is left to it.
+    if (recovering) return { kind: "step_aside", cutReason: ownCut.reason, liveRoles: liveRoles(branchEntries) };
+    return { kind: "cancel", why: "no_cut", notice: CUT_CANCEL_NOTICES[ownCut.reason], cutReason: ownCut.reason, liveRoles: liveRoles(branchEntries) };
+  }
+
+  const assembled = assembleSummary({
+    branchEntries,
+    cut: ownCut,
+    convert,
+    sessionFile: input.sessionFile,
+    indexById: input.indexById,
+    previousSummary: input.previousSummary,
+    fileOps: input.fileOps,
+    settings,
+    budgets,
+    charsPerToken: input.charsPerToken,
+  });
+  const { compiled, growth } = assembled;
+
+  // Growth guard: a compaction that leaves the context bigger is not written,
+  // and a manual pass says why (an automatic one would say so on every turn
+  // until the prefix grows). Recovering, it is written when it keeps part of
+  // the window: what overflows is that kept part, and omp's rescue shakes its
+  // oversized tool output once this commits. When even summarizing the whole
+  // window grows the context, what fills it is what no compaction removes.
+  if (growth.grows && (!recovering || ownCut.compactAll)) {
+    const n = ownCut.messages.length;
+    const notice = recovering
+      ? `omp-vcc: Not compacted: the ${n} messages left are smaller than a summary of them; the context is full of what no compaction removes (the system prompt and tools).`
+      : input.reason === "manual"
+        ? `omp-vcc: Not compacted: the summary would be ${growth.netChars} chars larger than the ${n} messages it replaces.${ownCut.compactAll ? "" : " keep:0 summarizes everything."}`
+        : undefined;
+    return { kind: "cancel", why: "growth", ...(notice ? { notice } : {}), growth, summarized: n };
+  }
+
+  const keptIdx = branchEntries.findIndex((e: any) => e.id === ownCut.firstKeptEntryId);
+  const kept = keptIdx >= 0 ? branchEntries.slice(keptIdx) : [];
+  return {
+    kind: "compact",
+    summary: compiled.text,
+    firstKeptEntryId: ownCut.firstKeptEntryId,
+    sections: compiled.sections,
+    summaryState: compiled.state,
+    summarized: assembled.summarized,
+    ...(assembled.historyIndex ? { historyIndex: assembled.historyIndex } : {}),
+    ...(assembled.workingSet ? { workingSet: assembled.workingSet } : {}),
+    stats: {
+      summarized: assembled.summarized,
+      keptUserTurns: ownCut.keptUserTurns,
+      totalUserTurns: ownCut.totalUserTurns,
+      keptTokensEst: estimateTokensFromChars(keptChars(kept), input.charsPerToken),
+      smartKeepAdjusted: smartKeep.smartAdjusted,
+      ...(ownCut.budgetCut ? { budgetCut: ownCut.budgetCut } : {}),
+    },
+    ...(ownCut.budgetCut ? { budgetCut: ownCut.budgetCut } : {}),
+    compactAll: ownCut.compactAll,
+    ...(growth.grows ? { writtenForRescue: { growth, summarized: ownCut.messages.length } } : {}),
+    ...(runningTurnRecovery ? { runningTurnRecovery } : {}),
+  };
+};
