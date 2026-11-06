@@ -167,7 +167,7 @@ describe("/omp-vcc", () => {
       await invoke();
       compactCalls[0].onError?.(new Error("Nothing to compact (session too small)"));
       await invoke();
-      state.lastStats = { summarized: 4, kept: 2, keptUserTurns: 1, totalUserTurns: 2, requestedKeepUserTurns: 1, keepUserTurnsExplicit: false, keepFallbackToCompactAll: false, keptTokensEst: 120 };
+      state.lastStats = { summarized: 4, keptUserTurns: 1, totalUserTurns: 2, keptTokensEst: 120 };
       compactCalls[1].onComplete?.();
       expect(notifyCalls).toEqual([]);
       expect(written[0]).toStartWith("Nothing to compact yet:");

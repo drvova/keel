@@ -281,18 +281,11 @@ export const registerCompactionHook = (
     const kept = keptIdx >= 0 ? branchEntries.slice(keptIdx) : [];
     const stats: CompactionStats = {
       summarized: assembled.summarized,
-      kept: kept.filter((e: any) => e.type === "message").length,
       keptUserTurns: ownCut.keptUserTurns,
       totalUserTurns: ownCut.totalUserTurns,
-      requestedKeepUserTurns: ownCut.requestedKeepUserTurns,
-      keepUserTurnsExplicit,
-      keepFallbackToCompactAll: ownCut.keepFallbackToCompactAll,
       keptTokensEst: estimateTokensFromChars(keptChars(kept), tokenEstimate.charsPerToken),
       smartKeepAdjusted: smartKeep.smartAdjusted,
-      smartFromKeep: smartKeep.fromKeep,
       budgetCut: ownCut.budgetCut,
-      reason,
-      willRetry,
     };
     state.lastStats = stats;
     state.pendingFollowUpPrompt = followUpPrompt;

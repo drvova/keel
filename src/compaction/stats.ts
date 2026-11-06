@@ -1,25 +1,17 @@
 // The line a compaction's outcome is told in, and the toast that shows it:
 // read by the hook (automatic and /compact passes) and /omp-vcc's feedback.
-import type { CompactionReason } from "../types";
 import type { BudgetCutKind } from "./cut";
 
+/** What the outcome line says. */
 export interface CompactionStats {
   summarized: number;
-  kept: number;
   keptUserTurns: number;
   totalUserTurns: number;
-  requestedKeepUserTurns: number;
-  keepUserTurnsExplicit: boolean;
-  keepFallbackToCompactAll: boolean;
   /** Set when the tail came from a token-budget cut instead of a user-turn cut. */
   budgetCut?: BudgetCutKind;
   keptTokensEst: number;
   /** True when smart-keep boosted the default keep beyond 1. */
   smartKeepAdjusted?: boolean;
-  /** Base keep before smart adjustment (for toast like "1→3"). */
-  smartFromKeep?: number;
-  reason?: CompactionReason;
-  willRetry?: boolean;
 }
 
 const formatTokens = (n: number): string => {

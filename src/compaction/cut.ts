@@ -343,8 +343,6 @@ export interface ResolveSmartKeepOptions {
 interface ResolveSmartKeepResult {
   keepUserTurns: number;
   smartAdjusted: boolean;
-  /** Original base keep, for toast like "1→3". */
-  fromKeep: number;
 }
 
 /**
@@ -377,13 +375,13 @@ export const resolveSmartKeepUserTurns = (opts: ResolveSmartKeepOptions): Resolv
   const baseKeep = opts.requestedKeepUserTurns ?? 1;
 
   if (opts.explicit || !opts.smartKeepTail) {
-    return { keepUserTurns: baseKeep, smartAdjusted: false, fromKeep: baseKeep };
+    return { keepUserTurns: baseKeep, smartAdjusted: false };
   }
 
   const baseTokens = tailTokensForKeep(opts.branchEntries, baseKeep, opts.charsPerToken, opts.convert);
   // base tail already above min (or unmeasurable / compact-all) → don't grow.
   if (baseTokens == null || baseTokens > minTokens) {
-    return { keepUserTurns: baseKeep, smartAdjusted: false, fromKeep: baseKeep };
+    return { keepUserTurns: baseKeep, smartAdjusted: false };
   }
 
   const baseCut = buildOwnCut(opts.convert, opts.branchEntries, baseKeep, []);
@@ -399,6 +397,5 @@ export const resolveSmartKeepUserTurns = (opts: ResolveSmartKeepOptions): Resolv
   return {
     keepUserTurns: selected,
     smartAdjusted: selected !== baseKeep,
-    fromKeep: baseKeep,
   };
 };

@@ -75,7 +75,6 @@ describe("resolveSmartKeepUserTurns", () => {
     });
     expect(r.keepUserTurns).toBe(2);
     expect(r.smartAdjusted).toBe(true);
-    expect(r.fromKeep).toBe(1);
   });
 
   test("keep:1 tail <= min but keep:2 > max → keep 1", () => {
@@ -182,7 +181,6 @@ describe("resolveSmartKeepUserTurns", () => {
     // keep:3 would cross the compact-all boundary, so boost only to 2.
     expect(r.keepUserTurns).toBe(2);
     expect(r.smartAdjusted).toBe(true);
-    expect(r.fromKeep).toBe(1);
   });
 
   test("uses calibrated chars/token ratio when estimating tail size", () => {

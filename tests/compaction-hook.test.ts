@@ -248,7 +248,6 @@ describe("compaction hook: compact-all path", () => {
     expect(result.compaction).toBeDefined();
     expect(result.compaction.firstKeptEntryId).toBe("m3");
     expect(result.compaction.details).toMatchObject({ reason: "manual", willRetry: false });
-    expect(getLastCompactionStats()).toMatchObject({ reason: "manual", willRetry: false });
   });
 
   test("threshold override still compacts and records reason metadata", () => {
@@ -262,7 +261,6 @@ describe("compaction hook: compact-all path", () => {
     expect(result.compaction).toBeDefined();
     expect(result.compaction.firstKeptEntryId).toBe("m3");
     expect(result.compaction.details).toMatchObject({ reason: "threshold", willRetry: false });
-    expect(getLastCompactionStats()).toMatchObject({ reason: "threshold", willRetry: false });
   });
 
   test("an automatic compaction sends no continue of its own: omp resumes the run itself", async () => {
@@ -344,8 +342,6 @@ describe("compaction hook: compact-all path", () => {
     expect(getLastCompactionStats()).toMatchObject({
       keptUserTurns: 3,
       totalUserTurns: 4,
-      requestedKeepUserTurns: 3,
-      keepUserTurnsExplicit: true,
     });
     expect(userMessages).toEqual(["continue"]);
   });
@@ -368,8 +364,6 @@ describe("compaction hook: compact-all path", () => {
     expect(getLastCompactionStats()).toMatchObject({
       keptUserTurns: 2,
       totalUserTurns: 3,
-      requestedKeepUserTurns: 2,
-      keepUserTurnsExplicit: true,
     });
     expect(userMessages).toEqual(["continue"]);
   });
@@ -393,12 +387,8 @@ describe("compaction hook: compact-all path", () => {
   test("formatCompactionStats shows kept 0/N result for compact-all fallback without extra wording", () => {
     const msg = formatCompactionStats({
       summarized: 2,
-      kept: 4,
       keptUserTurns: 0,
       totalUserTurns: 2,
-      requestedKeepUserTurns: 2,
-      keepUserTurnsExplicit: true,
-      keepFallbackToCompactAll: true,
       keptTokensEst: 10,
     });
     expect(msg).toBe("omp-vcc: kept 0/2 turns, ~10 tok (summarized 2).");
@@ -408,12 +398,8 @@ describe("compaction hook: compact-all path", () => {
   test("formatCompactionStats shows kept 0/N result for default compact-all fallback without extra wording", () => {
     const msg = formatCompactionStats({
       summarized: 2,
-      kept: 4,
       keptUserTurns: 0,
       totalUserTurns: 1,
-      requestedKeepUserTurns: 1,
-      keepUserTurnsExplicit: false,
-      keepFallbackToCompactAll: true,
       keptTokensEst: 10,
     });
     expect(msg).toBe("omp-vcc: kept 0/1 turns, ~10 tok (summarized 2).");
@@ -423,15 +409,10 @@ describe("compaction hook: compact-all path", () => {
   test("formatCompactionStats appends smart-keep tag when adjusted", () => {
     const msg = formatCompactionStats({
       summarized: 5,
-      kept: 6,
       keptUserTurns: 3,
       totalUserTurns: 5,
-      requestedKeepUserTurns: 1,
-      keepUserTurnsExplicit: false,
-      keepFallbackToCompactAll: false,
       keptTokensEst: 3200,
       smartKeepAdjusted: true,
-      smartFromKeep: 1,
     });
     expect(msg).toBe("omp-vcc: kept 3/5 turns, ~3.2k tok (summarized 5, smart-keep).");
   });
@@ -455,7 +436,6 @@ describe("compaction hook: compact-all path", () => {
     expect(result.compaction.details.sourceMessageCount).toBe(2);
     expect(getLastCompactionStats()).toMatchObject({
       summarized: 2,
-      kept: 4,
       keptUserTurns: 2,
       totalUserTurns: 3,
     });
@@ -481,7 +461,6 @@ describe("compaction hook: compact-all path", () => {
     expect(result.compaction.firstKeptEntryId).toBe("u2");
     expect(getLastCompactionStats()).toMatchObject({
       keptUserTurns: 2,
-      keepUserTurnsExplicit: true,
     });
     expect(userMessages).toEqual([]);
   });
@@ -607,12 +586,8 @@ describe("applyTailBudget: token-budget tail cut (default path)", () => {
   test("formatCompactionStats leads with tail tokens for budget cuts", () => {
     const base = {
       summarized: 4,
-      kept: 2,
       keptUserTurns: 0,
       totalUserTurns: 1,
-      requestedKeepUserTurns: 1,
-      keepUserTurnsExplicit: false,
-      keepFallbackToCompactAll: false,
       keptTokensEst: 5000,
     };
     expect(formatCompactionStats({ ...base, budgetCut: "no_anchor" })).toBe("omp-vcc: kept ~5.0k tok tail (mid-turn cut, no user anchor), summarized 4.");
@@ -678,7 +653,6 @@ describe("compaction hook: budget-cut hook integration", () => {
     const result = invokeBefore(makeEvent(entries, `${OMP_VCC_COMPACT_INSTRUCTION} keep:2`));
     expect(result.compaction.firstKeptEntryId).toBe("u2");
     expect(getLastCompactionStats()!.budgetCut).toBeUndefined();
-    expect(getLastCompactionStats()!.keepUserTurnsExplicit).toBe(true);
   });
 });
 
