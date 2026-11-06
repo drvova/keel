@@ -1,12 +1,12 @@
 /**
  * Phase 2 (vcc_recall noise floor + hard cap) constant selection evidence.
  *
- * Runs the REAL production `searchEntriesDetailed` (via its bench-only
+ * Runs the REAL production `searchEntries` (via its bench-only
  * `tuning` override) against real session transcripts, comparing candidate
  * relative-floor and hard-cap values. Not a duplicate scoring
  * implementation — this exercises the exact code path that ships.
  *
- * Production policy baked into `searchEntriesDetailed` itself (not
+ * Production policy baked into `searchEntries` itself (not
  * controlled by `tuning`): the relative floor only applies when the query
  * has >=2 effective terms after stopword filtering. Single-term runs below
  * therefore show identical counts across every floor candidate — that's the
@@ -16,7 +16,7 @@
  */
 import { pairs } from "../tests/support/pairs";
 import { renderMessage } from "../src/core/render-entries";
-import { searchEntriesDetailed, type SearchHit } from "../src/core/search-entries";
+import { searchEntries, type SearchHit } from "../src/core/search-entries";
 import { prepareSessionSamples } from "../tests/support/real-sessions";
 import { loadSessionMessages } from "../tests/support/load-session";
 
@@ -82,7 +82,7 @@ interface RunResult {
 }
 
 const run = (rendered: any[], messages: any[], q: string, tuning: { relativeFloor?: number; cap?: number }): RunResult => {
-  const r = searchEntriesDetailed(pairs(rendered, messages), q, tuning);
+  const r = searchEntries(pairs(rendered, messages), q, tuning);
   return {
     hits: r.hits,
     totalBeforeCap: r.totalBeforeCap,
@@ -166,7 +166,7 @@ async function main() {
   // ── Combined PRODUCTION POLICY (floor=0.20 for multi-term only, cap=50)
   //    vs raw baseline (no floor, no cap) ──
   console.log(`\n=== Combined production policy (floor=0.20 multi-term-only, cap=50) vs raw baseline ===`);
-  // No script-side gating needed here: searchEntriesDetailed itself only
+  // No script-side gating needed here: searchEntries itself only
   // applies relativeFloor when the query has >=2 effective terms, so calling
   // it with {relativeFloor: 0.2, cap: 50} already reflects exactly what
   // ships — including the single-term no-op.

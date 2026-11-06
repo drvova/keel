@@ -31,7 +31,7 @@ import type { Message } from "@oh-my-pi/pi-ai";
 import { textOf } from "./content";
 import { renderMessage } from "./render-entries";
 import type { LoadedEntry } from "./load-messages";
-import { searchEntriesDetailed } from "./search-entries";
+import { searchEntries } from "./search-entries";
 import { callKind, callSubject, filesOf, readsPart, toolCallsOf } from "./tools";
 import { RECALL_TOOL } from "../names";
 
@@ -276,7 +276,7 @@ export const selectWorkingSet = (input: WorkingSetInput): WorkingSetItem[] => {
       candidates.push({ entry: renderMessage(message, r.index), message });
     }
     if (candidates.length > 0) {
-      const { hits } = searchEntriesDetailed(candidates, request.slice(0, 2_000), { cap: MAX_RELEVANT });
+      const { hits } = searchEntries(candidates, request.slice(0, 2_000), { cap: MAX_RELEVANT });
       for (const hit of hits) {
         const r = results.find((x) => x.index === hit.index);
         if (!r || used.has(hit.index)) continue;

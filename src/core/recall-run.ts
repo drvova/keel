@@ -1,5 +1,5 @@
 import { readSession, renderMessages, type LoadedEntry, type RecallMessage, type SessionRead } from "./load-messages";
-import { searchEntriesDetailed, type SearchHit, type SearchResult } from "./search-entries";
+import { searchEntries, type SearchHit, type SearchResult } from "./search-entries";
 import { formatRecallOutput } from "./format-recall";
 import { formatTouched, touchedFiles } from "./touched";
 import { expandEntryFile } from "./drill-down";
@@ -391,7 +391,7 @@ const runRange = (range: [number, number], page: number, view: RecallView): stri
  */
 const searchBefore = (view: RecallView, query: string, skip: Set<number> | undefined) => {
   const loaded = view.load(false);
-  return searchEntriesDetailed(skip?.size ? loaded.filter((m) => !skip.has(m.entry.index)) : loaded, query);
+  return searchEntries(skip?.size ? loaded.filter((m) => !skip.has(m.entry.index)) : loaded, query);
 };
 
 /** A search of this session found nothing: name the project's earlier sessions, which it did not search. */
@@ -412,7 +412,7 @@ const runSearch = (query: string, page: number, view: RecallView, hints: RecallP
     }
   }
   if (hits.length === 0 && skip?.size) {
-    const inTurn = searchEntriesDetailed(view.load(false), query).hits
+    const inTurn = searchEntries(view.load(false), query).hits
       .filter((h) => skip.has(h.index)).length;
     if (inTurn > 0) {
       return `No earlier matches for "${query}"; its ${inTurn} match${inTurn === 1 ? " is" : "es are"} in the current turn, which is already in your context.` +
@@ -511,7 +511,7 @@ const runProjectSearch = (query: string, page: number, view: RecallView, hints: 
     ? "this session (no earlier sessions in this project)"
     : `this session and ${searched} earlier session${searched === 1 ? "" : "s"}${searched < all.length ? ` (the newest ${searched} of ${all.length}; session:'id' reads an older one)` : ""}`;
 
-  const result = searchEntriesDetailed(corpus, query);
+  const result = searchEntries(corpus, query);
   if (result.aborted) return `${result.aborted} Searching ${covered}: narrow the query, or read one session with session:'id' (mode:'sessions' lists them).`;
   if (result.hits.length === 0) return `No matches for "${query}" in ${covered}.`;
   return pageOfHits(result, query, page, {

@@ -1,4 +1,4 @@
-import { pairs } from "./support/pairs";
+import { pairs, searchHits } from "./support/pairs";
 import { ompBinding } from "./support/binding";
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import { mkdtempSync, writeFileSync, rmSync } from "fs";
@@ -7,7 +7,6 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { registerRecallTool } from "../src/tools/recall";
 import { RECALL_OUTPUT_CHARS } from "../src/core/recall-run";
-import { searchEntries } from "../src/core/search-entries";
 
 // One tool result is a ~600 KB base64 image on a single line (issue #63).
 const blob = Buffer.concat(Array.from({ length: 14_000 }, (_, i) => createHash("sha256").update(String(i)).digest())).toString("base64");
@@ -95,13 +94,13 @@ describe("search ranking with a long unbroken entry", () => {
     const plain = texts.map((t, i) => ({ entry: { index: i, role: "user", summary: t }, msg: { role: "user", content: t } }));
     const blobDoc = { entry: { index: 9, role: "tool_result", summary: "[other_tool]" }, msg: { role: "toolResult", toolName: "other_tool", content: [{ type: "text", text: `max ${blob}` }] } };
     const order = (docs: typeof plain) =>
-      searchEntries(pairs(docs.map((d) => d.entry) as any, docs.map((d) => d.msg) as any), "max").map((h) => h.index).filter((i) => i !== 9);
+      searchHits(pairs(docs.map((d) => d.entry) as any, docs.map((d) => d.msg) as any), "max").map((h) => h.index).filter((i) => i !== 9);
     expect(order([...plain, blobDoc as any])).toEqual(order(plain));
   });
 
   it("keeps long joined identifiers searchable", () => {
     const joined = "capturedNormalCompletionRecordOrdinaryObjectCreateDataProperty".repeat(30);
-    const hits = searchEntries(pairs([{ index: 0, role: "tool_result", summary: "" }] as any, [{ role: "toolResult", toolName: "bash", content: [{ type: "text", text: joined }] }] as any), "OrdinaryObjectCreate");
+    const hits = searchHits(pairs([{ index: 0, role: "tool_result", summary: "" }] as any, [{ role: "toolResult", toolName: "bash", content: [{ type: "text", text: joined }] }] as any), "OrdinaryObjectCreate");
     expect(hits.map((h) => h.index)).toEqual([0]);
   });
 });

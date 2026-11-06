@@ -12,11 +12,7 @@ export interface SearchHit extends RenderedEntry {
   matchCount?: number;
 }
 
-/**
- * Result of a search, with enough metadata for a caller to report truncation
- * honestly (see `searchEntriesDetailed`). `searchEntries` stays `SearchHit[]`
- * for existing call sites that only need the hits themselves.
- */
+/** Result of a search, with enough metadata for a caller to report truncation honestly. */
 export interface SearchResult {
   hits: SearchHit[];
   /** Genuine matches found before the hard cap was applied (after any
@@ -47,7 +43,7 @@ const quantifierAt = (p: string, i: number): { len: number; unbounded: boolean }
  * Detect an unbounded quantifier applied to a group that already contains one,
  * e.g. `(a+)+` or `(\w*)*`. That shape makes the engine explore exponentially
  * many splits on a non-matching input. Alternation overlap like `(a|a)+` is not
- * covered here; the search budget in `searchEntries` is the backstop.
+ * covered here; the search budget in `search` is the backstop.
  */
 const hasNestedQuantifier = (pattern: string): boolean => {
   const groups: boolean[] = []; // per open group: contains an unbounded quantifier
@@ -432,11 +428,11 @@ const BM25_RELATIVE_FLOOR = 0.2;
 const SEARCH_RESULT_CAP = 50;
 
 /**
- * Tuning overrides for `searchEntriesDetailed`. Exists so the offline bench
+ * Tuning overrides for `searchEntries`. Exists so the offline bench
  * (scripts/benchmark-recall-quality.ts) and targeted tests can exercise the
  * real scoring/capping pipeline against candidate constants, and so
  * [Working Set] can take only the top few hits (core/working-set.ts, `cap`).
- * Recall (`searchEntries`, the recall tool) never passes this and always gets
+ * Recall never passes this and always gets
  * `BM25_RELATIVE_FLOOR`/`SEARCH_RESULT_CAP`.
  */
 interface SearchTuning {
@@ -473,12 +469,8 @@ const capHits = (hits: SearchHit[], cap: number): SearchResult => {
   return { hits: capped, totalBeforeCap, truncated: capped.length < totalBeforeCap };
 };
 
-/**
- * Full search with truncation metadata. `searchEntries` below is a thin
- * `.hits`-only wrapper kept for existing call sites; use this directly when
- * a caller (the recall tool) needs to report a capped result set honestly.
- */
-export const searchEntriesDetailed = (
+/** Full search with truncation metadata, so a caller can report a capped result set honestly. */
+export const searchEntries = (
   items: readonly LoadedEntry[],
   query?: string,
   tuning?: SearchTuning,
@@ -577,4 +569,3 @@ const search = (
   return capHits(floored.map((s) => s.hit), cap);
 };
 
-export const searchEntries = (items: readonly LoadedEntry[], query?: string): SearchHit[] => searchEntriesDetailed(items, query).hits;

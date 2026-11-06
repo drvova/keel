@@ -1,4 +1,4 @@
-import { pairs } from "./pairs";
+import { pairs, searchHits } from "./pairs";
 import type { Message } from "@oh-my-pi/pi-ai";
 // A before/after report of one compile over a session's messages, for the
 // real-session tests and the benchmark scripts, at a ~128K window's limits.
@@ -6,7 +6,6 @@ import { clip } from "../../src/core/content";
 import { filesOf } from "../../src/core/tools";
 import { normalize } from "../../src/core/normalize";
 import { renderMessage } from "../../src/core/render-entries";
-import { searchEntries } from "../../src/core/search-entries";
 import { type CompileInput, compile } from "../../src/core/summarize";
 import { briefOf, sectionOf } from "../../src/core/legacy-summary";
 import { freshState } from "../../src/core/summary-state";
@@ -179,7 +178,7 @@ const probesOf = (messages: Message[], summary: string): RecallProbe[] => {
         sourceText,
         query,
         summaryMentioned: matchesQuery(summary, query),
-        recallHits: searchEntries(pairs(rendered, messages), query).length,
+        recallHits: searchHits(pairs(rendered, messages), query).length,
       };
     })
     .filter((probe): probe is RecallProbe => probe !== null);
