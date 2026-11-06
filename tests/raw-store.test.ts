@@ -3,7 +3,7 @@
 import { ompBinding, testConfig } from "./support/binding";
 import { sessionLineage } from "../src/core/session-file";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import {
@@ -138,6 +138,19 @@ describe("with omp's own session manager", () => {
 });
 
 describe("the summary is written from the originals", () => {
+  it("a write that fails is tried again on the next event, not given up", () => {
+    const file = join(dir, "retry.jsonl");
+    const entries = [{ type: "message", id: "t1", message: { role: "toolResult", toolCallId: "c", content: text("out") } }];
+    const sm = { getSessionFile: () => file, getEntries: () => entries };
+    const state = createRawCaptureState();
+    // The store's path is a directory: appending to it fails, as on a full disk.
+    mkdirSync(rawStorePath(file), { recursive: true });
+    expect(captureNewEntries(state, sm)).toBe(0);
+    rmSync(rawStorePath(file), { recursive: true, force: true });
+    expect(captureNewEntries(state, sm)).toBe(1);
+    expect([...readRawStore(file, new Set(["t1"])).values()]).toEqual([text("out")]);
+  });
+
   it("finds a record whatever order its fields were built in", () => {
     const file = join(dir, "order.jsonl");
     appendRawStore(file, [{ content: text("kept"), id: "o1" } as any]);

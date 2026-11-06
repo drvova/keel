@@ -45,14 +45,14 @@ export const captureNewEntries = (state: RawCaptureState, sessionManager: Sessio
     if (!mayBeRewritten(entry.message)) continue;
     records.push({ id: entry.id, content: keptContent(entry.message.content) });
   }
-  state.seen = entries.length;
-  if (records.length === 0) return 0;
+  // Seen only once kept: a failed write (a full disk) is tried again on the next event.
   try {
-    appendRawStore(file, records);
-    for (const r of records) state.kept.add(r.id);
+    if (records.length > 0) appendRawStore(file, records);
   } catch {
     return 0;
   }
+  for (const r of records) state.kept.add(r.id);
+  state.seen = entries.length;
   return records.length;
 };
 

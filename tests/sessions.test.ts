@@ -64,6 +64,24 @@ beforeAll(() => {
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
 describe("listProjectSessions", () => {
+  it("names a Pi session by its /name, the latest one", () => {
+    const piDir = mkdtempSync(join(tmpdir(), "omp-vcc-pi-names-"));
+    try {
+      const c = chain([["user", "Refactor the auth module"], ["assistant", "Done."]]);
+      write(join(piDir, "pi.jsonl"), [
+        header("dddd4444-0000-7000-8000-000000000004", "2026-10-04T10:00:00.000Z"),
+        c[0],
+        { type: "session_info", id: "n1", parentId: c[0].id, timestamp: "2026-10-04T10:01:00.000Z", name: "Auth refactor" },
+        { type: "session_info", id: "n2", parentId: "n1", timestamp: "2026-10-04T10:02:00.000Z", name: "Auth refactor, part 2" },
+        c[1],
+      ], 4_000);
+      expect(listProjectSessions(piDir)[0]).toMatchObject({ title: "Auth refactor, part 2", messages: 2 });
+    } finally {
+      rmSync(piDir, { recursive: true, force: true });
+    }
+  });
+
+
   it("lists the other session files newest first, with title, first request, size and pins", () => {
     expect(sessions.map((s) => s.short)).toEqual(["bbbb2222", "aaaa1111"]);
     expect(sessions[0]).toMatchObject({ title: "Billing cron move", firstRequest: "Migrate the billing cron", messages: 3 });

@@ -6,7 +6,7 @@ import { expandEntryFile } from "./drill-down";
 import { EXPAND_DETAIL_CHARS } from "./render-entries";
 import { ignoredNote, type RecallRequest, type RecallScope } from "./recall-request";
 import type { Message } from "@oh-my-pi/pi-ai";
-import { describeSession, listProjectSessions, MAX_LISTED_SESSIONS, resolveSession, sessionDirOf, type SessionInfo } from "./sessions";
+import { countProjectSessions, describeSession, listProjectSessions, MAX_LISTED_SESSIONS, resolveSession, sessionDirOf, type SessionInfo } from "./sessions";
 import { currentBranchIds, hostBranch, type SessionManagerLike } from "./session-file";
 import { toolCallsOf } from "./tools";
 import { DEFAULT_CHARS_PER_TOKEN } from "./token-estimate";
@@ -48,6 +48,8 @@ interface ProjectSessions {
   list(): SessionInfo[] & { more: boolean };
   /** Every one: an id older than the listed ones still names its session. */
   all(): SessionInfo[];
+  /** How many there are, from their headers: no file is read past its first lines. */
+  count(): number;
 }
 
 const projectSessions = (dir: string, currentFile: string): ProjectSessions => {
@@ -56,6 +58,7 @@ const projectSessions = (dir: string, currentFile: string): ProjectSessions => {
   return {
     list: () => (listed ??= listProjectSessions(dir, currentFile)),
     all: () => (all ??= listProjectSessions(dir, currentFile, Infinity)),
+    count: () => countProjectSessions(dir, currentFile),
   };
 };
 
@@ -234,7 +237,7 @@ export const recall = (input: RecallInput, surface: RecallSurface): { ok: true; 
   const maxChars = recallOutputChars(input.contextWindow);
   if (request.session) {
     const listed = resolveSession(request.session, project.list());
-    const target = "error" in listed && project.list().more ? resolveSession(request.session, project.all()) : listed;
+    const target = "error" in listed && listed.unmatched && project.list().more ? resolveSession(request.session, project.all()) : listed;
     if ("error" in target) return { ok: false, text: target.error, severity: "warning" };
     const header = sessionHeader(target);
     const view = openSessionView(target, request.scope, project, maxChars - header.length);
@@ -396,7 +399,7 @@ const searchBefore = (view: RecallView, query: string, skip: Set<number> | undef
 /** A search of this session found nothing: name the project's earlier sessions, which it did not search. */
 const otherSessionsNote = (view: RecallView, hints: RecallPagingHints): string => {
   if (!hints.otherSessions || !view.project || view.session || view.scope === "project") return "";
-  const count = view.project.list().length;
+  const count = view.project.count();
   return count > 0 ? `\n${hints.otherSessions(count)}` : "";
 };
 

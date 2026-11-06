@@ -28,6 +28,9 @@ const fileWritesOf = (message: unknown): Array<FileWrite & { name: string }> =>
  * When offset is given, shows `limit` lines (30 by default) under a "Lines X-Y (of Z)" header.
  * When neither, shows preview (first 30 lines) with truncation hint.
  */
+/** Room in a full view for its closing line and a note recall puts in front of it. */
+const FULL_VIEW_FRAME_CHARS = 600;
+
 function formatToolCallContent(
   tc: FileWrite & { name: string },
   entryIndex: number,
@@ -55,16 +58,19 @@ function formatToolCallContent(
   const previewLimit = 30;
 
   if (full) {
-    // All of it, within one recall result: past the cap, where the next lines are.
-    if (body.length > maxChars) {
-      const shown = body.slice(0, maxChars);
+    // All of it, within one recall result: past the cap, where the next lines
+    // are. The header, that line and a note recall puts in front (Ignored:, the
+    // off-path note) come out of the same result, so the body leaves them room.
+    const room = Math.max(0, maxChars - `File: ${tc.path}\nTool: ${tc.name}\n\n`.length - FULL_VIEW_FRAME_CHARS);
+    if (body.length > room) {
+      const shown = body.slice(0, room);
       const next = shown.split("\n").length - 1;
       return `File: ${tc.path}
 Tool: ${tc.name}
 
 ${shown}
 
-... (${body.length - maxChars} more chars: one recall result holds ${maxChars}. Use #${entryIndex}:${tc.path}:${next}${via} for the lines from ${next + 1} on.)`;
+... (${body.length - room} more chars: one recall result holds ${maxChars}. Use #${entryIndex}:${tc.path}:${next}${via} for the lines from ${next + 1} on.)`;
     }
     return `File: ${tc.path}
 Tool: ${tc.name}

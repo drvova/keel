@@ -45,6 +45,16 @@ const parse = (line: Buffer): any => {
  * title, pins (replayed along its active branch). Only the lines those need
  * are parsed; the rest are read by their heads (session-file.ts entryHead).
  */
+/**
+ * A session's name as each host writes it: omp's title slot (its first line,
+ * rewritten in place) and renames, `title`; Pi's `/name`, a session_info entry's
+ * `name` (docs/session-format.md). The latest wins.
+ */
+const nameOf = (e: any): string | undefined => {
+  const name = e?.type === "title" || e?.type === "title_change" ? e.title : e?.type === "session_info" ? e.name : undefined;
+  return typeof name === "string" && name.trim() ? name.trim() : undefined;
+};
+
 const scanSession = (file: string): SessionInfo | undefined => {
   let stat;
   try { stat = statSync(file); } catch { return undefined; }
@@ -70,8 +80,7 @@ const scanSession = (file: string): SessionInfo | undefined => {
       if (head.type === "compaction") return;
       const e = parse(line);
       if (replaysPins(e)) pinEntries.push(e);
-      // omp's title slot (its first line, rewritten in place) and later renames.
-      else if ((head.type === "title" || head.type === "title_change") && typeof e?.title === "string" && e.title.trim()) title = e.title.trim();
+      else title = nameOf(e) ?? title;
     });
   } catch {
     return undefined;
@@ -115,14 +124,23 @@ export const listProjectSessions = (dir: string, currentFile?: string, limit = M
   return Object.assign(files.slice(0, limit).map(scanSession).filter((s): s is SessionInfo => !!s), { more: files.length > limit });
 };
 
-/** An id prefix ("01a194d8", "01a1", "01a194d8-…"; core/recall-request.ts sessionRef strips "@"/"session:") -> the one session it names, or why not. */
-export const resolveSession = (ref: string, sessions: readonly SessionInfo[]): SessionInfo | { error: string } => {
+/** How many other sessions the project has, read from each file's header alone. */
+export const countProjectSessions = (dir: string, currentFile?: string): number =>
+  projectFiles(dir, currentFile).filter((f) => typeof readHeader(f)?.id === "string").length;
+
+/**
+ * An id prefix ("01a194d8", "01a1", "01a194d8-…"; core/recall-request.ts
+ * sessionRef strips "@"/"session:") -> the one session it names, or why not;
+ * `unmatched` when none of these sessions starts with it, which a longer list
+ * could change.
+ */
+export const resolveSession = (ref: string, sessions: readonly SessionInfo[]): SessionInfo | { error: string; unmatched?: true } => {
   const key = ref.replace(/-/g, "").toLowerCase();
   if (key.length < SESSION_REF_MIN_CHARS) return { error: `session:'${ref}' is too short: give at least ${SESSION_REF_MIN_CHARS} characters of an id from mode:'sessions'.` };
   const matches = sessions.filter((s) => s.id.replace(/-/g, "").toLowerCase().startsWith(key));
   if (matches.length === 1) return matches[0];
   if (matches.length === 0) {
-    return { error: `No earlier session of this project starts with '${ref}'. mode:'sessions' lists them.` };
+    return { error: `No earlier session of this project starts with '${ref}'. mode:'sessions' lists them.`, unmatched: true };
   }
   return { error: `session:'${ref}' matches ${matches.length} sessions (${matches.map((s) => s.short).join(", ")}): give more of the id.` };
 };

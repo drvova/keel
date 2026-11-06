@@ -226,6 +226,21 @@ describe("vcc_recall drill-down", () => {
     }
   });
 
+  it("#N:path:full of a file past the cap says where its next lines are, within the cap", async () => {
+    const huge = Array.from({ length: 4000 }, (_, i) => `line ${i} ${"x".repeat(30)}`).join("\n");
+    const entries = [toolMsg("m1", "write", { path: "/w/big.txt", content: huge })];
+    const { dir, file, ids } = makeSession(entries);
+    try {
+      const tool = register();
+      const out = await invoke(tool, file, ids, { query: "#0:/w/big.txt:full", range: [0, 0] });
+      expect(out).toStartWith("Ignored: range");
+      expect(out).toMatch(/Use #0:\/w\/big\.txt:\d+ for the lines from \d+ on\.\)$/);
+      expect(out).not.toContain("output clipped");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("#N:path of an edit that deletes text shows what it removed", async () => {
     const entries = [toolMsg("m1", "edit", { path: "src/a.ts", old_string: "const unused = 1;", new_string: "" })];
     const { dir, file, ids } = makeSession(entries);
