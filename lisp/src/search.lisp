@@ -70,67 +70,149 @@
 
 ;;; --- one term, matched as search-entries.ts's `term|(?<![a-z])stem`/i --------
 
-(defstruct (term (:constructor make-term (text &aux (stem (stem-of text)))))
+;;; Matching runs on folded text (FOLD): each character replaced by the one
+;;; /i compares it as, so a case-insensitive match is a plain comparison of
+;;; characters (FIND-TEXT). Folding maps character to character, so a position
+;;; in the folded text is the same position in the original, and an ASCII
+;;; letter folds to one, so the stem's look-behind reads the folded text as the
+;;; original.
+;;;
+;;; Every pass over an entry's text is declared on TEXT, the one string type
+;;; the core makes: untyped, a pass reads each character through SBCL's
+;;; generic array access, and a search over 5,000 entries cost half a second.
+
+(deftype text () '(simple-array character (*)))
+
+(defun as-text (string)
+  "STRING as a TEXT, copied only when it is some other kind of string."
+  (if (typep string 'text) string (coerce string 'text)))
+
+(defun fold (string)
+  "STRING with every character as a non-unicode /i regex compares it."
+  (let* ((s (as-text string)) (n (length s)) (out (make-string n)))
+    (declare (text s out) (fixnum n) (optimize speed))
+    (dotimes (i n out)
+      (let* ((c (schar s i)) (code (char-code c)))
+        (setf (schar out i) (cond ((< code 97) c)
+                                  ((<= code 122) (code-char (- code 32)))
+                                  ((< code 128) c)
+                                  (t (js-canonical c))))))))
+
+(defstruct (term (:constructor make-term
+                     (text &aux (stem (stem-of text)) (word (fold text)) (folded-stem (and stem (fold stem))))))
   (text "" :type string)
-  (stem nil))
+  (stem nil)
+  (word "" :type text)
+  (folded-stem nil :type (or null text)))
 
-(defun literal-at-p (needle text pos)
-  (and (<= (+ pos (length needle)) (length text))
-       (loop for i below (length needle)
-             always (js-char-equal (char needle i) (char text (+ pos i))))))
+(defun find-text (needle hay start)
+  "The first position from START where NEEDLE occurs in HAY, or NIL."
+  (declare (text needle hay) (fixnum start) (optimize speed))
+  (let* ((m (length needle)) (last (- (length hay) m)))
+    (declare (fixnum m last))
+    (if (zerop m)
+        (and (<= start (length hay)) start)
+        (let ((first (schar needle 0)))
+          (loop for p of-type fixnum from start to last
+                when (and (char= (schar hay p) first)
+                          (loop for k of-type fixnum from 1 below m
+                                always (char= (schar hay (+ p k)) (schar needle k))))
+                  return p)))))
 
-(defun term-match-length (term text pos)
-  "Length of TERM's match starting at POS of TEXT, or NIL: the term itself
-first, then its stem where no letter precedes it, as the alternation tries them."
-  (let ((word (term-text term)) (stem (term-stem term)))
-    (cond ((literal-at-p word text pos) (length word))
-          ((and stem
-                (or (zerop pos) (not (ascii-letter-p (char text (1- pos)))))
-                (literal-at-p stem text pos))
-           (length stem)))))
+(defun next-stem (stem hay start)
+  "The first position from START where STEM occurs in HAY with no letter before it, or NIL."
+  (declare (text stem hay) (fixnum start))
+  (loop for p = (find-text stem hay start)
+        while (and p (plusp p) (ascii-letter-p (schar hay (1- p))))
+        do (setf start (1+ p))
+        finally (return p)))
 
-(defun term-frequency (term text)
-  "Non-overlapping matches of TERM in TEXT, as String.match with a global regex counts them."
-  (loop with i = 0 and n = (length text) and count = 0
-        while (< i n)
-        do (let ((len (term-match-length term text i)))
-             (if len (progn (incf count) (incf i len)) (incf i)))
-        finally (return count)))
+(defun next-match (term hay start)
+  "The next match of TERM in the folded HAY from START, as (values POSITION LENGTH),
+or NIL: the earliest position wins, and at one position the term itself before
+its stem, as the alternation `term|(?<![a-z])stem` tries them."
+  (declare (text hay) (fixnum start))
+  (let ((word-at (find-text (term-word term) hay start))
+        (stem-at (and (term-folded-stem term) (next-stem (term-folded-stem term) hay start))))
+    (cond ((and word-at (or (null stem-at) (<= word-at stem-at))) (values word-at (length (term-word term))))
+          (stem-at (values stem-at (length (term-folded-stem term)))))))
 
-(defun term-occurs-p (term text)
-  (loop for i below (length text) thereis (term-match-length term text i)))
+(defun term-frequency (term hay)
+  "Non-overlapping matches of TERM in the folded HAY, as String.match with a global regex counts them."
+  (loop with i = 0 and count = 0
+        do (multiple-value-bind (at length) (next-match term hay i)
+             (unless at (return count))
+             (incf count)
+             (setf i (+ at length)))))
+
+(defun term-occurs-p (term hay)
+  (and (next-match term hay 0) t))
 
 (defun first-match (terms line)
-  "The first position in LINE where any of TERMS matches, or NIL."
-  (loop for i below (length line)
-        when (some (lambda (term) (term-match-length term line i)) terms)
-          return i))
+  "The first position in the folded LINE where any of TERMS matches, or NIL."
+  (let ((best nil))
+    (dolist (term terms best)
+      (let ((at (next-match term line 0)))
+        (when (and at (or (null best) (< at best))) (setf best at))))))
 
 ;;; --- what an entry's text is to search ----------------------------------------
 
+(declaim (inline base64-char-p))
 (defun base64-char-p (char)
-  (or (ascii-letter-p char) (char<= #\0 char #\9) (find char "+/=")))
+  (let ((code (char-code char)))
+    (or (<= 65 code 90) (<= 97 code 122) (<= 48 code 57) (= code 43) (= code 47) (= code 61))))
 
-(defun looks-encoded-p (run)
+(defun looks-encoded-p (text start end)
   "Encoded data mixes digits and both cases; joined identifiers, hex and rules do not."
-  (let ((digits 0) (upper 0) (lower 0) (n (length run)))
-    (loop for c across run
+  (declare (text text) (fixnum start end))
+  (let ((digits 0) (upper 0) (lower 0) (n (- end start)))
+    (declare (fixnum digits upper lower n))
+    (loop for i from start below end
+          for c = (schar text i)
           do (cond ((char<= #\0 c #\9) (incf digits))
                    ((char<= #\A c #\Z) (incf upper))
                    ((char<= #\a c #\z) (incf lower))))
     (and (>= digits (* n 0.05d0)) (>= upper (* n 0.15d0)) (>= lower (* n 0.15d0)))))
 
-(defun searchable-text (text)
-  "TEXT with each long run of encoded data replaced by an ellipsis."
-  (with-output-to-string (out)
-    (loop with i = 0 and n = (length text)
-          while (< i n)
-          do (if (base64-char-p (char text i))
-                 (let* ((end (or (position-if-not #'base64-char-p text :start i) n))
-                        (run (subseq text i end)))
-                   (write-string (if (and (>= (length run) +base64-run+) (looks-encoded-p run)) "…" run) out)
+(defun encoded-runs (text)
+  "The (START . END) of each run of TEXT that is encoded data."
+  (declare (text text) (optimize speed))
+  (let ((runs '()) (i 0) (n (length text)))
+    (declare (fixnum i n))
+    (loop while (< i n)
+          do (if (base64-char-p (schar text i))
+                 (let ((end i))
+                   (declare (fixnum end))
+                   (loop while (and (< end n) (base64-char-p (schar text end))) do (incf end))
+                   (when (and (>= (- end i) +base64-run+) (looks-encoded-p text i end))
+                     (push (cons i end) runs))
                    (setf i end))
-                 (progn (write-char (char text i) out) (incf i))))))
+                 (incf i)))
+    (nreverse runs)))
+
+(defun searchable-text (string)
+  "STRING with each long run of encoded data replaced by an ellipsis."
+  (let* ((text (as-text string)) (runs (encoded-runs text)))
+    (if (null runs)
+        text
+        (as-text (with-output-to-string (out)
+                   (let ((at 0))
+                     (loop for (start . end) in runs
+                           do (write-string text out :start at :end start)
+                              (write-string "…" out)
+                              (setf at end))
+                     (write-string text out :start at)))))))
+
+(defun word-count (text)
+  "TEXT's word count as search-entries.ts counts it: split(/\\s+/).length."
+  (declare (text text) (optimize speed))
+  (let ((count 1) (in-space nil))
+    (declare (fixnum count))
+    (loop for c across text
+          do (if (js-whitespace-p c)
+                 (unless in-space (setf in-space t) (incf count))
+                 (setf in-space nil)))
+    count))
 
 ;;; --- snippets ----------------------------------------------------------------
 
@@ -143,13 +225,15 @@ first, then its stem where no letter precedes it, as the alternation tries them.
                (end (+ start width)))
           (concatenate 'string (if (> start 0) "…" "") (js-slice line start end) (if (< end length) "…" ""))))))
 
-(defun line-snippet (text terms &optional (context 2))
-  "The lines around TEXT's first line that a term matches, or NIL."
+(defun line-snippet (text folded terms &optional (context 2))
+  "The lines around TEXT's first line that a term matches, or NIL. Matched
+in the folded text, cut from the original at the same positions."
   (let* ((lines (coerce (split-string text #\Newline) 'vector))
+         (folded (coerce (split-string folded #\Newline) 'vector))
          (count (length lines))
          (hit nil) (at 0))
     (loop for i below count
-          for pos = (first-match terms (aref lines i))
+          for pos = (first-match terms (aref folded i))
           when pos do (setf hit i at (js-index (aref lines i) pos)) (return))
     (when hit
       (let* ((start (max 0 (- hit context)))
@@ -184,9 +268,9 @@ the TS side."
            (n (length docs))
            (texts (map 'vector (lambda (d) (searchable-text (second d))) docs))
            (hays (map 'vector (lambda (d text)
-                                (format nil "~a ~a ~a" (first d) text (join-strings (third d) " ")))
+                                (fold (concatenate 'text (first d) " " text " " (join-strings (third d) " "))))
                       docs texts))
-           (lens (map 'vector (lambda (h) (length (js-split-whitespace h))) hays))
+           (lens (map 'vector #'word-count hays))
            (df (make-hash-table :test 'equal))
            (matched (make-array n))
            (total-length 0))
@@ -213,7 +297,10 @@ the TS side."
                              (norm (/ (* tf (+ +bm25-k+ 1d0))
                                       (+ tf (* +bm25-k+ (+ (- 1d0 +bm25-b+) (/ (* +bm25-b+ dl) avg-dl)))))))
                         (incf score (* idf norm))))))
-                (push (list i score (line-snippet (aref texts i) terms)) scored)))))
+                ;; The folded text is inside the folded hay, after the role and a space.
+                (let* ((from (1+ (length (first (aref docs i)))))
+                       (folded (subseq (aref hays i) from (+ from (length (aref texts i))))))
+                  (push (list i score (line-snippet (aref texts i) folded terms)) scored))))))
         (setf scored (stable-sort (nreverse scored) #'> :key #'second))
         (let* ((distinct (length (remove-duplicates (mapcar (lambda (term) (string-downcase (term-text term))) terms)
                                                     :test #'string=)))

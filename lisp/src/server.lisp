@@ -50,12 +50,26 @@
     (cond ((equal op "search") (handle-search request))
           (t (json-object "ok" :false "error" (format nil "unknown op ~a" (json-string (or op :null))))))))
 
+(defun read-stdin ()
+  "Everything on stdin, decoded from UTF-8. Read as bytes and decoded at once:
+a character stream decodes one character at a time, ten times slower on a
+large request."
+  (let ((in (sb-sys:make-fd-stream 0 :input t :element-type '(unsigned-byte 8) :buffering :full))
+        (chunks '()) (total 0))
+    (loop for chunk = (make-array 1048576 :element-type '(unsigned-byte 8))
+          for n = (read-sequence chunk in)
+          while (plusp n)
+          do (push (cons chunk n) chunks) (incf total n))
+    (let ((bytes (make-array total :element-type '(unsigned-byte 8))) (at 0))
+      (dolist (c (nreverse chunks))
+        (replace bytes (car c) :start1 at :end2 (cdr c))
+        (incf at (cdr c)))
+      (sb-ext:octets-to-string bytes :external-format :utf-8))))
+
 (defun main ()
   "Entry point of the dumped executable."
   (let ((response (handler-case
-                      (handle-request (parse-json (with-output-to-string (out)
-                                                    (loop for line = (read-line *standard-input* nil)
-                                                          while line do (write-line line out)))))
+                      (handle-request (parse-json (read-stdin)))
                     (error (e) (json-object "ok" :false "error" (princ-to-string e))))))
     (write-json response *standard-output*)
     (terpri *standard-output*)

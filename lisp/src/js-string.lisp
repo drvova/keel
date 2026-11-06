@@ -50,6 +50,7 @@ JavaScript's does."
   "The code unit offset of character POSITION of STRING."
   (loop for i below position sum (if (astral-p (char string i)) 2 1)))
 
+(declaim (inline js-whitespace-p))
 (defun js-whitespace-p (char)
   "True for JavaScript's \\s and String.trim set: WhiteSpace and LineTerminator."
   (let ((code (char-code char)))
