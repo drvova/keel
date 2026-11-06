@@ -37,7 +37,13 @@ const NOT_ARGUMENTS = new Set(["i"]);
  * edit's new text) is shown by expand too. String values print as written,
  * indented; others as JSON.
  */
-const fullToolArgs = (calls: ToolCall[], index: number, maxChars: number): string => {
+/** How expand clips one call's arguments, and what a follow-up call adds (session:'id' in an earlier session). */
+export interface ExpandDetail {
+  chars: number;
+  via: string;
+}
+
+const fullToolArgs = (calls: ToolCall[], index: number, { chars: maxChars, via }: ExpandDetail): string => {
   const blocks = calls.map((c) => {
     const shown = new Set(callSubject(c)?.keys ?? []);
     // A value's later lines sit deeper than its key, so they never read as another argument.
@@ -54,7 +60,7 @@ const fullToolArgs = (calls: ToolCall[], index: number, maxChars: number): strin
   if (text.length <= maxChars) return text;
   // A write's or edit's content is still all there through the file drill-down.
   const path = calls.map(fileWriteOf).find(Boolean)?.path;
-  const rest = path ? `; query '#${index}:${path}:full' reads the file content` : "";
+  const rest = path ? `; query '#${index}:${path}:full'${via} reads the file content` : "";
   return `${text.slice(0, maxChars)}\n  ...[arguments of #${index} clipped at ${maxChars} of ${text.length} chars${rest}]`;
 };
 
@@ -66,7 +72,7 @@ export const fileMentionPaths = (msg: unknown): string[] => {
     : [];
 };
 
-export const renderMessage = (msg: Message, index: number, full = false, detailChars = EXPAND_DETAIL_CHARS): RenderedEntry => {
+export const renderMessage = (msg: Message, index: number, full = false, detail: ExpandDetail = { chars: EXPAND_DETAIL_CHARS, via: "" }): RenderedEntry => {
   if (msg.role === "user") {
     return { index, role: "user", summary: full ? textOf(msg.content) : clip(textOf(msg.content), 300) };
   }
@@ -105,7 +111,7 @@ export const renderMessage = (msg: Message, index: number, full = false, detailC
   const calls = toolCallsOf(msg);
   const tools = calls.map(callLine).join(", ");
   const files = calls.flatMap((c) => namedPaths(c.args));
-  const args = full && tools ? fullToolArgs(calls, index, detailChars) : "";
+  const args = full && tools ? fullToolArgs(calls, index, detail) : "";
   const summary = tools ? [tools, args, text].filter(Boolean).join("\n") : text;
   return { index, role: "assistant", summary, ...(files.length > 0 && { files }) };
 };

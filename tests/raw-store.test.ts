@@ -11,6 +11,7 @@ import {
   keptContent,
   MAX_KEPT_CHARS,
   mayBeRewritten,
+  rawStoreIds,
   rawStorePath,
   readRawStore,
   wasRewritten,
@@ -137,6 +138,13 @@ describe("with omp's own session manager", () => {
 });
 
 describe("the summary is written from the originals", () => {
+  it("finds a record whatever order its fields were built in", () => {
+    const file = join(dir, "order.jsonl");
+    appendRawStore(file, [{ content: text("kept"), id: "o1" } as any]);
+    expect([...rawStoreIds(file)]).toEqual(["o1"]);
+    expect([...readRawStore(file, new Set(["o1"])).values()]).toEqual([text("kept")]);
+  });
+
   it("a commit whose git output omp blanked before omp-vcc compacted is still in [Commits]", async () => {
     writeFileSync(process.env.OMP_VCC_CONFIG_PATH!, JSON.stringify({ overrideDefaultCompaction: true }));
     const { registerHook } = await import("./support/host");

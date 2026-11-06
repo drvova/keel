@@ -4,6 +4,8 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { listProjectSessions, MAX_LISTED_SESSIONS, resolveSession, type SessionInfo } from "../src/core/sessions";
 import { executeRecall } from "../src/tools/recall";
+import { recall } from "../src/core/recall-run";
+import { parseCommandRequest } from "../src/core/recall-request";
 import { sessionRef } from "../src/core/recall-request";
 import { PIN_ENTRY_TYPE } from "../src/names";
 
@@ -115,6 +117,17 @@ describe("vcc_recall across sessions", () => {
     expect(out).toContain("in this session and 2 earlier sessions");
     expect(out).toMatch(/\[session aaaa1111\] #1 \[assistant\]/);
     expect(out).toContain("session:'aaaa1111', expand:[1]");
+  });
+
+  it("a surface without a read-around hint gives none for a hit in an earlier session either", () => {
+    const surface = () => ({ outOfRange: () => "", nextPage: () => "" });
+    const result = recall({ request: parseCommandRequest("rolled back release tag scope:project"), sessionManager: sm(currentBranch) }, surface);
+    expect(result.ok && result.text).toMatch(/\[session aaaa1111\] #1 \[assistant\]/);
+    expect(result.ok && result.text).not.toContain("Read around a hit");
+  });
+
+  it("an entry that does not exist is only that: not also off the current path", () => {
+    expect(executeRecall({ query: "#99:file" }, sm(currentBranch))).toBe("Entry #99 not found in session history.");
   });
 
   it("session:'id' reads that session, on its own active branch", () => {

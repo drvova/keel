@@ -37,6 +37,8 @@ const KIND_BY_NAME: Readonly<Record<string, CallKind>> = {
   read: "read",
   write: "write",
   edit: "edit",
+  // omp's edit in apply_patch mode, stored under the name it has on the wire to GPT-5 (its customWireName).
+  apply_patch: "edit",
   ast_edit: "edit",
   grep: "search",
   glob: "search",

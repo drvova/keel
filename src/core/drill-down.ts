@@ -234,7 +234,7 @@ export function expandEntryFile(
     return `Entry #${entryIndex} has ${matched.length} file operations matching "${pathPattern}":
 ${items.join("\n")}
 
-Use #${entryIndex}:<more-specific-path> to drill into a specific file.`;
+Use #${entryIndex}:<more-specific-path>${output.via} to drill into a specific file.`;
   }
 
   return formatToolCallContent(matched[0], entryIndex, { full, offset, limit, ...output });

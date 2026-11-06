@@ -45,7 +45,7 @@ const RECALL_PARAM_DESCRIPTIONS: Record<(typeof RECALL_PARAMS)[number], string> 
   expand: "#N indices to return full content for (from summary refs like (#12) or recall results).",
   page: "Page number (1-based) for query, range, touched or sessions results. Default: 1.",
   scope: "Default 'lineage' covers the active conversation path. Use 'all' to also reach messages from other branches, such as turns that were edited or retried. 'project' makes a query also search this project's earlier sessions.",
-  mode: "hybrid (default) = normal recall; touched = files worked on, by path, with entry indices (misses files written via apply_patch or bash redirects); sessions = this project's earlier sessions, newest first.",
+  mode: "hybrid (default) = normal recall; touched = files worked on, by path, with entry indices (misses files written by shell commands); sessions = this project's earlier sessions, newest first.",
   session: `Id (or its first ${SESSION_REF_MIN_CHARS}+ characters) of an earlier session from mode:'sessions' or a [session id] hit: the call reads that session instead of this one.`,
 };
 

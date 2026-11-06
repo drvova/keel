@@ -77,6 +77,8 @@ describe("omp tool shapes", () => {
     const patch = "*** Begin Patch\n*** Add File: hello.txt\n+Hello\n*** Update File: src/app.py\n*** Move to: src/main.py\n@@\n-a\n+b\n*** Delete File: old.txt\n*** End Patch\n";
     expect(namedPaths({ input: patch })).toEqual(["hello.txt", "src/app.py", "src/main.py", "old.txt"]);
     expect(callKind({ name: "edit", args: { input: patch } })).toBe("edit");
+    // On GPT-5 omp's edit goes on the wire, and into the session, as apply_patch.
+    expect(callKind({ name: "apply_patch", args: { input: patch } })).toBe("edit");
   });
 
   test("a read of lines is a read of part of the file; :raw and a whole read are not", () => {

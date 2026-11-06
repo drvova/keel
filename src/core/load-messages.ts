@@ -2,7 +2,7 @@
 // `#N` (session-file.ts), readable whatever the file holds, and with what omp
 // rewrote in place put back from the originals omp-vcc kept (raw-store.ts).
 import type { Message } from "@oh-my-pi/pi-ai";
-import { renderMessage, type RenderedEntry } from "./render-entries";
+import { renderMessage, type ExpandDetail, type RenderedEntry } from "./render-entries";
 import { isObject, readableMessage } from "./content";
 import { activeBranchIds, indexedMessages, readEntries } from "./session-file";
 import { restoreOriginals } from "./raw-store";
@@ -44,20 +44,20 @@ export interface LoadedEntry {
 
 /**
  * Messages as recall shows them, only those in `allowed` when it is given:
- * `full` is expand's view, `detailChars` its clip for one call's arguments
- * (render-entries.ts EXPAND_DETAIL_CHARS).
+ * `full` is expand's view, `detail` its clip for one call's arguments
+ * (render-entries.ts EXPAND_DETAIL_CHARS) and what its follow-ups add.
  */
 export const renderMessages = (
   messages: readonly RecallMessage[],
   full: boolean,
   allowed?: ReadonlySet<string>,
-  detailChars?: number,
+  detail?: ExpandDetail,
 ): LoadedEntry[] => {
   const out: LoadedEntry[] = [];
   for (const m of messages) {
     if (allowed && !(m.id && allowed.has(m.id))) continue;
     // One message that cannot be rendered is left out, not the session.
-    try { out.push({ entry: renderMessage(m.message, m.index, full, detailChars), message: m.message }); } catch {}
+    try { out.push({ entry: renderMessage(m.message, m.index, full, detail), message: m.message }); } catch {}
   }
   return out;
 };

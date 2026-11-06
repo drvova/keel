@@ -79,4 +79,10 @@ describe("renderMessage full view shows tool-call arguments", () => {
     const long: any = { role: "assistant", content: [call("t3", "write", { path: "b.txt", content: "y".repeat(9000) })] };
     expect(renderMessage(long, 7, true).summary).toContain("...[arguments of #7 clipped at 4000 of");
   });
+
+  it("points a clipped write at its file content, in the session it was read from", () => {
+    const long: any = { role: "assistant", content: [call("t3", "write", { path: "b.txt", content: "y".repeat(200) })] };
+    expect(renderMessage(long, 7, true, { chars: 50, via: " with session:'aaaa1111'" }).summary)
+      .toContain("query '#7:b.txt:full' with session:'aaaa1111' reads the file content]");
+  });
 });

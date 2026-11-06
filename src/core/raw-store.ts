@@ -75,7 +75,8 @@ export interface RawRecord {
 
 export const appendRawStore = (sessionFile: string, records: RawRecord[]): void => {
   if (records.length === 0) return;
-  appendFileSync(rawStorePath(sessionFile), records.map((r) => JSON.stringify(r)).join("\n") + "\n");
+  // `id` first, whatever the caller built: the scans below read it from each line's start.
+  appendFileSync(rawStorePath(sessionFile), records.map((r) => JSON.stringify({ id: r.id, content: r.content })).join("\n") + "\n");
 };
 
 const ID_AT_START = /^\{"id":"((?:[^"\\]|\\.)*)"/;

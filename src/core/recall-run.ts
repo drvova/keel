@@ -99,7 +99,7 @@ const openRecallView = (
     load(full) {
       let loaded = cache.get(full);
       if (!loaded) {
-        loaded = renderMessages(read().messages, full, lineageEntryIds, view.detailChars);
+        loaded = renderMessages(read().messages, full, lineageEntryIds, { chars: view.detailChars, via: inSession(view) });
         cache.set(full, loaded);
       }
       return loaded;
@@ -240,23 +240,25 @@ export const recall = (input: RecallInput, surface: RecallSurface): { ok: true; 
     if ("error" in target) return { ok: false, text: target.error, severity: "warning" };
     const header = sessionHeader(target);
     const view = openSessionView(target, request.scope, project, maxChars - header.length);
-    return { ok: true, text: header + capOutput(ignoredNote(request) + runAction(request, view, surface(target.short)), Math.max(0, maxChars - header.length)) };
+    return { ok: true, text: header + capOutput(ignoredNote(request) + runAction(request, view, surface), Math.max(0, maxChars - header.length)) };
   }
   const view = openRecallView(sessionFile, request.scope, sessionManager, { project, maxChars });
-  return { ok: true, text: capOutput(ignoredNote(request) + runAction(request, view, surface()), maxChars) };
+  return { ok: true, text: capOutput(ignoredNote(request) + runAction(request, view, surface), maxChars) };
 };
 
-const runAction = (request: RecallRequest, view: RecallView, hints: RecallPagingHints): string => {
+const runAction = (request: RecallRequest, view: RecallView, surface: RecallSurface): string => {
   const { action } = request;
+  const hints = surface(view.session?.short);
   const scopeAll = view.scope === "all";
 
   switch (action.kind) {
     case "drill": {
       // The entry is read from any branch; scope only decides whether it is off-path.
       const t = action.target;
-      const offPath = !scopeAll && !view.load(false).some((m) => m.entry.index === t.index);
+      const message = view.message(t.index);
+      const offPath = message !== undefined && !scopeAll && !view.load(false).some((m) => m.entry.index === t.index);
       return (offPath ? OFF_PATH_NOTE : "") +
-        expandEntryFile(view.message(t.index), t.index, t.pathPattern, t.full, t.offset, t.limit, { maxChars: view.maxChars, via: inSession(view) });
+        expandEntryFile(message, t.index, t.pathPattern, t.full, t.offset, t.limit, { maxChars: view.maxChars, via: inSession(view) });
     }
 
     case "touched":
@@ -272,7 +274,7 @@ const runAction = (request: RecallRequest, view: RecallView, hints: RecallPaging
       return runRange(action.range, action.page, view);
 
     case "search":
-      if (view.scope === "project") return runProjectSearch(action.query, action.page, view, hints);
+      if (view.scope === "project") return runProjectSearch(action.query, action.page, view, surface);
       return runSearch(action.query, action.page, view, hints, hints.skipCurrentTurn ? view.currentTurn() : undefined);
 
     case "recent": {
@@ -376,9 +378,8 @@ const runRange = (range: [number, number], page: number, view: RecallView): stri
   const header = totalPages > 1
     ? `Range #${lo}..#${hi}, page ${page}/${totalPages} (${counts})`
     : `Range #${lo}..#${hi} (${counts})`;
-  const inSession = view.session ? ` session:'${view.session.short}'` : "";
   const footer = page < totalPages
-    ? `\n--- Use range:[${lo}, ${hi}] page:${page + 1}${inSession}${scopeAll ? " scope:'all'" : ""} for the next ${RANGE_PAGE_SIZE} ---`
+    ? `\n--- Use range:[${lo}, ${hi}] page:${page + 1}${scopeAll ? " scope:'all'" : ""}${inSession(view)} for the next ${RANGE_PAGE_SIZE} ---`
     : "";
   return formatRecallOutput(entries.slice(start, start + RANGE_PAGE_SIZE), undefined, header) + footer;
 };
@@ -493,7 +494,8 @@ const runSessions = (page: number, view: RecallView): string => {
  * the ranking is comparable across them. Bounded by session count, bytes and
  * entries; a hit names its session.
  */
-const runProjectSearch = (query: string, page: number, view: RecallView, hints: RecallPagingHints): string => {
+const runProjectSearch = (query: string, page: number, view: RecallView, surface: RecallSurface): string => {
+  const hints = surface();
   const skip = hints.skipCurrentTurn ? view.currentTurn() : undefined;
   const corpus: LoadedEntry[] = view.load(false).filter((m) => !skip?.has(m.entry.index));
   let bytes = 0;
@@ -519,8 +521,6 @@ const runProjectSearch = (query: string, page: number, view: RecallView, hints: 
     scope: "project",
     hints,
     // A hit from an earlier session is read there; one from this session as any other.
-    around: (top) => top.session
-      ? `\n--- Read around a hit: session:'${top.session}', range:[${Math.max(0, top.index - 3)}, ${top.index + 3}]; full text: session:'${top.session}', expand:[${top.index}] ---`
-      : hints.aroundHit?.(top.index, "lineage") ?? "",
+    around: (top) => surface(top.session).aroundHit?.(top.index, "lineage") ?? "",
   });
 };
