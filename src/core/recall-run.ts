@@ -6,11 +6,11 @@ import { expandEntryFile } from "./drill-down";
 import { EXPAND_DETAIL_CHARS } from "./render-entries";
 import { ignoredNote, type RecallRequest, type RecallScope } from "./recall-request";
 import type { Message } from "@oh-my-pi/pi-ai";
-import { countProjectSessions, describeSession, findSession, listProjectSessions, MAX_LISTED_SESSIONS, sessionDirOf, type SessionInfo } from "./sessions";
+import { countProjectSessions, describeSession, findSession, listProjectSessions, MAX_LISTED_SESSIONS, projectFiles, sessionDirOf, type SessionInfo } from "./sessions";
 import { currentBranchIds, hostBranch, type SessionManagerLike } from "./session-file";
 import { toolCallsOf } from "./tools";
 import { DEFAULT_CHARS_PER_TOKEN } from "./token-estimate";
-import { searchSessionsInCore, type CoreSource } from "./lisp-core";
+import { callCore, searchSessionsInCore, type CoreSource } from "./lisp-core";
 
 export const SEARCH_PAGE_SIZE = 5;
 export const RANGE_PAGE_SIZE = 20;
@@ -228,7 +228,39 @@ export interface RecallInput {
    * adds no user message, so the last one there belongs to a finished turn.
    */
   skipCurrentTurn?: boolean;
+  /**
+   * The call as it came: the tool's params or the command's text. With it the
+   * Lisp core runs the whole call (lisp/src/recall.lisp), parsing included;
+   * without it, or without a core, `request` runs here.
+   */
+  call?: { surface: "tool"; params: unknown } | { surface: "command"; name: string; args: string };
 }
+
+type RecallResult = { ok: true; text: string } | { ok: false; text: string; severity: "error" | "warning" };
+
+/** The call run by the Lisp core, given what only the host knows; undefined when there is no core or it leaves the call to TS. */
+export const recallInCore = (input: RecallInput & { call: NonNullable<RecallInput["call"]> }): RecallResult | undefined => {
+  const { sessionManager } = input;
+  const sessionFile = sessionManager.getSessionFile?.();
+  const dir = sessionFile ? sessionDirOf(sessionManager, sessionFile) : undefined;
+  const reply = callCore({
+    op: "recall",
+    input: {
+      call: input.call,
+      sessionFile,
+      // Listing a directory by modification time is the host's (to the millisecond; SBCL reads seconds).
+      projectFiles: dir && sessionFile ? projectFiles(dir, sessionFile) : [],
+      cwd: process.cwd(),
+      lineageIds: [...currentBranchIds(sessionManager)],
+      hostBranch: (hostBranch(sessionManager) ?? []).map((e: any) => ({ type: e?.type, role: e?.message?.role })),
+      contextWindow: input.contextWindow,
+      skipCurrentTurn: input.skipCurrentTurn === true,
+    },
+  });
+  const r = reply?.recall as { ok: boolean; text: string; severity?: "error" | "warning" } | undefined;
+  if (!r) return undefined;
+  return r.ok ? { ok: true, text: r.text } : { ok: false, text: r.text, severity: r.severity ?? "error" };
+};
 
 /**
  * One recall call, for the tool and the command alike: the current session or
@@ -236,7 +268,9 @@ export interface RecallInput {
  * (its header included). `ok: false` when there is nothing to read, with how
  * bad that is for a person told so.
  */
-export const recall = (input: RecallInput, surface: RecallSurface): { ok: true; text: string } | { ok: false; text: string; severity: "error" | "warning" } => {
+export const recall = (input: RecallInput, surface: RecallSurface): RecallResult => {
+  const inCore = input.call ? recallInCore(input as RecallInput & { call: NonNullable<RecallInput["call"]> }) : undefined;
+  if (inCore) return inCore;
   const { request, sessionManager } = input;
   const sessionFile = sessionManager.getSessionFile?.();
   if (!sessionFile) return { ok: false, text: "No session file available.", severity: "error" };

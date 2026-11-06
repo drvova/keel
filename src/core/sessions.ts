@@ -109,7 +109,7 @@ const sameFile = (a: string, b: string): boolean => {
 };
 
 /** The project's other session files, newest first (by last write). */
-const projectFiles = (dir: string, currentFile?: string): string[] => {
+export const projectFiles = (dir: string, currentFile?: string): string[] => {
   let names: string[];
   try { names = readdirSync(dir); } catch { return []; }
   return names

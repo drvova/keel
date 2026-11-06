@@ -194,18 +194,77 @@ pattern, else its file (and how many more it names), command or query."
   "A field as `${v ?? \"\"}` writes it."
   (if (or (null v) (eq v :null)) "" (js-string-of v)))
 
-(defun render-entry (message)
-  "MESSAGE in recall's one-line view: (ROLE SUMMARY FILES)."
+(defun call-subject-keys (call)
+  "The arguments CALL's subject shows (tools.ts callSubject keys), so the full view leaves them out."
+  (let* ((args (call-args call)) (kind (call-kind call)))
+    (flet ((key-if (key) (let ((v (json-get args key))) (and (stringp v) (plusp (length v)) (list key)))))
+      (cond ((eq kind :shell) (key-if "command"))
+            ((and (eq kind :search) (or (key-if "pattern") (key-if "pat"))))
+            ((named-paths args)
+             (let ((key (or (path-key-of args) (and (vectorp (json-get args "paths")) (not (stringp (json-get args "paths"))) "paths"))))
+               (and key (list key))))
+            (t (or (key-if "command") (key-if "query")))))))
+
+(defun file-write-of (call)
+  "tools.ts fileWriteOf: what a write or edit puts in its file, as (:path P :content C), (:path P :edits ((OLD . NEW)...)) or (:path P :replace (OLD . NEW)); NIL for another call."
+  (let ((kind (call-kind call)) (args (call-args call)))
+    (when (member kind '(:write :edit))
+      (let ((key (path-key-of args)))
+        (when key
+          (let ((path (json-get args key)) (content (json-get args "content")))
+            (flet ((old-of (o) (or (string-or (json-get o "oldText") nil) (string-or (json-get o "old_string") nil)))
+                   (new-of (o) (or (string-or (json-get o "newText") nil) (string-or (json-get o "new_string") nil))))
+              (let ((edits (let ((e (json-get args "edits"))) (and (vectorp e) (not (stringp e)) (remove-if-not #'json-object-p (coerce e 'list))))))
+                (cond ((and (stringp content) (plusp (length content))) (list :path path :content content))
+                      ((some (lambda (e) (or (old-of e) (new-of e))) edits)
+                       (list :path path :edits (loop for e in edits when (or (old-of e) (new-of e)) collect (cons (or (old-of e) "") (or (new-of e) "")))))
+                      ((or (old-of args) (new-of args)) (list :path path :replace (cons (or (old-of args) "") (or (new-of args) "")))))))))))))
+
+(defparameter +not-arguments+ '("i") "omp's per-call intent line: not an argument of the call.")
+
+(defun indent-lines (text pad)
+  "TEXT with PAD before every line that holds a character: replace(/^(?=.)/gm, pad)."
+  (rx-replace (rx "^(?=.)" "m") text pad :all t))
+
+(defun full-tool-args (calls index chars via)
+  "render-entries.ts fullToolArgs: the arguments the one-line summary leaves out, clipped at CHARS."
+  (let* ((blocks (remove nil
+                         (mapcar (lambda (c)
+                                   (let* ((shown (call-subject-keys c))
+                                          (lines (loop for key in (json-keys (call-args c))
+                                                       for value = (gethash key (call-args c))
+                                                       unless (or (member key shown :test #'string=) (member key +not-arguments+ :test #'string=))
+                                                         collect (format nil "~a: ~a" key
+                                                                         (rx-replace (rx "\\n") (if (stringp value) (rx-replace (rx "\\s+$") value "") (json-string value))
+                                                                                     (format nil "~%  ") :all t)))))
+                                     (and lines (cons (call-name c) lines))))
+                                 calls)))
+         (labelled (> (length blocks) 1))
+         (text (join-strings (mapcar (lambda (b) (if labelled
+                                                     (format nil "  ~a:~%~a" (car b) (indent-lines (join-strings (cdr b) (string #\Newline)) "    "))
+                                                     (indent-lines (join-strings (cdr b) (string #\Newline)) "  ")))
+                                     blocks)
+                             (string #\Newline))))
+    (if (<= (js-length text) chars)
+        text
+        (let ((path (some (lambda (c) (getf (file-write-of c) :path)) calls)))
+          (format nil "~a~%  ...[arguments of #~a clipped at ~d of ~d chars~a]" (js-slice text 0 chars) index chars (js-length text)
+                  (if path (format nil "; query '#~a:~a:full'~a reads the file content" index path via) ""))))))
+
+(defun render-entry (message &optional full index (detail-chars 4000) (via ""))
+  "MESSAGE as recall shows it: (ROLE SUMMARY FILES), its one-line view, or with
+FULL expand's view, a tool call's other arguments clipped at DETAIL-CHARS."
   (let ((role (json-get message "role"))
         (content (json-get message "content")))
-    (flet ((clipped (max) (js-clip (text-of content) max)))
+    (flet ((clipped (max) (if full (text-of content) (js-clip (text-of content) max)))
+           (maybe-clip (text max) (if full text (js-clip text max))))
       (cond ((equal role "user") (list "user" (clipped 300) nil))
             ((equal role "toolResult")
              (list "tool_result" (format nil "[~a] ~a" (js-string-of (json-get message "toolName")) (clipped 200)) nil))
             ((equal role "bashExecution")
-             (list "bash" (js-clip (format nil "$ ~a~%~a" (or-empty (json-get message "command")) (or-empty (json-get message "output"))) 300) nil))
+             (list "bash" (maybe-clip (format nil "$ ~a~%~a" (or-empty (json-get message "command")) (or-empty (json-get message "output"))) 300) nil))
             ((equal role "pythonExecution")
-             (list "python" (js-clip (format nil ">>> ~a~%~a" (or-empty (json-get message "code")) (or-empty (json-get message "output"))) 300) nil))
+             (list "python" (maybe-clip (format nil ">>> ~a~%~a" (or-empty (json-get message "code")) (or-empty (json-get message "output"))) 300) nil))
             ((equal role "fileMention")
              (let ((paths (file-mention-paths message)))
                (list "file" (join-strings (mapcar (lambda (p) (concatenate 'string "@" p)) paths) " ") paths)))
@@ -214,10 +273,11 @@ pattern, else its file (and how many more it names), command or query."
              (let* ((text (clipped 300))
                     (calls (tool-calls-of message))
                     (tools (join-strings (mapcar #'call-line calls) ", "))
-                    (files (mapcan (lambda (c) (copy-list (named-paths (call-args c)))) calls)))
+                    (files (mapcan (lambda (c) (copy-list (named-paths (call-args c)))) calls))
+                    (args (if (and full (plusp (length tools))) (full-tool-args calls index detail-chars via) "")))
                (list "assistant"
                      (if (plusp (length tools))
-                         (join-strings (remove "" (list tools text) :test #'string=) (string #\Newline))
+                         (join-strings (remove "" (list tools args text) :test #'string=) (string #\Newline))
                          text)
                      files)))))))
 

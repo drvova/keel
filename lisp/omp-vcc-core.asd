@@ -32,14 +32,15 @@
      ;; regex: JavaScript's regular expressions, which search compiles a
      ;; query and its terms with.
      (:file "regex")
+     ;; rx: the TS's own regexes as written, on that engine.
+     (:file "rx")
      (:file "search")
      ;; session and render read a session file as recall does: the entries,
      ;; their #N, the branch, the kept originals, and each one rendered.
      (:file "session")
      (:file "render")
-     ;; The summary pipeline: rx (the TS's own regexes as written), blocks,
+     ;; The summary pipeline: blocks,
      ;; the section extractors, the brief and its ranking, the summary itself.
-     (:file "rx")
      (:file "blocks")
      (:file "extract")
      (:file "brief")
@@ -47,6 +48,10 @@
      ;; The compaction: its cut, the working set, and the plan the hook acts on.
      (:file "working-set")
      (:file "compaction")
+     ;; The rest of recall: the request, the project's sessions, the call.
+     (:file "request")
+     (:file "sessions")
+     (:file "recall")
      (:file "server"))))
   :in-order-to ((test-op (test-op "omp-vcc-core/test"))))
 

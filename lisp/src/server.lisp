@@ -41,6 +41,11 @@
 ;;;;   message what the host's convertToLlm makes of it (summary-input.ts
 ;;;;   toSummaryMessage), as it is and as its kept original, and its #N.
 ;;;;
+;;;; recall: one vcc_recall call or /…-recall command (src/core/recall-run.ts recall)
+;;;;   {"op":"recall","input":{call:{surface:"tool",params}|{surface:"command",name,args},
+;;;;    sessionFile, projectFiles (newest first), cwd, lineageIds, hostBranch, contextWindow, skipCurrentTurn}}
+;;;;   -> {"ok":true,"recall":{"ok":B,"text":T,"severity":S?}}
+;;;;
 ;;;; Either search may answer {"ok":false,"unsupported":"regex"}, and the caller
 ;;;; searches as before; {"ok":false,"error":MESSAGE} on any failure.
 ;;;;
@@ -184,6 +189,13 @@ parity test compares with JavaScript's own."
   (handler-case (json-object "ok" :true "plan" (plan-compaction (json-get request "input")))
     ((or left-to-ts regex-unsupported storage-condition) () (json-object "ok" :false "unsupported" "compact"))))
 
+(defun handle-recall (request)
+  "recall-run.ts recall() on the call REQUEST carries in \"input\"."
+  (handler-case
+      (multiple-value-bind (ok text severity) (run-recall (json-get request "input"))
+        (json-object "ok" :true "recall" (json-object "ok" (if ok :true :false) "text" text "severity" severity)))
+    ((or left-to-ts regex-unsupported storage-condition) () (json-object "ok" :false "unsupported" "recall"))))
+
 (defun handle-request (request)
   "The response object to the parsed REQUEST."
   (let ((op (json-get request "op")))
@@ -193,6 +205,7 @@ parity test compares with JavaScript's own."
           ((equal op "regex") (handle-regex request))
           ((equal op "summarize") (handle-summarize request))
           ((equal op "compact") (handle-compact request))
+          ((equal op "recall") (handle-recall request))
           (t (json-object "ok" :false "error" (format nil "unknown op ~a" (json-string (or op :null))))))))
 
 (defun read-stdin ()
