@@ -2,9 +2,12 @@ import { describe, it, expect } from "bun:test";
 import { mkdtempSync, writeFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { loadAllMessages } from "../src/core/load-messages";
+import { readSession, renderMessages } from "../src/core/load-messages";
 
-describe("loadAllMessages", () => {
+// A session file as a recall view loads it (recall-run.ts): read, then rendered.
+const load = (file: string, full: boolean, allowed?: ReadonlySet<string>) => renderMessages(readSession(file).messages, full, allowed);
+
+describe("reading a session for recall", () => {
   it("loads all message entries when no lineage filter is provided", () => {
     const dir = mkdtempSync(join(tmpdir(), "omp-vcc-load-all-"));
     const file = join(dir, "session.jsonl");
@@ -18,7 +21,7 @@ describe("loadAllMessages", () => {
       ];
       writeFileSync(file, lines.join("\n") + "\n", "utf8");
 
-      const loaded = loadAllMessages(file, false);
+      const loaded = load(file, false);
       expect(loaded.map((m) => m.entry.index)).toEqual([0, 1, 2]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -37,7 +40,7 @@ describe("loadAllMessages", () => {
       ];
       writeFileSync(file, lines.join("\n") + "\n", "utf8");
 
-      const loaded = loadAllMessages(file, false);
+      const loaded = load(file, false);
       expect(loaded.map((m) => [m.entry.index, m.entry.role, m.message.role])).toEqual([[1, "user", "user"], [3, "assistant", "assistant"]]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -56,7 +59,7 @@ describe("loadAllMessages", () => {
       // Deliberately omit the final newline to cover the buffered tail as well.
       writeFileSync(file, lines.join("\n"), "utf8");
 
-      const loaded = loadAllMessages(file, true);
+      const loaded = load(file, true);
       expect(loaded.map((m) => m.entry.summary)).toEqual([largeText, "after boundary"]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -67,7 +70,7 @@ describe("loadAllMessages", () => {
     // Fresh session: pi has not persisted any entry, so the JSONL does not exist.
     const dir = mkdtempSync(join(tmpdir(), "omp-vcc-load-missing-"));
     try {
-      const loaded = loadAllMessages(join(dir, "nope", "session.jsonl"), false);
+      const loaded = load(join(dir, "nope", "session.jsonl"), false);
       expect(loaded).toEqual([]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -79,7 +82,7 @@ describe("loadAllMessages", () => {
     const file = join(dir, "session.jsonl");
     try {
       writeFileSync(file, "", "utf8");
-      const loaded = loadAllMessages(file, false);
+      const loaded = load(file, false);
       expect(loaded).toEqual([]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -91,7 +94,7 @@ describe("loadAllMessages", () => {
     // an empty history. It must not be swallowed.
     const dir = mkdtempSync(join(tmpdir(), "omp-vcc-load-eisdir-"));
     try {
-      expect(() => loadAllMessages(dir, false)).toThrow();
+      expect(() => load(dir, false)).toThrow();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -108,10 +111,8 @@ describe("loadAllMessages", () => {
       ];
       writeFileSync(file, lines.join("\n") + "\n", "utf8");
 
-      const loaded = loadAllMessages(file, false, new Set(["m2"]));
-      expect(loaded.map((m) => m.entry)).toHaveLength(1);
-      expect(loaded.map((m) => m.message)).toHaveLength(1);
-      expect(loaded.map((m) => m.entry)[0].index).toBe(1);
+      const loaded = load(file, false, new Set(["m2"]));
+      expect(loaded.map((m) => [m.entry.index, m.message.role])).toEqual([[1, "assistant"]]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

@@ -1,7 +1,6 @@
 // vcc_recall keeps the originals of what omp rewrites in the session file
 // (src/core/raw-store.ts, src/hooks/raw-capture.ts), with no omp setting changed.
-import { testConfig } from "./support/binding";
-import { ompBinding } from "./support/binding";
+import { ompBinding, testConfig } from "./support/binding";
 import { sessionLineage } from "../src/core/session-file";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
@@ -123,15 +122,16 @@ describe("with omp's own session manager", () => {
   it("is taken on omp's events, and not when keepOriginals is off", () => {
     const handlers = new Map<string, Array<(e: unknown, c: unknown) => void>>();
     registerRawCapture({ on: (name: string, h: any) => handlers.set(name, [...(handlers.get(name) ?? []), h]) } as any, testConfig);
-    expect([...handlers.keys()].sort()).toEqual(["agent_end", "context", "message_end", "session_start", "turn_end"]);
     const file = join(dir, "events.jsonl");
     const entries: any[] = [{ type: "message", id: "r1", message: { role: "toolResult", toolCallId: "c", content: text("out") } }];
     const ctx = { sessionManager: { getSessionFile: () => file, getEntries: () => entries } };
+    const fireAll = () => { for (const hs of handlers.values()) for (const h of hs) h({ messages: [] }, ctx); };
     writeFileSync(process.env.OMP_VCC_CONFIG_PATH!, JSON.stringify({ keepOriginals: false }));
-    handlers.get("message_end")![0]({}, ctx);
+    fireAll();
     expect(existsSync(rawStorePath(file))).toBe(false);
+    // Off, the events passed the message by without taking it as seen.
     writeFileSync(process.env.OMP_VCC_CONFIG_PATH!, JSON.stringify({ keepOriginals: true }));
-    handlers.get("turn_end")![0]({}, ctx);
+    handlers.get("message_end")![0]({}, ctx);
     expect([...readRawStore(file, new Set(["r1"])).values()]).toEqual([text("out")]);
   });
 });

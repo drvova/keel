@@ -4,7 +4,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { listProjectSessions, MAX_LISTED_SESSIONS, resolveSession, type SessionInfo } from "../src/core/sessions";
 import { executeRecall } from "../src/tools/recall";
-import { parseCommandRequest, sessionRef } from "../src/core/recall-request";
+import { sessionRef } from "../src/core/recall-request";
 import { PIN_ENTRY_TYPE } from "../src/names";
 
 const header = (id: string, ts: string) => ({ type: "session", version: 3, id, timestamp: ts, cwd: "/work/app" });
@@ -152,14 +152,6 @@ describe("vcc_recall across sessions", () => {
 
   it("an unknown session is an error with the way out", () => {
     expect(executeRecall({ session: "ffff", query: "x" }, sm(currentBranch))).toBe("No earlier session of this project starts with 'ffff'. mode:'sessions' lists them.");
-  });
-});
-
-describe("/omp-vcc-recall arguments", () => {
-  it("parses sessions, session:<id> and scope:project", () => {
-    expect(parseCommandRequest("sessions").action).toEqual({ kind: "sessions", page: 1 });
-    expect(parseCommandRequest("session:aaaa1111 rolled back")).toMatchObject({ session: "aaaa1111", action: { kind: "search", query: "rolled back" } });
-    expect(parseCommandRequest("rolled back scope:project")).toMatchObject({ scope: "project", action: { kind: "search", query: "rolled back" } });
   });
 });
 

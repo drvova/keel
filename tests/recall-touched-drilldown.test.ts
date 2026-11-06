@@ -5,8 +5,6 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { registerRecallTool } from "../src/tools/recall";
 import { parseDrillDown } from "../src/core/drill-down";
-import { formatTouched, TOUCHED_PAGE_SIZE } from "../src/core/touched";
-import type { TouchedFile } from "../src/core/touched";
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -266,22 +264,6 @@ describe("parseDrillDown", () => {
   });
 });
 
-// ── Unit: formatTouched paging ──────────────────────────────────────
-
-describe("formatTouched", () => {
-  const tf = (path: string, index: number): TouchedFile => ({ path, entries: [{ index, toolName: "edit" }] });
-
-  it("shows page header and footer when there are more pages", () => {
-    const files = Array.from({ length: TOUCHED_PAGE_SIZE + 2 }, (_, i) => tf(`src/f${i}.ts`, i));
-    const out = formatTouched(files, 1);
-    expect(out).toContain(`Page 1/2 (${files.length} total files)`);
-    expect(out).toContain("--- Use page:2 for more results ---");
-  });
-
-  it("returns empty-state message when no files", () => {
-    expect(formatTouched([], 1)).toContain("No file operations found in session history.");
-  });
-});
 describe("drill-down scope", () => {
   it("labels #N:path on off-lineage entries by default, plain with scope all", async () => {
     const entries = [

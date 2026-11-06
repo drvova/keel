@@ -1,6 +1,8 @@
 import { ompBinding } from "./support/binding";
 import { describe, it, expect } from "bun:test";
-import { ignoredNote, parseToolRequest } from "../src/core/recall-request";
+import { validateToolArguments } from "@oh-my-pi/pi-ai";
+import { ignoredNote, normalizeToolParams, parseCommandRequest, parseToolRequest } from "../src/core/recall-request";
+import { registerRecallTool } from "../src/tools/recall";
 
 describe("parseToolRequest", () => {
   it("does not report filler defaults as ignored", () => {
@@ -35,11 +37,26 @@ describe("parseToolRequest", () => {
     expect(r.action.kind).toBe("recent");
     expect(ignoredNote(r)).toBe("Ignored: page (page applies to query or range results).\n\n");
   });
+
+  it("with a session, project is named as ignored on either surface", () => {
+    const fromTool = parseToolRequest(normalizeToolParams({ query: "x", scope: "project", session: "@abcd" }) as any);
+    const fromCommand = parseCommandRequest("x scope:project session:abcd");
+    for (const r of [fromTool, fromCommand]) {
+      expect(r).toMatchObject({ scope: "lineage", session: "abcd" });
+      expect(r.ignored?.map((i) => i.param)).toEqual(["scope"]);
+    }
+  });
 });
 
-import { normalizeToolParams } from "../src/core/recall-request";
-import { validateToolArguments } from "@oh-my-pi/pi-ai";
-import { registerRecallTool } from "../src/tools/recall";
+describe("parseCommandRequest", () => {
+  it("takes scope:, session: and page: out of the query, and lists the sessions for 'sessions' alone", () => {
+    expect(parseCommandRequest("license scope:all page:2")).toEqual({ scope: "all", action: { kind: "search", query: "license", page: 2 } });
+    expect(parseCommandRequest("license page:2")).toEqual({ scope: "lineage", action: { kind: "search", query: "license", page: 2 } });
+    expect(parseCommandRequest("rolled back scope:project")).toMatchObject({ scope: "project", action: { kind: "search", query: "rolled back" } });
+    expect(parseCommandRequest("session:aaaa1111 rolled back")).toMatchObject({ session: "aaaa1111", action: { kind: "search", query: "rolled back" } });
+    expect(parseCommandRequest("sessions").action).toEqual({ kind: "sessions", page: 1 });
+  });
+});
 
 describe("normalizeToolParams", () => {
   it("repairs mistakes whose meaning is certain", () => {

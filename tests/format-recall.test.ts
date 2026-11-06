@@ -20,11 +20,9 @@ describe("formatRecallOutput", () => {
     expect(r).toContain("#0 [user] hello");
   });
 
-  it("shows match count with query", () => {
-    const entries: RenderedEntry[] = [
-      { index: 2, role: "assistant", summary: "done" },
-    ];
-    const r = formatRecallOutput(entries, "done");
-    expect(r).toContain('Found 1 matches for "done"');
+  // Search passes its own header (count, page, scope); the query and each hit's snippet are added here.
+  it("names the query after the header and shows a hit's snippet", () => {
+    const hits = [{ index: 2, role: "assistant", summary: "Reading the log", snippet: "...(4 lines above)\nthe job is done" }];
+    expect(formatRecallOutput(hits, "done", "1 matches")).toBe('1 matches for "done":\n\n#2 [assistant] ...(4 lines above)\nthe job is done');
   });
 });

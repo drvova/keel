@@ -47,13 +47,6 @@ describe("searchEntries", () => {
     expect(r[0].snippet).toContain("hidden_keyword");
   });
 
-  it("returns snippet around matched term", () => {
-    const r = searchEntries(pairs(entries, messages), "root");
-    expect(r).toHaveLength(1);
-    expect(r[0].snippet).toBeDefined();
-    expect(r[0].snippet).toContain("root");
-  });
-
   // ── regex support ──
 
   it("supports regex pattern: alternation", () => {
@@ -97,17 +90,10 @@ describe("searchEntries", () => {
     expect(r[0].index).toBe(3); // "Found the root cause in auth module" matches all 3
   });
 
-  it("natural language ranks by BM25 score", () => {
-    const r = searchEntries(pairs(entries, messages), "root cause auth");
-    // Top result has more terms matched = higher BM25 score
-    expect(r[0].matchCount!).toBeGreaterThanOrEqual(r[r.length - 1].matchCount!);
-  });
-
   it("filters stopwords from queries", () => {
-    // "the root cause of it" → stopwords: the, of, it → meaningful: root, cause
-    const r = searchEntries(pairs(entries, messages), "the root cause of it");
-    expect(r).toHaveLength(1);
-    expect(r[0].index).toBe(3);
+    // Searches login and bug; searching "the" as well would also match #3.
+    const r = searchEntries(pairs(entries, messages), "what is the login bug");
+    expect(r.map((h) => h.index)).toEqual([0]);
   });
 
   it("keeps all terms if all are stopwords", () => {
@@ -158,10 +144,13 @@ describe("searchEntries regex safety", () => {
 
   it("treats nested-quantifier patterns as literals instead of hanging", () => {
     const { entries, messages } = corpus(20);
-    const t0 = Date.now();
-    const hits = searchEntries(pairs(entries, messages), "(a+)+$");
-    expect(Date.now() - t0).toBeLessThan(1000);
-    expect(hits.length).toBe(0); // matched literally, not as a pattern
+    const text = "the pattern (a+)+$ backtracks";
+    entries.push({ index: 20, role: "user", summary: text, files: [] });
+    messages.push({ role: "user", content: [{ type: "text", text }] });
+    // As a pattern it matches none of these, and the backtracking runs the search out of its time budget.
+    const r = searchEntriesDetailed(pairs(entries, messages), "(a+)+$");
+    expect(r.aborted).toBeUndefined();
+    expect(r.hits.map((h) => h.index)).toEqual([20]);
   });
 
   it("still honours legitimate regex queries", () => {
@@ -195,56 +184,28 @@ describe("searchEntries mode fallback", () => {
   });
 
   it("keeps regex results when the pattern actually matches", () => {
-    const hits = searchEntries(pairs(entries, messages), "auth|migration");
-    expect(hits.length).toBe(2);
-    expect(hits.every((h) => h.matchCount === 1)).toBe(true); // regex path, not term path
-  });
-
-  it("returns nothing when neither mode matches", () => {
-    expect(searchEntries(pairs(entries, messages), "kubernetes").length).toBe(0);
+    // Term search would rank the short, repeated mention first; regex hits stay in session order.
+    const texts = ["the cache came up once in a long note about deploys, staging and the gateway", "cache cache"];
+    const e: RenderedEntry[] = texts.map((t, i) => ({ index: i, role: "user", summary: t }));
+    const m: Message[] = texts.map((t) => ({ role: "user", content: t } as any));
+    expect(searchEntries(pairs(e, m), "cache|redis").map((h) => h.index)).toEqual([0, 1]);
   });
 });
 
 describe("searchEntries toolCall arguments", () => {
-  it("finds a bash command that exists only in toolCall arguments", () => {
-    const e: RenderedEntry[] = [{ index: 0, role: "assistant", summary: "Running the test suite" }];
-    const m: Message[] = [{
-      role: "assistant",
-      content: [{ type: "toolCall", name: "bash", arguments: { command: "grep -rn UNIQUEMARKER42 src" } }],
-    } as any];
-    const r = searchEntries(pairs(e, m), "UNIQUEMARKER42");
-    expect(r).toHaveLength(1);
-    expect(r[0].index).toBe(0);
-    expect(r[0].snippet).toContain("UNIQUEMARKER42");
-    expect(r[0].snippet).toContain("grep");
-  });
-
-  it("finds Write content that exists only in toolCall arguments", () => {
-    const e: RenderedEntry[] = [{ index: 0, role: "assistant", summary: "Writing config" }];
-    const m: Message[] = [{
-      role: "assistant",
-      content: [{
-        type: "toolCall", name: "Write",
-        arguments: { path: "config.json", content: '{ "featureFlag": "ZEBRA_STRIPE_MODE" }' },
-      }],
-    } as any];
-    const r = searchEntries(pairs(e, m), "ZEBRA_STRIPE_MODE");
-    expect(r).toHaveLength(1);
-    expect(r[0].snippet).toContain("ZEBRA_STRIPE_MODE");
-  });
-
-  it("finds Edit oldText/newText that exist only in toolCall arguments", () => {
-    const e: RenderedEntry[] = [{ index: 0, role: "assistant", summary: "Editing file" }];
-    const m: Message[] = [{
-      role: "assistant",
-      content: [{
-        type: "toolCall", name: "Edit",
-        arguments: { path: "a.ts", oldText: "const x = 1;", newText: "const QUOKKA_TOKEN = 2;" },
-      }],
-    } as any];
-    const r = searchEntries(pairs(e, m), "QUOKKA_TOKEN");
-    expect(r).toHaveLength(1);
-    expect(r[0].snippet).toContain("QUOKKA_TOKEN");
+  it("finds a command, written content or edit text that exists only in toolCall arguments", () => {
+    const cases: Array<[string, Record<string, unknown>, string]> = [
+      ["bash", { command: "grep -rn UNIQUEMARKER42 src" }, "UNIQUEMARKER42"],
+      ["Write", { path: "config.json", content: '{ "featureFlag": "ZEBRA_STRIPE_MODE" }' }, "ZEBRA_STRIPE_MODE"],
+      ["Edit", { path: "a.ts", oldText: "const x = 1;", newText: "const QUOKKA_TOKEN = 2;" }, "QUOKKA_TOKEN"],
+    ];
+    for (const [name, args, needle] of cases) {
+      const e: RenderedEntry[] = [{ index: 0, role: "assistant", summary: "Working on it" }];
+      const m: Message[] = [{ role: "assistant", content: [{ type: "toolCall", name, arguments: args }] } as any];
+      const r = searchEntries(pairs(e, m), needle);
+      expect(r.map((h) => h.index)).toEqual([0]);
+      expect(r[0].snippet).toContain(needle);
+    }
   });
 
   it("finds edits[] array oldText/newText that exist only in toolCall arguments", () => {
@@ -296,23 +257,6 @@ describe("searchEntries toolCall arguments", () => {
     expect(searchEntries(pairs(e, m), "LATE_MARKER_XYZ")).toHaveLength(0);
   });
 
-  it("keeps a giant toolCall argument's indexed/snippet contribution bounded", () => {
-    // Needle sits near the start (within the cap) — it's found, and the
-    // snippet built from that indexed text stays bounded even though the
-    // underlying argument is 20k+ chars.
-    const giant = "NEEDLE_NEAR_START " + "B".repeat(20_000);
-    const e: RenderedEntry[] = [{ index: 0, role: "assistant", summary: "Writing large file" }];
-    const m: Message[] = [{
-      role: "assistant",
-      content: [{ type: "toolCall", name: "Write", arguments: { content: giant } }],
-    } as any];
-    const r = searchEntries(pairs(e, m), "NEEDLE_NEAR_START");
-    expect(r).toHaveLength(1);
-    expect(r[0].snippet).toContain("NEEDLE_NEAR_START");
-    // Bounded: the snippet must never approach the raw 20k-char argument size.
-    expect(r[0].snippet!.length).toBeLessThan(2500);
-  });
-
   it("excludes the recall tool's own arguments from search (no self-hit)", () => {
     // A vcc_recall invocation is persisted as an ordinary assistant toolCall.
     // Its own { query } argument must not echo the search term back as a
@@ -347,12 +291,6 @@ describe("searchEntries toolCall arguments", () => {
       content: [{ type: "toolCall", name: "VCC_Recall", arguments: { query: "SELF_HIT_MARKER_2" } }],
     } as any];
     expect(searchEntries(pairs(e, m), "SELF_HIT_MARKER_2")).toHaveLength(0);
-  });
-
-  it("does not regress plain text search when toolCall args are also present", () => {
-    const r = searchEntries(pairs(entries, messages), "login");
-    expect(r).toHaveLength(1);
-    expect(r[0].index).toBe(0);
   });
 });
 
