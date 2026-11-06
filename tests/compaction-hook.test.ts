@@ -21,7 +21,7 @@ afterAll(() => {
   rmSync(tmpDir, { recursive: true, force: true });
 });
 
-// The stats toast is shown 500 ms after session_compact (scheduleCompactionStatsNotify).
+// The stats toast is shown 500 ms after session_compact (tellCompactionStats).
 // Under fake timers, jest.runAllTimers() fires it, and anything else scheduled, at once.
 beforeEach(() => jest.useFakeTimers());
 afterEach(() => jest.useRealTimers());
@@ -293,6 +293,23 @@ describe("compaction hook: compact-all path", () => {
     expect(userMessages).toEqual(["continue"]);
     expect(customMessages).toEqual([]);
     expect(notifyCalls.some((call) => call.msg.startsWith("omp-vcc: kept 1/2 turns,"))).toBe(true);
+  });
+
+  test("in print mode the outcome line of an automatic pass goes to stderr, as its reasons do", async () => {
+    setConfig({ debug: false, overrideDefaultCompaction: true });
+    const { pi, invokeBefore, invokeCompact, ctx } = createMockOmp();
+    ctx.hasUI = false;
+    register(pi);
+    const written: string[] = [];
+    const write = process.stderr.write;
+    (process.stderr as any).write = (chunk: string) => (written.push(String(chunk)), true);
+    try {
+      invokeBefore(makeEvent([msg("m1", "user"), msg("m2", "assistant"), msg("m3", "user"), msg("m4", "assistant")], undefined, { reason: "threshold" }));
+      await invokeCompact({ type: "session_compact", fromExtension: true, compactionEntry: { details: { compactor: "omp-vcc", reason: "threshold", willRetry: false } } });
+    } finally {
+      (process.stderr as any).write = write;
+    }
+    expect(written.some((w) => w.startsWith("omp-vcc: kept 1/2 turns,"))).toBe(true);
   });
 
   test("follow-up prompt does not block compact metrics notify", async () => {

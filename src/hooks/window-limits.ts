@@ -4,7 +4,7 @@ import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { modelKey, recordLearnedWindow, type WindowInfo } from "../core/model-limits";
 import type { Config } from "../core/settings";
 import { limitFromOverflowError, type TriggerRule } from "../core/window";
-import { compactAndWait, type Binding, type CompactionTrigger, type HostProfile } from "../host";
+import { compactAndWait, tell, type Binding, type CompactionTrigger, type HostProfile } from "../host";
 import { isRecoveryReason, type CompactionReason } from "../types";
 
 /** What window tracking learns over a binding's sessions, and the compaction it starts itself. */
@@ -119,10 +119,10 @@ export const registerWindowTracking = (pi: ExtensionAPI, state: WindowState, hos
     if (!state.windowNoticeShown) {
       state.windowNoticeShown = true;
       try {
-        ctx.ui?.notify?.(
+        tell(
+          ctx,
           `omp-vcc: ${modelKey(ctx.model)} holds ${w.effective} tokens (an overflow error said so), not the ${w.host} ${host.displayName} uses; ` +
             `omp-vcc compacts at ${trigger}. Set its contextWindow in ${host.modelsFile} to make ${host.displayName} do the same.`,
-          "info",
         );
       } catch {}
     }

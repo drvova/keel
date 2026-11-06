@@ -1,6 +1,7 @@
 // The line a compaction's outcome is told in, and the toast that shows it:
 // read by the hook (automatic and /compact passes) and /omp-vcc's feedback.
 import type { BudgetCutKind } from "./cut";
+import { tell, type NotifyCtx } from "../host";
 
 /** What the outcome line says. */
 export interface CompactionStats {
@@ -40,9 +41,11 @@ export const formatCompactionStats = (stats: CompactionStats): string => {
 /** The hook returns before the host applies the compaction and shows its own status; the line comes after it. */
 const AFTER_HOST_STATUS_MS = 500;
 
-export const scheduleCompactionStatsNotify = (ctx: any, stats: CompactionStats) => {
+/** The outcome line: at once where there is no UI (stderr; print mode may exit before a timer), else after the host's status. */
+export const tellCompactionStats = (ctx: NotifyCtx, stats: CompactionStats): void => {
+  if (ctx.hasUI === false) return tell(ctx, formatCompactionStats(stats));
   setTimeout(() => {
     // The session may have ended or the UI gone by then.
-    try { ctx?.ui?.notify?.(formatCompactionStats(stats), "info"); } catch {}
+    try { tell(ctx, formatCompactionStats(stats)); } catch {}
   }, AFTER_HOST_STATUS_MS);
 };

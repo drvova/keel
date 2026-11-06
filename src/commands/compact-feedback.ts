@@ -2,8 +2,7 @@
 // compaction it asked for ends.
 import { afterReset, hostBranch } from "../core/session-file";
 import { tell, type HostProfile, type NotifyCtx } from "../host";
-export { tell, type NotifyCtx } from "../host";
-import { formatCompactionStats, scheduleCompactionStatsNotify, type CompactionStats } from "../compaction/stats";
+import { tellCompactionStats, type CompactionStats } from "../compaction/stats";
 
 /** The branch has a compaction still in effect (none, or one before omp's /clear, does not count). */
 const compactedBefore = (ctx: NotifyCtx): boolean =>
@@ -15,8 +14,7 @@ export const reportCompactDone = (
   followUpPrompt: string,
   sendUserMessage: (content: string) => unknown,
 ): void => {
-  if (stats && ctx.hasUI === false) tell(ctx, formatCompactionStats(stats));
-  else if (stats) scheduleCompactionStatsNotify(ctx, stats);
+  if (stats) tellCompactionStats(ctx, stats);
   else tell(ctx, "Compacted with omp-vcc");
   if (followUpPrompt) {
     try {

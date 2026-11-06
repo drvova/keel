@@ -30,7 +30,7 @@ import {
   type OwnCutCancelReason,
 } from "../compaction/cut";
 import { assembleSummary } from "../compaction/assemble";
-import { scheduleCompactionStatsNotify, type CompactionStats } from "../compaction/stats";
+import { tellCompactionStats, type CompactionStats } from "../compaction/stats";
 
 export { OMP_VCC_COMPACT_INSTRUCTION } from "../core/compact-args";
 
@@ -353,7 +353,7 @@ export const registerCompactionHook = (
     if (details.willRetry) return;
     const stats = state.lastStats;
     if (!stats) return;
-    scheduleCompactionStatsNotify(ctx, stats);
+    tellCompactionStats(ctx, stats);
     // omp resumes an interrupted run by itself after automatic maintenance
     // (compaction.autoContinue); only a /compact follow-up prompt is sent here.
     if (followUpPrompt) {
