@@ -57,6 +57,8 @@
      (:file "pins")
      ;; raw-capture: the originals of what omp rewrites, kept as they land.
      (:file "raw-capture")
+     ;; args: what /omp-vcc hands the hook, and the hook reads back.
+     (:file "args")
      ;; The rest of recall: the request, the project's sessions, the call.
      (:file "request")
      (:file "sessions")

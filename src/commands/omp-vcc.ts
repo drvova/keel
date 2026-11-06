@@ -12,7 +12,7 @@
 // onError say it ended. So the marker goes both ways, and the command waits for
 // whichever the host settles by (omp: the call's promise; Pi: the callbacks)
 // before it clears the state.
-import { buildVccCustomInstructions, parseKeepAndPrompt } from "../core/compact-args";
+import { commandArgs } from "../core/compact-args";
 import type { CompactionState } from "../hooks/compaction";
 import { reportCompactDone, reportCompactError } from "../commands/compact-feedback";
 import { compactAndWait, type HostProfile } from "../host";
@@ -22,8 +22,7 @@ export const registerOmpVccCommand = (pi: ExtensionAPI, state: CompactionState, 
   pi.registerCommand(host.command, {
     description: "Compact the conversation into an omp-vcc structured summary (keep:N keeps the last N user turns)",
     handler: async (args, ctx) => {
-      const { followUpPrompt, keepUserTurns } = parseKeepAndPrompt(args);
-      const instructions = buildVccCustomInstructions(keepUserTurns);
+      const { followUpPrompt, instructions } = commandArgs(args);
       state.lastStats = null;
       state.lastCancelNotice = null;
       state.pendingManualInstructions = instructions;

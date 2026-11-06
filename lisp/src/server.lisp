@@ -71,6 +71,10 @@
 ;;;;    entries:[{type, id, message?}], kept:[ID...]}}
 ;;;;   -> {"ok":true,"replace":[{i, text}...]}
 ;;;;
+;;;; args: a compaction command's text and the instructions the hook reads (src/core/compact-args.ts)
+;;;;   {"op":"args","command":TEXT} -> {"ok":true,"followUpPrompt":P,"keepUserTurns":N|null,"instructions":I}
+;;;;   {"op":"args","instructions":TEXT|null} -> {"ok":true,"fromCommand":B,"keepUserTurns":N|null,"followUpPrompt":P|null}
+;;;;
 ;;;; window: the window rules (src/core/window.ts), case by case
 ;;;;   {"op":"window","cases":[{"error":TEXT} | {ruleName, window, hostSettings|policy,
 ;;;;    recovering, tokensBefore, overheadTokens, workingSet}...]}
@@ -278,6 +282,7 @@ parity test compares with JavaScript's own."
           ((equal op "settings") (handle-settings request))
           ((equal op "pin") (handle-pin request))
           ((equal op "raw-capture") (handle-raw-capture request))
+          ((equal op "args") (handle-args request))
           ((equal op "placeholders") (handle-placeholders request))
           ((equal op "context-edits") (handle-context-edits request))
           (t (json-object "ok" :false "error" (format nil "unknown op ~a" (json-string (or op :null))))))))
