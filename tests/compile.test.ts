@@ -451,6 +451,15 @@ describe("file lists follow recent work", () => {
     expect(sectionOf(second.text, "Files And Changes")).toBe("- Modified: (+5 earlier) f6.ts, f7.ts, f8.ts, f9.ts, f0.ts, f10.ts, f11.ts, f12.ts, f13.ts, f14.ts");
   });
 
+  it("keeps two tracked commands that share their first 80 characters apart, through a merge", () => {
+    const base = `kubectl get pods --namespace=production-cluster-eu-west --output=wide --selector=app=`;
+    const run = (cmd: string) => [assistantWithToolCall("bash", { command: cmd })];
+    const opts = { trackCommands: ["kubectl"], limits: DEFAULT_SUMMARY_LIMITS };
+    const first = compileSummary({ messages: [userMsg("check"), ...run(`${base}api`)], ...opts });
+    const second = compileSummary({ messages: [userMsg("again"), ...run(`${base}worker`)], previous: previousOf(first.state), ...opts });
+    expect(second.state.tracked).toEqual([{ name: "kubectl", entries: [`${base}api`, `${base}worker`] }]);
+  });
+
   // Summaries written before this fix end the list with "(+N more)".
   it("drops the old (+N more) marker when merging a summary from an older version", () => {
     const old = "[Files And Changes]\n- Modified: src/a.ts, src/b.ts (+7 more)";

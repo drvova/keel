@@ -167,6 +167,14 @@ describe("history index across compactions (the hook)", () => {
     expect(c.summary).toContain("#0–#3: earlier, not indexed");
   });
 
+  it("after another compactor's summary, this window's requests are not the session's first ones", () => {
+    const llm = "## Goal\nThe user is building a payments service.\n\n## Progress\n- Implemented the ledger.";
+    const theirs = { id: "k0", type: "compaction", firstKeptEntryId: "", summary: llm, details: { readFiles: [] } };
+    const c = compact([...turns(2), theirs, ...turns(3)], llm);
+    expect(c.summary).not.toContain("[Early Session Requests]");
+    expect(c.summary).toContain("[User Messages]");
+  });
+
   it("starts over after omp's /clear", () => {
     const first = turns(3);
     const c1 = compact(first);

@@ -61,6 +61,14 @@ describe("extractFiles", () => {
     expect([...extractFiles(blocks).modified].sort()).toEqual(["a.ts", "b.ts"]);
   });
 
+  it("a write or edit that failed changed nothing, though the host's list names it", () => {
+    const failed = (name: string, args: Record<string, unknown>): NormalizedBlock => ({ kind: "tool_call", name, args, failed: true });
+    const r = extractFiles([failed("edit", { path: "a.ts", oldText: "x", newText: "y" }), failed("write", { path: "b.ts", content: "z" })], { changed: ["a.ts", "b.ts", "c.ts"] });
+    // c.ts is a call the blocks do not show: the host's word stands.
+    expect([...r.modified]).toEqual(["c.ts"]);
+    expect([...r.created]).toEqual([]);
+  });
+
   it("seeds activity from hook-provided fileOps", () => {
     const r = extractFiles([], { read: ["x.ts"], changed: ["y.ts"] });
     expect([...r.read]).toEqual(["x.ts"]);

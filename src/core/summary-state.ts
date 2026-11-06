@@ -13,7 +13,7 @@ import { EARLY_REQUESTS_KEPT, extractUserMessages } from "../extract/user-messag
 import { addCommit, extractCommits, type Commit } from "../extract/commits";
 import { extractTrackedCommands } from "../extract/tracked-commands";
 import { buildBriefSections, stringifyBrief } from "./brief";
-import { capBrief, trackedEntry, wrapLongLines } from "./format";
+import { capBrief, wrapLongLines } from "./format";
 import type { SummaryLimits } from "./window";
 import { isObject } from "./content";
 
@@ -68,7 +68,8 @@ export const freshState = (input: FreshInput): SummaryState => {
     commits: extractCommits(blocks),
     tracked: [...tracked.byCommand]
       .filter(([, entries]) => entries.size > 0)
-      .map(([name, entries]) => ({ name, entries: [...entries].map(trackedEntry) })),
+      // Whole: two invocations sharing a prefix are two entries; the summary clips what it shows.
+      .map(([name, entries]) => ({ name, entries: [...entries] })),
     userMessages: messages.slice(early.length),
     // Sized by the ranked selection's budget, not by lines.
     brief: wrapLongLines(brief),

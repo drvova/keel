@@ -34,7 +34,7 @@ export const RECALL_NOTE =
  * '...'`) would break the section's line, and a separator inside it is escaped
  * (` \| `) so it reads as one entry. Then clipped.
  */
-export const trackedEntry = (entry: string): string => {
+const trackedEntry = (entry: string): string => {
   const line = entry.replace(/\s+/g, " ").replaceAll(COMMAND_SEPARATOR, " \\| ");
   return line.length > TRACKED_ENTRY_CHARS ? `${line.slice(0, TRACKED_ENTRY_CHARS)}…` : line;
 };
@@ -142,7 +142,7 @@ export const renderSummary = (input: RenderInput): { text: string; sections: str
     [SECTION.early, section(SECTION.early, state.earlyRequests)],
     [SECTION.files, section(SECTION.files, fileLines(state.files, limits.filesPerCategory))],
     [SECTION.commits, section(SECTION.commits, state.commits.slice(-limits.commits).map((c) => (c.hash ? `${c.hash}: ${c.message}` : c.message)))],
-    [SECTION.tracked, section(SECTION.tracked, state.tracked.map((t) => `${t.name}: ${capItems(t.entries, limits.commandsPerName, COMMAND_SEPARATOR)}`))],
+    [SECTION.tracked, section(SECTION.tracked, state.tracked.map((t) => `${t.name}: ${capItems(t.entries.map(trackedEntry), limits.commandsPerName, COMMAND_SEPARATOR)}`))],
     [SECTION.userMessages, section(SECTION.userMessages, state.userMessages.slice(-limits.userMessages))],
     [SECTION.history, section(SECTION.history, input.history ?? [])],
   ];
