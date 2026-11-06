@@ -2,6 +2,7 @@
 // by a real model in omp (or Pi, with OMP_VCC_LH_HOST=pi) with omp-vcc loaded,
 // omp's idle pass (Pi's /compact) every 6 turns (tests/support/long-horizon.ts).
 // Numbers for the current code: bun run scripts/benchmark-long-horizon.ts
+import { pairs } from "./support/pairs";
 import { beforeAll, describe, expect, it } from "bun:test";
 import { realModel, runLongHorizon, type LongHorizonResult } from "./support/long-horizon";
 import { sessionHost } from "./support/host-session";
@@ -102,7 +103,7 @@ describe("recall search: inflected forms", () => {
       { role: "user", content: "unrelated message about the docs" },
     ];
     const rendered = msgs.map((m, i) => renderMessage(m, i));
-    expect(searchEntries(rendered, msgs, "rounding failure").map((h) => h.index)).toEqual([0]);
+    expect(searchEntries(pairs(rendered, msgs), "rounding failure").map((h) => h.index)).toEqual([0]);
   });
 });
 

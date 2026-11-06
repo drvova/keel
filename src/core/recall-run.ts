@@ -1,6 +1,7 @@
-import { readSession, renderMessages, type LoadedMessages, type RecallMessage, type SessionRead } from "./load-messages";
-import { searchEntriesDetailed, getTouchedFiles, type SearchHit } from "./search-entries";
-import { formatRecallOutput, formatTouchedOutput, TOUCHED_PAGE_SIZE } from "./format-recall";
+import { readSession, renderMessages, type LoadedEntry, type RecallMessage, type SessionRead } from "./load-messages";
+import { searchEntriesDetailed, type SearchHit, type SearchResult } from "./search-entries";
+import { formatRecallOutput } from "./format-recall";
+import { formatTouched, touchedFiles } from "./touched";
 import { expandEntryFile } from "./drill-down";
 import { EXPAND_DETAIL_CHARS } from "./render-entries";
 import { ignoredNote, type RecallRequest, type RecallScope } from "./recall-request";
@@ -25,7 +26,7 @@ export interface RecallView {
   project?: ProjectSessions;
   /** Set when the view is over one of those earlier sessions instead of the current one. */
   session?: SessionInfo;
-  load(full: boolean): LoadedMessages;
+  load(full: boolean): LoadedEntry[];
   /** One recall result's cap (recallOutputChars). */
   maxChars: number;
   /** The message at `#N`, on any branch. */
@@ -85,7 +86,7 @@ export const openRecallView = (
   // scope:'project' reads the current session on its current path, like lineage;
   // only its search reaches further.
   const lineageEntryIds = scope !== "all" ? currentBranchIds(sessionManager) : undefined;
-  const cache = new Map<boolean, LoadedMessages>();
+  const cache = new Map<boolean, LoadedEntry[]>();
   let wide: RecallView | undefined;
   let turn: Set<number> | undefined;
   const view: RecallView = {
@@ -254,7 +255,7 @@ const runAction = (request: RecallRequest, view: RecallView, hints: RecallPaging
     case "drill": {
       // The entry is read from any branch; scope only decides whether it is off-path.
       const t = action.target;
-      const offPath = !scopeAll && !view.load(false).rendered.some((m) => m.index === t.index);
+      const offPath = !scopeAll && !view.load(false).some((m) => m.entry.index === t.index);
       return (offPath ? OFF_PATH_NOTE : "") +
         expandEntryFile(view.message(t.index), t.index, t.pathPattern, t.full, t.offset, t.limit, { maxChars: view.maxChars, via: inSession(view) });
     }
@@ -276,8 +277,7 @@ const runAction = (request: RecallRequest, view: RecallView, hints: RecallPaging
       return runSearch(action.query, action.page, view, hints, hints.skipCurrentTurn ? view.currentTurn() : undefined);
 
     case "recent": {
-      const { rendered } = view.load(false);
-      return (scopeAll ? "Scope: all\n\n" : "") + formatRecallOutput(rendered.slice(-RECENT_COUNT));
+      return (scopeAll ? "Scope: all\n\n" : "") + formatRecallOutput(view.load(false).slice(-RECENT_COUNT).map((m) => m.entry));
     }
   }
 };
@@ -296,9 +296,9 @@ const runExpand = (indices: number[], view: RecallView): string => {
   const pools = view.scope === "all" ? [view] : [view, view.widen()];
   const lookup = (i: number) => {
     for (const v of pools) {
-      const { rendered, rawMessages } = v.load(true);
-      const pos = rendered.findIndex((m) => m.index === i);
-      if (pos >= 0) return { entry: rendered[pos], raw: rawMessages[pos], v, pos };
+      const loaded = v.load(true);
+      const pos = loaded.findIndex((m) => m.entry.index === i);
+      if (pos >= 0) return { entry: loaded[pos].entry, raw: loaded[pos].message, v, pos };
     }
     return undefined;
   };
@@ -315,15 +315,15 @@ const runExpand = (indices: number[], view: RecallView): string => {
     out.push(entry);
     const ids = new Set(toolCallsOf(raw).flatMap((c) => c.id ?? []));
     if (ids.size === 0) continue;
-    const { rendered, rawMessages } = v.load(true);
-    for (let j = pos + 1; j < rendered.length && ids.size > 0; j++) {
-      const r = rawMessages[j] as any;
+    const loaded = v.load(true);
+    for (let j = pos + 1; j < loaded.length && ids.size > 0; j++) {
+      const r = loaded[j].message as any;
       // A call's results come before the next assistant message; past it, a
       // reused id (after an interrupted call) belongs to a later call.
       if (r?.role === "assistant") break;
       if (r?.role !== "toolResult" || !ids.has(r.toolCallId)) continue;
       ids.delete(r.toolCallId);
-      const res = rendered[j];
+      const res = loaded[j].entry;
       if (requested.has(res.index)) continue;
       const clipAt = v.detailChars;
       const summary = res.summary.length > clipAt
@@ -349,13 +349,13 @@ const runRange = (range: [number, number], page: number, view: RecallView): stri
   const [lo, to] = range;
   let hi = to;
   const scopeAll = view.scope === "all";
-  const { rendered } = view.load(false);
+  const rendered = view.load(false).map((m) => m.entry);
   let entries = rendered.filter((m) => m.index >= lo && m.index <= hi);
 
   if (entries.length === 0) {
     if (!scopeAll) {
       const wide = view.widen();
-      if (wide.load(false).rendered.some((m) => m.index >= lo && m.index <= hi)) {
+      if (wide.load(false).some((m) => m.entry.index >= lo && m.entry.index <= hi)) {
         return OFF_PATH_NOTE + runRange(range, page, wide);
       }
     }
@@ -391,10 +391,8 @@ const runRange = (range: [number, number], page: number, view: RecallView): stri
  * which hid earlier matches.
  */
 const searchBefore = (view: RecallView, query: string, skip: Set<number> | undefined) => {
-  const { rendered, rawMessages } = view.load(false);
-  if (!skip?.size) return searchEntriesDetailed(rendered, rawMessages, query);
-  const keep = rendered.map((m) => !skip.has(m.index));
-  return searchEntriesDetailed(rendered.filter((_, i) => keep[i]), rawMessages.filter((_, i) => keep[i]), query);
+  const loaded = view.load(false);
+  return searchEntriesDetailed(skip?.size ? loaded.filter((m) => !skip.has(m.entry.index)) : loaded, query);
 };
 
 /** A search of this session found nothing: name the project's earlier sessions, which it did not search. */
@@ -408,7 +406,7 @@ const otherSessionsNote = (view: RecallView, hints: RecallPagingHints): string =
 const runSearch = (query: string, page: number, view: RecallView, hints: RecallPagingHints, skip?: Set<number>): string => {
   const result = searchBefore(view, query, skip);
   if (result.aborted) return result.aborted;
-  const { hits, totalBeforeCap, truncated } = result;
+  const { hits } = result;
   if (hits.length === 0 && view.scope === "lineage") {
     const wide = view.widen();
     if (searchBefore(wide, query, skip).hits.length > 0) {
@@ -416,59 +414,56 @@ const runSearch = (query: string, page: number, view: RecallView, hints: RecallP
     }
   }
   if (hits.length === 0 && skip?.size) {
-    const inTurn = searchEntriesDetailed(view.load(false).rendered, view.load(false).rawMessages, query).hits
+    const inTurn = searchEntriesDetailed(view.load(false), query).hits
       .filter((h) => skip.has(h.index)).length;
     if (inTurn > 0) {
       return `No earlier matches for "${query}"; its ${inTurn} match${inTurn === 1 ? " is" : "es are"} in the current turn, which is already in your context.` +
         otherSessionsNote(view, hints);
     }
   }
-  // Single source of truth for page count: hits.length, the same array
-  // that's actually paginated below (already floor-filtered and capped).
+  const none = hits.length === 0 ? otherSessionsNote(view, hints) : "";
+  return pageOfHits(result, query, page, {
+    where: view.scope === "all" ? " (scope: all)" : "",
+    scope: view.scope,
+    hints,
+    around: (top) => hints.aroundHit?.(top.index, view.scope) ?? "",
+  }) + none;
+};
+
+/**
+ * One page of search hits: a header with the count (and how many the hard cap
+ * left out), the hits, where to read around the first, and the next page's
+ * call. A page past the last says which pages exist: the cap fixes the
+ * reachable range, so it is not "no matches".
+ */
+const pageOfHits = (
+  { hits, totalBeforeCap, truncated }: SearchResult,
+  query: string,
+  page: number,
+  opts: { where: string; scope: RecallScope; hints: RecallPagingHints; around: (top: SearchHit) => string },
+): string => {
   const totalPages = Math.ceil(hits.length / SEARCH_PAGE_SIZE);
-  const scopeSuffix = view.scope === "all" ? " (scope: all)" : "";
-  // The hard cap can discard genuine matches; hits.length alone would then
-  // understate the real total. Say so explicitly. Neutral wording ("showing",
-  // not "showing top"): regex-path hits are chronological with no relevance
-  // score, so "top" would falsely imply a ranking only the BM25 path has.
+  // Neutral wording ("showing", not "showing top"): regex hits are chronological, unranked.
   const truncationNote = truncated
     ? ` — showing ${hits.length} of ${totalBeforeCap} matches, refine your query for more precise results`
     : "";
-
-  // The hard cap creates a fixed reachable page range (1..totalPages). A page
-  // beyond it isn't "no matches": say which pages exist instead of falling
-  // through to formatRecallOutput's zero-hit message, which would be false.
   if (hits.length > 0 && page > totalPages) {
-    return `Page ${page} is outside the available range 1-${totalPages} ` +
-      `(${hits.length} matches${scopeSuffix}${truncationNote}). ` +
-      hints.outOfRange(query, view.scope, totalPages, truncated);
+    return `Page ${page} is outside the available range 1-${totalPages} (${hits.length} matches${opts.where}${truncationNote}). ` +
+      opts.hints.outOfRange(query, opts.scope, totalPages, truncated);
   }
-
   const start = (page - 1) * SEARCH_PAGE_SIZE;
   const pageHits = hits.slice(start, start + SEARCH_PAGE_SIZE);
   const header = totalPages > 1
-    ? `Page ${page}/${totalPages} (${hits.length} total matches${scopeSuffix}${truncationNote})`
-    : `${hits.length} matches${scopeSuffix}${truncationNote}`;
-  const around = pageHits.length > 0 && hints.aroundHit ? hints.aroundHit(pageHits[0].index, view.scope) : "";
-  const footer = page < totalPages ? hints.nextPage(query, view.scope, page + 1) : "";
-  const none = hits.length === 0 ? otherSessionsNote(view, hints) : "";
-  return formatRecallOutput(pageHits, query, header) + around + footer + none;
+    ? `Page ${page}/${totalPages} (${hits.length} total matches${opts.where}${truncationNote})`
+    : `${hits.length} matches${opts.where}${truncationNote}`;
+  const around = pageHits.length > 0 ? opts.around(pageHits[0]) : "";
+  const footer = page < totalPages ? opts.hints.nextPage(query, opts.scope, page + 1) : "";
+  return formatRecallOutput(pageHits, query, header) + around + footer;
 };
 
 /** Files worked on, plus a ready #N:path call for the first file on the page that was written. */
-const runTouched = (page: number | undefined, view: RecallView): string => {
-  const { rendered, rawMessages } = view.load(false);
-  const touched = getTouchedFiles(rawMessages, rendered);
-  const text = formatTouchedOutput(touched, page);
-  const start = (Math.max(1, page ?? 1) - 1) * TOUCHED_PAGE_SIZE;
-  for (const tf of touched.slice(start, start + TOUCHED_PAGE_SIZE)) {
-    const write = [...tf.entries].reverse().find((e) => e.drillable !== false);
-    if (!write) continue;
-    const name = tf.path.replace(/\\/g, "/").split("/").pop();
-    return `${text}\n--- File content at an entry: query:'#${write.index}:${name}'${inSession(view)} ---`;
-  }
-  return text;
-};
+const runTouched = (page: number, view: RecallView): string =>
+  formatTouched(touchedFiles(view.load(false)), page, inSession(view));
 
 // ── Earlier sessions of this project ──────────────────────────────────────
 
@@ -504,25 +499,15 @@ const runSessions = (page: number, view: RecallView): string => {
  */
 const runProjectSearch = (query: string, page: number, view: RecallView, hints: RecallPagingHints): string => {
   const skip = hints.skipCurrentTurn ? view.currentTurn() : undefined;
-  const own = view.load(false);
-  const rendered: SearchHit[] = [];
-  const raws: Message[] = [];
-  own.rendered.forEach((e, i) => {
-    if (skip?.has(e.index)) return;
-    rendered.push(e);
-    raws.push(own.rawMessages[i]);
-  });
+  const corpus: LoadedEntry[] = view.load(false).filter((m) => !skip?.has(m.entry.index));
   let bytes = 0;
   let searched = 0;
   const all = view.project?.list() ?? [];
   for (const s of all.slice(0, PROJECT_SEARCH_SESSIONS)) {
     if (bytes + s.bytes > PROJECT_SEARCH_BYTES && searched > 0) break;
     const loaded = openSessionView(s, "lineage").load(false);
-    if (rendered.length + loaded.rendered.length > PROJECT_SEARCH_ENTRIES && searched > 0) break;
-    loaded.rendered.forEach((e, i) => {
-      rendered.push({ ...e, session: s.short });
-      raws.push(loaded.rawMessages[i]);
-    });
+    if (corpus.length + loaded.length > PROJECT_SEARCH_ENTRIES && searched > 0) break;
+    for (const m of loaded) corpus.push({ entry: { ...m.entry, session: s.short }, message: m.message });
     bytes += s.bytes;
     searched++;
   }
@@ -530,25 +515,16 @@ const runProjectSearch = (query: string, page: number, view: RecallView, hints: 
     ? "this session (no earlier sessions in this project)"
     : `this session and ${searched} earlier session${searched === 1 ? "" : "s"}${searched < all.length ? ` (the newest ${searched} of ${all.length}; session:'id' reads an older one)` : ""}`;
 
-  const result = searchEntriesDetailed(rendered, raws, query);
+  const result = searchEntriesDetailed(corpus, query);
   if (result.aborted) return `${result.aborted} Searching ${covered}: narrow the query, or read one session with session:'id' (mode:'sessions' lists them).`;
-  const { hits, totalBeforeCap, truncated } = result;
-  if (hits.length === 0) return `No matches for "${query}" in ${covered}.`;
-  const totalPages = Math.ceil(hits.length / SEARCH_PAGE_SIZE);
-  if (page > totalPages) {
-    return `Page ${page} is outside the available range 1-${totalPages} (${hits.length} matches in ${covered}). ` +
-      hints.outOfRange(query, "project", totalPages, truncated);
-  }
-  const truncationNote = truncated ? ` — showing ${hits.length} of ${totalBeforeCap} matches, refine your query` : "";
-  const start = (page - 1) * SEARCH_PAGE_SIZE;
-  const pageHits = hits.slice(start, start + SEARCH_PAGE_SIZE);
-  const header = totalPages > 1
-    ? `Page ${page}/${totalPages} (${hits.length} total matches in ${covered}${truncationNote})`
-    : `${hits.length} matches in ${covered}${truncationNote}`;
-  const top = pageHits[0];
-  const around = top?.session
-    ? `\n--- Read around a hit: session:'${top.session}', range:[${Math.max(0, top.index - 3)}, ${top.index + 3}]; full text: session:'${top.session}', expand:[${top.index}] ---`
-    : top && hints.aroundHit ? hints.aroundHit(top.index, "lineage") : "";
-  const footer = page < totalPages ? hints.nextPage(query, "project", page + 1) : "";
-  return formatRecallOutput(pageHits, query, header) + around + footer;
+  if (result.hits.length === 0) return `No matches for "${query}" in ${covered}.`;
+  return pageOfHits(result, query, page, {
+    where: ` in ${covered}`,
+    scope: "project",
+    hints,
+    // A hit from an earlier session is read there; one from this session as any other.
+    around: (top) => top.session
+      ? `\n--- Read around a hit: session:'${top.session}', range:[${Math.max(0, top.index - 3)}, ${top.index + 3}]; full text: session:'${top.session}', expand:[${top.index}] ---`
+      : hints.aroundHit?.(top.index, "lineage") ?? "",
+  });
 };

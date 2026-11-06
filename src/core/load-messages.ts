@@ -36,9 +36,10 @@ export const readSession = (file: string): SessionRead => {
   return { messages, branchIds: activeBranchIds(entries) };
 };
 
-export interface LoadedMessages {
-  rendered: RenderedEntry[];
-  rawMessages: Message[];
+/** A message as recall shows it (`entry`, with its #N) and as it is (`message`). */
+export interface LoadedEntry {
+  entry: RenderedEntry;
+  message: Message;
 }
 
 /**
@@ -51,18 +52,15 @@ export const renderMessages = (
   full: boolean,
   allowed?: ReadonlySet<string>,
   detailChars?: number,
-): LoadedMessages => {
-  const rendered: RenderedEntry[] = [];
-  const rawMessages: Message[] = [];
+): LoadedEntry[] => {
+  const out: LoadedEntry[] = [];
   for (const m of messages) {
     if (allowed && !(m.id && allowed.has(m.id))) continue;
-    try {
-      rendered.push(renderMessage(m.message, m.index, full, detailChars));
-      rawMessages.push(m.message);
-    } catch {}
+    // One message that cannot be rendered is left out, not the session.
+    try { out.push({ entry: renderMessage(m.message, m.index, full, detailChars), message: m.message }); } catch {}
   }
-  return { rendered, rawMessages };
+  return out;
 };
 
-export const loadAllMessages = (file: string, full: boolean, allowed?: ReadonlySet<string>, detailChars?: number): LoadedMessages =>
+export const loadAllMessages = (file: string, full: boolean, allowed?: ReadonlySet<string>, detailChars?: number): LoadedEntry[] =>
   renderMessages(readSession(file).messages, full, allowed, detailChars);

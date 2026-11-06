@@ -14,6 +14,7 @@
  *
  * Usage: bun run scripts/benchmark-recall-quality.ts [sessionCount]
  */
+import { pairs } from "../tests/support/pairs";
 import { renderMessage } from "../src/core/render-entries";
 import { searchEntriesDetailed, type SearchHit } from "../src/core/search-entries";
 import { prepareSessionSamples } from "../tests/support/real-sessions";
@@ -81,7 +82,7 @@ interface RunResult {
 }
 
 const run = (rendered: any[], messages: any[], q: string, tuning: { relativeFloor?: number; cap?: number }): RunResult => {
-  const r = searchEntriesDetailed(rendered, messages, q, tuning);
+  const r = searchEntriesDetailed(pairs(rendered, messages), q, tuning);
   return {
     hits: r.hits,
     totalBeforeCap: r.totalBeforeCap,

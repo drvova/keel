@@ -1,3 +1,4 @@
+import { pairs } from "./support/pairs";
 import { ompBinding } from "./support/binding";
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import { mkdtempSync, writeFileSync, rmSync } from "fs";
@@ -94,13 +95,13 @@ describe("search ranking with a long unbroken entry", () => {
     const plain = texts.map((t, i) => ({ entry: { index: i, role: "user", summary: t }, msg: { role: "user", content: t } }));
     const blobDoc = { entry: { index: 9, role: "tool_result", summary: "[other_tool]" }, msg: { role: "toolResult", toolName: "other_tool", content: [{ type: "text", text: `max ${blob}` }] } };
     const order = (docs: typeof plain) =>
-      searchEntries(docs.map((d) => d.entry) as any, docs.map((d) => d.msg) as any, "max").map((h) => h.index).filter((i) => i !== 9);
+      searchEntries(pairs(docs.map((d) => d.entry) as any, docs.map((d) => d.msg) as any), "max").map((h) => h.index).filter((i) => i !== 9);
     expect(order([...plain, blobDoc as any])).toEqual(order(plain));
   });
 
   it("keeps long joined identifiers searchable", () => {
     const joined = "capturedNormalCompletionRecordOrdinaryObjectCreateDataProperty".repeat(30);
-    const hits = searchEntries([{ index: 0, role: "tool_result", summary: "" }] as any, [{ role: "toolResult", toolName: "bash", content: [{ type: "text", text: joined }] }] as any, "OrdinaryObjectCreate");
+    const hits = searchEntries(pairs([{ index: 0, role: "tool_result", summary: "" }] as any, [{ role: "toolResult", toolName: "bash", content: [{ type: "text", text: joined }] }] as any), "OrdinaryObjectCreate");
     expect(hits.map((h) => h.index)).toEqual([0]);
   });
 });

@@ -8,7 +8,7 @@ import { applyTailBudget, buildOwnCut, registerHook } from "./support/host";
 import { callKind, fileWriteOf, namedPaths, readsPart, stripReadSelector, writtenText } from "../src/core/tools";
 import { extractFiles } from "../src/extract/files";
 import { renderMessage } from "../src/core/render-entries";
-import { getTouchedFiles } from "../src/core/search-entries";
+import { touchedFiles } from "../src/core/touched";
 
 const msg = (id: string, role: "user" | "assistant", content = `text of ${id}`) => ({
   id,
@@ -107,7 +107,7 @@ describe("omp tool shapes", () => {
 
   test("mode:'touched' lists a hashline edit's files, not drillable", () => {
     const edit: any = { role: "assistant", content: [{ type: "toolCall", id: "t", name: "edit", arguments: { input: hashline } }] };
-    const touched = getTouchedFiles([edit], [{ index: 7, role: "assistant", summary: "" }]);
+    const touched = touchedFiles([{ entry: { index: 7, role: "assistant", summary: "" }, message: edit }]);
     expect(touched.map((t) => t.path).sort()).toEqual(["lib/util.py", "src/auth/session.ts"]);
     expect(touched[0].entries).toEqual([{ index: 7, toolName: "edit", drillable: false }]);
   });
@@ -120,7 +120,7 @@ describe("omp's replace edit (old_string/new_string)", () => {
     const call = { name: "edit", args: edit.content[0].arguments };
     expect(fileWriteOf(call)).toEqual({ path: "src/money.ts", replace: { oldText: "floor + 1 : floor", newText: "floor : floor + 1" } });
     expect(writtenText(call.args)).toBe("floor + 1 : floor\nfloor : floor + 1\n");
-    const touched = getTouchedFiles([edit], [{ index: 4, role: "assistant", summary: "" }]);
+    const touched = touchedFiles([{ entry: { index: 4, role: "assistant", summary: "" }, message: edit }]);
     expect(touched[0].entries).toEqual([{ index: 4, toolName: "edit" }]);
   });
 });

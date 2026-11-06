@@ -1,7 +1,8 @@
 import type { Message } from "@oh-my-pi/pi-ai";
 import { fileMentionPaths, type RenderedEntry } from "./render-entries";
+import type { LoadedEntry } from "./load-messages";
 import { textOf, clip } from "./content";
-import { argsText, callKind, filesOf, fileWriteOf, toolCallsOf, writtenText } from "./tools";
+import { argsText, toolCallsOf } from "./tools";
 import { RECALL_TOOL } from "../names";
 
 export interface SearchHit extends RenderedEntry {
@@ -25,19 +26,6 @@ export interface SearchResult {
   truncated: boolean;
   /** Why the search stopped before it finished (its time budget); no hits then. */
   aborted?: string;
-}
-/** A file touched in one entry — used by mode:touched aggregation. */
-export interface FileTouch {
-  index: number;
-  toolName: string;
-  /** False when the call names the file but carries no file content to drill into (a multi-path script edit). */
-  drillable?: false;
-}
-
-/** Aggregated view of a file touched across multiple entries. */
-export interface TouchedFile {
-  path: string;
-  entries: FileTouch[];
 }
 const escapeRegex = (s: string): string =>
   s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -379,48 +367,6 @@ const fullText = (msg: Message): string => {
   return args ? `${text}\n${args}` : text;
 };
 
-/**
- * The files a message's writes and edits change, each with the lines the call
- * carries and whether the drill-down can show them (`#N:path`).
- */
-export function getFileIndicators(msg: Message): { toolName: string; path: string; lineCount: number; drillable: boolean }[] {
-  return toolCallsOf(msg).flatMap((call) => {
-    const kind = callKind(call);
-    if (kind !== "write" && kind !== "edit") return [];
-    const lineCount = writtenText(call.args).split("\n").filter((l) => l.trim().length > 0).length;
-    const drillable = fileWriteOf(call) !== undefined;
-    return filesOf(call).map((path) => ({ toolName: call.name, path, lineCount, drillable }));
-  });
-}
-
-/**
- * Aggregate file operations across all entries for mode:touched.
- *
- * Ported from pi-blackhole (https://github.com/k0valik/pi-blackhole, MIT) by
- * k0valik — a pi-vcc derivative.
- */
-export function getTouchedFiles(
-  messages: Message[],
-  rendered: RenderedEntry[],
-): TouchedFile[] {
-  const map = new Map<string, TouchedFile>();
-  for (let i = 0; i < messages.length; i++) {
-    const msg = messages[i];
-    const indicators = getFileIndicators(msg);
-    for (const fm of indicators) {
-      const index = rendered[i]?.index ?? i;
-      if (!map.has(fm.path)) {
-        map.set(fm.path, { path: fm.path, entries: [] });
-      }
-      (map.get(fm.path) as TouchedFile).entries.push({
-        index,
-        toolName: fm.toolName,
-        ...(!fm.drillable && { drillable: false as const }),
-      });
-    }
-  }
-  return Array.from(map.values());
-}
 
 /**
  * Relative BM25 noise floor for MULTI-TERM natural-language queries only:
@@ -545,13 +491,12 @@ const capHits = (hits: SearchHit[], cap: number): SearchResult => {
  * a caller (the recall tool) needs to report a capped result set honestly.
  */
 export const searchEntriesDetailed = (
-  entries: RenderedEntry[],
-  messages: Message[],
+  items: readonly LoadedEntry[],
   query?: string,
   tuning?: SearchTuning,
 ): SearchResult => {
   try {
-    return search(entries, messages, query, tuning);
+    return search(items.map((i) => i.entry), items.map((i) => i.message), query, tuning);
   } catch (err) {
     if (err instanceof SearchAborted) return { hits: [], totalBeforeCap: 0, truncated: false, aborted: err.message };
     throw err;
@@ -653,8 +598,4 @@ const search = (
   return capHits(floored.map((s) => s.hit), cap);
 };
 
-export const searchEntries = (
-  entries: RenderedEntry[],
-  messages: Message[],
-  query?: string,
-): SearchHit[] => searchEntriesDetailed(entries, messages, query).hits;
+export const searchEntries = (items: readonly LoadedEntry[], query?: string): SearchHit[] => searchEntriesDetailed(items, query).hits;

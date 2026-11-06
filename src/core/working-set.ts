@@ -29,7 +29,8 @@
 // recall's own ranking.
 import type { Message } from "@oh-my-pi/pi-ai";
 import { textOf } from "./content";
-import { renderMessage, type RenderedEntry } from "./render-entries";
+import { renderMessage } from "./render-entries";
+import type { LoadedEntry } from "./load-messages";
 import { searchEntriesDetailed } from "./search-entries";
 import { callKind, callSubject, filesOf, readsPart, toolCallsOf } from "./tools";
 import { RECALL_TOOL } from "../names";
@@ -262,8 +263,7 @@ export const selectWorkingSet = (input: WorkingSetInput): WorkingSetItem[] => {
 
   // 3. What recall ranks highest for the latest request.
   if (request.trim()) {
-    const entries: RenderedEntry[] = [];
-    const msgs: Message[] = [];
+    const candidates: LoadedEntry[] = [];
     // Each run's latest result, by position: an earlier one is out of date.
     const latestRun = new Map<string, number>();
     for (const r of results) if (r.call) latestRun.set(runOf(r.call), r.pos);
@@ -273,12 +273,11 @@ export const selectWorkingSet = (input: WorkingSetInput): WorkingSetItem[] => {
       if (r.call && (edits(r.call) || writes(r.call))) continue;
       if (r.call && latestRun.get(runOf(r.call)) !== r.pos) continue;
       if ((r.call?.paths ?? []).some((p) => inContext.has(p) || chosenPaths.has(p))) continue;
-      const m = input.history[r.pos] as Message;
-      entries.push(renderMessage(m, r.index));
-      msgs.push(m);
+      const message = input.history[r.pos] as Message;
+      candidates.push({ entry: renderMessage(message, r.index), message });
     }
-    if (entries.length > 0) {
-      const { hits } = searchEntriesDetailed(entries, msgs, request.slice(0, 2_000), { cap: MAX_RELEVANT });
+    if (candidates.length > 0) {
+      const { hits } = searchEntriesDetailed(candidates, request.slice(0, 2_000), { cap: MAX_RELEVANT });
       for (const hit of hits) {
         const r = results.find((x) => x.index === hit.index);
         if (!r || used.has(hit.index)) continue;

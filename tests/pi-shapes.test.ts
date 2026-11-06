@@ -14,7 +14,7 @@ import { buildOwnCut } from "../src/compaction/cut";
 import { toSummaryMessage } from "../src/compaction/summary-input";
 import { normalize } from "../src/core/normalize";
 import { extractFiles } from "../src/extract/files";
-import { getTouchedFiles } from "../src/core/search-entries";
+import { touchedFiles } from "../src/core/touched";
 import { fileWriteOf, writtenText } from "../src/core/tools";
 import { openConfig } from "../src/core/settings";
 import { MANUAL_TRIGGER, PI_HOST } from "../src/host";
@@ -77,7 +77,7 @@ describe.skipIf(!piInstalled())("Pi shapes", () => {
       expect(writtenText(args)).toContain("floor : floor + 1");
       const files = extractFiles([{ kind: "tool_call", name: "edit", args } as any]);
       expect([...files.modified]).toEqual(["src/money.ts"]);
-      const touched = getTouchedFiles([edit], [{ index: 4, role: "assistant", summary: "" }]);
+      const touched = touchedFiles([{ entry: { index: 4, role: "assistant", summary: "" }, message: edit }]);
       expect(touched[0]).toMatchObject({ path: "src/money.ts", entries: [{ index: 4, toolName: "edit" }] });
     });
   });

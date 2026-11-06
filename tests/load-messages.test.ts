@@ -19,9 +19,7 @@ describe("loadAllMessages", () => {
       writeFileSync(file, lines.join("\n") + "\n", "utf8");
 
       const loaded = loadAllMessages(file, false);
-      expect(loaded.rendered).toHaveLength(3);
-      expect(loaded.rawMessages).toHaveLength(3);
-      expect(loaded.rendered.map((e) => e.index)).toEqual([0, 1, 2]);
+      expect(loaded.map((m) => m.entry.index)).toEqual([0, 1, 2]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -40,8 +38,7 @@ describe("loadAllMessages", () => {
       writeFileSync(file, lines.join("\n") + "\n", "utf8");
 
       const loaded = loadAllMessages(file, false);
-      expect(loaded.rendered.map((e) => [e.index, e.role])).toEqual([[1, "user"], [3, "assistant"]]);
-      expect(loaded.rawMessages.map((m) => m.role)).toEqual(["user", "assistant"]);
+      expect(loaded.map((m) => [m.entry.index, m.entry.role, m.message.role])).toEqual([[1, "user", "user"], [3, "assistant", "assistant"]]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -60,9 +57,7 @@ describe("loadAllMessages", () => {
       writeFileSync(file, lines.join("\n"), "utf8");
 
       const loaded = loadAllMessages(file, true);
-      expect(loaded.rendered).toHaveLength(2);
-      expect(loaded.rendered[0].summary).toBe(largeText);
-      expect(loaded.rendered[1].summary).toBe("after boundary");
+      expect(loaded.map((m) => m.entry.summary)).toEqual([largeText, "after boundary"]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -73,8 +68,7 @@ describe("loadAllMessages", () => {
     const dir = mkdtempSync(join(tmpdir(), "omp-vcc-load-missing-"));
     try {
       const loaded = loadAllMessages(join(dir, "nope", "session.jsonl"), false);
-      expect(loaded.rendered).toEqual([]);
-      expect(loaded.rawMessages).toEqual([]);
+      expect(loaded).toEqual([]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -86,8 +80,7 @@ describe("loadAllMessages", () => {
     try {
       writeFileSync(file, "", "utf8");
       const loaded = loadAllMessages(file, false);
-      expect(loaded.rendered).toEqual([]);
-      expect(loaded.rawMessages).toEqual([]);
+      expect(loaded).toEqual([]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -116,9 +109,9 @@ describe("loadAllMessages", () => {
       writeFileSync(file, lines.join("\n") + "\n", "utf8");
 
       const loaded = loadAllMessages(file, false, new Set(["m2"]));
-      expect(loaded.rendered).toHaveLength(1);
-      expect(loaded.rawMessages).toHaveLength(1);
-      expect(loaded.rendered[0].index).toBe(1);
+      expect(loaded.map((m) => m.entry)).toHaveLength(1);
+      expect(loaded.map((m) => m.message)).toHaveLength(1);
+      expect(loaded.map((m) => m.entry)[0].index).toBe(1);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

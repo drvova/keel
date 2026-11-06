@@ -1,3 +1,4 @@
+import { pairs } from "./pairs";
 import type { Message } from "@oh-my-pi/pi-ai";
 // A before/after report of one compile over a session's messages, for the
 // real-session tests and the benchmark scripts, at a ~128K window's limits.
@@ -178,7 +179,7 @@ const probesOf = (messages: Message[], summary: string): RecallProbe[] => {
         sourceText,
         query,
         summaryMentioned: matchesQuery(summary, query),
-        recallHits: searchEntries(rendered, messages, query).length,
+        recallHits: searchEntries(pairs(rendered, messages), query).length,
       };
     })
     .filter((probe): probe is RecallProbe => probe !== null);
