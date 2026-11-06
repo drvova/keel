@@ -59,6 +59,18 @@
 ;;;;   -> {"ok":true,"pin":{done, text, op?, severity?, agentNote?}}; OP is the
 ;;;;   omp-vcc.pin entry's data for the host to append.
 ;;;;
+;;;; raw-capture: copy what omp may rewrite (src/hooks/raw-capture.ts captureNewEntries)
+;;;;   {"op":"raw-capture","input":{file, entries:[the message entries since the last call],
+;;;;    kept:[ids of them the binding keeps], lineage:B}}
+;;;;   -> {"ok":true,"written":[ID...],"stored":B,"lineage":[ID...]?}; the core appends
+;;;;   <file>.vcc-raw itself (STORED false: the write failed), and with LINEAGE
+;;;;   reads the ids the file's and its parents' stores hold.
+;;;;
+;;;; placeholders: pointers on omp's placeholders (raw-capture.ts pointPlaceholders)
+;;;;   {"op":"placeholders","input":{candidates:[{i, callId, text}], branch:[{id, toolCallId}],
+;;;;    entries:[{type, id, message?}], kept:[ID...]}}
+;;;;   -> {"ok":true,"replace":[{i, text}...]}
+;;;;
 ;;;; window: the window rules (src/core/window.ts), case by case
 ;;;;   {"op":"window","cases":[{"error":TEXT} | {ruleName, window, hostSettings|policy,
 ;;;;    recovering, tokensBefore, overheadTokens, workingSet}...]}
@@ -239,6 +251,15 @@ parity test compares with JavaScript's own."
         (json-object "ok" :true "pin" (json-object "done" (if done :true :false) "text" text "op" op "severity" severity "agentNote" note)))
     (regex-unsupported () (json-object "ok" :false "unsupported" "pin"))))
 
+(defun handle-raw-capture (request)
+  "Copy the entries REQUEST carries that omp may rewrite into the store (raw-capture.lisp)."
+  (multiple-value-bind (written stored lineage) (capture-entries (json-get request "input"))
+    (json-object "ok" :true "written" (coerce written 'vector) "stored" (if stored :true :false)
+                 "lineage" (and lineage (coerce lineage 'vector)))))
+
+(defun handle-placeholders (request)
+  (json-object "ok" :true "replace" (coerce (point-placeholders (json-get request "input")) 'vector)))
+
 (defun handle-window (request)
   "The window rules on each of REQUEST's cases (window.lisp window-case)."
   (json-object "ok" :true "results" (map 'vector #'window-case (json-get request "cases" #()))))
@@ -256,6 +277,8 @@ parity test compares with JavaScript's own."
           ((equal op "window") (handle-window request))
           ((equal op "settings") (handle-settings request))
           ((equal op "pin") (handle-pin request))
+          ((equal op "raw-capture") (handle-raw-capture request))
+          ((equal op "placeholders") (handle-placeholders request))
           ((equal op "context-edits") (handle-context-edits request))
           (t (json-object "ok" :false "error" (format nil "unknown op ~a" (json-string (or op :null))))))))
 

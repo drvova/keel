@@ -1,0 +1,145 @@
+;;;; raw-capture.lisp --- keeping the originals of what omp rewrites, as they land.
+;;;;
+;;;; SPDX-License-Identifier: MIT
+;;;;
+;;;; A port of src/hooks/raw-capture.ts (captureNewEntries, pointPlaceholders)
+;;;; and of the writing half of src/core/raw-store.ts (mayBeRewritten,
+;;;; keptContent, appendRawStore, rawStoreIds); session.lisp reads the store.
+;;;; What a binding has seen and kept is its own state, in the TS binding: the
+;;;; core gets the entries that arrived since, appends the store itself, and on
+;;;; a new session file reads the ids the file's lineage already keeps.
+
+(in-package #:omp-vcc)
+
+(defparameter +shakeable-text-chars+ 1200
+  "omp shakes fenced and XML blocks of 400+ tokens out of a message's text: about this many chars.")
+(defparameter +max-kept-chars+ 1000000
+  "One message's kept text is clipped here, so a stray multi-megabyte result cannot double the session's size alone.")
+
+(defun content-parts (content)
+  "raw-store.ts parts: the object parts of a content array (not arrays, not null)."
+  (and (vectorp content) (not (stringp content)) (remove-if-not #'json-object-p (coerce content 'list))))
+
+(defun text-part-p (p) (and (equal (json-get p "type") "text") (stringp (json-get p "text"))))
+
+(defun may-be-rewritten-p (m)
+  "raw-store.ts mayBeRewritten: tool output, or text long enough to hold a block omp shakes."
+  (when (and (truthy-p m) (not (and (hash-table-p m) (nth-value 1 (gethash "prunedAt" m)))))
+    (let ((role (json-get m "role")) (content (json-get m "content")))
+      (cond ((equal role "toolResult")
+             (plusp (if (stringp content)
+                        (js-length content)
+                        (loop for p in (content-parts content) when (text-part-p p) sum (js-length (json-get p "text"))))))
+            ((member role '("assistant" "user" "developer") :test #'equal)
+             (if (stringp content)
+                 (>= (js-length content) +shakeable-text-chars+)
+                 (some (lambda (p) (and (text-part-p p) (>= (js-length (json-get p "text")) +shakeable-text-chars+)))
+                       (content-parts content))))))))
+
+(defun kept-content (content)
+  "raw-store.ts keptContent: the text (clipped), other parts as they are, images without their data."
+  (let ((budget +max-kept-chars+))
+    (flet ((clip (text)
+             (let ((n (js-length text)))
+               (if (<= n budget)
+                   (progn (decf budget n) text)
+                   (prog1 (format nil "~a~%...[omp-vcc kept the first ~d of ~d chars]" (js-slice text 0 budget) budget n)
+                     (setf budget 0))))))
+      (if (stringp content)
+          (clip content)
+          (coerce (loop for p in (content-parts content)
+                        collect (cond ((text-part-p p)
+                                       (let ((copy (copy-object p))) (setf (gethash "text" copy) (clip (json-get p "text"))) copy))
+                                      ((equal (json-get p "type") "image") (copy-object p "data"))
+                                      (t p)))
+                  'vector)))))
+
+(defun store-ids (path ids)
+  "raw-store.ts rawStoreIds of PATH, into the set IDS: the id at each line's
+start, read from its first 512 bytes; a head that does not read stops the scan."
+  (let ((bytes (ignore-errors (read-file-octets (raw-store-path path)))))
+    (when bytes
+      ;; The lines between newlines, and a final one without its newline (forEachJsonlLine).
+      (let ((lines (loop for start = 0 then (1+ end)
+                         for end = (or (position 10 bytes :start start) (length bytes))
+                         collect (cons start end)
+                         while (< end (length bytes)))))
+        (when (and lines (= (car (car (last lines))) (length bytes))) (setf lines (butlast lines)))
+        (loop for (start . end) in lines
+              do (let* ((head (decode-utf-8 (subseq bytes start (min end (+ start 512)))))
+                        (m (rx-exec (rx "^\\{\"id\":\"((?:[^\"\\\\]|\\\\.)*)\"") head)))
+                   (when m
+                     (let ((id (handler-case (parse-json (format nil "\"~a\"" (rx-group m 1)))
+                                 (error () (return)))))
+                       (setf (gethash id ids) t)))))))
+    ids))
+
+(defun lineage-kept-ids (file)
+  "The ids FILE's store and its parents' stores hold."
+  (let ((ids (make-hash-table :test 'equal)))
+    (dolist (f (session-lineage file) ids) (store-ids f ids))))
+
+(defun append-raw-store (file records)
+  "raw-store.ts appendRawStore: one line per record, `id` first. NIL when the write fails."
+  (or (null records)
+      (ignore-errors
+       (with-open-file (out (sb-ext:parse-native-namestring (raw-store-path file)) :direction :output :if-exists :append
+                                                                                   :if-does-not-exist :create :external-format :utf-8)
+         (dolist (r records) (write-json r out) (terpri out))
+         t))))
+
+(defun capture-entries (input)
+  "raw-capture.ts captureNewEntries on the entries that arrived since the last call:
+(values WRITTEN-IDS OK LINEAGE-IDS). KEPT are those of them the binding keeps
+already; with LINEAGE, the store ids of the file's lineage are read too (a new
+session file) and returned."
+  (let* ((file (json-get input "file"))
+         (kept (make-hash-table :test 'equal))
+         (lineage (and (eq (json-get input "lineage") :true) (lineage-kept-ids file))))
+    (loop for id across (json-get input "kept" #()) do (setf (gethash id kept) t))
+    (when lineage (maphash (lambda (k v) (setf (gethash k kept) v)) lineage))
+    (let ((records (loop for e across (json-get input "entries" #())
+                         for id = (json-get e "id")
+                         when (and (equal (json-get e "type") "message") (stringp id) (not (gethash id kept))
+                                   (may-be-rewritten-p (json-get e "message")))
+                           collect (json-object "id" id "content" (kept-content (json-get (json-get e "message") "content"))))))
+      (values (mapcar (lambda (r) (json-get r "id")) records)
+              (append-raw-store file records)
+              (and lineage (loop for k being the hash-keys of lineage collect k))))))
+
+;;; --- pointers on omp's placeholders --------------------------------------------------
+
+(defun index-by-id (entries)
+  "session-file.ts indexById: #N by entry id; an id seen twice is left out."
+  (let ((by-id (make-hash-table :test 'equal)) (ambiguous (make-hash-table :test 'equal)) (n 0))
+    (loop for e across entries
+          when (counted-entry-p e)
+            do (let ((id (json-get e "id")))
+                 (when (and (stringp id) (plusp (length id)))
+                   (if (or (nth-value 1 (gethash id by-id)) (gethash id ambiguous))
+                       (progn (remhash id by-id) (setf (gethash id ambiguous) t))
+                       (setf (gethash id by-id) n))))
+                 (incf n))
+    by-id))
+
+(defun point-placeholders (input)
+  "raw-capture.ts pointPlaceholders: for each candidate tool result whose text is
+one of omp's placeholders and whose original is kept, its new text, as (I TEXT)."
+  (let ((hits (loop for c across (json-get input "candidates" #())
+                    when (rx-test (rx "^\\[(?:Output truncated - \\d+ tokens|Superseded by a newer read of this file|Uneventful result elided)\\]$")
+                                  (json-get c "text"))
+                      collect c))
+        (kept (make-hash-table :test 'equal)))
+    (loop for id across (json-get input "kept" #()) do (setf (gethash id kept) t))
+    (when (and hits (plusp (hash-table-count kept)))
+      (let ((by-call (make-hash-table :test 'equal))
+            (index (index-by-id (coerce (json-get input "entries" #()) 'vector))))
+        ;; The tool result each call id names on the active path (a reused id: the latest).
+        (loop for r across (json-get input "branch" #())
+              do (setf (gethash (json-get r "toolCallId") by-call) (json-get r "id")))
+        (loop for h in hits
+              for id = (gethash (json-get h "callId") by-call)
+              for n = (and (stringp id) (plusp (length id)) (gethash id index))
+              when (and n (gethash id kept))
+                collect (json-object "i" (json-get h "i")
+                                     "text" (format nil "~a (the original: vcc_recall expand:[~d])" (json-get h "text") n)))))))

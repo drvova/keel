@@ -55,6 +55,8 @@
      ;; settings and pins: the config file, and pinning and unpinning notes.
      (:file "settings")
      (:file "pins")
+     ;; raw-capture: the originals of what omp rewrites, kept as they land.
+     (:file "raw-capture")
      ;; The rest of recall: the request, the project's sessions, the call.
      (:file "request")
      (:file "sessions")
