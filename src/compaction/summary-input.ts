@@ -1,7 +1,7 @@
 // What each live message becomes in a summary's input: the one mapping behind
 // both the summary and the cut's "would this prefix render" check, so the two
 // cannot disagree.
-import { normalize } from "../core/normalize";
+import { summaryBlocks } from "../core/normalize";
 import { UNSUMMARIZED_MESSAGE_TYPES } from "../names";
 
 import type { ConvertToLlm } from "../host";
@@ -28,10 +28,11 @@ const toLlmSafe = (message: unknown, convert: ConvertToLlm): any[] => {
  * - A user-run `!cmd` (bashExecution) and omp's user-run python cell stay as they
  *   are: the brief shows each as one line, with the output behind `vcc_recall`.
  *   convertToLlm would turn them into user text.
- * - An extension's custom_message, and user text an extension sent on the agent's
- *   behalf (omp `attribution: "agent"`), are marked `injected` so the early
- *   requests and [User Messages] read only what the user wrote. omp converts a
- *   custom message to a developer message; it is read back as user content.
+ * - An extension's custom_message, a branch's summary, and user text an
+ *   extension sent on the agent's behalf (omp `attribution: "agent"`), are
+ *   marked `injected` so the early requests, [User Messages] and [History Index]
+ *   read only what the user wrote. omp converts a custom message to a developer
+ *   message; it is read back as user content.
  * - omp's developer-role turns (host reminders) and @file mention contents are
  *   host context, not conversation, and are left out, as is the notice
  *   /omp-vcc-pin sends the agent ([Pinned Notes] carries the note itself).
@@ -44,7 +45,7 @@ export const toSummaryMessage = (message: any, convert: ConvertToLlm): any | nul
   if (converted.length === 0) return null;
   if (role === "bashExecution" || role === "pythonExecution") return message;
   if (role === "custom") return { ...converted[0], role: "user", injected: true };
-  if (role === "user" && message.attribution === "agent") return { ...converted[0], injected: true };
+  if (role === "branchSummary" || (role === "user" && message.attribution === "agent")) return { ...converted[0], injected: true };
   return converted[0];
 };
 
@@ -79,15 +80,16 @@ export const summaryInputOf = (
 
 /** True when the prefix would contribute at least one block to the summary.
  * Runs the same path as the summarizer (skipCustomTypes filter, toSummaryMessage,
- * normalize): custom_message and branch_summary become user content and render,
- * while role "system" renders nothing (omp's convertToLlm drops it; Pi's passes
- * it through and normalize skips it). */
+ * summaryBlocks): custom_message and branch_summary become user content and
+ * render, while role "system" renders nothing (omp's convertToLlm drops it; Pi's
+ * passes it through and normalize skips it), nor does a user message that is
+ * only a host's <system-reminder>. */
 export const prefixHasRenderableContent = (
   prefix: EntryWithMessage[],
   skipCustomTypes: readonly string[],
   convert: ConvertToLlm,
 ): boolean =>
-  normalize(summaryInputOf(prefix.map((m) => m.message), prefix.map((m) => m.entry.id), skipCustomTypes, convert).messages).length > 0;
+  summaryBlocks(summaryInputOf(prefix.map((m) => m.message), prefix.map((m) => m.entry.id), skipCustomTypes, convert).messages).length > 0;
 
 // Convert a non-message entry that carries LLM-context text (custom_message /
 // branch_summary) into its agent-message form, as omp's session context builds

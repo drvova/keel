@@ -324,6 +324,15 @@ describe("buildOwnCut: entries normalize() cannot render", () => {
     expect(r.compactAll).toBe(true);
   });
 
+  test("a user message that is only a host's <system-reminder> counts as unrenderable", () => {
+    // The summary cuts the reminder (filterNoise), which leaves nothing to summarize before m1.
+    const reminder = msg("r0", "user", "<system-reminder>Plan mode is active.</system-reminder>");
+    const r = buildOwnCut([reminder, msg("m1", "user", "go"), msg("m2", "assistant", "a"), msg("m3", "user", "next"), msg("m4", "assistant", "b")], 2);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.compactAll).toBe(true);
+  });
+
   test("the budget re-cut never lands right after a lone system entry", () => {
     // The first user message alone exceeds the budget, so the budget boundary
     // falls at index 1, leaving [system] as the summarized prefix.

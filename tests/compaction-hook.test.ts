@@ -753,6 +753,24 @@ describe("compaction hook: only what the user wrote is read as user messages", (
     expect(summary).not.toContain("OUTPUT_MARKER_99");
     expect(head).not.toContain("BASH_MARKER_88");
   });
+
+  test("a branch's summary stays in the transcript but is no request of the user's", () => {
+    setConfig({ overrideDefaultCompaction: true });
+    const { pi, invokeBefore } = createMockOmp();
+    register(pi);
+    const entries = [
+      branchSummary("bs1", "BRANCH_SUMMARY_MARKER tried the other parser"),
+      msg("u1", "user", "Fix the login bug"),
+      msg("a1", "assistant", "reply"),
+      msg("u2", "user", "next"),
+      msg("a2", "assistant", "done"),
+    ];
+    const summary: string = invokeBefore(makeEvent(entries, `${OMP_VCC_COMPACT_INSTRUCTION} keep:1`)).compaction.summary;
+    expect(summary).toContain("BRANCH_SUMMARY_MARKER");
+    const head = summary.slice(0, summary.indexOf("\n---\n"));
+    expect(head).toContain("[Early Session Requests]\n- Fix the login bug");
+    expect(head).not.toContain("BRANCH_SUMMARY_MARKER");
+  });
 });
 
 describe("compaction hook: skipForProviders (#27)", () => {
