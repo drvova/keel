@@ -88,14 +88,45 @@ leaves an empty string at that edge, and \"\" splits into (\"\")."
     (push (subseq string start) parts)
     (nreverse parts)))
 
+
+;;; --- Canonicalize --------------------------------------------------------------
+;;;
+;;; How a non-unicode /i regex compares characters (the spec's Canonicalize):
+;;; a code unit's uppercase when that is one code unit and does not take a
+;;; non-ASCII character to ASCII, from SBCL's full Unicode case mapping, the
+;;; one toUpperCase uses. Both the regex engine and the term search fold by it.---------------------------------------------------------
+
+(defun canonical-unit (unit)
+  (let ((upper (sb-unicode:uppercase (string (code-char unit)))))
+    (if (/= (length upper) 1)
+        unit
+        (let ((u (char-code (char upper 0))))
+          (if (or (> u #xFFFF) (and (>= unit 128) (< u 128))) unit u)))))
+
+(defparameter +canonical+
+  (let ((table (make-array 65536 :element-type '(unsigned-byte 16))))
+    (dotimes (u 65536 table)
+      (setf (aref table u) (if (<= #xD800 u #xDFFF) u (canonical-unit u)))))
+  "Each code unit as a non-unicode /i regex compares it.")
+
+(defparameter +same-case+
+  (let ((by-canonical (make-hash-table)))
+    (dotimes (u 65536) (push u (gethash (aref +canonical+ u) by-canonical)))
+    (let ((table (make-array 65536 :initial-element nil)))
+      (maphash (lambda (canonical units)
+                 (declare (ignore canonical))
+                 (when (rest units) (dolist (u units) (setf (aref table u) units))))
+               by-canonical)
+      table))
+  "For a code unit that /i makes equal to others, all of them; NIL for one equal only to itself.")
+
+(declaim (inline canon))
+(defun canon (unit) (aref (the (simple-array (unsigned-byte 16) (*)) +canonical+) unit))
+
 (defun js-canonical (char)
-  "CHAR as a non-unicode /i regex compares it: its uppercase when that is
-one character and does not take a non-ASCII character to ASCII. Code points
-past the BMP are compared as their code units, which no case maps."
-  (if (astral-p char)
-      char
-      (let ((upper (char-upcase char)))
-        (if (and (>= (char-code char) 128) (< (char-code upper) 128)) char upper))))
+  "CHAR as a non-unicode /i regex compares it (+CANONICAL+). Code points past
+the BMP are compared as their code units, which no case maps."
+  (if (astral-p char) char (code-char (canon (char-code char)))))
 
 (defun js-char-equal (a b)
   "True when A and B are the same character under a non-unicode /i regex."

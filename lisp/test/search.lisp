@@ -16,8 +16,15 @@
   (is (null (stem-of "test")) "too short to stem")
   (is (null (stem-of "café")) "only plain ASCII words are stemmed"))
 
-(deftest regex-queries-are-handed-back
-  (is (eq :regex (search-docs "money.ts" (docs "money.ts")))))
+(deftest regex-queries-run-in-entry-order
+  (is (equal (mapcar #'car (search-docs "mon.y" (docs "honey" "money" "MONEY" "monkey"))) '(1 2))))
+
+(deftest refused-constructs-are-handed-back
+  (is (eq :regex (search-docs "(?<n>a)" (docs "a")))))
+
+(deftest an-empty-regex-result-falls-back-to-terms
+  ;; "zz.z fix" finds nothing as one regex, so its terms are searched instead.
+  (is (equal (mapcar #'car (search-docs "zz.z fix" (docs "fix it" "nothing"))) '(0))))
 
 (deftest empty-query-finds-nothing
   (multiple-value-bind (hits total) (search-docs "   " (docs "anything"))

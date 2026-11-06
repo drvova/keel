@@ -45,8 +45,11 @@ const corpus = (seed: number, size: number): LoadedEntry[] => {
   });
 };
 
+// Mostly words; now and then a regex query, or a term with a metacharacter, which runs
+// the regex path and, when it finds nothing, the term search with regex terms.
+const REGEXES = ["round.*fail", "money\\.ts", "^user", "test(s|ing)?$", "(fail|error)ed", "[A-Z]\\w+Error", "café|naïve", "🎉", ".", "(a+)+", "a(", "\\bstop", "x{2,}", "src/money?"];
 const query = (r: () => number): string =>
-  Array.from({ length: 1 + Math.floor(r() * 3) }, () => pick(r, VOCAB.filter((w) => !/[|*+?{}()[\]\\^$.]/.test(w)))).join(" ");
+  Array.from({ length: 1 + Math.floor(r() * 3) }, () => (r() < 0.15 ? pick(r, REGEXES) : pick(r, VOCAB))).join(" ");
 
 const both = (items: LoadedEntry[], q: string, cap?: number) => ({
   ts: withCore(undefined, () => searchEntries(items, q, cap ? { cap } : undefined)),
@@ -82,10 +85,13 @@ maybe("Lisp core search", () => {
     expect(lisp.hits[0].snippet).toContain("needle");
   });
 
-  it("leaves regex queries to the TS code", () => {
+  it("runs regex queries, and leaves refused constructs to the TS code", () => {
+    expect(withCore(core, () => callCore({ op: "search", query: "money.ts", docs: [{ role: "user", text: "money.ts", files: [] }] }))?.hits).toHaveLength(1);
+    expect(withCore(core, () => callCore({ op: "search", query: "(?<n>a)", docs: [] }))).toBeUndefined();
     const items = corpus(3, 30);
-    expect(withCore(core, () => callCore({ op: "search", query: "money.ts", docs: [] }))).toBeUndefined();
-    const { ts, lisp } = both(items, "round.*fail");
-    expect(lisp).toEqual(ts);
+    for (const q of ["round.*fail", "(?<n>round)", "zz.z rounding", "(a+)+ round"]) {
+      const { ts, lisp } = both(items, q);
+      expect({ q, ...lisp }).toEqual({ q, ...ts });
+    }
   });
 });

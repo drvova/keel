@@ -9,19 +9,22 @@ import type { SearchHit, SearchResult } from "./search-entries";
  * It is found through OMP_VCC_CORE, the executable's path, while the port is
  * under way. Every failure (no core, a crash, a refusal, a reply that does not
  * parse) is undefined, and the caller runs the TypeScript code instead: a
- * broken core costs speed, never an answer.
+ * broken core costs speed, never an answer. With OMP_VCC_CORE_STRICT set, a
+ * failure other than a refusal throws, so a test cannot pass on the fallback.
  */
 export const callCore = (request: object): Record<string, unknown> | undefined => {
   const core = process.env.OMP_VCC_CORE;
   if (!core) return undefined;
   const run = spawnSync(core, [], { input: JSON.stringify(request), encoding: "utf8", maxBuffer: 1 << 30 });
-  if (run.error || run.status !== 0) return undefined;
-  try {
-    const reply = JSON.parse(run.stdout);
-    return reply && typeof reply === "object" && reply.ok === true ? reply : undefined;
-  } catch {
-    return undefined;
+  let reply: any;
+  try { reply = run.error || run.status !== 0 ? undefined : JSON.parse(run.stdout); } catch {}
+  if (reply?.ok === true) return reply;
+  // A query the core leaves to TypeScript is an answer too; anything else is
+  // the core failing, which OMP_VCC_CORE_STRICT (the tests, CI) makes loud.
+  if (process.env.OMP_VCC_CORE_STRICT && reply?.unsupported === undefined) {
+    throw new Error(`omp-vcc's Lisp core failed: ${reply?.error ?? run.error?.message ?? run.stderr ?? `exit ${run.status}`}`);
   }
+  return undefined;
 };
 
 /** A session file for the core to read and search: the entries on `ids` (the file's own active branch for "active", all for null), less `skip`. */
@@ -48,6 +51,9 @@ export const searchSessionsInCore = (
 ): { result: SearchResult; searched: number } | undefined => {
   const reply = callCore({ op: "search-sessions", query, sources, ...bounds });
   if (!reply || !Array.isArray(reply.hits)) return undefined;
+  if (typeof reply.aborted === "string") {
+    return { result: { hits: [], totalBeforeCap: 0, truncated: false, aborted: reply.aborted }, searched: reply.searched as number };
+  }
   const hits: SearchHit[] = (reply.hits as Array<Record<string, any>>).map((h) => ({
     index: h.index,
     role: h.role,

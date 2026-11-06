@@ -108,4 +108,4 @@ jobs:
 
       # The same suite with every recall search answered by the Lisp core.
       - name: Tests through the Lisp core
-        run: OMP_VCC_CORE="$PWD/lisp/build/omp-vcc-core" bun run test
+        run: OMP_VCC_CORE="$PWD/lisp/build/omp-vcc-core" OMP_VCC_CORE_STRICT=1 bun run test

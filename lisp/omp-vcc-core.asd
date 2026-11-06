@@ -29,6 +29,9 @@
      ;; core agree on every number they exchange.
      (:file "js-string")
      (:file "json")
+     ;; regex: JavaScript's regular expressions, which search compiles a
+     ;; query and its terms with.
+     (:file "regex")
      (:file "search")
      ;; session and render read a session file as recall does: the entries,
      ;; their #N, the branch, the kept originals, and each one rendered.

@@ -30,29 +30,24 @@ export const lispCore = (): string | undefined => {
 };
 
 /** Run `fn` with the core on (OMP_VCC_CORE set) or off, restoring what was there. */
+/** Set OMP_VCC_CORE to `core` (strictly: a core failure throws) or unset it, and give back how it was. */
+const setCore = (core: string | undefined): (() => void) => {
+  const was = { core: process.env.OMP_VCC_CORE, strict: process.env.OMP_VCC_CORE_STRICT };
+  const set = (k: string, v: string | undefined) => (v === undefined ? delete process.env[k] : (process.env[k] = v));
+  set("OMP_VCC_CORE", core);
+  set("OMP_VCC_CORE_STRICT", core ? "1" : undefined);
+  return () => { set("OMP_VCC_CORE", was.core); set("OMP_VCC_CORE_STRICT", was.strict); };
+};
+
 export const withCore = <T>(core: string | undefined, fn: () => T): T => {
-  const was = process.env.OMP_VCC_CORE;
-  if (core) process.env.OMP_VCC_CORE = core;
-  else delete process.env.OMP_VCC_CORE;
-  try {
-    return fn();
-  } finally {
-    if (was === undefined) delete process.env.OMP_VCC_CORE;
-    else process.env.OMP_VCC_CORE = was;
-  }
+  const restore = setCore(core);
+  try { return fn(); } finally { restore(); }
 };
 
 /** withCore for a function that awaits: the core stays set until its promise settles. */
 export const withCoreAsync = async <T>(core: string | undefined, fn: () => Promise<T>): Promise<T> => {
-  const was = process.env.OMP_VCC_CORE;
-  if (core) process.env.OMP_VCC_CORE = core;
-  else delete process.env.OMP_VCC_CORE;
-  try {
-    return await fn();
-  } finally {
-    if (was === undefined) delete process.env.OMP_VCC_CORE;
-    else process.env.OMP_VCC_CORE = was;
-  }
+  const restore = setCore(core);
+  try { return await fn(); } finally { restore(); }
 };
 
 /** The core behind a script that logs each start to `dir`, and how many starts there were. */

@@ -24,6 +24,11 @@
 ;;;; load: one source's entries as the core reads them, for the parity test
 ;;;;   {"op":"load","source":SOURCE} -> {"ok":true,"entries":[{"index","role","summary","files"?,"text"}...]}
 ;;;;
+;;;; regex: one pattern as `new RegExp(P, "i")` on texts, for the parity test
+;;;;   {"op":"regex","pattern":P,"texts":[T...]}
+;;;;   -> {"ok":true,"status":"ok","results":[{"test":B,"search":I,"count":N}...]}
+;;;;      or "status":"syntax" (JavaScript throws) or "unsupported" (left to TS)
+;;;;
 ;;;; Either search may answer {"ok":false,"unsupported":"regex"}, and the caller
 ;;;; searches as before; {"ok":false,"error":MESSAGE} on any failure.
 ;;;;
@@ -51,12 +56,18 @@
                      (request-docs request)
                      :floor (if (realp floor) (coerce floor 'double-float) +relative-floor+)
                      :cap (if (integerp cap) cap +result-cap+))
-      (if (eq hits :regex)
-          (json-object "ok" :false "unsupported" "regex")
+      (cond
+        ((eq hits :regex) (json-object "ok" :false "unsupported" "regex"))
+        ((eq hits :aborted) (aborted-reply total))
+        (t
           (json-object "ok" :true
                        "hits" (map 'vector (lambda (h) (json-object "index" (car h) "snippet" (or (cdr h) :null))) hits)
                        "totalBeforeCap" total
-                       "truncated" (bool truncated))))))
+                       "truncated" (bool truncated)))))))
+
+(defun aborted-reply (message &optional (searched 0))
+  "A search past its time budget: no hits, and why (search-entries.ts SearchAborted)."
+  (json-object "ok" :true "hits" #() "totalBeforeCap" 0 "truncated" :false "aborted" message "searched" searched))
 
 (defun source-entries (source)
   "The entries a source names, as (INDEX ROLE SUMMARY FILES TEXT): its file's
@@ -105,8 +116,10 @@ less the indices it skips."
                             entries)
                        :floor (if (realp floor) (coerce floor 'double-float) +relative-floor+)
                        :cap (if (integerp cap) cap +result-cap+))
-        (if (eq hits :regex)
-            (json-object "ok" :false "unsupported" "regex")
+        (cond
+          ((eq hits :regex) (json-object "ok" :false "unsupported" "regex"))
+          ((eq hits :aborted) (aborted-reply total searched))
+          (t
             (json-object "ok" :true
                          "hits" (map 'vector
                                      (lambda (h)
@@ -119,7 +132,7 @@ less the indices it skips."
                                      hits)
                          "totalBeforeCap" total
                          "truncated" (bool truncated)
-                         "searched" searched))))))
+                         "searched" searched)))))))
 
 (defun handle-load (request)
   "A source's entries as recall renders them and search reads them: what the
@@ -131,12 +144,29 @@ parity test compares with the TS side's load."
                                                        "files" (and files (coerce files 'vector)) "text" text)))
                               (source-entries (json-get request "source")))))
 
+(defun handle-regex (request)
+  "A pattern compiled as `new RegExp(P, \"i\")` and run on texts: what the regex
+parity test compares with JavaScript's own."
+  (let ((pattern (json-get request "pattern")) (texts (json-get request "texts" #())))
+    (handler-case
+        (let ((regex (compile-regex pattern)))
+          (json-object "ok" :true "status" "ok"
+                       "results" (map 'vector (lambda (text)
+                                                (let ((units (string-units text)))
+                                                  (json-object "test" (bool (regex-test regex units))
+                                                               "search" (or (regex-search regex units) -1)
+                                                               "count" (regex-count regex units))))
+                                      texts)))
+      (regex-syntax-error () (json-object "ok" :true "status" "syntax"))
+      (regex-unsupported () (json-object "ok" :true "status" "unsupported")))))
+
 (defun handle-request (request)
   "The response object to the parsed REQUEST."
   (let ((op (json-get request "op")))
     (cond ((equal op "search") (handle-search request))
           ((equal op "search-sessions") (handle-search-sessions request))
           ((equal op "load") (handle-load request))
+          ((equal op "regex") (handle-regex request))
           (t (json-object "ok" :false "error" (format nil "unknown op ~a" (json-string (or op :null))))))))
 
 (defun read-stdin ()

@@ -99,11 +99,24 @@
                                   (t (js-canonical c))))))))
 
 (defstruct (term (:constructor make-term
-                     (text &aux (stem (stem-of text)) (word (fold text)) (folded-stem (and stem (fold stem))))))
+                     (text &aux (stem (stem-of text)) (word (fold text)) (folded-stem (and stem (fold stem)))
+                                ;; A term with a metacharacter is a regex (safeRegex); a plain
+                                ;; one is matched by FIND-TEXT, which is the same answer faster.
+                                (regex (and (some #'regex-metachar-p text) (safe-regex text))))))
   (text "" :type string)
   (stem nil)
   (word "" :type text)
-  (folded-stem nil :type (or null text)))
+  (folded-stem nil :type (or null text))
+  (regex nil))
+
+(defstruct (hay (:constructor make-hay (original &aux (folded (fold original)))))
+  "A text as search matches it: folded for plain terms, as code units for a regex (made when first asked for)."
+  (original "" :type string)
+  (folded "" :type text)
+  (units-cache nil))
+
+(defun hay-units (hay)
+  (or (hay-units-cache hay) (setf (hay-units-cache hay) (string-units (hay-original hay)))))
 
 (defun find-text (needle hay start)
   "The first position from START where NEEDLE occurs in HAY, or NIL."
@@ -138,21 +151,33 @@ its stem, as the alternation `term|(?<![a-z])stem` tries them."
           (stem-at (values stem-at (length (term-folded-stem term)))))))
 
 (defun term-frequency (term hay)
-  "Non-overlapping matches of TERM in the folded HAY, as String.match with a global regex counts them."
-  (loop with i = 0 and count = 0
-        do (multiple-value-bind (at length) (next-match term hay i)
-             (unless at (return count))
-             (incf count)
-             (setf i (+ at length)))))
+  "Non-overlapping matches of TERM in HAY, as String.match with a global regex counts them."
+  (if (term-regex term)
+      (regex-count (term-regex term) (hay-units hay))
+      (loop with i = 0 and count = 0 and folded = (hay-folded hay)
+            do (multiple-value-bind (at length) (next-match term folded i)
+                 (unless at (return count))
+                 (incf count)
+                 (setf i (+ at length))))))
 
 (defun term-occurs-p (term hay)
-  (and (next-match term hay 0) t))
+  (if (term-regex term)
+      (regex-test (term-regex term) (hay-units hay))
+      (and (next-match term (hay-folded hay) 0) t)))
+
+(defun term-position (term line)
+  "The code unit where TERM first matches in the hay LINE, or NIL."
+  (if (term-regex term)
+      (values (regex-search (term-regex term) (hay-units line)))
+      (let ((at (next-match term (hay-folded line) 0)))
+        (and at (js-index (hay-original line) at)))))
 
 (defun first-match (terms line)
-  "The first position in the folded LINE where any of TERMS matches, or NIL."
+  "The first code unit in the hay LINE where any of TERMS matches, or NIL: where
+the terms joined by | match first, as search-entries.ts's snippet regex does."
   (let ((best nil))
     (dolist (term terms best)
-      (let ((at (next-match term line 0)))
+      (let ((at (term-position term line)))
         (when (and at (or (null best) (< at best))) (setf best at))))))
 
 ;;; --- what an entry's text is to search ----------------------------------------
@@ -225,16 +250,17 @@ its stem, as the alternation `term|(?<![a-z])stem` tries them."
                (end (+ start width)))
           (concatenate 'string (if (> start 0) "…" "") (js-slice line start end) (if (< end length) "…" ""))))))
 
-(defun line-snippet (text folded terms &optional (context 2))
-  "The lines around TEXT's first line that a term matches, or NIL. Matched
-in the folded text, cut from the original at the same positions."
+(defun line-snippet (text terms &optional (context 2))
+  "The lines around TEXT's first line that a term matches, or NIL. TERMS is a
+list of terms, or a regex (the regex path's one pattern)."
   (let* ((lines (coerce (split-string text #\Newline) 'vector))
-         (folded (coerce (split-string folded #\Newline) 'vector))
          (count (length lines))
          (hit nil) (at 0))
     (loop for i below count
-          for pos = (first-match terms (aref folded i))
-          when pos do (setf hit i at (js-index (aref lines i) pos)) (return))
+          for pos = (if (regex-p terms)
+                        (values (regex-search terms (string-units (aref lines i))))
+                        (first-match terms (make-hay (aref lines i))))
+          when pos do (setf hit i at pos) (return))
     (when hit
       (let* ((start (max 0 (- hit context)))
              (end (min count (+ hit context 1)))
@@ -254,23 +280,60 @@ in the folded text, cut from the original at the same positions."
                  raw)
       raw))
 
+(defparameter +search-budget-ms+ 3000
+  "A search's time budget: search-entries.ts SEARCH_BUDGET_MS.")
+
+(defparameter +search-aborted+
+  (format nil "Search aborted: query exceeded ~dms. Use fewer or more specific words; for a regex, avoid nested quantifiers such as (a+)+."
+          +search-budget-ms+)
+  "What an aborted search says: search-entries.ts SearchAborted.")
+
 (defun search-docs (query docs &key (floor +relative-floor+) (cap +result-cap+))
-  "Rank DOCS, a vector of (ROLE TEXT FILES), for the term QUERY.
-Returns the hits as a list of (INDEX . SNIPPET) best first, the count before
-the cap, and whether the cap cut it; or :REGEX for a query this port leaves to
-the TS side."
+  "Rank DOCS, a vector of (ROLE TEXT FILES), for QUERY, as search-entries.ts
+search does. Returns the hits as a list of (INDEX . SNIPPET) best first, the
+count before the cap, and whether the cap cut it; (values :ABORTED MESSAGE)
+past the time budget; or :REGEX for a query this port leaves to the TS side
+(a construct regex.lisp refuses, or the control stack running out)."
+  (let ((*regex-deadline* (+ (get-internal-real-time)
+                             (* +search-budget-ms+ (/ internal-time-units-per-second 1000))))
+        (*steps* 0))
+    (handler-case (search-docs-within query docs floor cap)
+      (regex-unsupported () :regex)
+      (storage-condition () :regex)
+      (regex-aborted () (values :aborted +search-aborted+)))))
+
+(defun cap-hits (hits cap)
+  (let ((total (length hits)))
+    (values (subseq hits 0 (min cap total)) total (> total cap))))
+
+(defun search-docs-within (query docs floor cap)
   (let ((raw-query (js-trim query)))
     (when (zerop (length raw-query))
-      (return-from search-docs (values '() 0 nil)))
-    (when (some #'regex-metachar-p raw-query)
-      (return-from search-docs :regex))
-    (let* ((terms (mapcar #'make-term (meaningful-terms (js-split-whitespace raw-query))))
-           (n (length docs))
+      (return-from search-docs-within (values '() 0 nil)))
+    (let* ((n (length docs))
            (texts (map 'vector (lambda (d) (searchable-text (second d))) docs))
            (hays (map 'vector (lambda (d text)
-                                (fold (concatenate 'text (first d) " " text " " (join-strings (third d) " "))))
-                      docs texts))
-           (lens (map 'vector #'word-count hays))
+                                (make-hay (concatenate 'text (first d) " " text " " (join-strings (third d) " "))))
+                      docs texts)))
+      ;; A query with a metacharacter is first one regex, its hits in entry order
+      ;; and unranked; when it finds nothing, the query is searched as terms.
+      (when (some #'regex-metachar-p raw-query)
+        (let ((regex (safe-regex raw-query)))
+          (let ((hits (loop for i below n
+                            when (regex-test regex (hay-units (aref hays i)))
+                              collect (cons i (line-snippet (aref texts i) regex)))))
+            (when hits (return-from search-docs-within (cap-hits hits cap))))))
+      (search-terms raw-query texts hays floor cap))))
+
+(defun search-terms (raw-query texts hays floor cap)
+  "The term search: BM25 over HAYS for RAW-QUERY's meaningful words."
+  (let* ((terms (mapcar #'make-term (meaningful-terms (js-split-whitespace raw-query))))
+         (n (length hays)))
+    ;; The snippet regex joins the terms with |, which numbers a later term's
+    ;; groups after the earlier ones': a later back-reference would mean another group.
+    (when (some (lambda (term) (and (term-regex term) (regex-backrefs (term-regex term)))) (rest terms))
+      (error 'regex-unsupported :detail "back-reference in a later term"))
+    (let* ((lens (map 'vector (lambda (h) (word-count (hay-folded h))) hays))
            (df (make-hash-table :test 'equal))
            (matched (make-array n))
            (total-length 0))
@@ -297,10 +360,7 @@ the TS side."
                              (norm (/ (* tf (+ +bm25-k+ 1d0))
                                       (+ tf (* +bm25-k+ (+ (- 1d0 +bm25-b+) (/ (* +bm25-b+ dl) avg-dl)))))))
                         (incf score (* idf norm))))))
-                ;; The folded text is inside the folded hay, after the role and a space.
-                (let* ((from (1+ (length (first (aref docs i)))))
-                       (folded (subseq (aref hays i) from (+ from (length (aref texts i))))))
-                  (push (list i score (line-snippet (aref texts i) folded terms)) scored))))))
+                (push (list i score (line-snippet (aref texts i) terms)) scored)))))
         (setf scored (stable-sort (nreverse scored) #'> :key #'second))
         (let* ((distinct (length (remove-duplicates (mapcar (lambda (term) (string-downcase (term-text term))) terms)
                                                     :test #'string=)))

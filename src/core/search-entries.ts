@@ -480,6 +480,7 @@ const searchInCore = (
   const docs = entries.map((e, i) => ({ role: e.role, text: rawSearchText(messages[i], e), files: e.files ?? [] }));
   const reply = callCore({ op: "search", query, docs, floor, cap });
   if (!reply || !Array.isArray(reply.hits)) return undefined;
+  if (typeof reply.aborted === "string") throw new SearchAborted(reply.aborted);
   const hits = (reply.hits as Array<{ index: number; snippet: string | null }>).map((h) => ({
     ...entries[h.index],
     snippet: h.snippet ?? undefined,
@@ -512,10 +513,8 @@ const search = (
   const relativeFloor = tuning?.relativeFloor ?? BM25_RELATIVE_FLOOR;
   const cap = tuning?.cap ?? SEARCH_RESULT_CAP;
   const rawQuery = query.trim();
-  if (!looksLikeRegex(rawQuery)) {
-    const inCore = searchInCore(entries, messages, query, relativeFloor, cap);
-    if (inCore) return inCore;
-  }
+  const inCore = searchInCore(entries, messages, query, relativeFloor, cap);
+  if (inCore) return inCore;
   const checkBudget = startBudget();
   // What each entry is found by (snippets come from it), and the document scored: with its role and files.
   const texts = messages.map((msg, i) => {
