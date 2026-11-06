@@ -1,17 +1,33 @@
+// A recall call as one request, from the tool's params or the command's text.
 import { parseDrillDown } from "./drill-down";
-import { normalizeRecallMode, normalizeRecallScope, parseRecallScope, type RecallScope } from "./recall-scope";
 
 export type DrillTarget = NonNullable<ReturnType<typeof parseDrillDown>>;
+
+/**
+ * lineage: the current conversation path. all: every branch of this session.
+ * project: search also covers this project's earlier sessions (core/sessions.ts).
+ */
+export const SCOPES = ["lineage", "all", "project"] as const;
+export type RecallScope = (typeof SCOPES)[number];
+/** hybrid: the default, a query, range, expand or the latest entries. */
+export const MODES = ["hybrid", "touched", "sessions"] as const;
+export type RecallMode = (typeof MODES)[number];
 
 /** The one thing a recall call does. Exactly one action runs per call. */
 export type RecallAction =
   | { kind: "drill"; target: DrillTarget }
-  | { kind: "touched"; page?: number }
+  | { kind: "touched"; page: number }
   | { kind: "sessions"; page: number }
   | { kind: "expand"; indices: number[] }
-  | { kind: "range"; range: unknown[]; page: number }
+  | { kind: "range"; range: [number, number]; page: number }
   | { kind: "search"; query: string; page: number }
-  | { kind: "recent"; query?: string };
+  | { kind: "recent" };
+
+/** A param the call set that its action does not use, and why. */
+export interface IgnoredParam {
+  param: string;
+  why: string;
+}
 
 export interface RecallRequest {
   scope: RecallScope;
@@ -19,29 +35,33 @@ export interface RecallRequest {
   /** An earlier session of this project to run the action in (id prefix, see core/sessions.ts). */
   session?: string;
   /** Params the caller set that this action does not use. Defaults (page:1, expand:[]) are not listed. */
-  ignored?: string[];
+  ignored?: IgnoredParam[];
   /** Values normalizeToolParams could not repair and removed. */
   dropped?: string[];
 }
 
+/** vcc_recall's params: the one list of them, for the type, the known keys and the JSON Schema. */
+export const RECALL_PARAMS = ["query", "range", "expand", "page", "scope", "mode", "session"] as const;
+
 export interface RecallToolParams {
   query?: string;
   expand?: number[];
-  range?: unknown[];
+  range?: number[];
   page?: number;
-  scope?: string;
-  mode?: string;
+  scope?: RecallScope;
+  mode?: RecallMode;
   session?: string;
 }
 
 /** Where normalizeToolParams records values it had to drop; read by parseToolRequest. */
 export const DROPPED_KEY = "_vccDropped";
 
-const KNOWN_PARAMS = new Set(["query", "range", "expand", "page", "scope", "mode", "session"]);
+const isScope = (v: unknown): v is RecallScope => (SCOPES as readonly unknown[]).includes(v);
+const isMode = (v: unknown): v is RecallMode => (MODES as readonly unknown[]).includes(v);
 
-/** 12, "12", "#12", " 12 " -> 12. Anything else -> undefined. */
+/** 12, "12", "#12", " 12 " -> 12. Anything else (a fraction, a negative) -> undefined. */
 const toIndex = (v: unknown): number | undefined => {
-  if (typeof v === "number") return Number.isInteger(v) ? v : undefined;
+  if (typeof v === "number") return Number.isInteger(v) && v >= 0 ? v : undefined;
   if (typeof v === "string") {
     const m = v.trim().match(/^#?(\d+)$/);
     return m ? Number(m[1]) : undefined;
@@ -56,13 +76,17 @@ const indexList = (s: string): number[] | undefined => {
   return (t.match(/\d+/g) ?? []).map(Number);
 };
 
+/** "@01a1", "session:01a1" -> "01a1": how a session id is written in output and by hand. */
+export const sessionRef = (ref: string): string => ref.trim().replace(/^(?:@|session:)/i, "");
+
 /**
- * Repair argument mistakes whose meaning is certain, before pi validates the
- * schema: numbers sent as strings or with a leading #, a single index where a
- * list is expected, a range written as "10-20" or reversed, enum values in
- * the wrong case, and a scope value put in mode. Values that cannot be
- * repaired are removed and listed under DROPPED_KEY, so the output names them
- * instead of pi rejecting the whole call or recall dropping them silently.
+ * Repair argument mistakes whose meaning is certain, before the host
+ * validates the schema: numbers sent as strings or with a leading #, a single
+ * index where a list is expected, a range written as "10-20" or reversed, enum
+ * values in the wrong case, and a scope value put in mode. Values that cannot
+ * be repaired are removed and listed under DROPPED_KEY, so the output names
+ * them instead of the host rejecting the whole call or recall dropping them
+ * silently.
  */
 export const normalizeToolParams = (raw: unknown): Record<string, unknown> => {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
@@ -71,7 +95,7 @@ export const normalizeToolParams = (raw: unknown): Record<string, unknown> => {
   const drop = (key: string, why: string) => { dropped.push(`${key} ${JSON.stringify(p[key])} (${why})`); delete p[key]; };
 
   for (const key of Object.keys(p)) {
-    if (!KNOWN_PARAMS.has(key) && key !== DROPPED_KEY) drop(key, "not a vcc_recall param");
+    if (!(RECALL_PARAMS as readonly string[]).includes(key) && key !== DROPPED_KEY) drop(key, "not a vcc_recall param");
   }
 
   if (p.page !== undefined) {
@@ -104,18 +128,15 @@ export const normalizeToolParams = (raw: unknown): Record<string, unknown> => {
   for (const key of ["scope", "mode"] as const) {
     if (typeof p[key] === "string") p[key] = (p[key] as string).trim().toLowerCase();
   }
-  if ((p.mode === "all" || p.mode === "lineage") && p.scope === undefined) {
+  // A scope value put in mode means the scope.
+  if (p.scope === undefined && isScope(p.mode)) {
     p.scope = p.mode;
     delete p.mode;
   }
-  if ((p.mode === "project") && p.scope === undefined) {
-    p.scope = p.mode;
-    delete p.mode;
-  }
-  if (p.scope !== undefined && p.scope !== "lineage" && p.scope !== "all" && p.scope !== "project") drop("scope", "use 'lineage', 'all' or 'project'");
-  if (p.mode !== undefined && p.mode !== "hybrid" && p.mode !== "touched" && p.mode !== "sessions") drop("mode", "use 'touched', 'sessions' or leave it out");
+  if (p.scope !== undefined && !isScope(p.scope)) drop("scope", "use 'lineage', 'all' or 'project'");
+  if (p.mode !== undefined && !isMode(p.mode)) drop("mode", "use 'touched', 'sessions' or leave it out");
   if (p.session !== undefined) {
-    if (typeof p.session === "string" && p.session.trim()) p.session = p.session.trim().replace(/^(?:@|session:)/i, "");
+    if (typeof p.session === "string" && sessionRef(p.session)) p.session = sessionRef(p.session);
     else drop("session", "not a session id");
   }
   if (p.query !== undefined && typeof p.query !== "string") drop("query", "not text");
@@ -124,55 +145,82 @@ export const normalizeToolParams = (raw: unknown): Record<string, unknown> => {
   return p;
 };
 
-/**
- * Tool params -> request. The precedence lives here and only here:
- * #N:path drill-down, then mode:'touched', then expand, then range, then
- * query search, then the most recent entries.
- */
-export const parseToolRequest = (params: RecallToolParams): RecallRequest => {
-  const scope = normalizeRecallScope(params.scope);
-  const q = params.query?.trim();
-  const indices = [...new Set(params.expand ?? [])];
-  const hasRange = Array.isArray(params.range) && params.range.length > 0;
-  const mode = normalizeRecallMode(params.mode);
-  const session = typeof params.session === "string" && params.session ? params.session : undefined;
-  const set = {
-    query: Boolean(q),
-    expand: indices.length > 0,
-    range: hasRange,
-    page: (params.page ?? 1) > 1,
-    touched: mode === "touched",
-    sessions: mode === "sessions",
-  };
-  const droppedRaw = (params as Record<string, unknown>)[DROPPED_KEY];
-  const dropped = Array.isArray(droppedRaw) && droppedRaw.length > 0 ? droppedRaw.map(String) : undefined;
-  const req = (action: RecallAction, uses: (keyof typeof set)[]): RecallRequest => {
-    const ignored: string[] = (Object.keys(set) as (keyof typeof set)[])
-      .filter((k) => set[k] && !uses.includes(k))
-      .map((k) => (k === "touched" || k === "sessions" ? "mode" : k));
-    // A listing names sessions, it does not read one; and one session has no
-    // earlier sessions of its own to widen to.
-    let effectiveScope = scope;
-    let target = session;
-    if (session && action.kind === "sessions") {
-      ignored.push("session");
-      target = undefined;
-    } else if (session && scope === "project") {
-      ignored.push("scope");
-      effectiveScope = "lineage";
-    }
-    const base: RecallRequest = { scope: effectiveScope, action, ...(target ? { session: target } : {}), ...(dropped ? { dropped } : {}) };
-    return ignored.length > 0 ? { ...base, ignored } : base;
-  };
+/** What a call names, whichever surface it came from. */
+interface RequestParts {
+  query?: string;
+  expand?: number[];
+  range?: [number, number];
+  page?: number;
+  scope?: RecallScope;
+  mode?: RecallMode;
+  session?: string;
+  dropped?: string[];
+}
 
-  const target = q ? parseDrillDown(q) : null;
-  if (target) return req({ kind: "drill", target }, ["query"]);
-  if (set.touched) return req({ kind: "touched", page: params.page }, ["touched", "page"]);
-  if (set.sessions) return req({ kind: "sessions", page: Math.max(1, params.page ?? 1) }, ["sessions", "page"]);
-  if (set.expand) return req({ kind: "expand", indices }, ["expand"]);
-  if (hasRange) return req({ kind: "range", range: params.range!, page: Math.max(1, params.page ?? 1) }, ["range", "page"]);
-  if (q) return req({ kind: "search", query: params.query!, page: Math.max(1, params.page ?? 1) }, ["query", "page"]);
-  return req({ kind: "recent", query: params.query }, []);
+const ALONE: Record<Exclude<RecallAction["kind"], "search">, string> = {
+  drill: "a #N:path query runs alone",
+  touched: "mode:'touched' runs alone",
+  sessions: "mode:'sessions' runs alone",
+  expand: "expand runs alone; send the rest in a separate call",
+  range: "range runs alone; send the rest in a separate call",
+  recent: "page applies to query or range results",
+};
+
+/**
+ * The request from what a call names. The precedence lives here and only
+ * here: #N:path drill-down, then mode:'touched', mode:'sessions', expand,
+ * range, query search, and the most recent entries.
+ */
+const requestOf = (parts: RequestParts): RecallRequest => {
+  const query = parts.query?.trim() ? parts.query : undefined;
+  const expand = [...new Set(parts.expand ?? [])];
+  const page = Math.max(1, parts.page ?? 1);
+  const drill = query ? parseDrillDown(query.trim()) : null;
+  const action: RecallAction =
+    drill ? { kind: "drill", target: drill }
+    : parts.mode === "touched" ? { kind: "touched", page }
+    : parts.mode === "sessions" ? { kind: "sessions", page }
+    : expand.length > 0 ? { kind: "expand", indices: expand }
+    : parts.range ? { kind: "range", range: parts.range, page }
+    : query ? { kind: "search", query, page }
+    : { kind: "recent" };
+  const set = {
+    query: Boolean(query) && action.kind !== "drill" && action.kind !== "search",
+    expand: expand.length > 0 && action.kind !== "expand",
+    range: Boolean(parts.range) && action.kind !== "range",
+    page: page > 1 && !("page" in action),
+    mode: Boolean(parts.mode && parts.mode !== "hybrid") && action.kind !== "touched" && action.kind !== "sessions",
+  };
+  const why = action.kind === "search" ? "" : ALONE[action.kind];
+  const ignored: IgnoredParam[] = (Object.keys(set) as (keyof typeof set)[])
+    .filter((k) => set[k])
+    .map((param) => ({ param, why }));
+  let scope: RecallScope = parts.scope ?? "lineage";
+  let session = parts.session;
+  if (session && action.kind === "sessions") {
+    ignored.push({ param: "session", why: "mode:'sessions' lists the sessions, it does not read one" });
+    session = undefined;
+  } else if (session && scope === "project") {
+    ignored.push({ param: "scope", why: "scope:'project' searches from this session; one earlier session has no earlier ones of its own" });
+    scope = "lineage";
+  }
+  return {
+    scope,
+    action,
+    ...(session ? { session } : {}),
+    ...(ignored.length > 0 ? { ignored } : {}),
+    ...(parts.dropped?.length ? { dropped: parts.dropped } : {}),
+  };
+};
+
+/** Tool params (normalizeToolParams' output) -> request. */
+export const parseToolRequest = (params: RecallToolParams): RecallRequest => {
+  const droppedRaw = (params as Record<string, unknown>)[DROPPED_KEY];
+  return requestOf({
+    ...params,
+    range: Array.isArray(params.range) && params.range.length === 2 ? [params.range[0], params.range[1]] : undefined,
+    dropped: Array.isArray(droppedRaw) ? droppedRaw.map(String) : undefined,
+  });
 };
 
 /**
@@ -180,16 +228,30 @@ export const parseToolRequest = (params: RecallToolParams): RecallRequest => {
  * session:<id> and page:N; "sessions" alone lists the earlier sessions.
  */
 export const parseCommandRequest = (args: string): RecallRequest => {
-  const parsed = parseRecallScope(args.trim());
-  const sessionMatch = parsed.text.match(/(?:^|\s)session:(\S+)/i);
-  const session = sessionMatch?.[1];
-  const rest = parsed.text.replace(/(?:^|\s)session:\S+/i, " ");
-  const pageMatch = rest.match(/\bpage:(\d+)\b/i);
-  const page = pageMatch ? Math.max(1, parseInt(pageMatch[1], 10)) : 1;
-  const query = rest.replace(/\bpage:\d+\b/i, "").trim();
-  const scope = session && parsed.scope === "project" ? "lineage" : parsed.scope;
-  const target = session ? { session } : {};
-  if (!session && /^sessions$/i.test(query)) return { scope, action: { kind: "sessions", page } };
-  if (!query) return { scope, action: { kind: "recent" }, ...target };
-  return { scope, action: { kind: "search", query, page }, ...target };
+  let text = args.trim();
+  const take = (re: RegExp): string | undefined => {
+    const m = text.match(re);
+    if (m) text = text.replace(re, " ").replace(/\s+/g, " ").trim();
+    return m?.[1];
+  };
+  const scope = take(/\bscope:(lineage|all|project)\b/i)?.toLowerCase() as RecallScope | undefined;
+  const session = take(/(?:^|\s)session:(\S+)/i);
+  const page = take(/\bpage:(\d+)\b/i);
+  const sessions = !session && /^sessions$/i.test(text);
+  return requestOf({
+    query: sessions ? undefined : text,
+    mode: sessions ? "sessions" : undefined,
+    page: page ? parseInt(page, 10) : undefined,
+    scope,
+    session: session ? sessionRef(session) : undefined,
+  });
+};
+
+/** One line per reason naming the params the action did not use, so nothing is dropped silently. */
+export const ignoredNote = (request: RecallRequest): string => {
+  const dropped = request.dropped?.length ? `Ignored: ${request.dropped.join(", ")}.\n` : "";
+  const byReason = new Map<string, string[]>();
+  for (const { param, why } of request.ignored ?? []) byReason.set(why, [...(byReason.get(why) ?? []), param]);
+  const ignored = [...byReason].map(([why, params]) => `Ignored: ${params.join(", ")}${why ? ` (${why})` : ""}.\n`).join("");
+  return dropped || ignored ? `${dropped}${ignored}\n` : "";
 };

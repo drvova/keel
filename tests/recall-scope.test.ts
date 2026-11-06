@@ -1,32 +1,24 @@
 import { describe, it, expect } from "bun:test";
-import { normalizeRecallScope, parseRecallScope } from "../src/core/recall-scope";
+import { normalizeToolParams, parseCommandRequest, parseToolRequest } from "../src/core/recall-request";
 
-describe("normalizeRecallScope", () => {
-  it("defaults to active lineage", () => {
-    expect(normalizeRecallScope()).toBe("lineage");
-    expect(normalizeRecallScope("lineage")).toBe("lineage");
-    expect(normalizeRecallScope("unknown")).toBe("lineage");
-    expect(normalizeRecallScope(123)).toBe("lineage");
+describe("the scope of a recall call", () => {
+  it("is lineage unless a call says all or project, in any case", () => {
+    expect(parseToolRequest(normalizeToolParams({ query: "x" }) as any).scope).toBe("lineage");
+    expect(parseToolRequest(normalizeToolParams({ query: "x", scope: "ALL" }) as any).scope).toBe("all");
+    expect(parseToolRequest(normalizeToolParams({ query: "x", mode: "project" }) as any).scope).toBe("project");
   });
 
-  it("accepts all scope", () => {
-    expect(normalizeRecallScope("all")).toBe("all");
-    expect(normalizeRecallScope("ALL")).toBe("all");
-  });
-});
-
-describe("parseRecallScope", () => {
-  it("removes scope token from command text", () => {
-    expect(parseRecallScope("license scope:all page:2")).toEqual({
-      scope: "all",
-      text: "license page:2",
-    });
+  it("is a token the command takes out of the query", () => {
+    expect(parseCommandRequest("license scope:all page:2")).toEqual({ scope: "all", action: { kind: "search", query: "license", page: 2 } });
+    expect(parseCommandRequest("license page:2")).toEqual({ scope: "lineage", action: { kind: "search", query: "license", page: 2 } });
   });
 
-  it("defaults to lineage when no scope token is present", () => {
-    expect(parseRecallScope("license page:2")).toEqual({
-      scope: "lineage",
-      text: "license page:2",
-    });
+  it("with a session, project is named as ignored on either surface", () => {
+    const fromTool = parseToolRequest(normalizeToolParams({ query: "x", scope: "project", session: "@abcd" }) as any);
+    const fromCommand = parseCommandRequest("x scope:project session:abcd");
+    for (const r of [fromTool, fromCommand]) {
+      expect(r).toMatchObject({ scope: "lineage", session: "abcd" });
+      expect(r.ignored?.map((i) => i.param)).toEqual(["scope"]);
+    }
   });
 });

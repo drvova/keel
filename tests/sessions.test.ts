@@ -4,7 +4,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { listProjectSessions, resolveSession, type SessionInfo } from "../src/core/sessions";
 import { executeRecall } from "../src/tools/recall";
-import { parseCommandRequest } from "../src/core/recall-request";
+import { parseCommandRequest, sessionRef } from "../src/core/recall-request";
 import { PIN_ENTRY_TYPE } from "../src/names";
 
 const header = (id: string, ts: string) => ({ type: "session", version: 3, id, timestamp: ts, cwd: "/work/app" });
@@ -93,7 +93,7 @@ describe("an earlier session's pins", () => {
 describe("resolveSession", () => {
   it("takes an id prefix, refuses short, unknown and ambiguous ones", () => {
     expect((resolveSession("aaaa", sessions) as SessionInfo).short).toBe("aaaa1111");
-    expect((resolveSession("@bbbb2222-0000", sessions) as SessionInfo).short).toBe("bbbb2222");
+    expect((resolveSession(sessionRef("@bbbb2222-0000"), sessions) as SessionInfo).short).toBe("bbbb2222");
     expect(resolveSession("aa", sessions)).toHaveProperty("error");
     expect(resolveSession("ffff", sessions)).toHaveProperty("error");
     const twins = [{ ...sessions[0], id: "abcd1-x", short: "abcd1x" }, { ...sessions[1], id: "abcd2-y", short: "abcd2y" }];

@@ -3,10 +3,9 @@ import { searchEntriesDetailed, getTouchedFiles, type SearchHit } from "./search
 import { formatRecallOutput, formatTouchedOutput, TOUCHED_PAGE_SIZE } from "./format-recall";
 import { expandEntryFile } from "./drill-down";
 import { EXPAND_DETAIL_CHARS } from "./render-entries";
-import type { RecallScope } from "./recall-scope";
-import type { RecallRequest } from "./recall-request";
+import { ignoredNote, type RecallRequest, type RecallScope } from "./recall-request";
 import type { Message } from "@oh-my-pi/pi-ai";
-import { describeSession, listProjectSessions, type SessionInfo } from "./sessions";
+import { describeSession, listProjectSessions, resolveSession, sessionDirOf, type SessionInfo } from "./sessions";
 import { currentBranchIds, type SessionManagerLike } from "./session-file";
 import { toolCallsOf } from "./tools";
 import { DEFAULT_CHARS_PER_TOKEN } from "./token-estimate";
@@ -152,9 +151,6 @@ const findCurrentTurn = (messages: readonly RecallMessage[], sessionManager: Ses
 const OFF_PATH_NOTE =
   "Nothing on the current conversation path; showing edited or retried branches (scope:'all').\n\n";
 
-export const invalidExpandIndices = (requested: number[], available: Set<number>): number[] =>
-  requested.filter((i) => !Number.isInteger(i) || !available.has(i));
-
 /** Surface-specific wording: the tool says page:N, the command says /omp-vcc-recall … page:N. */
 export interface RecallPagingHints {
   outOfRange(query: string, scope: RecallScope, totalPages: number, truncated: boolean): string;
@@ -172,23 +168,6 @@ export interface RecallPagingHints {
   otherSessions?(count: number): string;
 }
 
-
-const IGNORED_REASON: Record<RecallRequest["action"]["kind"], string> = {
-  drill: "a #N:path query runs alone",
-  touched: "mode:'touched' runs alone",
-  expand: "expand runs alone; send the rest in a separate call",
-  range: "range runs alone; send the rest in a separate call",
-  sessions: "mode:'sessions' runs alone",
-  search: "",
-  recent: "page applies to query or range results",
-};
-
-/** One line naming params the action did not use, so nothing is dropped silently. */
-export const ignoredNote = (request: RecallRequest): string =>
-  (request.dropped?.length ? `Ignored: ${request.dropped.join(", ")}.\n\n` : "") +
-  (request.ignored?.length
-    ? `Ignored: ${request.ignored.join(", ")} (${IGNORED_REASON[request.action.kind]}).\n\n`
-    : "");
 
 /** Ceiling for one recall result, 50 KB like a read tool's: one long entry
  *  (a base64 image on one line) must not flood the context. */
@@ -218,14 +197,39 @@ const capOutput = (text: string, max: number): string => {
     `${text.slice(0, end)}\n...[clipped at ${kb(max)}]`;
 };
 
-export const runRecall = (
-  request: RecallRequest,
-  view: RecallView,
-  hints: RecallPagingHints,
-  /** header: a first line ahead of the output (which session it was read from). */
-  options: { maxChars?: number; header?: string } = {},
-): string =>
-  (options.header ?? "") + capOutput(ignoredNote(request) + runAction(request, view, hints), options.maxChars ?? RECALL_OUTPUT_CHARS);
+/** Where a recall call came from: how its follow-up hints are written, for this session or an earlier one (`short`). */
+export type RecallSurface = (short?: string) => RecallPagingHints;
+
+export interface RecallInput {
+  request: RecallRequest;
+  sessionManager: SessionManagerLike & { getSessionDir?(): string | undefined };
+  /** The model's window: it scales the output cap (recallOutputChars). */
+  contextWindow?: number;
+}
+
+/**
+ * One recall call, for the tool and the command alike: the current session or
+ * the earlier one it names, read once, the action run, the output capped
+ * (its header included). `ok: false` when there is nothing to read, with how
+ * bad that is for a person told so.
+ */
+export const recall = (input: RecallInput, surface: RecallSurface): { ok: true; text: string } | { ok: false; text: string; severity: "error" | "warning" } => {
+  const { request, sessionManager } = input;
+  const sessionFile = sessionManager.getSessionFile?.();
+  if (!sessionFile) return { ok: false, text: "No session file available.", severity: "error" };
+  const project = projectSessions(sessionDirOf(sessionManager, sessionFile), sessionFile);
+  const maxChars = recallOutputChars(input.contextWindow);
+  const detailChars = expandDetailChars(maxChars);
+  if (request.session) {
+    const target = resolveSession(request.session, project.list());
+    if ("error" in target) return { ok: false, text: target.error, severity: "warning" };
+    const header = sessionHeader(target);
+    const view = openSessionView(target, request.scope, project, detailChars);
+    return { ok: true, text: header + capOutput(ignoredNote(request) + runAction(request, view, surface(target.short)), Math.max(0, maxChars - header.length)) };
+  }
+  const view = openRecallView(sessionFile, request.scope, sessionManager, { project, detailChars });
+  return { ok: true, text: capOutput(ignoredNote(request) + runAction(request, view, surface()), maxChars) };
+};
 
 const runAction = (request: RecallRequest, view: RecallView, hints: RecallPagingHints): string => {
   const { action } = request;
@@ -258,7 +262,7 @@ const runAction = (request: RecallRequest, view: RecallView, hints: RecallPaging
 
     case "recent": {
       const { rendered } = view.load(false);
-      return (scopeAll ? "Scope: all\n\n" : "") + formatRecallOutput(rendered.slice(-RECENT_COUNT), action.query);
+      return (scopeAll ? "Scope: all\n\n" : "") + formatRecallOutput(rendered.slice(-RECENT_COUNT));
     }
   }
 };
@@ -326,13 +330,9 @@ const runExpand = (indices: number[], view: RecallView): string => {
  * as search and recent. Indices are the global #N space shared with summaries
  * (session-file.ts), so a ref copied from a summary lands on its message.
  */
-const runRange = (range: unknown[], page: number, view: RecallView): string => {
-  const [from, to] = range;
-  if (range.length !== 2 || !Number.isInteger(from) || !Number.isInteger(to) || (from as number) < 0 || (from as number) > (to as number)) {
-    return `Invalid range ${JSON.stringify(range)}: use range:[from, to] with two #N indices, from <= to.`;
-  }
-  const lo = from as number;
-  let hi = to as number;
+const runRange = (range: [number, number], page: number, view: RecallView): string => {
+  const [lo, to] = range;
+  let hi = to;
   const scopeAll = view.scope === "all";
   const { rendered } = view.load(false);
   let entries = rendered.filter((m) => m.index >= lo && m.index <= hi);

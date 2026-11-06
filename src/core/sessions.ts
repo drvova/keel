@@ -9,7 +9,7 @@
 // its active branch (its last entry back to the root), with `#N` in its own
 // index space.
 import { readdirSync, realpathSync, statSync } from "fs";
-import { join } from "path";
+import { dirname, join } from "path";
 import { readHeader, RESET_ENTRY_TYPE, scanLines } from "./session-file";
 import { clip, textOf } from "./content";
 import { formatPin, readPins } from "./pins";
@@ -30,6 +30,9 @@ export interface SessionInfo {
   /** The session's pinned notes, formatted. */
   pins: string[];
 }
+
+/** The shortest id prefix that names a session. */
+export const SESSION_REF_MIN_CHARS = 4;
 
 /** Sessions listed at most; the newest are kept. */
 export const MAX_LISTED_SESSIONS = 50;
@@ -112,10 +115,10 @@ export const listProjectSessions = (dir: string, currentFile?: string, limit = M
   return files.map((x) => scanSession(x.f)).filter((s): s is SessionInfo => !!s);
 };
 
-/** "01a194d8", "@01a1", "session:01a194d8-…" -> the one session it names, or why not. */
+/** An id prefix ("01a194d8", "01a1", "01a194d8-…"; core/recall-request.ts sessionRef strips "@"/"session:") -> the one session it names, or why not. */
 export const resolveSession = (ref: string, sessions: readonly SessionInfo[]): SessionInfo | { error: string } => {
-  const key = ref.trim().replace(/^(?:@|session:)/i, "").replace(/-/g, "").toLowerCase();
-  if (key.length < 4) return { error: `session:'${ref}' is too short: give at least 4 characters of an id from mode:'sessions'.` };
+  const key = ref.replace(/-/g, "").toLowerCase();
+  if (key.length < SESSION_REF_MIN_CHARS) return { error: `session:'${ref}' is too short: give at least ${SESSION_REF_MIN_CHARS} characters of an id from mode:'sessions'.` };
   const matches = sessions.filter((s) => s.id.replace(/-/g, "").toLowerCase().startsWith(key));
   if (matches.length === 1) return matches[0];
   if (matches.length === 0) {
@@ -128,3 +131,12 @@ const date = (iso?: string): string => (iso ? iso.replace("T", " ").slice(0, 16)
 
 export const describeSession = (s: SessionInfo): string =>
   `${s.short} · ${date(s.started)} · ${s.messages} messages${s.title ? ` · ${s.title}` : ""}${s.firstRequest ? ` · "${s.firstRequest}"` : ""}`;
+
+/** The current session's project directory: the host's, else the session file's own. */
+export const sessionDirOf = (sessionManager: { getSessionDir?(): string | undefined }, sessionFile: string): string => {
+  try {
+    const dir = sessionManager.getSessionDir?.();
+    if (typeof dir === "string" && dir) return dir;
+  } catch {}
+  return dirname(sessionFile);
+};

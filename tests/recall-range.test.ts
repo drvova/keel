@@ -118,7 +118,7 @@ describe("vcc_recall range", () => {
     expect(await recall(file, { range: [1] }, ids)).toStartWith("Range #1..#1 (1 messages):");
     expect(await recall(file, { range: ["1", "2"] }, ids)).toStartWith("Range #1..#2 (2 messages):");
     expect(await recall(file, { range: [1.5, 3] }, ids)).toStartWith("Ignored: range [1.5,3] (not [from, to]).");
-    expect(await recall(file, { range: [-1, 2] }, ids)).toContain("Invalid range");
+    expect(await recall(file, { range: [-1, 2] }, ids)).toStartWith("Ignored: range [-1,2] (not [from, to]).");
     expect(await recall(file, { range: [10, 20] }, ids)).toBe("No messages #10..#20 in session history (last entry is #2).");
   });
 

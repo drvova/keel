@@ -1,7 +1,6 @@
 import { ompBinding } from "./support/binding";
 import { describe, it, expect } from "bun:test";
-import { parseToolRequest } from "../src/core/recall-request";
-import { ignoredNote } from "../src/core/recall-run";
+import { ignoredNote, parseToolRequest } from "../src/core/recall-request";
 
 describe("parseToolRequest", () => {
   it("does not report filler defaults as ignored", () => {
@@ -22,13 +21,13 @@ describe("parseToolRequest", () => {
   it("keeps page for range and names the query", () => {
     const r = parseToolRequest({ range: [10, 50], page: 2, query: "auth" });
     expect(r.action).toEqual({ kind: "range", range: [10, 50], page: 2 });
-    expect(r.ignored).toEqual(["query"]);
+    expect(r.ignored?.map((i) => i.param)).toEqual(["query"]);
   });
 
   it("names everything touched does not use", () => {
     const r = parseToolRequest({ mode: "touched", query: "x", expand: [1], page: 2 });
     expect(r.action.kind).toBe("touched");
-    expect(r.ignored).toEqual(["query", "expand"]);
+    expect(r.ignored?.map((i) => i.param)).toEqual(["query", "expand"]);
   });
 
   it("names page without anything to page", () => {
