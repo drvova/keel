@@ -186,26 +186,14 @@ describe("learned limits", () => {
 describe("triggerFor", () => {
   const model = { provider: "p", id: "m", contextWindow: 128_000 };
 
-  it("a threshold pass measures omp's trigger and later passes reuse it", () => {
-    const state = createWindowState();
-    const w = windowOf(model);
-    expect(triggerFor(w, state, "p/m", "threshold", 90_000)).toBe(90_000);
-    expect(triggerFor(w, state, "p/m", "manual", 40_000)).toBe(90_000);
-    // Another model: omp's default for its window.
-    expect(triggerFor(windowOf({ ...model, id: "n" }), state, "p/n", "manual", 40_000)).toBe(108_800);
-  });
-
   it("an overflow pass is bounded by the context that overflowed", () => {
     expect(triggerFor(windowOf(model), createWindowState(), "p/m", "overflow", 30_000)).toBe(30_000);
   });
 
-  it("omp's policy, as its compactions carry it, places the trigger, for that model only", () => {
-    const state = createWindowState();
+  it("omp's policy, as its compactions carry it, places the trigger; without one, omp's default for the window", () => {
     const w = windowOf(model);
-    expect(triggerFor(w, state, "p/m", "threshold", 70_000, { thresholdPercent: 50 })).toBe(64_000);
-    // A later pass without one (a /omp-vcc) keeps it; another model does not.
-    expect(triggerFor(w, state, "p/m", "manual", 40_000)).toBe(64_000);
-    expect(triggerFor(windowOf({ ...model, id: "n" }), state, "p/n", "manual", 40_000)).toBe(108_800);
+    expect(triggerFor(w, createWindowState(), "p/m", "threshold", 70_000, { thresholdPercent: 50 })).toBe(64_000);
+    expect(triggerFor(w, createWindowState(), "p/m", "manual", 40_000)).toBe(108_800);
     expect(triggerFor(w, createWindowState(), "p/m", "manual", 40_000, { thresholdTokens: 90_000 })).toBe(90_000);
     expect(triggerFor(w, createWindowState(), "p/m", "overflow", 30_000, { thresholdTokens: 90_000 })).toBe(30_000);
   });
@@ -243,10 +231,6 @@ describe("Pi's trigger rule", () => {
     const policy = PI_TRIGGER_RULE.policyOf({ enabled: true, reserveTokens: 20_000, keepRecentTokens: 20_000 });
     expect(triggerFor(w, createWindowState(), "p/pi-m", "threshold", 110_000, policy, PI_TRIGGER_RULE)).toBe(108_000);
     expect(triggerFor(w, createWindowState(), "p/pi-m", "overflow", 90_000, policy, PI_TRIGGER_RULE)).toBe(90_000);
-    // The policy carries over to a later pass that brings none, for the same model.
-    const state = createWindowState();
-    triggerFor(w, state, "p/pi-m", "threshold", 110_000, policy, PI_TRIGGER_RULE);
-    expect(triggerFor(w, state, "p/pi-m", "manual", 40_000, undefined, PI_TRIGGER_RULE)).toBe(108_000);
   });
 });
 

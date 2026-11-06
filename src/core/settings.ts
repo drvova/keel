@@ -116,6 +116,16 @@ const parseSettings = (parsed: Record<string, unknown> | null): VccSettings => {
   return merged;
 };
 
+/**
+ * Whether omp-vcc answers the host's own compactions (automatic ones and
+ * /compact) for a model of this provider: unless the user opted out, for every
+ * provider or this one (#27). Read at each call: /model changes the provider
+ * mid-session, and an unknown one never skips. /omp-vcc is answered regardless.
+ */
+export const handlesHostCompactions = (settings: VccSettings, provider: unknown): boolean =>
+  settings.overrideDefaultCompaction &&
+  !(typeof provider === "string" && settings.skipForProviders.some((p) => p.toLowerCase() === provider.toLowerCase()));
+
 /** omp-vcc's config for one binding: its file in the host's agent directory (or OMP_VCC_CONFIG_PATH). */
 export interface Config {
   /** Resolved at every call: the env override can change between loads. */

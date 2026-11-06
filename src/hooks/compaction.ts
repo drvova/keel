@@ -8,7 +8,7 @@ import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { writeFileSync } from "fs";
 import { indexById, readEntries } from "../core/session-file";
 import { parseInstructions } from "../core/compact-args";
-import type { VccSettings } from "../core/settings";
+import { handlesHostCompactions, type VccSettings } from "../core/settings";
 import { calibrateCharsPerToken, DEFAULT_CHARS_PER_TOKEN, estimateMessageChars, estimateTokensFromChars } from "../core/token-estimate";
 import { compactionBudgets } from "../core/window";
 import { isRecovery, tell, type Binding } from "../host";
@@ -143,14 +143,7 @@ export const registerCompactionHook = (
 
     const { fromCommand, keepUserTurns, followUpPrompt } = parseInstructions(customInstructions);
     state.pendingFollowUpPrompt = null;
-    if (!fromCommand && !settings.overrideDefaultCompaction) return;
-    // Provider-level opt-out (#27): defer to the provider's own compaction
-    // (e.g. a provider's remote compaction). Checked at call time because the
-    // model can change mid-session via /model. Explicit /omp-vcc bypasses the
-    // skip; undefined model never skips.
-    const provider = ctx?.model?.provider;
-    if (!fromCommand && typeof provider === "string" &&
-        settings.skipForProviders.some((p) => p.toLowerCase() === provider.toLowerCase())) return;
+    if (!fromCommand && !handlesHostCompactions(settings, ctx?.model?.provider)) return;
 
     const { tokenEstimate, overheadTokens } = measureContext(branchEntries, preparation.tokensBefore, previousSummary);
     // Budgets from the model's real window and where the next compaction comes (core/window.ts).
