@@ -61,6 +61,3 @@ export const renderMessages = (
   }
   return out;
 };
-
-export const loadAllMessages = (file: string, full: boolean, allowed?: ReadonlySet<string>, detailChars?: number): LoadedEntry[] =>
-  renderMessages(readSession(file).messages, full, allowed, detailChars);

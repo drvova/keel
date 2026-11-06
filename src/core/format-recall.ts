@@ -11,11 +11,10 @@ export const formatRecallOutput = (
       : "No entries in session history.";
   }
 
+  // Search, range and touched pass their own header (count, page, scope).
   const header = headerOverride
     ? `${headerOverride}${query ? ` for "${query}"` : ""}:`
-    : query
-      ? `Found ${entries.length} matches for "${query}":`
-      : `Session history (${entries.length} entries):`;
+    : `Session history (${entries.length} entries):`;
 
   const lines = entries.map((e) => {
     const fileSuffix = e.files?.length ? ` files:[${e.files.join(", ")}]` : "";
