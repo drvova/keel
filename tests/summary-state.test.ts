@@ -1,11 +1,26 @@
 import { describe, it, expect } from "bun:test";
-import { freshState, previousOf } from "../src/core/summary-state";
+import { freshState, previousOf, readState } from "../src/core/summary-state";
 import { sectionOf } from "../src/core/legacy-summary";
 import { compile as compileAt, compileSummary } from "../src/core/summarize";
 import { DEFAULT_SUMMARY_LIMITS } from "../src/core/window";
 import type { NormalizedBlock } from "../src/types";
 
 const compile = (input: Omit<Parameters<typeof compileAt>[0], "limits">) => compileAt({ limits: DEFAULT_SUMMARY_LIMITS, ...input });
+
+describe("readState", () => {
+  const stored = { earlyRequests: ["goal"], files: { modified: ["a.ts"], created: [], read: [] }, commits: [{ hash: "abc1234", message: "m" }], userMessages: [], brief: "[user]\ngoal" };
+
+  it("loads a state stored before a section existed, with that section empty", () => {
+    // No `tracked`: as a release before it would have stored it.
+    expect(readState(stored)).toEqual({ ...stored, tracked: [] });
+  });
+
+  it("is no state when a section has another shape (a hand-edited file)", () => {
+    expect(readState({ ...stored, tracked: "ssh" })).toBeUndefined();
+    expect(readState({ ...stored, files: { ...stored.files, read: [1] } })).toBeUndefined();
+    expect(readState("text")).toBeUndefined();
+  });
+});
 
 describe("freshState", () => {
   it("returns all-empty for no blocks", () => {

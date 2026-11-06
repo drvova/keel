@@ -147,13 +147,31 @@ export const capState = (state: SummaryState, limits: SummaryLimits): SummarySta
 
 const strings = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === "string");
 
-/** A stored state, or undefined when `v` is not one (another version, a hand-edited file). */
+/** A field a stored state may lack (written before it existed): read as `empty`. Present in another shape, it is not a state. */
+const field = <T>(v: unknown, is: (x: unknown) => x is T, empty: T): T | undefined => (v === undefined ? empty : is(v) ? v : undefined);
+const isCommit = (c: unknown): c is Commit => isObject(c) && typeof c.message === "string" && (c.hash === undefined || typeof c.hash === "string");
+const isTracked = (t: unknown): t is SummaryState["tracked"][number] => isObject(t) && typeof t.name === "string" && strings(t.entries);
+const listOf = <T>(is: (x: unknown) => x is T) => (v: unknown): v is T[] => Array.isArray(v) && v.every(is);
+const isText = (v: unknown): v is string => typeof v === "string";
+
+/**
+ * A stored state, or undefined when `v` is not one (another version's shape,
+ * a hand-edited file). Built field by field: a section added later is read
+ * here or the build fails, and a state stored before it existed loads with
+ * it empty.
+ */
 export const readState = (v: unknown): SummaryState | undefined => {
-  if (!isObject(v) || !isObject(v.files)) return undefined;
-  const { files } = v;
-  if (!strings(v.earlyRequests) || !strings(v.userMessages) || typeof v.brief !== "string") return undefined;
-  if (!strings(files.modified) || !strings(files.created) || !strings(files.read)) return undefined;
-  if (!Array.isArray(v.commits) || !v.commits.every((c) => isObject(c) && typeof c.message === "string" && (c.hash === undefined || typeof c.hash === "string"))) return undefined;
-  if (!Array.isArray(v.tracked) || !v.tracked.every((t) => isObject(t) && typeof t.name === "string" && strings(t.entries))) return undefined;
-  return v as unknown as SummaryState;
+  if (!isObject(v)) return undefined;
+  const files = v.files === undefined ? {} : isObject(v.files) ? v.files : undefined;
+  if (!files) return undefined;
+  const earlyRequests = field(v.earlyRequests, strings, []);
+  const modified = field(files.modified, strings, []);
+  const created = field(files.created, strings, []);
+  const read = field(files.read, strings, []);
+  const commits = field(v.commits, listOf(isCommit), []);
+  const tracked = field(v.tracked, listOf(isTracked), []);
+  const userMessages = field(v.userMessages, strings, []);
+  const brief = field(v.brief, isText, "");
+  if (!earlyRequests || !modified || !created || !read || !commits || !tracked || !userMessages || brief === undefined) return undefined;
+  return { earlyRequests, files: { modified, created, read }, commits, tracked, userMessages, brief };
 };

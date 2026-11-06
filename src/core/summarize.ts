@@ -14,10 +14,12 @@ import type { SummaryLimits } from "./window";
 
 export interface CompileInput {
   messages: Message[];
-  /** The previous summary's stored state; when absent, `previousSummary` is read from its text. */
+  /** The state the previous compaction stored; when absent, `previousSummary` is read from its text. */
   previous?: PreviousSummary;
   /** The previous summary's text: one an older version or another compactor wrote. */
   previousSummary?: string;
+  /** Another compactor (an LLM) wrote `previousSummary`, not omp-vcc or pi-vcc. */
+  previousSummaryForeign?: boolean;
   fileOps?: FileOps;
   /**
    * Session-global `#N` index per message position (see
@@ -53,7 +55,8 @@ export interface CompiledSummary {
 /** The summary, and what to store for the next compaction. */
 export const compileSummary = (input: RankedCompileInput): CompiledSummary => {
   const blocks = summaryBlocks(input.messages, input.sourceIndices);
-  const legacy = !input.previous && input.previousSummary ? legacyPrevious(input.previousSummary) : undefined;
+  // A summary read from its text: every rule for one is here (legacy-summary.ts).
+  const legacy = !input.previous && input.previousSummary ? legacyPrevious(input.previousSummary, input.previousSummaryForeign) : undefined;
   const previous = input.previous ?? legacy;
   const fresh = freshState({
     blocks,

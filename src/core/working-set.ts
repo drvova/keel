@@ -32,7 +32,7 @@ import { textOf } from "./content";
 import { renderMessage } from "./render-entries";
 import type { LoadedEntry } from "./load-messages";
 import { searchEntries } from "./search-entries";
-import { callKind, callSubject, filesOf, readsPart, toolCallsOf } from "./tools";
+import { callKind, callSubject, filesOf, fileWriteOf, readsPart, toolCallsOf } from "./tools";
 import { RECALL_TOOL } from "../names";
 
 interface WorkingSetInput {
@@ -118,8 +118,11 @@ const titleOf = (call: Call | undefined): string => {
   return arg ? `${call.name} ${JSON.stringify(arg.length > 80 ? `${arg.slice(0, 80)}…` : arg)}` : call.name;
 };
 
+/** What a call that writes one file whole puts in it (tools.ts fileWriteOf): the file. */
+const wholeText = (call: Call): string | undefined =>
+  callKind(call) === "write" && call.paths.length === 1 ? fileWriteOf(call)?.content : undefined;
 /** A call that writes a file whole: its content is the file. */
-const writes = (call: Call): boolean => callKind(call) === "write" && call.paths.length === 1 && typeof call.args.content === "string";
+const writes = (call: Call): boolean => wholeText(call) !== undefined;
 /** A call that changes part of a file. */
 const edits = (call: Call): boolean => !writes(call) && (callKind(call) === "edit" || callKind(call) === "write");
 /** A call that shows a file: a read of one path; not a search over a directory. */
@@ -209,7 +212,8 @@ export const selectWorkingSet = (input: WorkingSetInput): WorkingSetItem[] => {
     // Its last whole view: a write's content, or the result of a read of all of it.
     let base: { call: Call; text: string; index: number | undefined } | undefined;
     for (const c of touching) {
-      if (writes(c)) base = { call: c, text: String(c.args.content), index: input.indices[c.pos] };
+      const whole = wholeText(c);
+      if (whole !== undefined) base = { call: c, text: whole, index: input.indices[c.pos] };
       else if (reads(c) && !readsPart(c)) {
         const r = resultOf(c);
         if (r) base = { call: c, text: r.text, index: r.index };

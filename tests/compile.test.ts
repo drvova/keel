@@ -460,6 +460,13 @@ describe("file lists follow recent work", () => {
     expect(second.state.tracked).toEqual([{ name: "kubectl", entries: [`${base}api`, `${base}worker`] }]);
   });
 
+  it("carries another compactor's summary wrapped, with none of the next requests as early ones", () => {
+    const llm = `## Goal\n${"The user is building a payments service with a ledger and refunds. ".repeat(30)}`;
+    const r = compileSummary({ messages: [userMsg("now add the refunds endpoint")], previousSummary: llm, previousSummaryForeign: true, limits: DEFAULT_SUMMARY_LIMITS });
+    expect(Math.max(...r.state.brief.split("\n").map((l) => l.length))).toBeLessThanOrEqual(120);
+    expect(r.state.earlyRequests).toEqual([]);
+  });
+
   // Summaries written before this fix end the list with "(+N more)".
   it("drops the old (+N more) marker when merging a summary from an older version", () => {
     const old = "[Files And Changes]\n- Modified: src/a.ts, src/b.ts (+7 more)";

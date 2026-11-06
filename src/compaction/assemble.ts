@@ -4,7 +4,6 @@
 import type { FileOps } from "../types";
 import { compileSummary, type CompiledSummary } from "../core/summarize";
 import { previousOf, readState } from "../core/summary-state";
-import { legacyPrevious } from "../core/legacy-summary";
 import { mergeHistoryIndex, rangeOfWindow, readHistoryIndex, unindexedRange, type HistoryRange } from "../core/history-index";
 import { readPins } from "../core/pins";
 import { lastCompactionIndex, lastResetIndex } from "../core/session-file";
@@ -129,14 +128,12 @@ export const assembleSummary = (input: AssembleInput): Assembled => {
   }
 
   // The previous summary's sections: the state its compaction stored, or its
-  // text when an older version or another compactor wrote it. After another
-  // compactor's (an LLM's) the session's first requests are long gone: this
-  // window's are not taken for them.
+  // text when an older version or another compactor wrote it.
   const storedState = input.previousSummary !== undefined && previousCompaction ? readState(previousDetails?.summaryState) : undefined;
-  const foreign = input.previousSummary !== undefined && previousCompaction && !previousDetails ? { ...legacyPrevious(input.previousSummary), earlySlots: 0 } : undefined;
   const compiled = compileSummary({
-    previous: storedState ? previousOf(storedState) : foreign,
+    previous: storedState ? previousOf(storedState) : undefined,
     previousSummary: input.previousSummary,
+    previousSummaryForeign: !!previousCompaction && !previousDetails,
     messages: summaryInput.messages,
     sourceIndices,
     historyIndex,

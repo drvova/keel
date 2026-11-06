@@ -4,6 +4,7 @@
 // section of a summary's text (tests, reports).
 import { EARLY_REQUESTS_KEPT } from "../extract/user-messages";
 import type { PreviousSummary, SummaryState } from "./summary-state";
+import { wrapLongLines } from "./format";
 import type { Commit } from "../extract/commits";
 
 // The text older versions wrote, as they wrote it. Frozen here, not read from
@@ -85,8 +86,13 @@ const listed = (lines: readonly string[], splitOn: string): Array<{ name: string
 
 const COMMIT_RE = /^([0-9a-f]{7,12}): (.*)$/;
 
-/** An older summary as state, and the early requests it still has room for. */
-export const legacyPrevious = (summary: string): PreviousSummary => {
+/**
+ * An older summary as state, and the early requests it still has room for.
+ * `foreign`: another compactor (an LLM) wrote it, so the session's first
+ * requests are long gone and none are taken from the next window. Its brief
+ * is wrapped as omp-vcc's own is (format.ts wrapLongLines).
+ */
+export const legacyPrevious = (summary: string, foreign = false): PreviousSummary => {
   const text = summary.replace(RECALL_NOTE_RE, "\n\n").trimEnd();
   const early = items(text, SECTION.early);
   // An older version's [Session Goal]: its first real line (not a "[skill: x]"
@@ -107,9 +113,9 @@ export const legacyPrevious = (summary: string): PreviousSummary => {
       commits,
       tracked: listed(items(text, SECTION.tracked), COMMAND_SEPARATOR),
       userMessages: items(text, SECTION.userMessages),
-      brief: briefOf(text),
+      brief: wrapLongLines(briefOf(text)),
     },
-    earlySlots: Math.max(0, earlySlots),
+    earlySlots: foreign ? 0 : Math.max(0, earlySlots),
   };
 };
 
