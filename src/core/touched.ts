@@ -1,6 +1,7 @@
 // mode:'touched': the files the session's writes and edits changed, each with
 // the entries that changed it, a page at a time.
 import type { LoadedEntry } from "./load-messages";
+import { outsidePage } from "./format-recall";
 import { callKind, filesOf, fileWriteOf, toolCallsOf, writtenText } from "./tools";
 
 const TOUCHED_PAGE_SIZE = 5;
@@ -54,18 +55,20 @@ const shortPath = (path: string): string => {
 };
 
 /**
- * A page of touched files, with the next page's call and a ready `#N:path`
- * call for the first file on it a write or edit can show. `via` is what a
- * follow-up call adds (session:'id' in an earlier session).
+ * A page of touched files, with the next page's call (`next`, the surface's)
+ * and a ready `#N:path` call for the first file on it a write or edit can show.
+ * `via` is what a follow-up call adds (session:'id' in an earlier session).
  */
-export const formatTouched = (touched: readonly TouchedFile[], page: number, via = ""): string => {
+export const formatTouched = (touched: readonly TouchedFile[], page: number, hint: { via: string; next: (page: number) => string }): string => {
   if (touched.length === 0) return "No file operations found in session history.";
   const totalPages = Math.ceil(touched.length / TOUCHED_PAGE_SIZE);
+  if (page > totalPages) return outsidePage(page, totalPages, `${touched.length} files touched`);
+  const { via } = hint;
   const start = (page - 1) * TOUCHED_PAGE_SIZE;
   const files = touched.slice(start, start + TOUCHED_PAGE_SIZE);
   const header = totalPages > 1 ? `Page ${page}/${totalPages} (${touched.length} total files)` : `${touched.length} files touched`;
   const lines = files.map((tf) => `  ${shortPath(tf.path)}    ${tf.entries.map((e) => `#${e.index} (${e.toolName})`).join(", ")}`);
-  const next = page < totalPages ? `\n\n--- Use page:${page + 1}${via} for more results ---` : "";
+  const next = page < totalPages ? `\n${hint.next(page + 1)}` : "";
   const drill = files
     .map((tf) => ({ tf, write: [...tf.entries].reverse().find((e) => e.drillable !== false) }))
     .find((x) => x.write);

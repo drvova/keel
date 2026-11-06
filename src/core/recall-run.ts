@@ -1,6 +1,6 @@
 import { readSession, renderMessages, type LoadedEntry, type RecallMessage, type SessionRead } from "./load-messages";
 import { searchEntries, type SearchHit, type SearchResult } from "./search-entries";
-import { formatRecallOutput } from "./format-recall";
+import { formatRecallOutput, outsidePage, sessionParam, withParams } from "./format-recall";
 import { formatTouched, touchedFiles } from "./touched";
 import { expandEntryFile } from "./drill-down";
 import { EXPAND_DETAIL_CHARS } from "./render-entries";
@@ -126,7 +126,7 @@ const openSessionView = (session: SessionInfo, scope: RecallScope, project?: Pro
 };
 
 /** What a follow-up call inside an earlier session adds, so it reads that session again. */
-const inSession = (view: RecallView): string => (view.session ? ` with session:'${view.session.short}'` : "");
+const inSession = (view: RecallView): string => withParams(sessionParam(view.session?.short));
 
 /** "Session 01a194d8 · …" line that opens output read from an earlier session. */
 const sessionHeader = (s: SessionInfo): string => `Session ${describeSession(s)}\n\n`;
@@ -166,6 +166,8 @@ const OFF_PATH_NOTE =
 export interface RecallPagingHints {
   outOfRange(query: string, scope: RecallScope, totalPages: number, truncated: boolean): string;
   nextPage(query: string, scope: RecallScope, page: number): string;
+  /** The next page of mode:'touched' or mode:'sessions'; "" where the surface has no such call. */
+  listPage(mode: "touched" | "sessions", page: number): string;
   /** Next step after a search page, pointing at its first hit. The command has none. */
   aroundHit?(index: number, scope: RecallScope): string;
   /**
@@ -258,10 +260,10 @@ const runAction = (request: RecallRequest, view: RecallView, surface: RecallSurf
     }
 
     case "touched":
-      return runTouched(action.page, view);
+      return runTouched(action.page, view, hints);
 
     case "sessions":
-      return runSessions(action.page, view);
+      return runSessions(action.page, view, hints);
 
     case "expand":
       return runExpand(action.indices, view);
@@ -368,7 +370,7 @@ const runRange = (range: [number, number], page: number, view: RecallView): stri
   const totalPages = Math.ceil(entries.length / RANGE_PAGE_SIZE);
   const counts = `${entries.length} messages${scopeAll ? ", scope: all" : ""}${clamped ? `, #${hi} is the last entry` : ""}`;
   if (page > totalPages) {
-    return `Page ${page} is outside the available range 1-${totalPages} (#${lo}..#${hi}: ${counts}). Use a page between 1 and ${totalPages}.`;
+    return `${outsidePage(page, totalPages, `#${lo}..#${hi}: ${counts}`)} Use a page between 1 and ${totalPages}.`;
   }
   const start = (page - 1) * RANGE_PAGE_SIZE;
   const header = totalPages > 1
@@ -443,7 +445,7 @@ const pageOfHits = (
     ? ` — showing ${hits.length} of ${totalBeforeCap} matches, refine your query for more precise results`
     : "";
   if (hits.length > 0 && page > totalPages) {
-    return `Page ${page} is outside the available range 1-${totalPages} (${hits.length} matches${opts.where}${truncationNote}). ` +
+    return `${outsidePage(page, totalPages, `${hits.length} matches${opts.where}${truncationNote}`)} ` +
       opts.hints.outOfRange(query, opts.scope, totalPages, truncated);
   }
   const start = (page - 1) * SEARCH_PAGE_SIZE;
@@ -457,8 +459,8 @@ const pageOfHits = (
 };
 
 /** Files worked on, plus a ready #N:path call for the first file on the page that was written. */
-const runTouched = (page: number, view: RecallView): string =>
-  formatTouched(touchedFiles(view.load(false)), page, inSession(view));
+const runTouched = (page: number, view: RecallView, hints: RecallPagingHints): string =>
+  formatTouched(touchedFiles(view.load(false)), page, { via: inSession(view), next: (n) => hints.listPage("touched", n) });
 
 const SESSIONS_PAGE_SIZE = 10;
 /** scope:'project' searches at most this much: the newest sessions first. */
@@ -466,11 +468,11 @@ const PROJECT_SEARCH_SESSIONS = 20;
 const PROJECT_SEARCH_BYTES = 24 * 1024 * 1024;
 const PROJECT_SEARCH_ENTRIES = 40_000;
 
-const runSessions = (page: number, view: RecallView): string => {
+const runSessions = (page: number, view: RecallView, hints: RecallPagingHints): string => {
   const sessions = view.project?.list() ?? [];
   if (sessions.length === 0) return "No earlier sessions in this project (the session directory has no other session files).";
   const totalPages = Math.ceil(sessions.length / SESSIONS_PAGE_SIZE);
-  if (page > totalPages) return `Page ${page} is outside the available range 1-${totalPages} (${sessions.length} earlier sessions).`;
+  if (page > totalPages) return outsidePage(page, totalPages, `${sessions.length} earlier sessions`);
   const start = (page - 1) * SESSIONS_PAGE_SIZE;
   const lines = sessions.slice(start, start + SESSIONS_PAGE_SIZE).map((s) =>
     `${describeSession(s)}${s.pins.length > 0 ? `\n  pinned: ${s.pins.join("; ")}` : ""}`);
@@ -478,7 +480,7 @@ const runSessions = (page: number, view: RecallView): string => {
   const header = totalPages > 1
     ? `Earlier sessions in this project, newest first, page ${page}/${totalPages} (${sessions.length} sessions${more}):`
     : `${sessions.length} earlier session${sessions.length === 1 ? "" : "s"} in this project, newest first${more}:`;
-  const next = page < totalPages ? `\n--- Use mode:'sessions' page:${page + 1} for more ---` : "";
+  const next = page < totalPages ? hints.listPage("sessions", page + 1) : "";
   const first = sessions[start].short;
   return `${header}\n\n${lines.join("\n")}\n` +
     `\n--- Read one: session:'${first}' with a query, range, expand or mode:'touched'; search all: a query with scope:'project' ---${next}`;

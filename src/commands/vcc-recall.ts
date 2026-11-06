@@ -16,6 +16,8 @@ const commandHints = (name: string) => (short?: string): RecallPagingHints => {
       `Use /${name} ${query}${at}${scopeArg(scope)} page:N with N between 1 and ${totalPages}` +
       (truncated ? "." : ", or refine your query."),
     nextPage: (query, scope, page) => `\n--- /${name} ${query}${at}${scopeArg(scope)} page:${page} ---`,
+    // The command lists sessions; mode:'touched' is the tool's alone.
+    listPage: (mode, page) => (mode === "sessions" ? `\n--- /${name} sessions page:${page} ---` : ""),
     otherSessions: (n) =>
       `This project has ${n} earlier session${n === 1 ? "" : "s"}: add scope:project to search ${n === 1 ? "it" : "them"} too; /${name} sessions lists ${n === 1 ? "it" : "them"}.`,
   };

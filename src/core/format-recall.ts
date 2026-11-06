@@ -1,5 +1,18 @@
 import type { SearchHit } from "./search-entries";
 
+/** A follow-up call's params after the call: ` with session:'a' and scope:'all'`, "" for none. */
+export const withParams = (...params: Array<string | undefined>): string => {
+  const set = params.filter((p): p is string => !!p);
+  return set.length > 0 ? ` with ${set.join(" and ")}` : "";
+};
+
+/** session:'id' for a call into an earlier session; nothing for this one. */
+export const sessionParam = (short?: string): string | undefined => (short ? `session:'${short}'` : undefined);
+
+/** The one answer for a page past the last of a paged listing. */
+export const outsidePage = (page: number, totalPages: number, what: string): string =>
+  `Page ${page} is outside the available range 1-${totalPages} (${what}).`;
+
 export const formatRecallOutput = (
   entries: SearchHit[],
   query?: string,

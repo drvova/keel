@@ -157,14 +157,17 @@ describe("vcc_recall mode:touched", () => {
       const tool = register();
       const page1 = await invoke(tool, file, ids, { mode: "touched" });
       expect(page1).toContain("Page 1/2 (7 total files)");
-      expect(page1).toContain("--- Use page:2 for more results ---");
+      // The hint is the call that reads the next page: without mode it would be another listing.
+      expect(page1).toContain("--- Use mode:'touched' page:2 for more results ---");
       expect(page1).toContain("src/f0.ts");
       expect(page1).not.toContain("src/f5.ts");
 
       const page2 = await invoke(tool, file, ids, { mode: "touched", page: 2 });
       expect(page2).toContain("Page 2/2 (7 total files)");
       expect(page2).toContain("src/f5.ts");
-      expect(page2).not.toContain("--- Use page:3");
+      expect(page2).not.toContain("page:3");
+      // Past the last page: said, not an empty page.
+      expect(await invoke(tool, file, ids, { mode: "touched", page: 5 })).toBe("Page 5 is outside the available range 1-2 (7 files touched).");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

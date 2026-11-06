@@ -7,7 +7,8 @@
 // them. omp drops unknown keys itself, before execute().
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import type { Binding } from "../host";
-import { normalizeToolParams, parseToolRequest, RECALL_PARAMS, type RecallToolParams } from "../core/recall-request";
+import { normalizeToolParams, parseToolRequest, RECALL_PARAMS, type RecallScope, type RecallToolParams } from "../core/recall-request";
+import { sessionParam, withParams } from "../core/format-recall";
 import { RANGE_PAGE_SIZE, RECALL_OUTPUT_CHARS, recall, SEARCH_PAGE_SIZE, type RecallInput, type RecallPagingHints } from "../core/recall-run";
 import { SESSION_REF_MIN_CHARS } from "../core/sessions";
 import { RECALL_TOOL } from "../names";
@@ -49,14 +50,15 @@ const RECALL_PARAM_DESCRIPTIONS: Record<(typeof RECALL_PARAMS)[number], string> 
 };
 
 /** Follow-up hints in the tool's own params; inside an earlier session they carry session:'id'. */
-const toolHints = (short?: string): RecallPagingHints => {
-  const at = short ? ` with session:'${short}'` : "";
+export const toolHints = (short?: string): RecallPagingHints => {
+  const session = sessionParam(short);
+  const scopeParam = (scope: RecallScope) => (scope === "lineage" ? undefined : `scope:'${scope}'`);
   return {
     outOfRange: (_query, _scope, totalPages, truncated) => truncated
       ? `Use a page between 1 and ${totalPages}.`
       : `Use a page between 1 and ${totalPages}, or refine your query.`,
-    nextPage: (_query, scope, page) =>
-      `\n--- Use page:${page}${short ? `${at}${scope === "all" ? " and scope:'all'" : ""}` : scope === "all" ? " with scope:'all'" : ""} for more results ---`,
+    nextPage: (_query, scope, page) => `\n--- Use page:${page}${withParams(session, scopeParam(scope))} for more results ---`,
+    listPage: (mode, page) => `\n--- Use mode:'${mode}' page:${page}${withParams(session)} for more results ---`,
     // The agent has its current turn in context, and its question would match itself (an earlier session has none).
     skipCurrentTurn: true,
     aroundHit: (n, scope) => short

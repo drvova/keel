@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, utimesSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { listProjectSessions, MAX_LISTED_SESSIONS, resolveSession, type SessionInfo } from "../src/core/sessions";
-import { executeRecall } from "../src/tools/recall";
+import { executeRecall, toolHints as toolHintsOf } from "../src/tools/recall";
 import { recall } from "../src/core/recall-run";
 import { parseCommandRequest } from "../src/core/recall-request";
 import { sessionRef } from "../src/core/recall-request";
@@ -117,6 +117,11 @@ describe("vcc_recall across sessions", () => {
     expect(out).toContain("in this session and 2 earlier sessions");
     expect(out).toMatch(/\[session aaaa1111\] #1 \[assistant\]/);
     expect(out).toContain("session:'aaaa1111', expand:[1]");
+  });
+
+  it("the next page of a scope:'project' search keeps the scope", () => {
+    expect(toolHintsOf().nextPage("x", "project", 2)).toBe("\n--- Use page:2 with scope:'project' for more results ---");
+    expect(toolHintsOf("aaaa1111").nextPage("x", "all", 2)).toBe("\n--- Use page:2 with session:'aaaa1111' and scope:'all' for more results ---");
   });
 
   it("a surface without a read-around hint gives none for a hit in an earlier session either", () => {
