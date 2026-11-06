@@ -28,18 +28,13 @@ export interface SummaryState {
   userMessages: string[];
   /** The brief transcript as shown, its lines wrapped. */
   brief: string;
-}
-
-/** A previous summary to merge into: its state, and how many early requests it still has room for. */
-export interface PreviousSummary {
-  state: SummaryState;
+  /**
+   * How many more of the session's first requests a later window may add:
+   * none once its first ones are known, or long gone (after another
+   * compactor's summary, or an older version's [Session Goal]).
+   */
   earlySlots: number;
 }
-
-export const previousOf = (state: SummaryState): PreviousSummary => ({
-  state,
-  earlySlots: Math.max(0, EARLY_REQUESTS_KEPT - state.earlyRequests.length),
-});
 
 interface FreshInput {
   blocks: NormalizedBlock[];
@@ -64,6 +59,7 @@ export const freshState = (input: FreshInput): SummaryState => {
   const brief = stringifyBrief(buildBriefSections(input.briefBlocks ?? blocks));
   return {
     earlyRequests: early,
+    earlySlots: Math.max(0, input.earlySlots - early.length),
     files: { modified: [...files.modified], created: [...files.created], read: [...files.read] },
     commits: extractCommits(blocks),
     tracked: [...tracked.byCommand]
@@ -103,10 +99,9 @@ const mergeBrief = (prev: string, fresh: string, maxLines: number): string => {
 };
 
 /** The previous summary's sections with this window's merged in. */
-export const mergeStates = (previous: PreviousSummary | undefined, fresh: SummaryState, limits: SummaryLimits): SummaryState => {
-  if (!previous) return fresh;
-  const prev = previous.state;
-  const modified = appendTouched(prev.files.modified, fresh.files.modified);
+export const mergeStates = (prev: SummaryState | undefined, fresh: SummaryState, limits: SummaryLimits): SummaryState => {
+  if (!prev) return fresh;
+  let modified = appendTouched(prev.files.modified, fresh.files.modified);
   const created = appendTouched(prev.files.created, fresh.files.created);
   // A file in both: created earlier in the session and changed since, it is
   // still new (Created); changed before a later write, it existed (Modified).
@@ -114,6 +109,12 @@ export const mergeStates = (previous: PreviousSummary | undefined, fresh: Summar
   for (const p of modified.filter((p) => created.includes(p))) {
     if (createdBefore.has(p)) modified.splice(modified.indexOf(p), 1);
     else created.splice(created.indexOf(p), 1);
+  }
+  // Written whole in this window after an earlier one read it: it existed, as
+  // the same calls in one window say (extract/files.ts).
+  for (const p of fresh.files.created.filter((p) => prev.files.read.includes(p) && !createdBefore.has(p))) {
+    created.splice(created.indexOf(p), 1);
+    modified = appendTouched(modified, [p]);
   }
   const tracked = prev.tracked.map((t) => ({ name: t.name, entries: [...t.entries] }));
   for (const t of fresh.tracked) {
@@ -123,6 +124,8 @@ export const mergeStates = (previous: PreviousSummary | undefined, fresh: Summar
   }
   return {
     earlyRequests: [...new Set([...prev.earlyRequests, ...fresh.earlyRequests])].slice(0, EARLY_REQUESTS_KEPT),
+    // This window had the previous one's room (compileSummary) and took what it used.
+    earlySlots: fresh.earlySlots,
     files: { modified, created, read: appendTouched(prev.files.read, fresh.files.read) },
     commits: mergeCommits([...prev.commits, ...fresh.commits]),
     tracked,
@@ -134,6 +137,7 @@ export const mergeStates = (previous: PreviousSummary | undefined, fresh: Summar
 /** What a summary shows of each list, which is what it stores for the next compaction. */
 export const capState = (state: SummaryState, limits: SummaryLimits): SummaryState => ({
   earlyRequests: state.earlyRequests.slice(0, EARLY_REQUESTS_KEPT),
+  earlySlots: state.earlySlots,
   files: {
     modified: state.files.modified.slice(-limits.filesPerCategory),
     created: state.files.created.slice(-limits.filesPerCategory),
@@ -153,6 +157,7 @@ const isCommit = (c: unknown): c is Commit => isObject(c) && typeof c.message ==
 const isTracked = (t: unknown): t is SummaryState["tracked"][number] => isObject(t) && typeof t.name === "string" && strings(t.entries);
 const listOf = <T>(is: (x: unknown) => x is T) => (v: unknown): v is T[] => Array.isArray(v) && v.every(is);
 const isText = (v: unknown): v is string => typeof v === "string";
+const isCount = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v >= 0;
 
 /**
  * A stored state, or undefined when `v` is not one (another version's shape,
@@ -172,6 +177,8 @@ export const readState = (v: unknown): SummaryState | undefined => {
   const tracked = field(v.tracked, listOf(isTracked), []);
   const userMessages = field(v.userMessages, strings, []);
   const brief = field(v.brief, isText, "");
-  if (!earlyRequests || !modified || !created || !read || !commits || !tracked || !userMessages || brief === undefined) return undefined;
-  return { earlyRequests, files: { modified, created, read }, commits, tracked, userMessages, brief };
+  // Stored before it was: the room the first requests leave.
+  const earlySlots = earlyRequests ? field(v.earlySlots, isCount, Math.max(0, EARLY_REQUESTS_KEPT - earlyRequests.length)) : undefined;
+  if (!earlyRequests || !modified || !created || !read || !commits || !tracked || !userMessages || brief === undefined || earlySlots === undefined) return undefined;
+  return { earlyRequests, earlySlots, files: { modified, created, read }, commits, tracked, userMessages, brief };
 };

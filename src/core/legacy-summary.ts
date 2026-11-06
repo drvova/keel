@@ -3,7 +3,7 @@
 // so the next compaction can merge into it like any other. Also what reads a
 // section of a summary's text (tests, reports).
 import { EARLY_REQUESTS_KEPT } from "../extract/user-messages";
-import type { PreviousSummary, SummaryState } from "./summary-state";
+import type { SummaryState } from "./summary-state";
 import { wrapLongLines } from "./format";
 import type { Commit } from "../extract/commits";
 
@@ -92,7 +92,7 @@ const COMMIT_RE = /^([0-9a-f]{7,12}): (.*)$/;
  * requests are long gone and none are taken from the next window. Its brief
  * is wrapped as omp-vcc's own is (format.ts wrapLongLines).
  */
-export const legacyPrevious = (summary: string, foreign = false): PreviousSummary => {
+export const legacyPrevious = (summary: string, foreign = false): SummaryState => {
   const text = summary.replace(RECALL_NOTE_RE, "\n\n").trimEnd();
   const early = items(text, SECTION.early);
   // An older version's [Session Goal]: its first real line (not a "[skill: x]"
@@ -107,15 +107,13 @@ export const legacyPrevious = (summary: string, foreign = false): PreviousSummar
     return m ? { hash: m[1], message: m[2] } : { message: l };
   });
   return {
-    state: {
-      earlyRequests,
-      files: { modified: files.Modified ?? [], created: files.Created ?? [], read: files.Read ?? [] },
-      commits,
-      tracked: listed(items(text, SECTION.tracked), COMMAND_SEPARATOR),
-      userMessages: items(text, SECTION.userMessages),
-      brief: wrapLongLines(briefOf(text)),
-    },
+    earlyRequests,
     earlySlots: foreign ? 0 : Math.max(0, earlySlots),
+    files: { modified: files.Modified ?? [], created: files.Created ?? [], read: files.Read ?? [] },
+    commits,
+    tracked: listed(items(text, SECTION.tracked), COMMAND_SEPARATOR),
+    userMessages: items(text, SECTION.userMessages),
+    brief: wrapLongLines(briefOf(text)),
   };
 };
 
@@ -125,16 +123,13 @@ export const legacyPrevious = (summary: string, foreign = false): PreviousSummar
  * listed path that exactly one of this window's absolute paths ends with is
  * that file, so a file touched again is not listed under two names.
  */
-export const withFullPaths = (previous: PreviousSummary, fresh: SummaryState): PreviousSummary => {
+export const withFullPaths = (previous: SummaryState, fresh: SummaryState): SummaryState => {
   const absolute = [...new Set([...fresh.files.modified, ...fresh.files.created, ...fresh.files.read].filter((p) => p.startsWith("/")))];
   const full = (p: string): string => {
     if (p.startsWith("/")) return p;
     const matches = absolute.filter((a) => a.endsWith(`/${p}`));
     return matches.length === 1 ? matches[0] : p;
   };
-  const { files } = previous.state;
-  return {
-    ...previous,
-    state: { ...previous.state, files: { modified: files.modified.map(full), created: files.created.map(full), read: files.read.map(full) } },
-  };
+  const { files } = previous;
+  return { ...previous, files: { modified: files.modified.map(full), created: files.created.map(full), read: files.read.map(full) } };
 };

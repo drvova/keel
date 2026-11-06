@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { freshState, previousOf, readState } from "../src/core/summary-state";
+import { freshState, readState, type SummaryState } from "../src/core/summary-state";
 import { sectionOf } from "../src/core/legacy-summary";
 import { compile as compileAt, compileSummary } from "../src/core/summarize";
 import { DEFAULT_SUMMARY_LIMITS } from "../src/core/window";
@@ -12,7 +12,7 @@ describe("readState", () => {
 
   it("loads a state stored before a section existed, with that section empty", () => {
     // No `tracked`: as a release before it would have stored it.
-    expect(readState(stored)).toEqual({ ...stored, tracked: [] });
+    expect(readState(stored)).toEqual({ ...stored, tracked: [], earlySlots: 2 });
   });
 
   it("is no state when a section has another shape (a hand-edited file)", () => {
@@ -87,11 +87,11 @@ describe("carried sections merge from the stored state", () => {
   const windowOf = (...msgs: any[][]) => [{ role: "user", content: "work on the files" }, ...msgs.flat()] as any[];
   /** Three compactions in a row, each merging into the state the one before stored. */
   const chain = (...windows: any[][]) => {
-    let previous: ReturnType<typeof previousOf> | undefined;
+    let previous: SummaryState | undefined;
     let last: ReturnType<typeof compileSummary> | undefined;
     for (const messages of windows) {
       last = compileSummary({ messages, previous, limits: DEFAULT_SUMMARY_LIMITS });
-      previous = previousOf(last.state);
+      previous = last.state;
     }
     return last!;
   };
@@ -117,13 +117,27 @@ describe("carried sections merge from the stored state", () => {
     expect(filesLine(out.text, "Read")).toBe("- Read: src/b.ts, src/a.ts, lib/c.ts");
   });
 
+  it("a file read in one window and written whole in a later one existed: Modified, as in one window", () => {
+    const r = chain(windowOf(call("read", { path: "/r/src/config.ts" }, "1")), windowOf(call("write", { path: "/r/src/config.ts", content: "x = 1" }, "2")));
+    expect(r.state.files.modified).toContain("/r/src/config.ts");
+    expect(r.state.files.created).not.toContain("/r/src/config.ts");
+  });
+
+  it("after another compactor's summary, no later compaction takes a request for an early one", () => {
+    const llm = "## Goal\nThe user is building a payments service.";
+    const first = compileSummary({ messages: [{ role: "user", content: "now wire the refunds endpoint" }] as any, previousSummary: llm, previousSummaryForeign: true, limits: DEFAULT_SUMMARY_LIMITS });
+    const second = compileSummary({ messages: [{ role: "user", content: "now add the export command to the CLI" }] as any, previous: first.state, limits: DEFAULT_SUMMARY_LIMITS });
+    expect(second.state.earlyRequests).toEqual([]);
+    expect(second.text).not.toContain("[Early Session Requests]");
+  });
+
   it("a tracked command whose name has a colon keeps its entries", () => {
     const w = (cmd: string, id: string) => windowOf(call("bash", { command: cmd }, id));
-    let previous: ReturnType<typeof previousOf> | undefined;
+    let previous: SummaryState | undefined;
     let out: ReturnType<typeof compileSummary> | undefined;
     for (const [cmd, id] of [["c:tool run one", "1"], ["c:tool run two", "2"]]) {
       out = compileSummary({ messages: w(cmd, id), previous, trackCommands: ["c:tool"], limits: DEFAULT_SUMMARY_LIMITS });
-      previous = previousOf(out.state);
+      previous = out.state;
     }
     expect(out!.state.tracked).toEqual([{ name: "c:tool", entries: ["c:tool run one", "c:tool run two"] }]);
   });

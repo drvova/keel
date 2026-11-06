@@ -4,7 +4,8 @@
 // comes in as its convertToLlm.
 import { estimateMessageChars, estimateMessageTokens, estimateTokensFromChars } from "../core/token-estimate";
 import { lastCompactionIndex, lastResetIndex } from "../core/session-file";
-import { prefixHasRenderableContent, toLiveMessage, type ConvertToLlm, type EntryWithMessage } from "./summary-input";
+import { prefixHasRenderableContent, toLiveMessage, type EntryWithMessage } from "./summary-input";
+import type { ConvertToLlm } from "../host";
 
 /**
  * no_anchor: no user turn to cut at, so a token-budget cut inside the turn.

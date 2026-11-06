@@ -10,11 +10,11 @@ import { indexById, readEntries } from "../core/session-file";
 import { parseInstructions } from "../core/compact-args";
 import { handlesHostCompactions, type VccSettings } from "../core/settings";
 import { calibrateCharsPerToken, DEFAULT_CHARS_PER_TOKEN, estimateMessageChars, estimateTokensFromChars } from "../core/token-estimate";
-import { compactionBudgets } from "../core/window";
+import { compactionBudgets, triggerFor } from "../core/window";
 import { isRecovery, tell, type Binding } from "../host";
 import { applyContextEdits } from "../core/context-edits";
 import { modelKey, recordHostPolicy } from "../core/model-limits";
-import { triggerFor, type WindowState } from "./window-limits";
+import type { WindowState } from "./window-limits";
 import { vccDetailsOf, type VccCompactionDetails } from "../details";
 import { COMPACTOR } from "../names";
 import {
@@ -154,7 +154,14 @@ export const registerCompactionHook = (
     recordHostPolicy(host.config.dir(), key, policy);
     // A pass that must shrink the context: an overflow, a cut-off reply, one the host retries.
     const recovering = !fromCommand && isRecovery({ reason, willRetry });
-    const trigger = triggerFor(window, recovering, preparation.tokensBefore, policy, rule);
+    const trigger = triggerFor(window.effective, recovering, preparation.tokensBefore, policy, rule);
+    // A pass omp-vcc started itself went by the policy as last recorded; this
+    // one carries the current policy, which may since say no: compaction off,
+    // or a trigger the context (measured as the end-of-run check measured it) is under.
+    if (windows.selfTrigger) {
+      const used = ctx?.getContextUsage?.()?.tokens;
+      if (!rule.autoCompacts(policy) || (typeof used === "number" && trigger !== undefined && used < trigger)) return { cancel: true };
+    }
     const budgets = compactionBudgets(trigger, overheadTokens, settings.workingSet);
     const cutOptions = { charsPerToken: tokenEstimate.charsPerToken, skipCustomTypes: settings.skipCustomTypes, maxTokens: budgets.maxTailTokens };
 

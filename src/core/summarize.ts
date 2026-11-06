@@ -6,7 +6,7 @@ import { summaryBlocks } from "./normalize";
 import { EARLY_REQUESTS_KEPT } from "../extract/user-messages";
 import { renderSummary } from "./format";
 import { legacyPrevious, withFullPaths } from "./legacy-summary";
-import { capState, freshState, mergeStates, type PreviousSummary, type SummaryState } from "./summary-state";
+import { capState, freshState, mergeStates, type SummaryState } from "./summary-state";
 import { selectRankedBriefBlocks, type BriefRankingOptions } from "./rank";
 import { formatHistoryRange, type HistoryRange } from "./history-index";
 import { formatPinLines, type PinnedNote } from "./pins";
@@ -15,7 +15,7 @@ import type { SummaryLimits } from "./window";
 export interface CompileInput {
   messages: Message[];
   /** The state the previous compaction stored; when absent, `previousSummary` is read from its text. */
-  previous?: PreviousSummary;
+  previous?: SummaryState;
   /** The previous summary's text: one an older version or another compactor wrote. */
   previousSummary?: string;
   /** Another compactor (an LLM) wrote `previousSummary`, not omp-vcc or pi-vcc. */

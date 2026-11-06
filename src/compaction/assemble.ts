@@ -3,7 +3,7 @@
 // writing at all.
 import type { FileOps } from "../types";
 import { compileSummary, type CompiledSummary } from "../core/summarize";
-import { previousOf, readState } from "../core/summary-state";
+import { readState } from "../core/summary-state";
 import { mergeHistoryIndex, rangeOfWindow, readHistoryIndex, unindexedRange, type HistoryRange } from "../core/history-index";
 import { readPins } from "../core/pins";
 import { lastCompactionIndex, lastResetIndex } from "../core/session-file";
@@ -13,7 +13,8 @@ import { estimateMessageChars } from "../core/token-estimate";
 import type { CompactionBudgets } from "../core/window";
 import type { VccSettings } from "../core/settings";
 import { vccDetailsOf } from "../details";
-import { summaryInputOf, toLiveMessage, type ConvertToLlm } from "./summary-input";
+import { summaryInputOf, toLiveMessage } from "./summary-input";
+import type { ConvertToLlm } from "../host";
 import type { OwnCutResult } from "./cut";
 
 /** Growth a summary may add before it is not worth writing: its framing (the
@@ -58,7 +59,7 @@ interface AssembleInput {
   previousSummary: string | undefined;
   /** The host's file activity for its cut. */
   fileOps: FileOps;
-  settings: Pick<VccSettings, "skipCustomTypes" | "trackCommands" | "workingSet">;
+  settings: Pick<VccSettings, "skipCustomTypes" | "trackCommands">;
   budgets: CompactionBudgets;
   charsPerToken: number;
 }
@@ -131,7 +132,7 @@ export const assembleSummary = (input: AssembleInput): Assembled => {
   // text when an older version or another compactor wrote it.
   const storedState = input.previousSummary !== undefined && previousCompaction ? readState(previousDetails?.summaryState) : undefined;
   const compiled = compileSummary({
-    previous: storedState ? previousOf(storedState) : undefined,
+    previous: storedState,
     previousSummary: input.previousSummary,
     previousSummaryForeign: !!previousCompaction && !previousDetails,
     messages: summaryInput.messages,

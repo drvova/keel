@@ -427,6 +427,23 @@ describe("omp entry: the model's real window", () => {
     rmSync(limitsFile(), { force: true });
   });
 
+  test("a pass it starts on a policy since turned off is cancelled, and the new policy kept", async () => {
+    recordLimit(32_768);
+    const omp = createOmp();
+    omp.ctx.model = model;
+    omp.ctx.isIdle = () => true;
+    omp.ctx.getContextUsage = () => ({ tokens: 30_000, contextWindow: 128_000, percent: 23 });
+    omp.setEntries(big());
+    let result: any;
+    omp.setCompact(async () => { result = omp.beforeCompact(undefined, { enabled: false }); });
+    omp.fire("agent_end", { messages: [] });
+    await new Promise((r) => setTimeout(r, 5));
+    expect(omp.compactCalls).toHaveLength(1);
+    expect(result).toEqual({ cancel: true });
+    expect(JSON.parse(readFileSync(limitsFile(), "utf8"))["electronhub/small-model"].hostPolicy).toEqual({ enabled: false });
+    rmSync(limitsFile(), { force: true });
+  });
+
   test("no compaction of its own for a provider in skipForProviders: omp's own would run", async () => {
     writeFileSync(process.env.OMP_VCC_CONFIG_PATH!, JSON.stringify({ skipForProviders: [model.provider] }));
     recordLimit(32_768);

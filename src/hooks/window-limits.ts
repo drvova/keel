@@ -3,7 +3,7 @@
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { learnedHostPolicy, modelKey, recordLearnedWindow, type WindowInfo } from "../core/model-limits";
 import { handlesHostCompactions } from "../core/settings";
-import { limitFromOverflowError, type TriggerRule } from "../core/window";
+import { limitFromOverflowError } from "../core/window";
 import { compactAndWait, tell, type Binding, type CompactionTrigger } from "../host";
 
 /** What window tracking learns over a binding's sessions, and the compaction it starts itself. */
@@ -22,31 +22,6 @@ export const createWindowState = (): WindowState => ({
 /** The host's window is above the real one, so its trigger cannot fire before an overflow. */
 const hostOverestimates = (w: WindowInfo): boolean =>
   w.host !== undefined && w.effective !== undefined && w.effective < w.host;
-
-/** The host's policy for this model as the last compaction carried it; undefined before one, or for another model. */
-
-const positive = (n: number | undefined): number | undefined => (typeof n === "number" && n > 0 ? n : undefined);
-
-/**
- * Where this compaction's budgets assume the next one happens: the host's
- * policy, which every compaction of either host carries (preparation.settings,
- * required from omp 18.14 and Pi 1.0 on), applied to the effective window as
- * the host applies it (`rule`: omp its threshold, reserve and the model's own
- * entry, Pi its reserve). When the host's window is too high, its trigger can
- * never fire, and the same policy on the real window applies. A recovery pass
- * (the hook's `recovering`) is bounded by the context that overflowed.
- */
-export const triggerFor = (
-  w: WindowInfo,
-  recovering: boolean,
-  tokensBefore: number | undefined,
-  policy: object | undefined,
-  rule: TriggerRule,
-): number | undefined => {
-  const trigger = w.effective ? rule.trigger(w.effective, policy) : undefined;
-  const before = positive(tokensBefore);
-  return recovering && before ? (trigger ? Math.min(trigger, before) : before) : trigger;
-};
 
 /**
  * Learn limits from overflow errors, and compact when a run ends past omp-vcc's

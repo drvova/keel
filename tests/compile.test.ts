@@ -1,6 +1,5 @@
 import { describe, it, expect } from "bun:test";
 import { compile as compileAt, compileSummary, type CompileInput } from "../src/core/summarize";
-import { previousOf } from "../src/core/summary-state";
 import { DEFAULT_SUMMARY_LIMITS } from "../src/core/window";
 import {
   userMsg,
@@ -445,7 +444,7 @@ describe("file lists follow recent work", () => {
     const first = compileSummary({ messages: [userMsg("work"), ...touch(10)], limits: DEFAULT_SUMMARY_LIMITS });
     const second = compileSummary({
       messages: [userMsg("more"), ...touch(1, 0), ...touch(5, 10)],
-      previous: previousOf(first.state),
+      previous: first.state,
       limits: DEFAULT_SUMMARY_LIMITS,
     });
     expect(sectionOf(second.text, "Files And Changes")).toBe("- Modified: (+5 earlier) f6.ts, f7.ts, f8.ts, f9.ts, f0.ts, f10.ts, f11.ts, f12.ts, f13.ts, f14.ts");
@@ -456,7 +455,7 @@ describe("file lists follow recent work", () => {
     const run = (cmd: string) => [assistantWithToolCall("bash", { command: cmd })];
     const opts = { trackCommands: ["kubectl"], limits: DEFAULT_SUMMARY_LIMITS };
     const first = compileSummary({ messages: [userMsg("check"), ...run(`${base}api`)], ...opts });
-    const second = compileSummary({ messages: [userMsg("again"), ...run(`${base}worker`)], previous: previousOf(first.state), ...opts });
+    const second = compileSummary({ messages: [userMsg("again"), ...run(`${base}worker`)], previous: first.state, ...opts });
     expect(second.state.tracked).toEqual([{ name: "kubectl", entries: [`${base}api`, `${base}worker`] }]);
   });
 

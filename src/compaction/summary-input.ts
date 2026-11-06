@@ -6,7 +6,6 @@ import { isExtensionUserMessage } from "../core/content";
 import { UNSUMMARIZED_MESSAGE_TYPES } from "../names";
 
 import type { ConvertToLlm } from "../host";
-export type { ConvertToLlm } from "../host";
 
 export interface EntryWithMessage {
   entry: { id: string; type: string };

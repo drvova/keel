@@ -200,6 +200,27 @@ export const PI_TRIGGER_RULE: TriggerRule = {
   autoCompacts: (policy) => piAutoCompacts(policy as PiCompactionPolicy | undefined),
 };
 
+/**
+ * Where this compaction's budgets assume the next one happens: the host's
+ * policy, which every compaction of either host carries (preparation.settings,
+ * required from omp 18.14 and Pi 1.0 on), applied to the effective window as
+ * the host applies it (`rule`: omp its threshold, reserve and the model's own
+ * entry, Pi its reserve). When the host's window is too high, its trigger can
+ * never fire, and the same policy on the real window applies. A recovery pass
+ * (the hook's `recovering`) is bounded by the context that overflowed.
+ */
+export const triggerFor = (
+  effectiveWindow: number | undefined,
+  recovering: boolean,
+  tokensBefore: number | undefined,
+  policy: object | undefined,
+  rule: TriggerRule,
+): number | undefined => {
+  const trigger = effectiveWindow ? rule.trigger(effectiveWindow, policy) : undefined;
+  const before = positive(tokensBefore);
+  return recovering && before ? (trigger ? Math.min(trigger, before) : before) : trigger;
+};
+
 /** omp re-compacts unless the result lands at or under this share of the trigger. */
 export const RECOVERY_BAND = 0.8;
 /** omp-vcc aims lower, so the turn after a compaction has room before the next one. */

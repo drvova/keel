@@ -18,13 +18,13 @@ import {
   piTrigger,
   OMP_TRIGGER_RULE,
   PI_TRIGGER_RULE,
+  triggerFor as triggerForRule,
   type TriggerRule,
 } from "../src/core/window";
 // omp's own function, which omp-vcc ports since omp does not export it to extensions.
 import { resolveThresholdTokens } from "@oh-my-pi/pi-agent-core/compaction";
 import { learnedWindow, recordLearnedWindow } from "../src/core/model-limits";
 import type { CompactionReason } from "../src/types";
-import { triggerFor as triggerForRule } from "../src/hooks/window-limits";
 import { windowOf as windowOfHost } from "../src/core/model-limits";
 import type { HostName } from "../src/host";
 
@@ -35,7 +35,7 @@ const windowOf = (model: Parameters<typeof windowOfHost>[0], host: HostName = "o
 /** As the hook runs a compaction, omp's rule unless a test names another. */
 /** As the hook calls it: a pass of these reasons is a recovery (no host retries a threshold pass). */
 const triggerFor = (w: ReturnType<typeof windowOfHost>, reason: CompactionReason, before: number, policy?: object, rule: TriggerRule = OMP_TRIGGER_RULE) =>
-  triggerForRule(w, reason === "overflow" || reason === "incomplete", before, policy, rule);
+  triggerForRule(w.effective, reason === "overflow" || reason === "incomplete", before, policy, rule);
 
 let dir: string;
 const prev = process.env.OMP_VCC_CONFIG_PATH;
