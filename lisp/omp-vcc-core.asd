@@ -37,6 +37,13 @@
      ;; their #N, the branch, the kept originals, and each one rendered.
      (:file "session")
      (:file "render")
+     ;; The summary pipeline: rx (the TS's own regexes as written), blocks,
+     ;; the section extractors, the brief and its ranking, the summary itself.
+     (:file "rx")
+     (:file "blocks")
+     (:file "extract")
+     (:file "brief")
+     (:file "summary")
      (:file "server"))))
   :in-order-to ((test-op (test-op "omp-vcc-core/test"))))
 

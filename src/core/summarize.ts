@@ -11,6 +11,7 @@ import { selectRankedBriefBlocks, type BriefRankingOptions } from "./rank";
 import { formatHistoryRange, type HistoryRange } from "./history-index";
 import { formatPinLines, type PinnedNote } from "./pins";
 import type { SummaryLimits } from "./window";
+import { callCore } from "./lisp-core";
 
 export interface CompileInput {
   messages: Message[];
@@ -49,8 +50,12 @@ export interface CompiledSummary {
   sections: string[];
 }
 
-/** The summary, and what to store for the next compaction. */
+/** The summary, and what to store for the next compaction: from the Lisp core when there is one (lisp/src/summary.lisp). */
 export const compileSummary = (input: CompileInput): CompiledSummary => {
+  const inCore = callCore({ op: "summarize", input });
+  if (inCore && typeof inCore.text === "string") {
+    return { text: inCore.text, state: inCore.state as SummaryState, sections: inCore.sections as string[] };
+  }
   const blocks = summaryBlocks(input.messages, input.sourceIndices);
   // A summary read from its text: every rule for one is here (legacy-summary.ts).
   const legacy = !input.previous && input.previousSummary ? legacyPrevious(input.previousSummary, input.previousSummaryForeign) : undefined;

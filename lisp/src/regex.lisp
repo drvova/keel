@@ -65,8 +65,11 @@
 
 (defun line-terminator-p (u) (member u '(10 13 #x2028 #x2029)))
 
+(defvar *ignore-case* t "The /i flag, read while a pattern is parsed and compiled.")
+(defvar *multiline* nil "The /m flag, read while a pattern is compiled.")
+
 (defun class-bits (items negate)
-  "The units a class of ITEMS matches under /i: a unit matches when any unit
+  "The units a class of ITEMS matches; under /i a unit matches when any unit
 /i makes equal to it is in the class."
   (let ((raw (make-array 65536 :element-type 'bit :initial-element 0)))
     (dolist (item items)
@@ -80,7 +83,7 @@
     (let ((bits (make-array 65536 :element-type 'bit :initial-element 0)))
       (dotimes (u 65536)
         (let ((in (or (= 1 (sbit raw u))
-                      (some (lambda (v) (= 1 (sbit raw v))) (aref +same-case+ u)))))
+                      (and *ignore-case* (some (lambda (v) (= 1 (sbit raw v))) (aref +same-case+ u))))))
           (setf (sbit bits u) (if (eq (not in) (not negate)) 0 1))))
       bits)))
 
@@ -322,7 +325,9 @@ from an escape; a named group is refused."
 (defun unit-test-of (node)
   "A predicate on one unit for a node that matches exactly one, or NIL."
   (case (first node)
-    (:char (let ((c (canon (second node)))) (lambda (u) (= (canon u) c))))
+    (:char (if *ignore-case*
+               (let ((c (canon (second node)))) (lambda (u) (= (canon u) c)))
+               (let ((c (second node))) (lambda (u) (= u c)))))
     (:any (lambda (u) (not (line-terminator-p u))))
     (:class (let ((bits (second node))) (lambda (u) (= 1 (sbit bits u)))))))
 
@@ -335,8 +340,12 @@ is true when NODE matches there and K matches where it ends."
        (lambda (pos)
          (declare (fixnum pos))
          (and (< pos (length *input*)) (funcall test (aref *input* pos)) (funcall k (1+ pos))))))
-    (:start (lambda (pos) (and (zerop pos) (funcall k pos))))
-    (:end (lambda (pos) (and (= pos (length *input*)) (funcall k pos))))
+    (:start (if *multiline*
+                (lambda (pos) (and (or (zerop pos) (line-terminator-p (aref *input* (1- pos)))) (funcall k pos)))
+                (lambda (pos) (and (zerop pos) (funcall k pos)))))
+    (:end (if *multiline*
+              (lambda (pos) (and (or (= pos (length *input*)) (line-terminator-p (aref *input* pos))) (funcall k pos)))
+              (lambda (pos) (and (= pos (length *input*)) (funcall k pos)))))
     (:boundary
      (let ((negate (second node)))
        (lambda (pos)
@@ -359,14 +368,16 @@ is true when NODE matches there and K matches where it ends."
            (setf (car start-cell) pos)
            (prog1 (funcall inner pos) (setf (car start-cell) saved))))))
     (:backref
-     (let ((i (second node)))
+     (let ((i (second node)) (fold *ignore-case*))
        (lambda (pos)
          (let ((s (aref *captures* (* 2 i))) (e (aref *captures* (1+ (* 2 i)))))
            (if (or (null s) (null e))
                (funcall k pos)
                (let ((n (- e s)))
                  (and (<= (+ pos n) (length *input*))
-                      (loop for j below n always (= (canon (aref *input* (+ s j))) (canon (aref *input* (+ pos j)))))
+                      (loop for j below n
+                            for a = (aref *input* (+ s j)) and b = (aref *input* (+ pos j))
+                            always (if fold (= (canon a) (canon b)) (= a b)))
                       (funcall k (+ pos n)))))))))
     (:look
      (destructuring-bind (ahead negate inner-node) (rest node)
@@ -431,24 +442,32 @@ is true when NODE matches there and K matches where it ends."
 
 (defstruct (regex (:constructor %make-regex)) matcher groups source backrefs)
 
-(defun compile-regex (pattern)
-  "PATTERN compiled as `new RegExp(PATTERN, \"i\")`; signals REGEX-SYNTAX-ERROR
-where that throws, REGEX-UNSUPPORTED where this port would not be sure to agree."
-  (multiple-value-bind (tree groups) (parse-regex (string-units pattern))
-    (%make-regex :matcher (compile-node tree (lambda (p) p)) :groups groups :source pattern
-                 :backrefs (tree-has tree :backref))))
+(defun compile-regex (pattern &key (ignore-case t) multiline)
+  "PATTERN compiled as `new RegExp(PATTERN, FLAGS)`, FLAGS i (the default, as
+recall's search compiles a query) and m; signals REGEX-SYNTAX-ERROR where that
+throws, REGEX-UNSUPPORTED where this port would not be sure to agree."
+  (let ((*ignore-case* ignore-case) (*multiline* multiline))
+    (multiple-value-bind (tree groups) (parse-regex (string-units pattern))
+      (%make-regex :matcher (compile-node tree (lambda (p) p)) :groups groups :source pattern
+                   :backrefs (tree-has tree :backref)))))
 
-(defun regex-match-at (regex units start)
-  "The end of REGEX's match starting at START, or NIL."
+(defun regex-match-at (regex units start &optional captures)
+  "The end of REGEX's match starting at START, or NIL; and its captures, a
+vector of start and end units per group (group I at 2I and 2I+1). CAPTURES,
+when given, is that vector to reuse, cleared here."
   (let ((*input* units)
-        (*captures* (make-array (* 2 (1+ (regex-groups regex))) :initial-element nil)))
-    (funcall (regex-matcher regex) start)))
+        (*captures* (if captures
+                        (fill captures nil)
+                        (make-array (* 2 (1+ (regex-groups regex))) :initial-element nil))))
+    (let ((end (funcall (regex-matcher regex) start)))
+      (values end (and end *captures*)))))
 
 (defun regex-search (regex units &optional (start 0))
   "The first match at or after START, as (values START END), or NIL: String.search, RegExp.exec."
-  (loop for s from start to (length units)
-        for end = (regex-match-at regex units s)
-        when end return (values s end)))
+  (let ((captures (make-array (* 2 (1+ (regex-groups regex))) :initial-element nil)))
+    (loop for s from start to (length units)
+          for end = (regex-match-at regex units s captures)
+          when end return (values s end))))
 
 (defun regex-test (regex units) (and (regex-search regex units) t))
 

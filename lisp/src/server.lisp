@@ -29,6 +29,11 @@
 ;;;;   -> {"ok":true,"status":"ok","results":[{"test":B,"search":I,"count":N}...]}
 ;;;;      or "status":"syntax" (JavaScript throws) or "unsupported" (left to TS)
 ;;;;
+;;;; summarize: a compaction's summary (src/core/summarize.ts compileSummary)
+;;;;   {"op":"summarize","input":COMPILE-INPUT} -> {"ok":true,"text":T,"state":STATE,"sections":[S...]}
+;;;;   or {"ok":false,"unsupported":"summary"} for input left to TS (text in a
+;;;;   script segmented by dictionary, a regex construct it refuses)
+;;;;
 ;;;; Either search may answer {"ok":false,"unsupported":"regex"}, and the caller
 ;;;; searches as before; {"ok":false,"error":MESSAGE} on any failure.
 ;;;;
@@ -160,6 +165,13 @@ parity test compares with JavaScript's own."
       (regex-syntax-error () (json-object "ok" :true "status" "syntax"))
       (regex-unsupported () (json-object "ok" :true "status" "unsupported")))))
 
+(defun handle-summarize (request)
+  "compileSummary on the CompileInput REQUEST carries in \"input\"."
+  (handler-case
+      (multiple-value-bind (text state sections) (compile-summary (json-get request "input"))
+        (json-object "ok" :true "text" text "state" (state-json state) "sections" (coerce sections 'vector)))
+    ((or left-to-ts regex-unsupported storage-condition) () (json-object "ok" :false "unsupported" "summary"))))
+
 (defun handle-request (request)
   "The response object to the parsed REQUEST."
   (let ((op (json-get request "op")))
@@ -167,6 +179,7 @@ parity test compares with JavaScript's own."
           ((equal op "search-sessions") (handle-search-sessions request))
           ((equal op "load") (handle-load request))
           ((equal op "regex") (handle-regex request))
+          ((equal op "summarize") (handle-summarize request))
           (t (json-object "ok" :false "error" (format nil "unknown op ~a" (json-string (or op :null))))))))
 
 (defun read-stdin ()
