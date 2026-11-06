@@ -115,7 +115,6 @@ export const assembleSummary = (input: AssembleInput): Assembled => {
     // compaction summarizes and what earlier ones did, from the originals.
     const past = branchEntries
       .slice(lastResetIndex(branchEntries) + 1, keptAt >= 0 ? keptAt : branchEntries.length)
-      .filter((e: any) => e?.type !== "compaction")
       .map((e: any) => ({ id: e.id as string, m: toLiveMessage(e) }))
       .filter((x) => x.m);
     const pastIds = past.map((x) => x.id);

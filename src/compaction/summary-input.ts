@@ -101,8 +101,8 @@ export const prefixHasRenderableContent = (
 // branch_summary) into its agent-message form, as omp's session context builds
 // them when it replays the branch.
 export const toLiveMessage = (entry: any): { role: string; content: unknown; [key: string]: unknown } | null => {
-  if (entry.type === "message" && entry.message) return entry.message;
-  if (entry.type === "custom_message") {
+  if (entry?.type === "message" && entry.message) return entry.message;
+  if (entry?.type === "custom_message") {
     return {
       role: "custom",
       customType: entry.customType,
@@ -113,7 +113,7 @@ export const toLiveMessage = (entry: any): { role: string; content: unknown; [ke
       timestamp: entry.timestamp != null ? new Date(entry.timestamp).getTime() : undefined,
     };
   }
-  if (entry.type === "branch_summary") {
+  if (entry?.type === "branch_summary") {
     return {
       role: "branchSummary",
       summary: entry.summary,

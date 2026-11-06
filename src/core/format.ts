@@ -18,14 +18,14 @@ export const SECTION = {
 } as const;
 
 /** Between the header sections, the brief and the recall note. */
-export const SEPARATOR = "\n\n---\n\n";
+const SEPARATOR = "\n\n---\n\n";
 
 /** Between a tracked command's invocations: an entry (`kubectl get pods,svc`) can contain a comma. */
-export const COMMAND_SEPARATOR = " | ";
+const COMMAND_SEPARATOR = " | ";
 /** One tracked invocation is clipped to this many characters. */
 const TRACKED_ENTRY_CHARS = 80;
 
-export const RECALL_NOTE =
+const RECALL_NOTE =
   `Use \`${RECALL_TOOL}\` to search for prior work, decisions, and context from before this summary. ` +
   "Do not redo work already completed.";
 

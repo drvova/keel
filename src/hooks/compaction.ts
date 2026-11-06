@@ -31,7 +31,7 @@ import { assembleSummary } from "../compaction/assemble";
 import { tellCompactionStats, type CompactionStats } from "../compaction/stats";
 
 /** What the compaction hook needs of its host. */
-export type CompactionHost = Pick<Binding, "name" | "rule" | "convertToLlm" | "triggerOf" | "config" | "window">;
+export type CompactionHost = Pick<Binding, "rule" | "convertToLlm" | "triggerOf" | "config" | "window">;
 
 /** Per-registration state. omp binds the factory again for every subagent, so it gets one per binding. */
 export interface CompactionState {
@@ -189,7 +189,7 @@ export const registerCompactionHook = (
         dbg(settings, { deferredRunningTurn: true, compaction: { reason, willRetry }, liveMessages: ownCut.messages.length });
         return { cancel: true };
       }
-      ownCut = runningTurnCut(convert, branchEntries, ownCut, cutOptions) ?? ownCut;
+      ownCut = runningTurnCut(convert, branchEntries, cutOptions) ?? ownCut;
       dbg(settings, { runningTurnRecovery: true, compaction: { reason, willRetry }, budgetCut: ownCut.ok ? ownCut.budgetCut : undefined });
     }
     // One or two messages too big for the window: summarized whole on a recovery pass.

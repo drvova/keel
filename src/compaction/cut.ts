@@ -25,7 +25,7 @@ const normalizeKeepUserTurns = (keepUserTurns: number): number => {
 /** Chars of what stays in context from these entries: every live message, whatever its shape (custom messages and branch summaries included). */
 export const keptChars = (entries: any[]): number =>
   entries.reduce((sum: number, e: any) => {
-    const m = e?.type === "compaction" ? null : toLiveMessage(e);
+    const m = toLiveMessage(e);
     return m ? sum + estimateMessageChars(m) : sum;
   }, 0);
 
@@ -84,7 +84,6 @@ export const collectLiveMessages = (branchEntries: any[]): EntryWithMessage[] =>
   const liveMessages: EntryWithMessage[] = [];
   for (let i = liveWindowStart(branchEntries); i < branchEntries.length; i++) {
     const e = branchEntries[i];
-    if (e.type === "compaction") continue;
     const m = toLiveMessage(e);
     if (m) liveMessages.push({ entry: e, message: m });
   }
@@ -209,10 +208,8 @@ const findBudgetCutIndex = (
 export const runningTurnCut = (
   convert: ConvertToLlm,
   branchEntries: any[],
-  cut: OwnCutResult,
   opts: { maxTokens: number; charsPerToken?: number; skipCustomTypes?: readonly string[] },
 ): OwnCutResult | undefined => {
-  if (!cut.ok) return undefined;
   const live = collectLiveMessages(branchEntries);
   const tokens = live.map((m) => estimateMessageTokens(m.message, opts.charsPerToken));
   const target = Math.min(opts.maxTokens, tokens.reduce((a, b) => a + b, 0) / 2);
