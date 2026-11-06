@@ -7,6 +7,7 @@
 // same argument shapes.
 import type { NormalizedBlock } from "../types";
 import { isObject } from "./content";
+import type { PIN_TOOL, RECALL_TOOL } from "../names";
 
 export interface ToolCall {
   id: string | undefined;
@@ -29,6 +30,10 @@ export const toolCallsOf = (message: unknown): ToolCall[] => {
   const content = isObject(message) ? message.content : undefined;
   return Array.isArray(content) ? content.flatMap((part) => toolCallOf(part) ?? []) : [];
 };
+
+/** A call of one of omp-vcc's own tools (src/names.ts), by name as the host stores it. */
+export const isOwnTool = (name: string | undefined, tool: typeof RECALL_TOOL | typeof PIN_TOOL): boolean =>
+  typeof name === "string" && name.toLowerCase() === tool;
 
 /** What a call does to the project. */
 type CallKind = "read" | "write" | "edit" | "search" | "shell" | "other";

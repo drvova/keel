@@ -7,7 +7,7 @@ import { previousOf, readState } from "../core/summary-state";
 import { legacyPrevious } from "../core/legacy-summary";
 import { mergeHistoryIndex, rangeOfWindow, readHistoryIndex, unindexedRange, type HistoryRange } from "../core/history-index";
 import { readPins } from "../core/pins";
-import { lastResetIndex } from "../core/session-file";
+import { lastCompactionIndex, lastResetIndex } from "../core/session-file";
 import { restoreOriginals } from "../core/raw-store";
 import { buildWorkingSet } from "../core/working-set";
 import { estimateMessageChars } from "../core/token-estimate";
@@ -88,9 +88,8 @@ export const assembleSummary = (input: AssembleInput): Assembled => {
 
   // The previous compaction still in context: after omp's /clear (a later
   // reset_boundary) the summary and [History Index] start over.
-  let lastCompactionIdx = -1;
-  for (let i = branchEntries.length - 1; i >= 0 && lastCompactionIdx < 0; i--) if (branchEntries[i]?.type === "compaction") lastCompactionIdx = i;
-  const previousCompaction = lastCompactionIdx > lastResetIndex(branchEntries) ? branchEntries[lastCompactionIdx] : undefined;
+  const lastCompactionIdx = lastCompactionIndex(branchEntries);
+  const previousCompaction = lastCompactionIdx >= 0 ? branchEntries[lastCompactionIdx] : undefined;
   const previousDetails = previousCompaction ? vccDetailsOf(previousCompaction.details) : undefined;
 
   // [History Index]: this window's range added to the one the previous compaction stored.

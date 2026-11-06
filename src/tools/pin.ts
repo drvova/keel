@@ -5,7 +5,7 @@ import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import type { HostProfile } from "../host";
 import { addPin, listPins, PIN_CHARS, removePin, type PinHost } from "../core/pins";
 import type { SessionManagerLike } from "../core/session-file";
-import { PIN_TOOL } from "../names";
+import { PIN_PARAMS, PIN_TOOL } from "../names";
 
 const PIN_TOOL_LABEL = "VCC Pin";
 
@@ -23,25 +23,26 @@ const pinToolDescription = (command: string): string => [
 ].join("\n");
 
 const PIN_PARAM_DESCRIPTIONS = {
-  note: "Text to pin: one self-contained line, e.g. 'Sessions live in SQLite, not Redis: the deploy host has no Redis.'",
-  unpin: "The [N] of a pinned note to remove.",
+  [PIN_PARAMS.note]: "Text to pin: one self-contained line, e.g. 'Sessions live in SQLite, not Redis: the deploy host has no Redis.'",
+  [PIN_PARAMS.unpin]: "The [N] of a pinned note to remove.",
 } as const;
 
 /** One vcc_pin call: note pins, unpin removes, neither lists. */
 export const executePin = (params: unknown, host: PinHost, session: SessionManagerLike): string => {
-  const p = (params && typeof params === "object" ? params : {}) as { note?: unknown; unpin?: unknown };
-  const note = typeof p.note === "string" ? p.note : undefined;
-  if (note && p.unpin !== undefined) return "Send note or unpin, not both, in one call.";
+  const p = (params && typeof params === "object" ? params : {}) as Record<string, unknown>;
+  const note = typeof p[PIN_PARAMS.note] === "string" ? (p[PIN_PARAMS.note] as string) : undefined;
+  const unpin = p[PIN_PARAMS.unpin];
+  if (note && unpin !== undefined) return "Send note or unpin, not both, in one call.";
   if (note) return addPin(host, session, note, "agent").text;
-  if (p.unpin !== undefined) return removePin(host, session, p.unpin).text;
+  if (unpin !== undefined) return removePin(host, session, unpin).text;
   return listPins(session);
 };
 
 const PIN_PARAMETERS = {
   type: "object",
   properties: {
-    note: { type: "string", description: PIN_PARAM_DESCRIPTIONS.note },
-    unpin: { description: PIN_PARAM_DESCRIPTIONS.unpin, anyOf: [{ type: "number" }, { type: "string" }] },
+    [PIN_PARAMS.note]: { type: "string", description: PIN_PARAM_DESCRIPTIONS[PIN_PARAMS.note] },
+    [PIN_PARAMS.unpin]: { description: PIN_PARAM_DESCRIPTIONS[PIN_PARAMS.unpin], anyOf: [{ type: "number" }, { type: "string" }] },
   },
 } as const;
 

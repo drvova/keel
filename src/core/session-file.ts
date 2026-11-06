@@ -39,6 +39,15 @@ export const RESET_ENTRY_TYPE = "reset_boundary";
 /** An entry `#N` counts: a persisted message. */
 export const isCountedEntry = (entry: any): boolean => entry?.type === "message" && entry.message != null;
 
+/** Index of the branch's last compaction still in context, -1 for none: one before a later `/clear` has left it. */
+export const lastCompactionIndex = (branch: readonly any[]): number => {
+  for (let i = branch.length - 1; i >= 0; i--) {
+    if (branch[i]?.type === "compaction") return i;
+    if (branch[i]?.type === RESET_ENTRY_TYPE) return -1;
+  }
+  return -1;
+};
+
 /** Index of the branch's last `/clear`, -1 for none. */
 export const lastResetIndex = (branch: readonly any[]): number => {
   for (let i = branch.length - 1; i >= 0; i--) if (branch[i]?.type === RESET_ENTRY_TYPE) return i;

@@ -3,7 +3,7 @@
 // newest steps, the whole window, and smart keep-tail. Pure: what the host does
 // comes in as its convertToLlm.
 import { estimateMessageChars, estimateMessageTokens, estimateTokensFromChars } from "../core/token-estimate";
-import { lastResetIndex } from "../core/session-file";
+import { lastCompactionIndex, lastResetIndex } from "../core/session-file";
 import { prefixHasRenderableContent, toLiveMessage, type ConvertToLlm, type EntryWithMessage } from "./summary-input";
 
 /**
@@ -49,11 +49,6 @@ export type OwnCutResult =
     }
   | { ok: false; reason: OwnCutCancelReason };
 
-const lastIndexOfType = (entries: any[], type: string): number => {
-  for (let i = entries.length - 1; i >= 0; i--) if (entries[i]?.type === type) return i;
-  return -1;
-};
-
 /**
  * Index of the first branch entry still in the model's context: everything from
  * here on (minus compaction entries) is live.
@@ -70,9 +65,8 @@ const lastIndexOfType = (entries: any[], type: string): number => {
  */
 const liveWindowStart = (branchEntries: any[]): number => {
   const resetIdx = lastResetIndex(branchEntries);
-  const compactionIdx = lastIndexOfType(branchEntries, "compaction");
-  if (resetIdx > compactionIdx) return resetIdx + 1;
-  if (compactionIdx < 0) return 0;
+  const compactionIdx = lastCompactionIndex(branchEntries);
+  if (compactionIdx < 0) return resetIdx + 1;
 
   const compaction = branchEntries[compactionIdx];
   const findAfterReset = (id: unknown) =>

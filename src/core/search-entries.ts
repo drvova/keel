@@ -2,7 +2,7 @@ import type { Message } from "@oh-my-pi/pi-ai";
 import { fileMentionPaths, type RenderedEntry } from "./render-entries";
 import type { LoadedEntry } from "./load-messages";
 import { textOf, clip } from "./content";
-import { argsText, toolCallsOf } from "./tools";
+import { argsText, isOwnTool, toolCallsOf } from "./tools";
 import { RECALL_TOOL } from "../names";
 
 export interface SearchHit extends RenderedEntry {
@@ -314,7 +314,7 @@ const TOOL_ARGS_BUDGET = 2000;
  *  tool's own arguments (see above). */
 const toolCallArgsText = (msg: Message): string => {
   const raw = toolCallsOf(msg)
-    .filter((call) => call.name.toLowerCase() !== RECALL_TOOL)
+    .filter((call) => !isOwnTool(call.name, RECALL_TOOL))
     .map((call) => argsText(call.args))
     .filter(Boolean)
     .join("\n");
@@ -342,7 +342,7 @@ const fullText = (msg: Message): string => {
     return `${(msg as any).code ?? ""} ${(msg as any).output ?? ""}`;
   }
   if ((msg as any).role === "fileMention") return fileMentionPaths(msg).join(" ");
-  if (msg.role === "toolResult" && msg.toolName?.toLowerCase() === RECALL_TOOL) {
+  if (msg.role === "toolResult" && isOwnTool(msg.toolName, RECALL_TOOL)) {
     return "";
   }
   const text = textOf(msg.content);

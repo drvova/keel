@@ -4,6 +4,8 @@
 /** The recall tool, named in the summary, in hints and in omp's placeholders. */
 export const RECALL_TOOL = "vcc_recall";
 export const PIN_TOOL = "vcc_pin";
+/** vcc_pin's params, as its schema (tools/pin.ts) declares them and the brief reads a pin call by them. */
+export const PIN_PARAMS = { note: "note", unpin: "unpin" } as const;
 
 /** Custom entries that hold a pin or unpin (core/pins.ts): in the session file, never in the model's context. */
 export const PIN_ENTRY_TYPE = "omp-vcc.pin";
