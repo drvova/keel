@@ -131,6 +131,8 @@ describe.skipIf(!piInstalled())("Pi entry", () => {
     await pi.run("pi-vcc", "keep:1");
     expect(pi.compactCalls).toHaveLength(1);
     expect(pi.compactCalls[0].customInstructions).toContain("keep:1");
+    // Pi's compact() returned at once; the command came back only after Pi's onComplete, which reports the outcome.
+    expect(pi.notices).toEqual(["Compacted with omp-vcc"]);
     // The hook gets the marker from Pi's event, so it compacts with omp-vcc even when overriding is off.
     writeFileSync(process.env.OMP_VCC_CONFIG_PATH!, JSON.stringify({ overrideDefaultCompaction: false }));
     const result = pi.beforeCompact({ reason: "manual", willRetry: false, customInstructions: pi.compactCalls[0].customInstructions });

@@ -12,11 +12,14 @@ const tokenContent = (n: number): string => "a".repeat(n * 4);
 
 describe("resolveSmartKeepUserTurns", () => {
   test("smart disabled → old behavior, keep base (1)", () => {
+    // Three user turns: enabled, it would boost to 2 (as below).
     const entries = [
       msg("u1", "user", tokenContent(3)),
       msg("a1", "assistant", tokenContent(3)),
       msg("u2", "user", tokenContent(3)),
       msg("a2", "assistant", tokenContent(3)),
+      msg("u3", "user", tokenContent(3)),
+      msg("a3", "assistant", tokenContent(3)),
     ];
     const r = resolveSmartKeepUserTurns({
       branchEntries: entries,
@@ -39,15 +42,16 @@ describe("resolveSmartKeepUserTurns", () => {
       msg("u3", "user", tokenContent(3)),
       msg("a3", "assistant", tokenContent(3)),
     ];
+    // keep:1 has a 6-token tail: the default path would boost it to 2 (as below).
     const r = resolveSmartKeepUserTurns({
       branchEntries: entries,
-      requestedKeepUserTurns: 2,
+      requestedKeepUserTurns: 1,
       explicit: true,
       smartKeepTail: true,
       minTokens: 10,
       maxTokens: 40,
     });
-    expect(r.keepUserTurns).toBe(2);
+    expect(r.keepUserTurns).toBe(1);
     expect(r.smartAdjusted).toBe(false);
   });
 
@@ -101,12 +105,14 @@ describe("resolveSmartKeepUserTurns", () => {
   });
 
   test("keep:1 tail > min → no boost (already above threshold)", () => {
-    // keep:1 tail = 8+8 = 16 tokens (> min 10).
+    // keep:1 tail = 8+8 = 16 tokens (> min 10); keep:2 (22) would fit max 100.
     const entries = [
       msg("u1", "user", tokenContent(3)),
       msg("a1", "assistant", tokenContent(3)),
-      msg("u2", "user", tokenContent(8)),
-      msg("a2", "assistant", tokenContent(8)),
+      msg("u2", "user", tokenContent(3)),
+      msg("a2", "assistant", tokenContent(3)),
+      msg("u3", "user", tokenContent(8)),
+      msg("a3", "assistant", tokenContent(8)),
     ];
     const r = resolveSmartKeepUserTurns({
       branchEntries: entries,

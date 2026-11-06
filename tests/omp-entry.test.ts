@@ -1,6 +1,6 @@
 // The omp entry (index.ts) against a fake omp extension API that hands it omp's
 // real convertToLlm. tests/omp-host.test.ts runs the same entry inside a real omp.
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, jest, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -143,13 +143,19 @@ describe("omp entry: /omp-vcc", () => {
       arg.onComplete();
     });
 
-    await omp.run("omp-vcc", "keep:2");
+    // The stats toast waits 500 ms; fake timers fire it at once.
+    jest.useFakeTimers();
+    try {
+      await omp.run("omp-vcc", "keep:2");
+      jest.runAllTimers();
+    } finally {
+      jest.useRealTimers();
+    }
 
     expect(typeof omp.compactCalls[0]).toBe("object");
     expect(hookResult.compaction.details.compactor).toBe("omp-vcc");
     // keep:2 reached the hook: the tail starts at the second user turn.
     expect(hookResult.compaction.firstKeptEntryId).toBe(entries[2].id);
-    await Bun.sleep(600);
     expect(omp.notices.some((x) => x.msg.startsWith("omp-vcc: kept 2/3 turns"))).toBe(true);
     // The marker is only for the pass the command started.
     expect(omp.beforeCompact(undefined)?.compaction.details.reason).toBe("manual");

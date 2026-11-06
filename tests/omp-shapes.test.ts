@@ -149,7 +149,8 @@ describe("a turn still running", () => {
     else process.env.OMP_VCC_CONFIG_PATH = prev;
   });
 
-  test("a threshold pass between tool calls waits; a recovery pass is answered by omp-vcc", async () => {
+  // The threshold pass on such a turn (it waits) is omp-entry.test.ts's "a threshold pass waits for the turn to end".
+  test("a recovery pass on a running turn whose one step is over half of it summarizes the turn whole", async () => {
     const { mkdtempSync, writeFileSync } = await import("fs");
     const { tmpdir } = await import("os");
     const dir = mkdtempSync(join(tmpdir(), "omp-vcc-running-"));
@@ -162,17 +163,16 @@ describe("a turn still running", () => {
       { id: "a1", type: "message", message: { role: "assistant", content: [{ type: "toolCall", id: "t1", name: "bash", arguments: { command: "bun test" } }] } },
       { id: "r1", type: "message", message: { role: "toolResult", toolCallId: "t1", toolName: "bash", content: [{ type: "text", text: "12 pass" }], isError: false } },
     ];
-    const event = (reason: "threshold" | "overflow") => (hook.autoCompactionStart(reason), {
+    hook.autoCompactionStart("overflow");
+    const event = {
       type: "session_before_compact", branchEntries: entries, customInstructions: undefined,
       preparation: { previousSummary: undefined, fileOps: { read: [], written: [], edited: [] }, tokensBefore: 1000 },
       signal: new AbortController().signal,
-    });
-    const ctx = { ui: { notify: () => {} } };
-    expect(handler(event("threshold"), ctx)).toEqual({ cancel: true });
+    };
     // Recovering, omp-vcc answers itself (omp would run snapcompact, handoff or an
     // LLM summary otherwise). One step is more than half the turn, so the turn is
     // summarized whole, the request with it.
-    const recovered = handler(event("overflow"), ctx).compaction;
+    const recovered = handler(event, { ui: { notify: () => {} } }).compaction;
     expect(recovered.firstKeptEntryId).toBe("");
     expect(recovered.summary).toContain("Run the tests");
   });

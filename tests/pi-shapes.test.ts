@@ -123,8 +123,9 @@ describe.skipIf(!piInstalled())("Pi shapes", () => {
     test("a compact-all keeps nothing, which Pi reads from an empty firstKeptEntryId", () => {
       const cut = buildOwnCut(host.convertToLlm, branch(), 0, []);
       expect(cut.ok && cut.compactAll).toBe(true);
+      if (!cut.ok) return;
       // Pi's buildContextEntries keeps nothing before a compaction whose kept id is not on the path.
-      const compaction = { type: "compaction", id: "cmp", parentId: "a2", timestamp: "2026-11-06T00:00:00.000Z", summary: "s", firstKeptEntryId: "", tokensBefore: 1 };
+      const compaction = { type: "compaction", id: "cmp", parentId: "a2", timestamp: "2026-11-06T00:00:00.000Z", summary: "s", firstKeptEntryId: cut.firstKeptEntryId, tokensBefore: 1 };
       let parent: string | null = null;
       const linked = [...branch(), compaction].map((e) => {
         const withParent = { ...e, parentId: parent };

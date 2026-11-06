@@ -114,8 +114,10 @@ describe("/omp-vcc", () => {
 
     await invoke("continue");
 
-    expect(() => compactCalls[0].onComplete?.()).not.toThrow();
-    await Promise.resolve();
+    // Called outside expect(): bun:test fails a test on an unhandled rejection
+    // after a turn of the event loop, but not one raised inside expect(fn).toThrow.
+    compactCalls[0].onComplete?.();
+    await Bun.sleep(0);
   });
 
   test("skips follow-up when trailing prompt is empty", async () => {
