@@ -5,7 +5,7 @@ import type { FileOps } from "../types";
 import { summaryBlocks } from "./normalize";
 import { EARLY_REQUESTS_KEPT } from "../extract/user-messages";
 import { renderSummary } from "./format";
-import { legacyPrevious } from "./legacy-summary";
+import { legacyPrevious, withFullPaths } from "./legacy-summary";
 import { capState, freshState, mergeStates, type PreviousSummary, type SummaryState } from "./summary-state";
 import { selectRankedBriefBlocks, type BriefRankingOptions } from "./rank";
 import { formatHistoryRange, type HistoryRange } from "./history-index";
@@ -52,7 +52,8 @@ export interface CompiledSummary {
 /** The summary, and what to store for the next compaction. */
 export const compileSummary = (input: RankedCompileInput): CompiledSummary => {
   const blocks = summaryBlocks(input.messages, input.sourceIndices);
-  const previous = input.previous ?? (input.previousSummary ? legacyPrevious(input.previousSummary) : undefined);
+  const legacy = !input.previous && input.previousSummary ? legacyPrevious(input.previousSummary) : undefined;
+  const previous = input.previous ?? legacy;
   const fresh = freshState({
     blocks,
     briefBlocks: selectRankedBriefBlocks(blocks, { ...input.ranking, fileOps: input.ranking?.fileOps ?? input.fileOps }),
@@ -60,7 +61,7 @@ export const compileSummary = (input: RankedCompileInput): CompiledSummary => {
     trackCommands: input.trackCommands,
     earlySlots: previous?.earlySlots ?? EARLY_REQUESTS_KEPT,
   });
-  const merged = mergeStates(previous, fresh, input.limits);
+  const merged = mergeStates(legacy ? withFullPaths(legacy, fresh) : previous, fresh, input.limits);
   const { text, sections } = renderSummary({
     state: merged,
     limits: input.limits,

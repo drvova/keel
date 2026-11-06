@@ -4,7 +4,7 @@
 // section of a summary's text (tests, reports).
 import { EARLY_REQUESTS_KEPT } from "../extract/user-messages";
 import { COMMAND_SEPARATOR, RECALL_NOTE, SECTION, SEPARATOR } from "./format";
-import type { Commit, PreviousSummary } from "./summary-state";
+import type { Commit, PreviousSummary, SummaryState } from "./summary-state";
 
 // A header section is a "[Title Case]" line standing alone in the header area
 // (the text before the first separator) plus the lines up to the next blank
@@ -96,5 +96,25 @@ export const legacyPrevious = (summary: string): PreviousSummary => {
       brief: briefOf(text),
     },
     earlySlots: Math.max(0, earlySlots),
+  };
+};
+
+/**
+ * An older summary listed absolute paths without the directory they all
+ * shared, and its text does not say which: `f3.ts` for `/repo/src/f3.ts`. A
+ * listed path that exactly one of this window's absolute paths ends with is
+ * that file, so a file touched again is not listed under two names.
+ */
+export const withFullPaths = (previous: PreviousSummary, fresh: SummaryState): PreviousSummary => {
+  const absolute = [...new Set([...fresh.files.modified, ...fresh.files.created, ...fresh.files.read].filter((p) => p.startsWith("/")))];
+  const full = (p: string): string => {
+    if (p.startsWith("/")) return p;
+    const matches = absolute.filter((a) => a.endsWith(`/${p}`));
+    return matches.length === 1 ? matches[0] : p;
+  };
+  const { files } = previous.state;
+  return {
+    ...previous,
+    state: { ...previous.state, files: { modified: files.modified.map(full), created: files.created.map(full), read: files.read.map(full) } },
   };
 };

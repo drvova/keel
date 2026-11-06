@@ -97,6 +97,22 @@ describe("compile", () => {
     );
   });
 
+  it("an older summary's paths, listed without their shared directory, are the files this window touches by full path", () => {
+    const previousSummary = "[Files And Changes]\n- Modified: f0.ts, f3.ts\n- Read: src/a.ts\n\n---\n\n[user]\nhi";
+    const r = compile({
+      previousSummary,
+      messages: [
+        userMsg("again"),
+        assistantWithToolCall("Edit", { path: "/repo/f3.ts", oldText: "a", newText: "b" }),
+        assistantWithToolCall("Read", { path: "/repo/src/a.ts" }),
+        assistantWithToolCall("Read", { path: "/other/f0.ts" }),
+        assistantWithToolCall("Read", { path: "/elsewhere/f0.ts" }),
+      ],
+    });
+    // f3.ts and src/a.ts are listed once, by the full path; f0.ts matches two files, so it is left as it was.
+    expect(sectionOf(r, "Files And Changes")).toBe("- Modified: f0.ts, /repo/f3.ts\n- Read: /repo/src/a.ts, /other/f0.ts, /elsewhere/f0.ts");
+  });
+
   it("user messages keep the newest, and a repeated message moves to the end", () => {
     let summary = compile({ messages: [userMsg("the first goal")] });
     for (let i = 1; i <= 20; i++) summary = compile({ previousSummary: summary, messages: [userMsg(`step number ${i}`)] });
