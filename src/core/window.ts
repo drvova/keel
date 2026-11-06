@@ -183,18 +183,22 @@ const piAutoCompacts = (policy: PiCompactionPolicy | undefined): boolean => poli
  * compacts next, so the rule is the host's, never a guess.
  */
 export interface TriggerRule {
+  /** Whose rule it is: the Lisp core applies the same one by this name (lisp/src/window.lisp). */
+  name: "omp" | "pi";
   policyOf(settings: unknown): object | undefined;
   trigger(window: number, policy?: object): number;
   autoCompacts(policy: object | undefined): boolean;
 }
 
 export const OMP_TRIGGER_RULE: TriggerRule = {
+  name: "omp",
   policyOf: ompPolicyOf,
   trigger: (window, policy) => ompTrigger(window, policy as OmpCompactionPolicy | undefined),
   autoCompacts: (policy) => ompAutoCompacts(policy as OmpCompactionPolicy | undefined),
 };
 
 export const PI_TRIGGER_RULE: TriggerRule = {
+  name: "pi",
   policyOf: piPolicyOf,
   trigger: (window, policy) => piTrigger(window, policy as PiCompactionPolicy | undefined),
   autoCompacts: (policy) => piAutoCompacts(policy as PiCompactionPolicy | undefined),

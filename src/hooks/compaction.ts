@@ -9,15 +9,12 @@ import { writeFileSync } from "fs";
 import { indexById, readEntries } from "../core/session-file";
 import { parseInstructions } from "../core/compact-args";
 import { handlesHostCompactions, type VccSettings } from "../core/settings";
-import { calibrateCharsPerToken, DEFAULT_CHARS_PER_TOKEN, estimateMessageChars, estimateTokensFromChars } from "../core/token-estimate";
-import { compactionBudgets, triggerFor } from "../core/window";
 import { isRecovery, tell, type Binding } from "../host";
 import { applyContextEdits } from "../core/context-edits";
 import { modelKey, recordHostPolicy } from "../core/model-limits";
 import type { WindowState } from "./window-limits";
 import { vccDetailsOf, type VccCompactionDetails } from "../details";
 import { COMPACTOR } from "../names";
-import { collectLiveMessages } from "../compaction/cut";
 import { planCompaction } from "../compaction/plan";
 import { tellCompactionStats, type CompactionStats } from "../compaction/stats";
 
@@ -59,44 +56,6 @@ const dbg = (settings: VccSettings, data: Record<string, unknown>) => {
 };
 
 /**
- * Prompt tokens of the session's first request less what its messages account
- * for: the system prompt and tool schemas every request carries. Undefined when
- * no request recorded its usage.
- */
-const measuredOverheadTokens = (branchEntries: any[]): number | undefined => {
-  let chars = 0;
-  for (const e of branchEntries) {
-    if (e?.type !== "message" || !e.message) continue;
-    const m = e.message;
-    const u = m.role === "assistant" ? m.usage : undefined;
-    const prompt = u ? (Number(u.input) || 0) + (Number(u.cacheRead) || 0) + (Number(u.cacheWrite) || 0) : 0;
-    if (prompt > 0) return Math.max(0, prompt - estimateTokensFromChars(chars, DEFAULT_CHARS_PER_TOKEN));
-    chars += estimateMessageChars(m);
-  }
-  return undefined;
-};
-
-/**
- * The context as a compaction sizes it: chars per token calibrated on the
- * messages, and what a compaction cannot remove (system prompt, tool schemas).
- * The session's first request measured that: its prompt held little else.
- * Without one, the provider-counted context less what the messages account for
- * at 4 chars/token, which overstates it for dense text.
- */
-const measureContext = (branchEntries: any[], tokensBefore: number, previousSummary: string | undefined) => {
-  const messageChars = collectLiveMessages(branchEntries).reduce((sum, m) => sum + estimateMessageChars(m.message), 0);
-  const contentChars = messageChars + (previousSummary?.length ?? 0);
-  const measured = measuredOverheadTokens(branchEntries);
-  // Calibrated on the messages alone where the overhead is known, so a summary's
-  // token budget maps to the chars the messages actually take.
-  const tokenEstimate = calibrateCharsPerToken(contentChars, measured !== undefined && tokensBefore > measured ? tokensBefore - measured : tokensBefore);
-  const overheadTokens = measured
-    ?? (tokensBefore > 0 ? Math.max(0, tokensBefore - estimateTokensFromChars(contentChars, DEFAULT_CHARS_PER_TOKEN)) : 0);
-  return { tokenEstimate, overheadTokens };
-};
-
-
-/**
  * omp binds the factory once per session (subagents too), so each binding
  * passes its own `state`.
  */
@@ -132,24 +91,9 @@ export const registerCompactionHook = (
     state.pendingFollowUpPrompt = null;
     if (!fromCommand && !handlesHostCompactions(settings, ctx?.model?.provider)) return;
 
-    const { tokenEstimate, overheadTokens } = measureContext(branchEntries, preparation.tokensBefore, previousSummary);
-    // Budgets from the model's real window and where the next compaction comes (core/window.ts).
     const window = host.window(ctx?.model);
-    const key = modelKey(ctx?.model);
-    const policy = rule.policyOf((preparation as { settings?: unknown }).settings);
-    // Kept beside the learned window, for the compaction omp-vcc starts in the host's stead (window-limits.ts).
-    recordHostPolicy(host.config.dir(), key, policy);
     // A pass that must shrink the context: an overflow, a cut-off reply, one the host retries.
     const recovering = !fromCommand && isRecovery({ reason, willRetry });
-    const trigger = triggerFor(window.effective, recovering, preparation.tokensBefore, policy, rule);
-    // A pass omp-vcc started itself went by the policy as last recorded; this
-    // one carries the current policy, which may since say no: compaction off,
-    // or a trigger the context (measured as the end-of-run check measured it) is under.
-    if (windows.selfTrigger) {
-      const used = ctx?.getContextUsage?.()?.tokens;
-      if (!rule.autoCompacts(policy) || (typeof used === "number" && trigger !== undefined && used < trigger)) return { cancel: true };
-    }
-    const budgets = compactionBudgets(trigger, overheadTokens, settings.workingSet);
     let globalIndexById: Map<string, number> | undefined;
     // Recall numbers messages across the whole session file (all windows, all
     // branches): the host's in-memory tree, else the file.
@@ -171,19 +115,28 @@ export const registerCompactionHook = (
       reason,
       recovering,
       settings,
-      budgets,
-      charsPerToken: tokenEstimate.charsPerToken,
+      rule,
+      window: window.effective,
+      tokensBefore: preparation.tokensBefore,
+      hostSettings: (preparation as { settings?: unknown }).settings,
+      // A pass omp-vcc started itself went by the policy as last recorded; this
+      // one carries the current policy, which may since say no.
+      ...(windows.selfTrigger ? { selfStarted: { usedTokens: ctx?.getContextUsage?.()?.tokens } } : {}),
       sessionFile: (ctx as any)?.sessionManager?.getSessionFile?.(),
       indexById: globalIndexById,
       previousSummary,
       fileOps: { read: [...preparation.fileOps.read], changed: [...preparation.fileOps.edited, ...preparation.fileOps.written] },
     });
 
+    const { policy, trigger, overheadTokens, tokenEstimate, budgets } = plan.sizing;
+    // Kept beside the learned window, for the compaction omp-vcc starts in the host's stead (window-limits.ts).
+    recordHostPolicy(host.config.dir(), modelKey(ctx?.model), policy);
     if (plan.kind === "step_aside") {
       dbg(settings, { cancelled: false, reason: plan.cutReason, compaction: { reason, willRetry }, fromCommand, entries: branchEntries.length, liveRoles: plan.liveRoles });
       return;
     }
     if (plan.kind === "cancel") {
+      if (plan.why === "policy") return { cancel: true };
       if (plan.why === "running_turn") dbg(settings, { deferredRunningTurn: true, compaction: { reason, willRetry }, liveMessages: plan.summarized });
       else if (plan.why === "no_cut") dbg(settings, { cancelled: true, reason: plan.cutReason, compaction: { reason, willRetry }, fromCommand, entries: branchEntries.length, liveRoles: plan.liveRoles });
       else {

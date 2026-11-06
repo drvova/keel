@@ -425,10 +425,10 @@
 
 (defun budget (budgets key) (json-get budgets key))
 
-(defun assemble-summary (branch notes cut input)
+(defun assemble-summary (branch notes cut input sizing)
   "assemble.ts assembleSummary: (values TEXT STATE SECTIONS SUMMARIZED HISTORY WORKING-SET-SHOWN GROWTH)."
-  (let* ((budgets (json-get input "budgets"))
-         (per-token (json-get input "charsPerToken"))
+  (let* ((budgets (json-get sizing "budgets"))
+         (per-token (json-get (json-get sizing "tokenEstimate") "charsPerToken"))
          (skip (strings-of (json-get (json-get input "settings") "skipCustomTypes")))
          (summarized 0) (messages '()) (indices '()))
     ;; The summary is written from the originals omp-vcc kept (the TS sends what
@@ -500,16 +500,32 @@
 (defun cut-reason-name (reason) (if (eq reason :no-live-messages) "no_live_messages" "too_few_live_messages"))
 
 (defun plan-compaction (input)
-  "plan.ts planCompaction: what the compaction does, as the plan's JSON."
+  "plan.ts planCompaction: what the compaction does, sized first (window.lisp), as the plan's JSON."
   (let* ((branch (coerce (json-get input "branch" #()) 'vector))
-         (notes (coerce (json-get input "notes" #()) 'vector))
+         (sizing (size-compaction input branch))
+         (plan (plan-sized input branch sizing)))
+    (setf (gethash "sizing" plan) sizing)
+    plan))
+
+(defun plan-sized (input branch sizing)
+  "plan.ts planSized: the plan once SIZING (the policy, trigger, budgets) is known."
+  (let* ((notes (coerce (json-get input "notes" #()) 'vector))
          (settings (json-get input "settings"))
          (skip (strings-of (json-get settings "skipCustomTypes")))
-         (budgets (json-get input "budgets"))
-         (per-token (json-get input "charsPerToken"))
+         (budgets (json-get sizing "budgets"))
+         (per-token (json-get (json-get sizing "tokenEstimate") "charsPerToken"))
          (requested (let ((k (json-get input "keepUserTurns"))) (and (realp k) k)))
          (recovering (eq (json-get input "recovering") :true))
          (max-tail (budget budgets "maxTailTokens")))
+    ;; A pass omp-vcc started itself went by the policy as last recorded; this one
+    ;; carries the current policy, which may since say no: compaction off, or a
+    ;; trigger the context (measured as the end-of-run check measured it) is under.
+    (let ((self (json-get input "selfStarted")))
+      (when self
+        (let ((used (json-get self "usedTokens")) (trigger (json-get sizing "trigger")))
+          (when (or (not (rule-auto-compacts-p (json-get input "ruleName") (json-get sizing "policy")))
+                    (and (realp used) trigger (< used trigger)))
+            (return-from plan-sized (json-object "kind" "cancel" "why" "policy"))))))
     (multiple-value-bind (keep adjusted)
         (resolve-smart-keep branch notes requested (eq (json-get settings "smartKeepTail") :true) skip
                             (budget budgets "minTailTokens") max-tail per-token)
@@ -519,21 +535,21 @@
                    (equal (item-role (car (last (cut-items cut)))) "toolResult")
                    (not (equal (json-get input "reason") "manual")))
           (unless recovering
-            (return-from plan-compaction (json-object "kind" "cancel" "why" "running_turn" "summarized" (length (cut-items cut)))))
+            (return-from plan-sized (json-object "kind" "cancel" "why" "running_turn" "summarized" (length (cut-items cut)))))
           (setf cut (or (running-turn-cut branch notes max-tail per-token skip) cut) running t))
         (when (and (not (cut-p cut)) recovering (eq cut :too-few-live-messages))
           (setf cut (or (whole-window-cut branch notes skip) cut)))
         (unless (cut-p cut)
           (let ((roles (coerce (live-roles (live-items branch notes)) 'vector)))
-            (return-from plan-compaction
+            (return-from plan-sized
               (if recovering
                   (json-object "kind" "step_aside" "cutReason" (cut-reason-name cut) "liveRoles" roles)
                   (json-object "kind" "cancel" "why" "no_cut" "notice" (cdr (assoc cut +cut-notices+))
                                "cutReason" (cut-reason-name cut) "liveRoles" roles)))))
-        (multiple-value-bind (text state sections summarized history shown growth) (assemble-summary branch notes cut input)
+        (multiple-value-bind (text state sections summarized history shown growth) (assemble-summary branch notes cut input sizing)
           (let ((grows (eq (json-get growth "grows") :true)) (n (length (cut-items cut))))
             (when (and grows (or (not recovering) (cut-compact-all cut)))
-              (return-from plan-compaction
+              (return-from plan-sized
                 (json-object "kind" "cancel" "why" "growth"
                              "notice" (cond (recovering (format nil "omp-vcc: Not compacted: the ~d messages left are smaller than a summary of them; the context is full of what no compaction removes (the system prompt and tools)." n))
                                             ((equal (json-get input "reason") "manual")

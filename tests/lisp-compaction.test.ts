@@ -9,7 +9,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { planCompaction, planInCore, type PlanInput } from "../src/compaction/plan";
-import { compactionBudgets } from "../src/core/window";
+import { OMP_TRIGGER_RULE, PI_TRIGGER_RULE } from "../src/core/window";
 import { ompConvertToLlm } from "./support/host";
 import { lispCore, withCore } from "./support/lisp-core";
 
@@ -69,7 +69,10 @@ const branch = (seed: number) => {
           { name: "grep", arguments: { pattern: "TODO", path: "src" } },
         ]) });
       }
-      push({ type: "message", message: { role: "assistant", content: parts, usage: { input: 100 + i * 50, output: 10, cacheRead: 0, cacheWrite: 0 } } });
+      push({ type: "message", message: { role: "assistant", content: parts, usage: pick(r, [
+        { input: 100 + i * 50, output: 10, cacheRead: 0, cacheWrite: 0 }, { input: 0, output: 10, cacheRead: 0, cacheWrite: 0 },
+        { input: 40 + i, output: 10, cacheRead: 2_000 + i * 70, cacheWrite: 300 }, { input: "120", cacheRead: null, cacheWrite: "x" }, undefined, 0,
+      ]) } });
     } else if (roll < 0.7 && calls.length) {
       const id = push({ type: "message", message: { role: "toolResult", toolCallId: pick(r, calls), toolName: "bash", content: [{ type: "text", text: r() < 0.5 ? fileText(r) : words(r, 10) }], ...(r() < 0.2 ? { isError: true } : {}), ...(r() < 0.15 ? { prunedAt: 1 } : {}) } });
       if (r() < 0.5) store.push(JSON.stringify({ id, content: [{ type: "text", text: `original ${fileText(r)}` }] }));
@@ -93,6 +96,12 @@ const branch = (seed: number) => {
   return { entries, index, file };
 };
 
+/** Sized for a trigger of exactly `trigger` tokens (omp's fixed threshold on a 1M window), or none when undefined. */
+const sizedFor = (trigger: number | undefined, workingSet: boolean) => ({
+  rule: OMP_TRIGGER_RULE, window: trigger ? 1_000_000 : undefined, hostSettings: trigger ? { thresholdTokens: trigger } : undefined, tokensBefore: 0,
+  settings: { skipCustomTypes: [], trackCommands: [], smartKeepTail: true, workingSet },
+});
+
 const inputOf = (seed: number, r: () => number): PlanInput => {
   const { entries, index, file } = branch(seed);
   const lastCompaction = [...entries].reverse().find((e) => e.type === "compaction");
@@ -104,9 +113,15 @@ const inputOf = (seed: number, r: () => number): PlanInput => {
     fromCommand: r() < 0.2,
     reason,
     recovering: reason === "overflow" || reason === "incomplete",
-    settings: { skipCustomTypes: some(r, ["notice", "other"]), trackCommands: some(r, ["git", "bun"]), smartKeepTail: r() < 0.6 },
-    budgets: compactionBudgets(pick(r, [undefined, 8_000, 30_000, 100_000, 600_000]), pick(r, [0, 2_000]), r() < 0.8),
-    charsPerToken: pick(r, [4, 3.2, 2.5]),
+    settings: { skipCustomTypes: some(r, ["notice", "other"]), trackCommands: some(r, ["git", "bun"]), smartKeepTail: r() < 0.6, workingSet: r() < 0.8 },
+    rule: r() < 0.6 ? OMP_TRIGGER_RULE : PI_TRIGGER_RULE,
+    window: pick(r, [undefined, 16_000, 40_000, 128_000, 200_000, 1_000_000]),
+    // The host's policy as it came, malformed now and then.
+    hostSettings: pick(r, [undefined, {}, { enabled: true, reserveTokens: 16_384 }, { thresholdPercent: 70 }, { thresholdTokens: 30_000, reserveTokens: 8_000 },
+      { baseWindowTokens: 64_000, thresholdPercent: 85 }, { reserveTokens: 4_000 }, { reserveTokens: "x", thresholdTokens: Number.NaN }, "settings"]),
+    // The host's count of the context: none, under the messages, about them, well over them.
+    tokensBefore: pick(r, [0, 500, 20_000, 90_000, 300_000]),
+    ...(r() < 0.15 ? { selfStarted: r() < 0.3 ? {} : { usedTokens: pick(r, [1_000, 50_000, 500_000]) } } : {}),
     sessionFile: r() < 0.8 ? file : undefined,
     indexById: r() < 0.9 ? index : undefined,
     previousSummary: lastCompaction && r() < 0.8 ? lastCompaction.summary : undefined,
@@ -128,7 +143,7 @@ maybe("Lisp core compaction plan", () => {
       kinds[kind] = (kinds[kind] ?? 0) + 1;
     }
     // The generated branches reach every kind of plan.
-    for (const k of ["compact", "compact+ws", "cancel:no_cut", "step_aside"]) expect(Object.keys(kinds).some((x) => x.startsWith(k))).toBe(true);
+    for (const k of ["compact", "compact+ws", "cancel:no_cut", "cancel:policy", "step_aside"]) expect(Object.keys(kinds).some((x) => x.startsWith(k))).toBe(true);
     expect(Object.keys(kinds).length).toBeGreaterThan(6);
   }, 300_000);
 
@@ -150,7 +165,7 @@ maybe("Lisp core compaction plan", () => {
     // One user turn whose tool output is far past the tail budget: cut inside it.
     const big = "x ".repeat(40_000);
     cases.push(["oversized tail", {
-      ...base, reason: "threshold", recovering: false, keepUserTurns: null, fromCommand: false, budgets: compactionBudgets(8_000, 0, false),
+      ...base, reason: "threshold", recovering: false, keepUserTurns: null, fromCommand: false, ...sizedFor(8_000, false),
       branchEntries: [
         msg("u1", { role: "user", content: "first request about src/a.ts" }), msg("a1", { role: "assistant", content: [{ type: "text", text: "on it" }] }),
         msg("u2", { role: "user", content: "second request" }),
@@ -170,7 +185,7 @@ maybe("Lisp core compaction plan", () => {
     // The oversized-tail rule's 2.5 factor, and the growth guard's 25% share, each swept across its edge.
     const tailInput = cases[4][1];
     for (const max of [9_000, 10_000, 11_000, 12_000, 13_000, 14_000, 15_000, 16_000, 18_000]) {
-      const input = { ...tailInput, budgets: { ...tailInput.budgets, maxTailTokens: max } };
+      const input = { ...tailInput, ...sizedFor(max * 4, false) };
       expect({ max, ...withCore(core, () => planInCore(input)) }).toEqual({ max, ...withCore(undefined, () => planCompaction(input)) });
     }
     for (let k = 1; k <= 30; k++) {
@@ -180,7 +195,7 @@ maybe("Lisp core compaction plan", () => {
       expect({ k, ...withCore(core, () => planInCore(input)) }).toEqual({ k, ...withCore(undefined, () => planCompaction(input)) });
     }
     // A first request over the tail budget on its own: the cut snaps past it, never to before it.
-    const paste = { ...tailInput, reason: "manual" as const, budgets: compactionBudgets(100_000, 0, false), branchEntries: [
+    const paste = { ...tailInput, reason: "manual" as const, ...sizedFor(100_000, false), branchEntries: [
       msg("p0", { role: "user", content: `paste ${"z ".repeat(60_000)}` }),
       msg("p1", { role: "assistant", content: [{ type: "toolCall", id: "q1", name: "bash", arguments: { command: "ls" } }] }),
       msg("p2", { role: "toolResult", toolCallId: "q1", toolName: "bash", content: [{ type: "text", text: "a b" }] }),
@@ -196,7 +211,7 @@ maybe("Lisp core compaction plan", () => {
         msg(`wr${k}-r`, { role: "toolResult", toolCallId: `wr${k}`, toolName: "read", content: [{ type: "text", text: file(k) }] }),
       ]);
       const input = { ...tailInput, reason: "manual" as const, keepUserTurns: 1, sessionFile: undefined, indexById: new Map(Array.from({ length: 20 }, (_, i) => [`x${i}`, i])),
-        budgets: compactionBudgets(100_000, 0, true), branchEntries: [
+        ...sizedFor(100_000, true), branchEntries: [
           msg("x0", { role: "user", content: "work on src/a.ts src/b.ts src/c.ts src/d.ts" }), ...reads,
           msg("x9", { role: "user", content: "now change src/a.ts src/b.ts src/c.ts and src/d.ts" }),
           msg("x10", { role: "assistant", content: [{ type: "text", text: "changing them" }] }),
@@ -204,6 +219,14 @@ maybe("Lisp core compaction plan", () => {
       input.indexById = new Map(input.branchEntries.map((e: any, i: number) => [e.id, i]));
       expect({ lines, ...withCore(core, () => planInCore(input)) }).toEqual({ lines, ...withCore(undefined, () => planCompaction(input)) });
     }
+    // A pass omp-vcc started itself, at its trigger, a token under it and past it; and settings without the workingSet flag.
+    for (const usedTokens of [29_999, 30_000, 30_001]) {
+      const input = { ...tailInput, ...sizedFor(30_000, true), selfStarted: { usedTokens } };
+      expect({ usedTokens, ...withCore(core, () => planInCore(input)) }).toEqual({ usedTokens, ...withCore(undefined, () => planCompaction(input)) });
+    }
+    const unset = { ...tailInput, ...sizedFor(100_000, true) };
+    delete (unset.settings as { workingSet?: boolean }).workingSet;
+    expect(withCore(core, () => planInCore(unset))).toEqual(withCore(undefined, () => planCompaction(unset)));
     const tail = withCore(undefined, () => planCompaction(cases[4][1]));
     expect(tail.kind === "compact" && tail.budgetCut).toBe("oversized_tail");
   }, 120_000);

@@ -48,6 +48,8 @@
      ;; The compaction: its cut, the working set, and the plan the hook acts on.
      (:file "working-set")
      (:file "compaction")
+     ;; window: where the host compacts next, and the budgets below it.
+     (:file "window")
      ;; The rest of recall: the request, the project's sessions, the call.
      (:file "request")
      (:file "sessions")

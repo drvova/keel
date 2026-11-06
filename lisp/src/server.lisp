@@ -36,10 +36,18 @@
 ;;;;
 ;;;; compact: what a compaction does (src/compaction/plan.ts planCompaction)
 ;;;;   {"op":"compact","input":{branch, notes, keepUserTurns, fromCommand, reason,
-;;;;    recovering, settings, budgets, charsPerToken, sessionFile, previousSummary, fileOps}}
-;;;;   -> {"ok":true,"plan":PLAN}; NOTES, parallel to BRANCH, carry for each live
-;;;;   message what the host's convertToLlm makes of it (summary-input.ts
-;;;;   toSummaryMessage), as it is and as its kept original, and its #N.
+;;;;    recovering, settings, ruleName, window, tokensBefore, hostSettings,
+;;;;    selfStarted?, sessionFile, previousSummary, fileOps}}
+;;;;   -> {"ok":true,"plan":PLAN}, PLAN with its "sizing" (the host's policy and
+;;;;   trigger, the context's overhead and chars per token, the budgets); NOTES,
+;;;;   parallel to BRANCH, carry for each live message what the host's
+;;;;   convertToLlm makes of it (summary-input.ts toSummaryMessage), as it is and
+;;;;   as its kept original, and its #N.
+;;;;
+;;;; window: the window rules (src/core/window.ts), case by case
+;;;;   {"op":"window","cases":[{"error":TEXT} | {ruleName, window, hostSettings|policy,
+;;;;    recovering, tokensBefore, overheadTokens, workingSet}...]}
+;;;;   -> {"ok":true,"results":[{"limit":N?} | {policy?, trigger?, autoCompacts, budgets}...]}
 ;;;;
 ;;;; recall: one vcc_recall call or /…-recall command (src/core/recall-run.ts recall)
 ;;;;   {"op":"recall","input":{call:{surface:"tool",params}|{surface:"command",name,args},
@@ -196,6 +204,10 @@ parity test compares with JavaScript's own."
         (json-object "ok" :true "recall" (json-object "ok" (if ok :true :false) "text" text "severity" severity)))
     ((or left-to-ts regex-unsupported storage-condition) () (json-object "ok" :false "unsupported" "recall"))))
 
+(defun handle-window (request)
+  "The window rules on each of REQUEST's cases (window.lisp window-case)."
+  (json-object "ok" :true "results" (map 'vector #'window-case (json-get request "cases" #()))))
+
 (defun handle-request (request)
   "The response object to the parsed REQUEST."
   (let ((op (json-get request "op")))
@@ -206,6 +218,7 @@ parity test compares with JavaScript's own."
           ((equal op "summarize") (handle-summarize request))
           ((equal op "compact") (handle-compact request))
           ((equal op "recall") (handle-recall request))
+          ((equal op "window") (handle-window request))
           (t (json-object "ok" :false "error" (format nil "unknown op ~a" (json-string (or op :null))))))))
 
 (defun read-stdin ()

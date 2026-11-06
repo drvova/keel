@@ -3,8 +3,9 @@
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { learnedHostPolicy, modelKey, recordLearnedWindow, type WindowInfo } from "../core/model-limits";
 import { handlesHostCompactions } from "../core/settings";
-import { limitFromOverflowError, triggerFor } from "../core/window";
+import { limitFromOverflowError, triggerFor, type TriggerRule } from "../core/window";
 import { compactAndWait, tell, type Binding, type CompactionTrigger } from "../host";
+import { callCore } from "../core/lisp-core";
 
 /** What window tracking learns over a binding's sessions, and the compaction it starts itself. */
 export interface WindowState {
@@ -18,6 +19,23 @@ export const createWindowState = (): WindowState => ({
   selfTrigger: null,
   windowNoticeShown: false,
 });
+
+/** The window rules in the Lisp core (lisp/src/window.lisp, op window), case by case; undefined without it. */
+const windowInCore = (cases: object[]): Array<Record<string, any>> | undefined =>
+  callCore({ op: "window", cases })?.results as Array<Record<string, any>> | undefined;
+
+/** The first limit the error texts state. */
+const overflowLimit = (texts: unknown[]): number | undefined => {
+  const inCore = windowInCore(texts.map((error) => ({ error: error ?? null })));
+  return (inCore ? inCore.map((r) => r.limit as number | undefined) : texts.map(limitFromOverflowError)).find((n) => n !== undefined);
+};
+
+/** Whether the host compacts on its own under `policy`, and where on `window`. */
+const hostTrigger = (rule: TriggerRule, window: number | undefined, policy: object): { autoCompacts: boolean; trigger: number | undefined } => {
+  const inCore = windowInCore([{ ruleName: rule.name, window, policy }])?.[0];
+  if (inCore) return { autoCompacts: inCore.autoCompacts === true, trigger: inCore.trigger };
+  return { autoCompacts: rule.autoCompacts(policy), trigger: triggerFor(window, false, undefined, policy, rule) };
+};
 
 /** The host's window is above the real one, so its trigger cannot fire before an overflow. */
 const hostOverestimates = (w: WindowInfo): boolean =>
@@ -35,7 +53,7 @@ export const registerWindowTracking = (pi: ExtensionAPI, state: WindowState, hos
   pi.on("message_end", (event, ctx) => {
     const message = event.message as { role?: string; stopReason?: string; errorMessage?: string; errorClassificationMessage?: string };
     if (message?.role !== "assistant" || message.stopReason !== "error") return;
-    const limit = limitFromOverflowError(message.errorMessage) ?? limitFromOverflowError(message.errorClassificationMessage);
+    const limit = overflowLimit([message.errorMessage, message.errorClassificationMessage]);
     const hostWindow = ctx?.model?.contextWindow;
     if (limit && (typeof hostWindow !== "number" || !(hostWindow > 0) || limit < hostWindow)) recordLearnedWindow(host.config.dir(), modelKey(ctx?.model), limit);
   });
@@ -52,10 +70,10 @@ export const registerWindowTracking = (pi: ExtensionAPI, state: WindowState, hos
     // applies to the real window. Until one has, omp-vcc does not compact in
     // the host's stead: it cannot know the user wants it.
     const policy = learnedHostPolicy(host.config.dir(), modelKey(ctx?.model));
-    if (!policy || !host.rule.autoCompacts(policy)) return;
+    if (!policy) return;
     // The trigger as the hook works it out for the pass this starts (which cancels when the context is under it).
-    const trigger = triggerFor(w.effective, false, undefined, policy, host.rule);
-    if (trigger === undefined) return;
+    const { autoCompacts, trigger } = hostTrigger(host.rule, w.effective, policy);
+    if (!autoCompacts || trigger === undefined) return;
     const used = ctx?.getContextUsage?.()?.tokens;
     if (!(typeof used === "number" && used >= trigger)) return;
     if (!state.windowNoticeShown) {
