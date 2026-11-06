@@ -1,33 +1,68 @@
-import type { SectionData } from "../sections";
-import { DEFAULT_SUMMARY_LIMITS } from "./window";
+// A summary's text, rendered from its sections' data (core/summary-state.ts)
+// and the sections each compaction builds again (pins, history, working set).
+// Nothing reads this text back but core/legacy-summary.ts, for a summary from
+// before the state was stored.
+import type { SummaryState } from "./summary-state";
+import type { SummaryLimits } from "./window";
 import { RECALL_TOOL } from "../names";
 
-const section = (title: string, items: string[]): string => {
-  if (items.length === 0) return "";
-  const body = items.map((i) => `- ${i}`).join("\n");
-  return `[${title}]\n${body}`;
+export const SECTION = {
+  pins: "Pinned Notes",
+  early: "Early Session Requests",
+  files: "Files And Changes",
+  commits: "Commits",
+  tracked: "Tracked Commands",
+  userMessages: "User Messages",
+  history: "History Index",
+  workingSet: "Working Set",
+} as const;
+
+/** Between the header sections, the brief and the recall note. */
+export const SEPARATOR = "\n\n---\n\n";
+
+/** Between a tracked command's invocations: an entry (`kubectl get pods,svc`) can contain a comma. */
+export const COMMAND_SEPARATOR = " | ";
+/** One tracked invocation is clipped to this many characters. */
+const TRACKED_ENTRY_CHARS = 80;
+
+export const RECALL_NOTE =
+  `Use \`${RECALL_TOOL}\` to search for prior work, decisions, and context from before this summary. ` +
+  "Do not redo work already completed.";
+
+/**
+ * A tracked invocation as one line: a quoted multi-line argument (`python3 -c
+ * '...'`) would break the section's line, and a separator inside it is escaped
+ * (` \| `) so it reads as one entry. Then clipped.
+ */
+export const trackedEntry = (entry: string): string => {
+  const line = entry.replace(/\s+/g, " ").replaceAll(COMMAND_SEPARATOR, " \\| ");
+  return line.length > TRACKED_ENTRY_CHARS ? `${line.slice(0, TRACKED_ENTRY_CHARS)}…` : line;
 };
 
 /**
- * Join a categorized line's items (oldest first), keeping the newest `limit`
- * behind a leading "(+N earlier)". Keeping the oldest instead froze a merged
- * list on its first entries. stripCapMarker is its inverse, used when a merge
- * re-reads the line.
+ * Join a list's items (oldest first), keeping the newest `limit` behind a
+ * leading "(+N earlier)": keeping the oldest froze a merged list on its first
+ * entries.
  */
 export const capItems = (items: readonly string[], limit: number, joinWith: string): string => {
   if (items.length <= limit) return items.join(joinWith);
   return `(+${items.length - limit} earlier) ` + items.slice(-limit).join(joinWith);
 };
 
-/** Files listed per Files And Changes category on a ~128K window; the newest are kept. */
-export const FILES_PER_CATEGORY = DEFAULT_SUMMARY_LIMITS.filesPerCategory;
+/**
+ * The last `maxLines` lines of a brief, starting at a block's header so no
+ * block is cut in the middle, behind a count of the lines left out.
+ */
+export const capBrief = (text: string, maxLines: number): string => {
+  if (!text || maxLines <= 0) return "";
+  const lines = text.split("\n");
+  if (lines.length <= maxLines) return text;
+  const kept = lines.slice(-maxLines);
+  const firstHeader = kept.findIndex((l) => /^\[.+\]/.test(l));
+  const clean = firstHeader > 0 ? kept.slice(firstHeader) : kept;
+  return `...(${lines.length - clean.length} earlier lines omitted)\n\n${clean.join("\n")}`;
+};
 
-/** Also strips the trailing "(+N more)" that older versions wrote. */
-export const stripCapMarker = (text: string): string =>
-  text.replace(/^\s*\(\+\d+ earlier\)\s*/, "").replace(/\s*\(\+\d+ (?:more|earlier)\)\s*$/, "");
-
-/** Brief transcript lines on a ~128K window. */
-export const BRIEF_MAX_LINES = DEFAULT_SUMMARY_LIMITS.briefLines;
 const TUI_SAFE_LINE_CHARS = 120;
 
 const wrapLine = (line: string, maxChars: number): string[] => {
@@ -53,52 +88,71 @@ const wrapLine = (line: string, maxChars: number): string[] => {
   return wrapped;
 };
 
+/** Lines wrapped for the hosts' TUI, which shows a summary as written. */
 export const wrapLongLines = (text: string, maxChars = TUI_SAFE_LINE_CHARS): string =>
   text.split("\n").flatMap((line) => wrapLine(line, maxChars)).join("\n");
 
-export const capBrief = (text: string, maxLines = BRIEF_MAX_LINES): string => {
-  const lines = text.split("\n");
-  if (lines.length <= maxLines) return text;
-  const omitted = lines.length - maxLines;
-  const kept = lines.slice(-maxLines);
-  // Find first section header to avoid cutting mid-section
-  const firstHeader = kept.findIndex((l) => /^\[.+\]/.test(l));
-  const clean = firstHeader > 0 ? kept.slice(firstHeader) : kept;
-  return `...(${omitted} earlier lines omitted)\n\n${clean.join("\n")}`;
+/**
+ * The longest directory two or more absolute paths share (at least `/a/b/`),
+ * left off when they are listed: it says the same thing on every line.
+ */
+const commonDir = (paths: readonly string[]): string => {
+  const abs = paths.filter((p) => p.startsWith("/"));
+  if (abs.length < 2) return "";
+  const split = abs.map((p) => p.split("/"));
+  const min = Math.min(...split.map((s) => s.length));
+  let i = 0;
+  while (i < min - 1 && split.every((s) => s[i] === split[0][i])) i++;
+  return i < 2 ? "" : split[0].slice(0, i).join("/") + "/";
 };
 
-export const RECALL_NOTE =
-  `Use \`${RECALL_TOOL}\` to search for prior work, decisions, and context from before this summary. ` +
-  "Do not redo work already completed.";
+const section = (title: string, items: readonly string[]): string =>
+  items.length === 0 ? "" : `[${title}]\n${items.map((i) => `- ${i}`).join("\n")}`;
 
-export interface FormatSummaryOptions {
-  capBriefTranscript?: boolean;
-  /** The brief's line cap (BRIEF_MAX_LINES on a ~128K window). */
-  briefLines?: number;
+const fileLines = (files: SummaryState["files"], limit: number): string[] => {
+  const shown = [files.modified, files.created, files.read].flatMap((l) => l.slice(-limit));
+  const dir = commonDir(shown);
+  const trim = (p: string) => (dir && p.startsWith(dir) ? p.slice(dir.length) : p);
+  return ([["Modified", files.modified], ["Created", files.created], ["Read", files.read]] as const)
+    .filter(([, list]) => list.length > 0)
+    .map(([label, list]) => `${label}: ${capItems(list.map(trim), limit, ", ")}`);
+};
+
+export interface RenderInput {
+  state: SummaryState;
+  limits: SummaryLimits;
+  /** [Pinned Notes] lines (core/pins.ts formatPinLines). */
+  pins?: readonly string[];
+  /** [History Index] lines (core/history-index.ts formatHistoryRange). */
+  history?: readonly string[];
+  /** [Working Set] lines (core/working-set.ts formatWorkingSet): file excerpts, shown as they are. */
+  workingSet?: readonly string[];
 }
 
-export const formatSummary = (data: SectionData, options: FormatSummaryOptions = {}): string => {
-  const capBriefTranscript = options.capBriefTranscript ?? true;
-  const headerParts = [
-    section("Early Session Requests", data.earlyRequests),
-    section("Files And Changes", data.filesAndChanges),
-    section("Commits", data.commits),
-    section("Tracked Commands", data.trackedCommands),
-    section("User Messages", data.userMessages),
-  ].filter(Boolean);
-
-  const parts: string[] = [];
-  if (headerParts.length > 0) {
-    parts.push(headerParts.join("\n\n"));
-  }
-  if (data.briefTranscript) {
-    parts.push(capBriefTranscript ? capBrief(data.briefTranscript, options.briefLines) : data.briefTranscript);
-  }
-
-  if (parts.length === 0) return "";
-
-  // NOTE: RECALL_NOTE is intentionally NOT appended here.
-  // It is appended once by `compile()` at the very end, after merge-with-previous,
-  // to avoid the note compounding inside the brief transcript across compactions.
-  return wrapLongLines(parts.join("\n\n---\n\n"));
+/**
+ * The summary: [Pinned Notes] first (the start of the context is where a model
+ * attends best, arXiv:2307.03172), the carried sections, [History Index] and
+ * [Working Set] last in the header, next to the brief and the kept turns; then
+ * the brief and the recall note. Empty when there is nothing to show.
+ */
+export const renderSummary = (input: RenderInput): { text: string; sections: string[] } => {
+  const { state, limits } = input;
+  const parts: Array<[string, string]> = [
+    [SECTION.pins, section(SECTION.pins, input.pins ?? [])],
+    [SECTION.early, section(SECTION.early, state.earlyRequests)],
+    [SECTION.files, section(SECTION.files, fileLines(state.files, limits.filesPerCategory))],
+    [SECTION.commits, section(SECTION.commits, state.commits.slice(-limits.commits).map((c) => (c.hash ? `${c.hash}: ${c.message}` : c.message)))],
+    [SECTION.tracked, section(SECTION.tracked, state.tracked.map((t) => `${t.name}: ${capItems(t.entries, limits.commandsPerName, COMMAND_SEPARATOR)}`))],
+    [SECTION.userMessages, section(SECTION.userMessages, state.userMessages.slice(-limits.userMessages))],
+    [SECTION.history, section(SECTION.history, input.history ?? [])],
+  ];
+  const shown = parts.filter(([, text]) => text);
+  const workingSet = input.workingSet && input.workingSet.length > 0 ? `[${SECTION.workingSet}]\n${input.workingSet.join("\n")}` : "";
+  const head = [wrapLongLines(shown.map(([, text]) => text).join("\n\n")), workingSet].filter(Boolean).join("\n\n");
+  if (!head && !state.brief) return { text: "", sections: [] };
+  const body = [head, state.brief].filter(Boolean).join(SEPARATOR);
+  return {
+    text: `${body}${SEPARATOR}${wrapLongLines(RECALL_NOTE)}`,
+    sections: [...shown.map(([name]) => name), ...(workingSet ? [SECTION.workingSet] : [])],
+  };
 };

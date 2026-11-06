@@ -134,13 +134,13 @@ describe("formatWorkingSet", () => {
   };
 
   it("fits the budget, has no blank line, and brings a file back whole or not at all", () => {
-    const tight = formatWorkingSet(selectWorkingSet({ history: work(), indices: all(8), kept: [user("go on")], maxChars: 2_000 }), 2_000);
+    const tight = formatWorkingSet(selectWorkingSet({ history: work(), indices: all(8), kept: [user("go on")], maxChars: 2_000 }), 2_000).lines;
     shape(tight, 2_000);
     // The 60-line file does not fit whole in 2,000 chars: the failure has the room.
     expect(tight.some((l) => l.startsWith("- #2 "))).toBe(false);
     expect(tight[0]).toBe('- #4 bash "bun test tests/billing.test.ts" [failed], its end:');
     expect(tight.at(-1)).toBe("    expected 10.01, received 10.00");
-    const roomy = formatWorkingSet(selectWorkingSet({ history: work(), indices: all(8), kept: [user("go on")], maxChars: 20_000 }), 20_000);
+    const roomy = formatWorkingSet(selectWorkingSet({ history: work(), indices: all(8), kept: [user("go on")], maxChars: 20_000 }), 20_000).lines;
     shape(roomy, 20_000);
     expect(roomy).toContain("    export const roundTotal = (x: number) => Math.floor(x * 100) / 100;");
     expect(roomy.some((l) => l.includes("vcc_recall expand:[2]"))).toBe(false);
@@ -148,7 +148,7 @@ describe("formatWorkingSet", () => {
 
   it("quotes a long failure by its end, after where the earlier lines are", () => {
     const history = [user("run the tests"), call("t1", "bash", { command: "bun test" }), result("t1", "bash", `${"log line\n".repeat(300)}expected 1, received 2`, true)];
-    const lines = formatWorkingSet(selectWorkingSet({ history, indices: all(3), kept: [user("fix it")], maxChars: 2_000 }), 2_000);
+    const lines = formatWorkingSet(selectWorkingSet({ history, indices: all(3), kept: [user("fix it")], maxChars: 2_000 }), 2_000).lines;
     shape(lines, 2_000);
     expect(lines[0]).toBe('- #2 bash "bun test" [failed], its end:');
     expect(lines[1]).toMatch(/^    …\[\d+ earlier lines: vcc_recall expand:\[2\]\]$/);

@@ -1,3 +1,4 @@
+import { vccDetailsOf } from "../src/details";
 import { DEFAULT_SUMMARY_LIMITS } from "../src/core/window";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "fs";
@@ -103,14 +104,14 @@ describe("formatHistoryRange", () => {
   });
 });
 
-describe("readHistoryIndex", () => {
+describe("the stored index", () => {
   it("reads omp-vcc details (and pre-rename pi-vcc ones), including omp's notes-backed wrapper, and rejects anything else", () => {
     const historyIndex = [range(0, 9)];
-    expect(readHistoryIndex({ compactor: "omp-vcc", historyIndex })).toEqual(historyIndex);
-    expect(readHistoryIndex({ compactor: "pi-vcc", historyIndex })).toEqual(historyIndex);
-    expect(readHistoryIndex({ kind: "experimental-context-rollover", hookDetails: { compactor: "omp-vcc", historyIndex } })).toEqual(historyIndex);
-    expect(readHistoryIndex({ compactor: "other", historyIndex })).toBeUndefined();
-    expect(readHistoryIndex({ compactor: "omp-vcc", historyIndex: [{ from: "x" }] })).toBeUndefined();
+    expect(readHistoryIndex(vccDetailsOf({ compactor: "omp-vcc", historyIndex })?.historyIndex)).toEqual(historyIndex);
+    expect(readHistoryIndex(vccDetailsOf({ compactor: "pi-vcc", historyIndex })?.historyIndex)).toEqual(historyIndex);
+    expect(readHistoryIndex(vccDetailsOf({ kind: "experimental-context-rollover", hookDetails: { compactor: "omp-vcc", historyIndex } })?.historyIndex)).toEqual(historyIndex);
+    expect(readHistoryIndex(vccDetailsOf({ compactor: "other", historyIndex })?.historyIndex)).toBeUndefined();
+    expect(readHistoryIndex(vccDetailsOf({ compactor: "omp-vcc", historyIndex: [{ from: "x" }] })?.historyIndex)).toBeUndefined();
   });
 });
 

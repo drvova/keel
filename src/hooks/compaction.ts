@@ -4,7 +4,8 @@
 // stays on node builtins.
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { writeFileSync } from "fs";
-import { compileRanked } from "../core/summarize";
+import { compileSummary } from "../core/summarize";
+import { previousOf, readState } from "../core/summary-state";
 import { mergeHistoryIndex, rangeOfWindow, readHistoryIndex, unindexedRange } from "../core/history-index";
 import { readPins } from "../core/pins";
 import { normalize } from "../core/normalize";
@@ -1015,7 +1016,8 @@ export const registerCompactionHook = (
       ? (branchEntries as any[])[lastCompactionIdx]
       : undefined;
     const windowRange = rangeOfWindow(messages, sourceIndices);
-    const storedIndex = previousCompaction ? readHistoryIndex(previousCompaction.details) : [];
+    const previousDetails = previousCompaction ? vccDetailsOf(previousCompaction.details) : undefined;
+    const storedIndex = previousCompaction ? readHistoryIndex(previousDetails?.historyIndex) : [];
     const historyIndex = windowRange
       ? mergeHistoryIndex(
           storedIndex ?? (windowRange.from > 0 ? [unindexedRange(windowRange.from - 1)] : []),
@@ -1029,7 +1031,7 @@ export const registerCompactionHook = (
     // [Working Set]: what the next step likely needs, brought back from the
     // originals with the compaction (core/working-set.ts), so the agent does not
     // spend its next requests fetching it again.
-    let workingSet: { items: WorkingSetItem[]; lines: string[] } | undefined;
+    let workingSet: { lines: string[]; shown: number[] } | undefined;
     if (settings.workingSet && budgets.workingSetTokens > 0) {
       const all = branchEntries as any[];
       const keptAt = firstKeptEntryId ? all.findIndex((e: any) => e.id === firstKeptEntryId) : -1;
@@ -1052,11 +1054,17 @@ export const registerCompactionHook = (
         kept,
         maxChars,
       });
-      const lines = formatWorkingSet(items, maxChars);
-      if (lines.length > 0) workingSet = { items, lines };
+      const formatted = formatWorkingSet(items, maxChars);
+      if (formatted.lines.length > 0) workingSet = formatted;
     }
 
-    const summary = compileRanked({
+    // The previous summary's sections: the state its compaction stored, or its
+    // text when an older version or another compactor wrote it.
+    const storedState = typeof preparation.previousSummary === "string" && previousCompaction
+      ? readState(previousDetails?.summaryState)
+      : undefined;
+    const compiled = compileSummary({
+      previous: storedState ? previousOf(storedState) : undefined,
       messages,
       sourceIndices,
       historyIndex,
@@ -1077,6 +1085,7 @@ export const registerCompactionHook = (
         maxBlocks: budgets.briefMaxBlocks,
       },
     });
+    const summary = compiled.text;
 
     // Growth guard: a compaction that leaves the context bigger is not written,
     // and a manual pass says why (an automatic one would say so on every turn
@@ -1140,7 +1149,7 @@ export const registerCompactionHook = (
       tokenEstimate,
       summaryLength: summary.length,
       summaryPreview: summary.slice(0, 500),
-      sections: [...summary.matchAll(/^\[(.+?)\]/gm)].map((m) => m[1]),
+      sections: compiled.sections,
     });
 
     const details: VccCompactionDetails = {
@@ -1148,14 +1157,15 @@ export const registerCompactionHook = (
       // version 2 = refs are session-global (recall index space); version 1
       // summaries carried window-relative refs (issue #28).
       version: 2,
-      sections: [...summary.matchAll(/^\[(.+?)\]/gm)].map((m) => m[1]),
+      sections: compiled.sections,
+      summaryState: compiled.state,
       sourceMessageCount: agentMessages.length,
       previousSummaryUsed: Boolean(preparation.previousSummary),
       reason,
       willRetry,
       ...(historyIndex ? { historyIndex } : {}),
       // The #N of what [Working Set] brought back.
-      ...(workingSet ? { workingSet: workingSet.items.filter((i) => workingSet!.lines.some((l) => l.startsWith(`- #${i.index} `))).map((i) => i.index) } : {}),
+      ...(workingSet ? { workingSet: workingSet.shown } : {}),
       // What the budgets were sized from, for debugging a compaction that kept too much or too little.
       limits: {
         ...(window.effective ? { contextWindow: window.effective, windowSource: window.source } : {}),

@@ -1,5 +1,6 @@
 import { basename, dirname } from "node:path";
 import { compile } from "../src/core/summarize";
+import { DEFAULT_SUMMARY_LIMITS } from "../src/core/window";
 import { normalize } from "../src/core/normalize";
 import { filterNoise } from "../src/core/filter-noise";
 import { renderMessage } from "../src/core/render-entries";
@@ -15,7 +16,7 @@ for (const sample of samples) {
 
   const rawBlocks = normalize(messages);
   const filteredBlocks = filterNoise(rawBlocks);
-  const afterText = compile({ messages });
+  const afterText = compile({ messages, limits: DEFAULT_SUMMARY_LIMITS });
 
   const rendered = messages.map((m, i) => renderMessage(m, i));
   const beforeChars = rendered.reduce((s, e) => s + e.summary.length, 0);

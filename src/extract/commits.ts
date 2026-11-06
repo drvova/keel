@@ -1,8 +1,7 @@
 import type { NormalizedBlock } from "../types";
-import { DEFAULT_SUMMARY_LIMITS } from "../core/window";
 import { commandOf } from "../core/tools";
 
-interface CommitInfo {
+export interface CommitInfo {
   hash?: string;
   message: string;
 }
@@ -196,14 +195,4 @@ export const extractCommits = (blocks: NormalizedBlock[]): CommitInfo[] => {
   }
 
   return commits;
-};
-
-export const formatCommits = (commits: CommitInfo[], limit = DEFAULT_SUMMARY_LIMITS.commits): string[] => {
-  const lines: string[] = [];
-  const items = commits.slice(-limit); // keep most recent
-  for (const c of items) {
-    const prefix = c.hash ? `${c.hash}: ` : "";
-    lines.push(`${prefix}${c.message}`);
-  }
-  return lines;
 };

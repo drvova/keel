@@ -18,10 +18,13 @@ import {
   readEntries,
 } from "../src/core/session-file";
 import { normalize } from "../src/core/normalize";
-import { compile } from "../src/core/summarize";
+import { compile as compileAt, type RankedCompileInput } from "../src/core/summarize";
+import { DEFAULT_SUMMARY_LIMITS } from "../src/core/window";
 import { OMP_VCC_COMPACT_INSTRUCTION } from "../src/hooks/compaction";
 import { registerHook } from "./support/host";
 import { userMsg, assistantWithToolCall, toolResult } from "./fixtures";
+/** compile at a ~128K window's section limits unless a test sets its own. */
+const compile = (input: Omit<RankedCompileInput, "limits"> & { limits?: RankedCompileInput["limits"] }) => compileAt({ limits: DEFAULT_SUMMARY_LIMITS, ...input });
 
 let tmpDir: string;
 let CONFIG_PATH: string;

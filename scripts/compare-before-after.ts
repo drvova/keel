@@ -1,5 +1,6 @@
 import { basename } from "node:path";
 import { compile } from "../src/core/summarize";
+import { DEFAULT_SUMMARY_LIMITS } from "../src/core/window";
 import { renderMessage } from "../src/core/render-entries";
 import { clip } from "../src/core/content";
 import { prepareSessionSamples } from "../tests/support/real-sessions";
@@ -17,7 +18,7 @@ for (const sample of samples) {
     (e) => `#${e.index} [${e.role}] ${clip(e.summary, 300)}`,
   );
   const beforeText = beforeLines.join("\n");
-  const afterText = compile({ messages });
+  const afterText = compile({ messages, limits: DEFAULT_SUMMARY_LIMITS });
 
   console.log(SEP);
   console.log(`FILE: ${basename(sample.source)}`);

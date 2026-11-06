@@ -1,9 +1,14 @@
 import { describe, expect, it } from "bun:test";
-import { compile, compileRanked } from "../src/core/summarize";
+import { compile as compileAt, compileRanked as compileRankedAt, type RankedCompileInput } from "../src/core/summarize";
+import { DEFAULT_SUMMARY_LIMITS } from "../src/core/window";
 import { rankBriefBlocks, selectRankedBriefBlocks } from "../src/core/rank";
 import { compileBrief } from "../src/core/brief";
 import type { NormalizedBlock } from "../src/types";
 import { assistantText, assistantWithToolCall, userMsg } from "./fixtures";
+/** compile at a ~128K window's section limits unless a test sets its own. */
+const compile = (input: Omit<RankedCompileInput, "limits"> & { limits?: RankedCompileInput["limits"] }) => compileAt({ limits: DEFAULT_SUMMARY_LIMITS, ...input });
+/** compileRanked at a ~128K window's section limits unless a test sets its own. */
+const compileRanked = (input: Omit<RankedCompileInput, "limits"> & { limits?: RankedCompileInput["limits"] }) => compileRankedAt({ limits: DEFAULT_SUMMARY_LIMITS, ...input });
 
 const briefPart = (summary: string): string => summary.split("\n\n---\n\n")[1] ?? "";
 

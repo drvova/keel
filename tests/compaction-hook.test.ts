@@ -1182,3 +1182,30 @@ describe("compaction hook: section sizes follow the window", () => {
     expect(out.compaction.details.limits).toMatchObject({ contextWindow: 16_384, summaryScale: 0.36 });
   });
 });
+
+describe("what a compaction stores for the next one", () => {
+  test("details name the sections shown, and hold the carried sections the next compaction merges into", () => {
+    const { pi, invokeBefore } = createMockOmp();
+    register(pi);
+    const first = [
+      msg("u1", "user", "fix the login bug"),
+      msg("a1", "assistant", "looking"),
+      msg("u2", "user", "and the signup form"),
+      msg("a2", "assistant", "done"),
+    ];
+    const one = invokeBefore(makeEvent(first, `${OMP_VCC_COMPACT_INSTRUCTION} keep:1`));
+    const { details, summary } = one.compaction;
+    // The brief's [user] and [assistant] blocks are not sections.
+    expect(details.sections).toEqual(["Early Session Requests"]);
+    expect(details.summaryState.earlyRequests).toEqual(["fix the login bug"]);
+
+    // The next compaction merges into that state, not the text: a summary text that
+    // says something else is not read when the stored state is there.
+    const compaction = { id: "c1", type: "compaction", summary, firstKeptEntryId: "u2", details };
+    const event = makeEvent([...first, compaction, msg("u3", "user", "now the password reset"), msg("a3", "assistant", "ok")], `${OMP_VCC_COMPACT_INSTRUCTION} keep:1`);
+    event.preparation.previousSummary = "[Early Session Requests]\n- something the text alone says" as any;
+    const two = invokeBefore(event);
+    expect(two.compaction.details.summaryState.earlyRequests).toEqual(["fix the login bug", "and the signup form"]);
+    expect(two.compaction.summary).not.toContain("something the text alone says");
+  });
+});

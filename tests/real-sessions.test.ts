@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it } from "bun:test";
 import { assertRealPi, piInstalled } from "./support/pi";
 import { existsSync } from "node:fs";
-import { buildCompactReport } from "../src/core/report";
+import { buildCompactReport } from "./support/report";
 import { prepareSessionSamples, readSourceStat, sessionRoot, type SessionSample } from "./support/real-sessions";
 import { loadPiSessionMessages, loadSessionMessages } from "./support/load-session";
 

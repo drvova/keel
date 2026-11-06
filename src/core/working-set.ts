@@ -311,8 +311,9 @@ const excerpt = (text: string, max: number, fromEnd: boolean): { lines: string[]
  * A section has no blank line inside (the summary's sections are told apart by
  * them), and an indented line never reads as a section header or a separator.
  */
-export const formatWorkingSet = (items: readonly WorkingSetItem[], maxChars: number): string[] => {
+export const formatWorkingSet = (items: readonly WorkingSetItem[], maxChars: number): { lines: string[]; shown: number[] } => {
   const lines: string[] = [];
+  const shown: number[] = [];
   let left = maxChars;
   for (const item of items) {
     const head = `- #${item.index} ${item.title}${item.note ? `, ${item.note}` : ""}:`;
@@ -325,7 +326,8 @@ export const formatWorkingSet = (items: readonly WorkingSetItem[], maxChars: num
     const quoted = body.map((l) => `    ${l}`);
     const block = [head, ...(more && item.fromEnd ? [more] : []), ...quoted, ...(more && !item.fromEnd ? [more] : [])];
     lines.push(...block);
+    shown.push(item.index);
     left -= block.reduce((n, l) => n + l.length + 1, 0);
   }
-  return lines;
+  return { lines, shown };
 };

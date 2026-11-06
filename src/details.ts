@@ -1,5 +1,6 @@
 import type { CompactionReason } from "./types";
 import type { HistoryRange } from "./core/history-index";
+import type { SummaryState } from "./core/summary-state";
 import { COMPACTOR, LEGACY_COMPACTOR } from "./names";
 
 /** Compactions stored before the rename say "pi-vcc"; both are read as this extension's. */
@@ -10,7 +11,10 @@ export const isVccCompactor = (value: unknown): value is VccCompactor => value =
 export interface VccCompactionDetails {
   compactor: VccCompactor;
   version: number;
+  /** The sections the summary shows, in order. */
   sections: string[];
+  /** What the summary shows of its carried sections, which the next compaction merges into (core/summary-state.ts). */
+  summaryState?: SummaryState;
   sourceMessageCount: number;
   previousSummaryUsed: boolean;
   reason?: CompactionReason;

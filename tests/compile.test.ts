@@ -1,11 +1,14 @@
 import { describe, it, expect } from "bun:test";
-import { compile } from "../src/core/summarize";
+import { compile as compileAt, type RankedCompileInput } from "../src/core/summarize";
+import { DEFAULT_SUMMARY_LIMITS } from "../src/core/window";
 import {
   userMsg,
   assistantText,
   assistantWithToolCall,
   toolResult,
 } from "./fixtures";
+/** compile at a ~128K window's section limits unless a test sets its own. */
+const compile = (input: Omit<RankedCompileInput, "limits"> & { limits?: RankedCompileInput["limits"] }) => compileAt({ limits: DEFAULT_SUMMARY_LIMITS, ...input });
 
 // A section's body, with wrapped lines (wrapLongLines, 120 chars) rejoined.
 const sectionOf = (s: string, h: string) =>

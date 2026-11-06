@@ -1,14 +1,11 @@
 import type { NormalizedBlock } from "../types";
 import { clip } from "../core/content";
 import { SKILL_BLOCK_RE } from "../core/skill-collapse";
-import { DEFAULT_SUMMARY_LIMITS } from "../core/window";
 
 /** Each user message becomes one item, clipped to this many characters. */
 const USER_MESSAGE_CHARS = 300;
 /** [Early Session Requests] keeps this many of the first messages. */
 export const EARLY_REQUESTS_KEPT = 3;
-/** [User Messages] keeps this many of the newest messages on a ~128K window (core/window.ts scales it). */
-const USER_MESSAGES_KEPT = DEFAULT_SUMMARY_LIMITS.userMessages;
 
 const segmenter = new Intl.Segmenter(undefined, { granularity: "word" });
 
@@ -42,18 +39,6 @@ const userLine = (text: string, sourceIndex?: number): string => {
   // A cut request reads as complete without a mark, and the cut part can be the
   // constraint that matters: say it goes on, and where vcc_recall reads all of it.
   return `${clipped.trimEnd()}…${sourceIndex != null ? ` (#${sourceIndex})` : ""}`;
-};
-
-/** The newest `keep` lines, oldest first. A repeated line
- * counts as new: it moves to the end. */
-export const keepNewestUserMessages = (lines: string[], keep = USER_MESSAGES_KEPT): string[] => {
-  const seq: string[] = [];
-  for (const l of lines) {
-    const at = seq.indexOf(l);
-    if (at >= 0) seq.splice(at, 1);
-    seq.push(l);
-  }
-  return seq.slice(-keep);
 };
 
 /**

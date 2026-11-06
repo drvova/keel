@@ -18,7 +18,6 @@ import type { NormalizedBlock } from "../types";
 import { clip } from "./content";
 import { normalize } from "./normalize";
 import { filterNoise } from "./filter-noise";
-import { vccDetailsOf } from "../details";
 import { extractFiles } from "../extract/files";
 import { extractCommits } from "../extract/commits";
 import { extractUserMessages } from "../extract/user-messages";
@@ -167,9 +166,8 @@ const isRange = (value: unknown): value is HistoryRange => {
     && (r.requests === undefined || Number.isInteger(r.requests));
 };
 
-/** The index an omp-vcc (or, before the rename, pi-vcc) compaction stored in its details, if it is well-formed. */
-export const readHistoryIndex = (details: unknown): HistoryRange[] | undefined => {
-  const index: unknown = vccDetailsOf(details)?.historyIndex;
+/** A stored index (details.historyIndex), or undefined when it is not a well-formed one. */
+export const readHistoryIndex = (index: unknown): HistoryRange[] | undefined => {
   if (!Array.isArray(index)) return undefined;
   return index.every(isRange) ? (index as HistoryRange[]) : undefined;
 };

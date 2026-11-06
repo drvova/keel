@@ -1,10 +1,5 @@
 import type { NormalizedBlock } from "../types";
-import { capItems } from "../core/format";
 import { commandOf } from "../core/tools";
-
-/** Maximum characters kept per captured entry (a truncated one-liner, not a
- * parsed structure -- deliberately shallow, see module docstring below). */
-const MAX_ENTRY_CHARS = 80;
 
 /** Single-pass quote-aware scan: returns the index of every UNQUOTED
  * shell separator (`;`, `&`, `|`, newline). Quote state tracks ' and "
@@ -38,8 +33,8 @@ const unquotedSeparators = (cmd: string): number[] => {
 /** Cut `text` at the next UNQUOTED separator. Quotes are kept as written:
  * the cut never lands inside a quote, so they stay balanced. No truncation
  * here -- dedup must see the full string (two distinct invocations sharing
- * an 80-char prefix must not collapse); render-time truncation lives in
- * formatTrackedCommands. */
+ * an 80-char prefix must not collapse); the summary clips it when it shows
+ * it (core/format.ts trackedEntry). */
 const captureEntry = (text: string): string => {
   const seps = unquotedSeparators(text);
   const cut = seps.length ? text.slice(0, seps[0]) : text;
@@ -199,33 +194,4 @@ export const extractTrackedCommands = (
   }
 
   return { byCommand };
-};
-
-/** Line format of `[Tracked Commands]`, shared with the merge in
- * core/summarize.ts: `- <name>: <entry> | <entry> ...`, the newest
- * (SummaryLimits.commandsPerName) kept. " | " rather than "," since an entry
- * (e.g. `kubectl get pods,svc`) can legitimately contain a comma. */
-export const COMMAND_SEPARATOR = " | ";
-
-/** Render form: one line (a quoted multi-line argument such as
- * `python3 -c '...'` would otherwise break the line format), with an inner
- * separator escaped as ` \| ` so the merge, which splits on
- * COMMAND_SEPARATOR, keeps the entry whole. Then truncated. */
-const renderEntry = (entry: string): string => {
-  const line = entry.replace(/\s+/g, " ").replaceAll(COMMAND_SEPARATOR, " \\| ");
-  return line.length > MAX_ENTRY_CHARS ? `${line.slice(0, MAX_ENTRY_CHARS)}…` : line;
-};
-
-/** Formats TrackedCommandActivity into `[Tracked Commands]` body lines, one per
- * tracked command name that had at least one match. Keeps the NEWEST
- * entries: a ledger of what was run recently must not freeze at its first
- * ten while everything later drowns in a permanent "(+N more)". */
-export const formatTrackedCommands = (act: TrackedCommandActivity, perName: number): string[] => {
-  const lines: string[] = [];
-  for (const [name, entries] of act.byCommand) {
-    if (entries.size > 0) {
-      lines.push(`${name}: ${capItems([...entries].map(renderEntry), perName, COMMAND_SEPARATOR)}`);
-    }
-  }
-  return lines;
 };

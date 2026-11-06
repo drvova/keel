@@ -1,5 +1,9 @@
 import { describe, it, expect } from "bun:test";
-import { extractTrackedCommands, formatTrackedCommands } from "../src/extract/tracked-commands";
+import { extractTrackedCommands } from "../src/extract/tracked-commands";
+import { freshState } from "../src/core/summary-state";
+import { renderSummary } from "../src/core/format";
+import { sectionOf } from "../src/core/legacy-summary";
+import { DEFAULT_SUMMARY_LIMITS } from "../src/core/window";
 import type { NormalizedBlock } from "../src/types";
 
 const bash = (command: string): NormalizedBlock => ({
@@ -9,6 +13,13 @@ const bash = (command: string): NormalizedBlock => ({
 });
 
 const TRACK = ["ssh", "kubectl", "docker", "aws"];
+
+/** The [Tracked Commands] lines a summary of these blocks shows. */
+const trackedLines = (blocks: NormalizedBlock[], track: string[]): string[] => {
+  const { text } = renderSummary({ state: freshState({ blocks, trackCommands: track, earlySlots: 0 }), limits: DEFAULT_SUMMARY_LIMITS });
+  // Wrapped lines rejoined.
+  return sectionOf(text, "Tracked Commands").replace(/\n[ \t]+(?=\S)/g, " ").split("\n").slice(1).map((l) => l.slice(2));
+};
 
 describe("extractTrackedCommands", () => {
   it("returns empty when trackCommands is empty (feature off)", () => {
@@ -76,7 +87,7 @@ describe("extractTrackedCommands", () => {
     const act = extractTrackedCommands([bash(`aws ec2 ${longArgs}`)], TRACK);
     const stored = [...act.byCommand.get("aws")!][0];
     expect(stored.length).toBeGreaterThan(200); // full fidelity for dedup
-    const rendered = formatTrackedCommands(act, 10)[0];
+    const rendered = trackedLines([bash(`aws ec2 ${longArgs}`)], TRACK)[0];
     expect(rendered).toContain("…");
     expect(rendered.length).toBeLessThanOrEqual(5 + 80 + 1); // "aws: " + entry + "…"
   });
@@ -123,8 +134,7 @@ describe("extractTrackedCommands", () => {
 
   it("re-running a command moves it to the tail (most-recently-used)", () => {
     const cmds = [...Array.from({ length: 11 }, (_, i) => bash(`ssh host${i}`)), bash("ssh host0")];
-    const act = extractTrackedCommands(cmds, ["ssh"]);
-    const [line] = formatTrackedCommands(act, 10);
+    const [line] = trackedLines(cmds, ["ssh"]);
     expect(line).toContain("ssh host0"); // refreshed — survives the tail cap
     expect(line).not.toContain("ssh host1 |"); // oldest dropped instead
   });
@@ -145,29 +155,25 @@ describe("extractTrackedCommands", () => {
   });
 });
 
-describe("formatTrackedCommands", () => {
+describe("[Tracked Commands] lines", () => {
   it("formats one line per command name that had a match, in insertion order", () => {
-    const act = extractTrackedCommands([bash("ssh prod-server"), bash("docker ps")], ["ssh", "docker"]);
-    expect(formatTrackedCommands(act, 10)).toEqual(["ssh: ssh prod-server", "docker: docker ps"]);
+    expect(trackedLines([bash("ssh prod-server"), bash("docker ps")], ["ssh", "docker"])).toEqual(["ssh: ssh prod-server", "docker: docker ps"]);
   });
 
   it("omits command names with zero matches", () => {
-    const act = extractTrackedCommands([bash("ssh prod-server")], ["ssh", "docker"]);
-    expect(formatTrackedCommands(act, 10)).toEqual(["ssh: ssh prod-server"]);
+    expect(trackedLines([bash("ssh prod-server")], ["ssh", "docker"])).toEqual(["ssh: ssh prod-server"]);
   });
 
   it("caps entries per command at 10 keeping the NEWEST (recency ledger)", () => {
     const cmds = Array.from({ length: 12 }, (_, i) => bash(`ssh host${i}`));
-    const act = extractTrackedCommands(cmds, ["ssh"]);
-    const [line] = formatTrackedCommands(act, 10);
+    const [line] = trackedLines(cmds, ["ssh"]);
     expect(line).toContain("(+2 earlier)");
     expect(line).toContain("ssh host11"); // newest kept
     expect(line).not.toContain("ssh host0 "); // oldest overflowed
   });
 
   it("a quoted multi-line argument renders on one line", () => {
-    const act = extractTrackedCommands([bash("python3 -c 'import os\nprint(1)'")], ["python3"]);
-    expect(formatTrackedCommands(act, 10)).toEqual(["python3: python3 -c 'import os print(1)'"]);
+    expect(trackedLines([bash("python3 -c 'import os\nprint(1)'")], ["python3"])).toEqual(["python3: python3 -c 'import os print(1)'"]);
   });
 
   it("separators inside quotes are not boundaries — either direction", () => {

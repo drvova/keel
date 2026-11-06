@@ -1,5 +1,6 @@
 import { basename } from "node:path";
 import { compile } from "../src/core/summarize";
+import { DEFAULT_SUMMARY_LIMITS } from "../src/core/window";
 import { prepareSessionSamples } from "../tests/support/real-sessions";
 import { loadSessionMessages } from "../tests/support/load-session";
 import { writeFileSync, mkdirSync } from "node:fs";
@@ -12,7 +13,7 @@ const samples = await prepareSessionSamples(5);
 for (const sample of samples) {
   const name = basename(sample.source).slice(0, 30);
   const loaded = loadSessionMessages(sample.copy);
-  const summary = compile({ messages: loaded.messages });
+  const summary = compile({ messages: loaded.messages, limits: DEFAULT_SUMMARY_LIMITS });
   const outFile = `${outDir}/${branch}/${name}.txt`;
   writeFileSync(outFile, summary);
   console.log(`${name} (${loaded.messageCount} msgs) => ${summary.length} chars`);

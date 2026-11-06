@@ -1,17 +1,20 @@
 import { describe, it, expect } from "bun:test";
-import { formatSummary } from "../src/core/format";
-import type { SectionData } from "../src/sections";
+import { renderSummary } from "../src/core/format";
+import type { SummaryState } from "../src/core/summary-state";
+import { DEFAULT_SUMMARY_LIMITS } from "../src/core/window";
 
-const empty: SectionData = {
+const empty: SummaryState = {
   earlyRequests: [],
-  filesAndChanges: [],
+  files: { modified: [], created: [], read: [] },
   commits: [],
+  tracked: [],
   userMessages: [],
-  trackedCommands: [],
-  briefTranscript: "",
+  brief: "",
 };
 
-describe("formatSummary", () => {
+const formatSummary = (state: SummaryState): string => renderSummary({ state, limits: DEFAULT_SUMMARY_LIMITS }).text;
+
+describe("renderSummary", () => {
   it("returns empty string for all-empty sections", () => {
     expect(formatSummary(empty)).toBe("");
   });
@@ -30,7 +33,7 @@ describe("formatSummary", () => {
     const data = {
       ...empty,
       earlyRequests: ["goal"],
-      briefTranscript: "[user]\ndo something",
+      brief: "[user]\ndo something",
     };
     const r = formatSummary(data);
     expect(r).toContain("[Early Session Requests]");
@@ -41,7 +44,7 @@ describe("formatSummary", () => {
   it("renders brief transcript alone when no header sections", () => {
     const data = {
       ...empty,
-      briefTranscript: "[user]\nhi\n\n[assistant]\nhello",
+      brief: "[user]\nhi\n\n[assistant]\nhello",
     };
     const r = formatSummary(data);
     expect(r).toContain("[user]\nhi\n\n[assistant]\nhello");
@@ -60,9 +63,10 @@ describe("formatSummary", () => {
   });
 
   it("wraps long lines so compaction TUI rendering stays bounded", () => {
+    // The brief is wrapped where it is made (freshState); the sections here.
     const data = {
       ...empty,
-      briefTranscript: `[assistant]\n${"word ".repeat(80)}`,
+      userMessages: ["word ".repeat(80).trim()],
     };
     const r = formatSummary(data);
     expect(Math.max(...r.split("\n").map((line) => line.length))).toBeLessThanOrEqual(120);
