@@ -1,0 +1,50 @@
+;;;; omp-vcc-core.asd --- the Lisp core of omp-vcc.
+;;;;
+;;;; SPDX-License-Identifier: MIT
+;;;;
+;;;; The hosts (omp, Pi) load only JS/TS extensions, so index.ts and pi.ts stay
+;;;; TypeScript and hand requests to this core: one JSON object on stdin, one
+;;;; on stdout (src/server.lisp). Everything a request needs is computed here.
+;;;;
+;;;; No dependencies beyond SBCL itself. The core is dumped as one executable
+;;;; (build.lisp) that links only libc and libm, and nothing a user installs
+;;;; has to fetch a library: JSON (src/json.lisp) and the test runner
+;;;; (test/support.lisp) are this system's own.
+;;;;
+;;;; Components are listed in load order and named one by one, so a file left
+;;;; out fails the load instead of being skipped.
+
+(defsystem "omp-vcc-core"
+  :description "omp-vcc's core: recall search, run as a JSON request/response process."
+  :license "MIT"
+  :version "0.1.0"
+  :serial t
+  :components
+  ((:module "src"
+    :serial t
+    :components
+    ((:file "package")
+     ;; js-string precedes everything that measures or cuts text: budgets and
+     ;; offsets are JavaScript's (UTF-16 code units), so the TS side and this
+     ;; core agree on every number they exchange.
+     (:file "js-string")
+     (:file "json")
+     (:file "search")
+     (:file "server"))))
+  :in-order-to ((test-op (test-op "omp-vcc-core/test"))))
+
+(defsystem "omp-vcc-core/test"
+  :depends-on ("omp-vcc-core")
+  :serial t
+  :components
+  ((:module "test"
+    :serial t
+    :components
+    ((:file "support")
+     (:file "js-string")
+     (:file "json")
+     (:file "search"))))
+  :perform (test-op (op c)
+             (declare (ignore op c))
+             (unless (uiop:symbol-call '#:omp-vcc.test '#:run-all)
+               (error "omp-vcc-core tests failed"))))
