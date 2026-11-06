@@ -14,52 +14,17 @@
  * - Inline queries like "check #42:auth.ts" are NOT drill-down — the ^ anchor
  *   requires the entire query to be the drill-down pattern.
  */
-import { isContentBearing, newTextOf, oldTextOf } from "./content";
-import { extractPath } from "./tool-args";
+import { fileWriteOf, toolCallsOf, type FileWrite } from "./tools";
 import { loadAllMessages } from "./load-messages";
-
-// ── Types ─────────────────────────────────────────────────────────────────
-
-interface ContentBearingCall {
-  name: string;
-  path: string;
-  content?: string;
-  oldText?: string;
-  newText?: string;
-  edits?: Array<{ oldText?: string; newText?: string }>;
-}
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
-/**
- * Find content-bearing tool calls that have a `path` argument and at least
- * one content field (content, edits, oldText, newText).
- * Uses the shared isContentBearing() heuristic from content.ts.
- */
-function findContentBearingCalls(content: unknown[]): ContentBearingCall[] {
-  if (!Array.isArray(content)) return [];
-  const results: ContentBearingCall[] = [];
-  for (const part of content) {
-    if (!part || (part as any).type !== "toolCall") continue;
-    const args = (part as any).arguments ?? {};
-    if (!isContentBearing(args)) continue;
-    const path = extractPath(args);
-    if (!path) continue;
-    const entry: ContentBearingCall = { name: (part as any).name ?? "", path };
-    if (typeof args.content === "string") entry.content = args.content;
-    if (Array.isArray(args.edits)) {
-      entry.edits = args.edits
-        .filter((e: unknown): e is Record<string, unknown> => e !== null && typeof e === "object")
-        .map((e: Record<string, unknown>) => ({ oldText: oldTextOf(e), newText: newTextOf(e) }));
-    }
-    if (!Array.isArray(args.edits)) {
-      entry.oldText = oldTextOf(args);
-      entry.newText = newTextOf(args);
-    }
-    results.push(entry);
-  }
-  return results;
-}
+/** A message's writes and edits, each with the file it changes and what it puts there. */
+const fileWritesOf = (message: unknown): Array<FileWrite & { name: string }> =>
+  toolCallsOf(message).flatMap((call) => {
+    const write = fileWriteOf(call);
+    return write ? [{ ...write, name: call.name }] : [];
+  });
 
 /** Format content for display with optional offset/limit slicing.
  *
@@ -68,7 +33,7 @@ function findContentBearingCalls(content: unknown[]): ContentBearingCall[] {
  * When neither, shows preview (first 30 lines) with truncation hint.
  */
 function formatToolCallContent(
-  tc: ContentBearingCall,
+  tc: FileWrite & { name: string },
   entryIndex: number,
   options?: { full?: boolean; offset?: number; limit?: number },
 ): string {
@@ -79,11 +44,11 @@ function formatToolCallContent(
     body = tc.edits
       .map(
         (e, i) =>
-          `--- edit ${i + 1} ---\n${e.oldText ?? ""}\n--- becomes ---\n${e.newText ?? ""}`,
+          `--- edit ${i + 1} ---\n${e.oldText}\n--- becomes ---\n${e.newText}`,
       )
       .join("\n\n");
-  } else if (tc.oldText && tc.newText) {
-    body = `--- old ---\n${tc.oldText}\n--- new ---\n${tc.newText}`;
+  } else if (tc.replace) {
+    body = `--- old ---\n${tc.replace.oldText}\n--- new ---\n${tc.replace.newText}`;
   } else {
     body = "(no file content found in tool call arguments)";
   }
@@ -256,9 +221,7 @@ export function expandEntryFile(
     return `Entry #${entryIndex} not found in session history.`;
   }
 
-  const msg = rawMessages[pos];
-  const content = msg.content as unknown[];
-  const calls = findContentBearingCalls(content);
+  const calls = fileWritesOf(rawMessages[pos]);
 
   // Special case: #42:file keyword
   if (pathPattern === "file") {

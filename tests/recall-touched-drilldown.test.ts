@@ -224,6 +224,17 @@ describe("vcc_recall drill-down", () => {
     }
   });
 
+  it("#N:path of an edit that deletes text shows what it removed", async () => {
+    const entries = [toolMsg("m1", "edit", { path: "src/a.ts", old_string: "const unused = 1;", new_string: "" })];
+    const { dir, file, ids } = makeSession(entries);
+    try {
+      const out = await invoke(register(), file, ids, { query: "#0:src/a.ts" });
+      expect(out).toContain("--- old ---\nconst unused = 1;\n--- new ---\n");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("inline mention is treated as a normal search, not drill-down", async () => {
     const entries = [toolMsg("m1", "write", { path: "src/big.ts", content: bigContent })];
     const { dir, file, ids } = makeSession(entries);

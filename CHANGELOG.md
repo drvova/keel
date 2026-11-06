@@ -57,6 +57,15 @@ All notable changes to `@drvova/omp-vcc` are documented in this file. Entries fr
 
 ### Fixes
 
+- **Tool calls read by the hosts' own tools** — the summary and recall each kept their own list of tool names, some from neither host (Claude Code's `file_path`, Factory's `TodoWrite`), and none had omp's `ast_edit`. One reading of a call now serves them all, by the names and arguments of omp's and Pi's own tools, and by shape for another extension's tool. What it fixes:
+  - A search shows its pattern: the brief said `* grep "src"` and recall `grep(path=src)` for every grep, and kept only one of a turn's greps over the same directory; now `* grep "authRetry"`, one line per pattern.
+  - `[Commits]` and tracked commands read the commands the user ran themselves (`!git commit -m …`, `!docker …`) and Pi's `powershell` tool, not only the agent's `bash` calls.
+  - A commit's hash comes from its own call's output: with several calls in one message, a call was paired with whichever result sat next to it, and the hash was lost.
+  - omp's `ast_edit` and apply_patch edits list their files as changed (in `[Files And Changes]`, `mode:'touched'`, `[Working Set]`).
+  - `[Working Set]` reads omp's `:-20` (the last lines) and `:L50-L60` as part of a file, not the whole of it, names a search by its pattern, and offers only the latest run of a repeated call (the same grep three times was three items).
+  - Drilling into an edit that only deletes text (`#N:path`) shows what it removed, not "no file content".
+  - The brief no longer reads a markdown bullet in the agent's text as a tool call: two identical `* tests pass` lines were merged into `(#1, #2) x2`, and bullets counted toward a turn's eight calls.
+
 Found by running omp-vcc on omp with a real model:
 
 - **omp's edits are read as edits** — omp's `edit` tool replaces text with `old_string`/`new_string`; omp-vcc knew only Pi's `oldText`/`newText`. So `vcc_recall mode:"touched"` left those edits out, and `[Working Set]` took them for reads of the file: a file the kept turn was editing counted as already in context and was never brought back. They are now changes like any other.

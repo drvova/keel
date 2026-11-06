@@ -11,7 +11,7 @@ import { buildOwnCut, createCompactionState, registerCompactionHook, toSummaryMe
 import { normalize } from "../src/core/normalize";
 import { extractFiles } from "../src/extract/files";
 import { getTouchedFiles } from "../src/core/search-entries";
-import { extractToolCallText, isContentBearing } from "../src/core/content";
+import { fileWriteOf, writtenText } from "../src/core/tools";
 import { setSettingsAgentDir, settingsPath } from "../src/core/settings";
 import { PI_TRIGGER_RULE } from "../src/core/window";
 
@@ -70,8 +70,8 @@ describe.skipIf(!piInstalled())("Pi shapes", () => {
     const edit: any = { role: "assistant", content: [{ type: "toolCall", id: "t", name: "edit", arguments: args }] };
 
     test("is a change: listed as modified, drillable in mode:'touched', its text searchable", () => {
-      expect(isContentBearing(args)).toBe(true);
-      expect(extractToolCallText(args)).toContain("floor : floor + 1");
+      expect(fileWriteOf({ name: "edit", args })?.edits).toHaveLength(2);
+      expect(writtenText(args)).toContain("floor : floor + 1");
       const files = extractFiles([{ kind: "tool_call", name: "edit", args } as any]);
       expect([...files.modified]).toEqual(["src/money.ts"]);
       const touched = getTouchedFiles([edit], [{ index: 4, role: "assistant", summary: "" }]);

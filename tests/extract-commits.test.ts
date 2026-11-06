@@ -2,10 +2,17 @@ import { describe, it, expect } from "bun:test";
 import { extractCommits } from "../src/extract/commits";
 import type { NormalizedBlock } from "../src/types";
 
-const commitBlocks = (command: string): NormalizedBlock[] => [
-  { kind: "tool_call", name: "bash", args: { command } },
-  { kind: "tool_result", name: "bash", text: "[master 5416801] commit" },
-];
+let calls = 0;
+/** A bash call and its result, paired by id as the session pairs them. */
+const ran = (command: string, text: string, failed = false): NormalizedBlock[] => {
+  const id = `call-${++calls}`;
+  return [
+    { kind: "tool_call", id, name: "bash", args: { command }, ...(failed ? { failed: true as const } : {}) },
+    { kind: "tool_result", callId: id, name: "bash", text },
+  ];
+};
+
+const commitBlocks = (command: string): NormalizedBlock[] => ran(command, "[master 5416801] commit");
 
 describe("extractCommits", () => {
   it("extracts double-quoted -m subject", () => {
@@ -94,16 +101,10 @@ describe("extractCommits", () => {
   });
 
   it("extracts every commit in an && chain and hashes only the one the output names", () => {
-    const blocks: NormalizedBlock[] = [
-      {
-        kind: "tool_call",
-        name: "bash",
-        args: {
-          command: `git add a && git commit -m "docs: explain git commit -m" && git add b && git commit -m "$(cat <<'EOF'\nfeat: add retry to upload client\nEOF\n)"`,
-        },
-      },
-      { kind: "tool_result", name: "bash", text: "[master 5416801] docs: explain git commit -m\n 1 file changed\n[master 77aa001] unrelated" },
-    ];
+    const blocks = ran(
+      `git add a && git commit -m "docs: explain git commit -m" && git add b && git commit -m "$(cat <<'EOF'\nfeat: add retry to upload client\nEOF\n)"`,
+      "[master 5416801] docs: explain git commit -m\n 1 file changed\n[master 77aa001] unrelated",
+    );
     expect(extractCommits(blocks)).toEqual([
       { hash: "5416801", message: "docs: explain git commit -m" },
       { hash: undefined, message: "feat: add retry to upload client" },
@@ -111,10 +112,10 @@ describe("extractCommits", () => {
   });
 
   it("hashes quiet commits in a chain from `git log --oneline` lines naming them", () => {
-    const blocks: NormalizedBlock[] = [
-      { kind: "tool_call", name: "bash", args: { command: 'git commit -q -m "fix: one" && git commit -q -m "fix: two" && git log --oneline -2' } },
-      { kind: "tool_result", name: "bash", text: "bbb2222 (HEAD -> master) fix: two\naaa1111 fix: one" },
-    ];
+    const blocks = ran(
+      'git commit -q -m "fix: one" && git commit -q -m "fix: two" && git log --oneline -2',
+      "bbb2222 (HEAD -> master) fix: two\naaa1111 fix: one",
+    );
     expect(extractCommits(blocks)).toEqual([
       { hash: "aaa1111", message: "fix: one" },
       { hash: "bbb2222", message: "fix: two" },
@@ -143,10 +144,7 @@ describe("extractCommits", () => {
   });
 
   // `-q` makes git print no hash, so these commits are hashless.
-  const quietBlocks = (command: string): NormalizedBlock[] => [
-    { kind: "tool_call", name: "bash", args: { command } },
-    { kind: "tool_result", name: "bash", text: "" },
-  ];
+  const quietBlocks = (command: string): NormalizedBlock[] => ran(command, "");
 
   it("extracts the subject from combined short flags ending in m", () => {
     expect(extractCommits(quietBlocks('git commit -qam "chore: release v0.11.0"'))).toEqual([
@@ -171,10 +169,7 @@ describe("extractCommits", () => {
     expect(extractCommits([...hashless, ...hashed])).toEqual(want);
     expect(extractCommits([...hashed, ...hashless])).toEqual(want);
     // Two commits that share a message but have different hashes stay two.
-    const other = [
-      { kind: "tool_call", name: "bash", args: { command: 'git commit -m "fix: handle empty config"' } },
-      { kind: "tool_result", name: "bash", text: "[master 9999999] commit" },
-    ] as NormalizedBlock[];
+    const other = ran('git commit -m "fix: handle empty config"', "[master 9999999] commit");
     expect(extractCommits([...hashed, ...other]).map((x) => x.hash)).toEqual(["5416801", "9999999"]);
   });
 });
@@ -182,10 +177,7 @@ describe("extractCommits", () => {
 // Seen with a real model on omp: output that only looks like a hash, a commit in a
 // command that failed before reaching it, and an amend.
 describe("extractCommits: only git's own output names a hash", () => {
-  const call = (command: string, text: string, failed = false): NormalizedBlock[] => [
-    { kind: "tool_call", name: "bash", args: { command }, ...(failed ? { failed: true as const } : {}) },
-    { kind: "tool_result", name: "bash", text },
-  ];
+  const call = ran;
 
   it("a number printed on its own line is not the hash; the --oneline line naming the subject is", () => {
     const blocks = call(
@@ -251,5 +243,26 @@ describe("extractCommits: only git's own output names a hash", () => {
       ...call("git commit --amend -m 'feat: a, better'", "[master 77aa001] feat: a, better\n"),
     ];
     expect(extractCommits(blocks)).toEqual([{ hash: "77aa001", message: "feat: a, better" }]);
+  });
+});
+
+describe("extractCommits: the command and its output", () => {
+  it("pairs a call with its own result, not the one next to it", () => {
+    // Two calls in one assistant message, their results after both.
+    const blocks: NormalizedBlock[] = [
+      { kind: "tool_call", id: "a", name: "bash", args: { command: "git status" } },
+      { kind: "tool_call", id: "b", name: "bash", args: { command: "git commit -m 'feat: x'" } },
+      { kind: "tool_result", callId: "a", name: "bash", text: "nothing to commit? no: [master 1111111] something else" },
+      { kind: "tool_result", callId: "b", name: "bash", text: "[master 5416801] feat: x" },
+    ];
+    expect(extractCommits(blocks)).toEqual([{ hash: "5416801", message: "feat: x" }]);
+  });
+
+  it("reads a commit the user ran with !cmd, from its own output", () => {
+    const blocks: NormalizedBlock[] = [
+      { kind: "bash", command: "git commit -m 'fix: by hand'", output: "[master 5416801] fix: by hand", exitCode: 0 },
+      { kind: "bash", command: "git commit -m 'fix: refused'", output: "nothing to commit", exitCode: 1 },
+    ];
+    expect(extractCommits(blocks)).toEqual([{ hash: "5416801", message: "fix: by hand" }]);
   });
 });

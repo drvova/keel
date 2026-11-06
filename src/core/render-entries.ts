@@ -1,6 +1,6 @@
-import type { Message, ToolCall } from "@oh-my-pi/pi-ai";
-import { clip, isContentBearing, textOf } from "./content";
-import { summarizeToolArgs, extractPath, extractPaths, PATH_KEYS } from "./tool-args";
+import type { Message } from "@oh-my-pi/pi-ai";
+import { clip, textOf } from "./content";
+import { callSubject, fileWriteOf, namedPaths, toolCallsOf, type ToolCall } from "./tools";
 
 export interface RenderedEntry {
   index: number;
@@ -11,15 +11,13 @@ export interface RenderedEntry {
   session?: string;
 }
 
-const toolCallParts = (content: Message["content"]): ToolCall[] => {
-  if (!content || typeof content === "string") return [];
-  return (content as { type: string }[]).filter((c): c is ToolCall => c.type === "toolCall");
-};
-
-const toolCalls = (content: Message["content"]): string => {
-  return toolCallParts(content)
-    .map((c) => `${c.name}(${summarizeToolArgs(c.arguments)})`)
-    .join(", ");
+/** A call in one line: `name(key=value)`, the argument it is about; else its argument names. */
+const callLine = (c: ToolCall): string => {
+  const subject = callSubject(c);
+  const what = subject
+    ? `${subject.label}=${subject.value}${subject.more ? ` +${subject.more}` : ""}`
+    : Object.keys(c.args).join(", ");
+  return `${c.name}(${what})`;
 };
 
 const indent = (text: string, pad: string): string => text.replace(/^(?=.)/gm, pad);
@@ -39,14 +37,11 @@ const NOT_ARGUMENTS = new Set(["i"]);
  * edit's new text) is shown by expand too. String values print as written,
  * indented; others as JSON.
  */
-const fullToolArgs = (content: Message["content"], index: number, maxChars: number): string => {
-  const calls = toolCallParts(content);
+const fullToolArgs = (calls: ToolCall[], index: number, maxChars: number): string => {
   const blocks = calls.map((c) => {
-    const args = (c.arguments ?? {}) as Record<string, unknown>;
-    const [path] = extractPaths(args);
-    const shown = new Set<string>(path ? PATH_KEYS : typeof args.command === "string" ? ["command"] : typeof args.query === "string" ? ["query"] : []);
+    const shown = new Set(callSubject(c)?.keys ?? []);
     // A value's later lines sit deeper than its key, so they never read as another argument.
-    const lines = Object.entries(args)
+    const lines = Object.entries(c.args)
       .filter(([key, value]) => !shown.has(key) && !NOT_ARGUMENTS.has(key) && value !== undefined)
       .map(([key, value]) => `${key}: ${(typeof value === "string" ? value.replace(/\s+$/, "") : JSON.stringify(value)).replace(/\n/g, "\n  ")}`);
     return { name: c.name, lines };
@@ -58,14 +53,9 @@ const fullToolArgs = (content: Message["content"], index: number, maxChars: numb
     .join("\n");
   if (text.length <= maxChars) return text;
   // A write's or edit's content is still all there through the file drill-down.
-  const call = calls.find((c) => isContentBearing((c.arguments ?? {}) as Record<string, unknown>) && extractPath(c.arguments));
-  const path = call ? extractPath(call.arguments) : undefined;
+  const path = calls.map(fileWriteOf).find(Boolean)?.path;
   const rest = path ? `; query '#${index}:${path}:full' reads the file content` : "";
   return `${text.slice(0, maxChars)}\n  ...[arguments of #${index} clipped at ${maxChars} of ${text.length} chars${rest}]`;
-};
-
-const extractFilesFromContent = (content: Message["content"]): string[] => {
-  return toolCallParts(content).flatMap((c) => extractPaths(c.arguments));
 };
 
 /** Paths of an omp fileMention message. */
@@ -112,9 +102,10 @@ export const renderMessage = (msg: Message, index: number, full = false, detailC
     return { index, role: (msg as any).role, summary: text };
   }
   const text = full ? textOf(msg.content) : clip(textOf(msg.content), 300);
-  const tools = toolCalls(msg.content);
-  const files = extractFilesFromContent(msg.content);
-  const args = full && tools ? fullToolArgs(msg.content, index, detailChars) : "";
+  const calls = toolCallsOf(msg);
+  const tools = calls.map(callLine).join(", ");
+  const files = calls.flatMap((c) => namedPaths(c.args));
+  const args = full && tools ? fullToolArgs(calls, index, detailChars) : "";
   const summary = tools ? [tools, args, text].filter(Boolean).join("\n") : text;
   return { index, role: "assistant", summary, ...(files.length > 0 && { files }) };
 };

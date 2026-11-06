@@ -1,7 +1,7 @@
-import type { Message, ToolCall } from "@oh-my-pi/pi-ai";
+import type { Message } from "@oh-my-pi/pi-ai";
 import { fileMentionPaths, type RenderedEntry } from "./render-entries";
-import { textOf, isContentBearing, extractToolCallText, extractToolCallArgsText, clip } from "./content";
-import { extractPaths, hashlineEditPaths, isUrlPath } from "./tool-args";
+import { textOf, clip } from "./content";
+import { argsText, callKind, filesOf, fileWriteOf, toolCallsOf, writtenText } from "./tools";
 import { RECALL_TOOL } from "../names";
 
 export interface SearchHit extends RenderedEntry {
@@ -342,12 +342,10 @@ const TOOL_ARGS_BUDGET = 2000;
 /** Text of every toolCall's arguments in a message's content, for search —
  *  bounded once, in aggregate, by TOOL_ARGS_BUDGET. Excludes the recall
  *  tool's own arguments (see RECALL_TOOL). */
-const toolCallArgsText = (content: Message["content"]): string => {
-  if (!content || typeof content === "string") return "";
-  const raw = (content as { type: string }[])
-    .filter((part): part is ToolCall => part.type === "toolCall")
-    .filter((part) => part.name?.toLowerCase() !== RECALL_TOOL)
-    .map((part) => extractToolCallArgsText(part.arguments))
+const toolCallArgsText = (msg: Message): string => {
+  const raw = toolCallsOf(msg)
+    .filter((call) => call.name.toLowerCase() !== RECALL_TOOL)
+    .map((call) => argsText(call.args))
     .filter(Boolean)
     .join("\n");
   return clip(raw, TOOL_ARGS_BUDGET);
@@ -379,40 +377,22 @@ const fullText = (msg: Message): string => {
     return "";
   }
   const text = textOf(msg.content);
-  const argsText = toolCallArgsText(msg.content);
-  return argsText ? `${text}\n${argsText}` : text;
+  const args = toolCallArgsText(msg);
+  return args ? `${text}\n${args}` : text;
 };
 
 /**
- * Compute file indicators from a message, counting non-empty content lines
- * per content-bearing file call. Shape-based — no tool-name allowlist.
- *
- * Ported from pi-blackhole (https://github.com/k0valik/pi-blackhole, MIT) by
- * k0valik — a pi-vcc derivative.
+ * The files a message's writes and edits change, each with the lines the call
+ * carries and whether the drill-down can show them (`#N:path`).
  */
 export function getFileIndicators(msg: Message): { toolName: string; path: string; lineCount: number; drillable: boolean }[] {
-  if (!msg?.content || typeof msg.content === "string") return [];
-  const indicators: { toolName: string; path: string; lineCount: number; drillable: boolean }[] = [];
-  for (const part of msg.content) {
-    if (!part || typeof part !== "object" || part.type !== "toolCall") continue;
-    const args = part.arguments as Record<string, unknown>;
-    const drillable = isContentBearing(args);
-    // A multi-path edit tool: a script (`code`) edits the listed `paths`, so there is no per-file content.
-    // Likewise omp's hashline edit, whose `input` patches the files named in its section headers.
-    const multiPathEdit = (typeof args.code === "string" && Array.isArray(args.paths)) || hashlineEditPaths(args).length > 0;
-    if (!drillable && !multiPathEdit) continue;
-    const totalText = extractToolCallText(args);
-    const nonEmpty = totalText.split("\n").filter((l) => l.trim().length > 0);
-    for (const path of extractPaths(args)) {
-      indicators.push({
-        toolName: part.name || "",
-        path,
-        lineCount: nonEmpty.length,
-        drillable,
-      });
-    }
-  }
-  return indicators;
+  return toolCallsOf(msg).flatMap((call) => {
+    const kind = callKind(call);
+    if (kind !== "write" && kind !== "edit") return [];
+    const lineCount = writtenText(call.args).split("\n").filter((l) => l.trim().length > 0).length;
+    const drillable = fileWriteOf(call) !== undefined;
+    return filesOf(call).map((path) => ({ toolName: call.name, path, lineCount, drillable }));
+  });
 }
 
 /**
@@ -430,7 +410,6 @@ export function getTouchedFiles(
     const msg = messages[i];
     const indicators = getFileIndicators(msg);
     for (const fm of indicators) {
-      if (isUrlPath(fm.path)) continue;
       const index = rendered[i]?.index ?? i;
       if (!map.has(fm.path)) {
         map.set(fm.path, { path: fm.path, entries: [] });

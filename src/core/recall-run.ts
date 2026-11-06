@@ -8,6 +8,7 @@ import type { RecallScope } from "./recall-scope";
 import type { RecallRequest } from "./recall-request";
 import type { Message } from "@oh-my-pi/pi-ai";
 import { describeSession, fileBranchIds, listProjectSessions, type SessionInfo } from "./sessions";
+import { toolCallsOf } from "./tools";
 
 export const SEARCH_PAGE_SIZE = 5;
 export const RANGE_PAGE_SIZE = 20;
@@ -248,11 +249,6 @@ export const PAIRED_RESULT_CHARS = EXPAND_DETAIL_CHARS;
 export const expandDetailChars = (maxChars: number = RECALL_OUTPUT_CHARS): number =>
   Math.max(1, Math.round((maxChars * PAIRED_RESULT_CHARS) / RECALL_OUTPUT_CHARS));
 
-const toolCallIds = (msg: Message | undefined): string[] =>
-  msg?.role === "assistant" && Array.isArray(msg.content)
-    ? msg.content.flatMap((b: any) => (b?.type === "toolCall" && typeof b.id === "string" ? [b.id] : []))
-    : [];
-
 /**
  * Full text of the requested entries. An expanded tool call brings its tool
  * results along (matched by toolCallId, clipped to PAIRED_RESULT_CHARS), so
@@ -280,7 +276,7 @@ const runExpand = (indices: number[], view: RecallView): string => {
   for (const { hit } of found) {
     const { entry, raw, v, pos } = hit!;
     out.push(entry);
-    const ids = new Set(toolCallIds(raw));
+    const ids = new Set(toolCallsOf(raw).flatMap((c) => c.id ?? []));
     if (ids.size === 0) continue;
     const { rendered, rawMessages } = v.load(true);
     for (let j = pos + 1; j < rendered.length && ids.size > 0; j++) {
@@ -424,8 +420,6 @@ const runSearch = (query: string, page: number, view: RecallView, hints: RecallP
   return formatRecallOutput(pageHits, query, header) + around + footer + none;
 };
 
-const WRITES_FILE = /write|edit|patch/i;
-
 /** Files worked on, plus a ready #N:path call for the first file on the page that was written. */
 const runTouched = (page: number | undefined, view: RecallView): string => {
   const { rendered, rawMessages } = view.load(false);
@@ -433,7 +427,7 @@ const runTouched = (page: number | undefined, view: RecallView): string => {
   const text = formatTouchedOutput(touched, page);
   const start = (Math.max(1, page ?? 1) - 1) * TOUCHED_PAGE_SIZE;
   for (const tf of touched.slice(start, start + TOUCHED_PAGE_SIZE)) {
-    const write = [...tf.entries].reverse().find((e) => e.drillable !== false && WRITES_FILE.test(e.toolName));
+    const write = [...tf.entries].reverse().find((e) => e.drillable !== false);
     if (!write) continue;
     const name = tf.path.replace(/\\/g, "/").split("/").pop();
     return `${text}\n--- File content at an entry: query:'#${write.index}:${name}' ---`;

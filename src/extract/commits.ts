@@ -1,5 +1,6 @@
 import type { NormalizedBlock } from "../types";
 import { DEFAULT_SUMMARY_LIMITS } from "../core/window";
+import { commandOf } from "../core/tools";
 
 interface CommitInfo {
   hash?: string;
@@ -134,31 +135,37 @@ const amendedCommit = (results: string[]): { hash: string; message: string } | u
 };
 
 /**
- * Extract git commits from bash tool calls (`git commit -m "..."`) and pair
- * with hash from the immediately following tool_result.
+ * What a command block printed and whether it failed: a `!cmd`'s own output and
+ * exit code, a shell call's results (matched by id, before the next user turn).
  */
+const outcomeOf = (blocks: NormalizedBlock[], i: number): { results: string[]; failed: boolean } => {
+  const b = blocks[i];
+  if (b.kind === "bash") return { results: [b.output], failed: b.exitCode != null && b.exitCode !== 0 };
+  const results: string[] = [];
+  if (b.kind === "tool_call" && b.id !== undefined) {
+    for (let j = i + 1; j < blocks.length && blocks[j].kind !== "user"; j++) {
+      const r = blocks[j];
+      if (r.kind === "tool_result" && r.callId === b.id) results.push(r.text);
+    }
+  }
+  return { results, failed: b.kind === "tool_call" && b.failed === true };
+};
+
+/** Git commits the session made (`git commit -m "..."`), each with the hash its output reported. */
 export const extractCommits = (blocks: NormalizedBlock[]): CommitInfo[] => {
   const commits: CommitInfo[] = [];
 
   for (let i = 0; i < blocks.length; i++) {
-    const b = blocks[i];
-    if (b.kind !== "tool_call" || b.name !== "bash") continue;
-    const cmd = typeof b.args.command === "string" ? b.args.command : "";
-    const segments = commitSegments(cmd);
+    const segments = commitSegments(commandOf(blocks[i]) ?? "");
     if (segments.length === 0) continue;
-
-    const results: string[] = [];
-    for (let j = i + 1; j < Math.min(blocks.length, i + 3); j++) {
-      const r = blocks[j];
-      if (r.kind === "tool_result") results.push(r.text);
-    }
+    const { results, failed } = outcomeOf(blocks, i);
 
     for (const seg of segments) {
       const amend = /\s--amend\b/.test(seg);
       const message = subjectOf(seg);
       // A failed command made no commit unless git printed that it did (`git commit … && git push` with
       // the push failing): `a && git commit` stops at a failing `a`.
-      if (b.failed && !(message ? committedLine(results, message) : amend && amendedCommit(results))) continue;
+      if (failed && !(message ? committedLine(results, message) : amend && amendedCommit(results))) continue;
       if (amend) {
         // --amend replaces the commit before it, so that commit's hash (and with -m its subject) is gone.
         const reported = message ? undefined : amendedCommit(results);

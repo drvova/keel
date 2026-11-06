@@ -1,5 +1,6 @@
 import type { NormalizedBlock } from "../types";
 import { capItems } from "../core/format";
+import { commandOf } from "../core/tools";
 
 /** Maximum characters kept per captured entry (a truncated one-liner, not a
  * parsed structure -- deliberately shallow, see module docstring below). */
@@ -131,7 +132,7 @@ export interface TrackedCommandActivity {
 }
 
 /**
- * Scans bash tool-call commands for invocations of any command name in
+ * Scans shell commands (the agent's and the user's `!cmd`) for invocations of any command name in
  * `trackCommands`, capturing a one-line snapshot per match --
  * deliberately shallow (no per-command argument parsing) so this never
  * needs updating as any given CLI's flags evolve, unlike a design that
@@ -156,8 +157,7 @@ export const extractTrackedCommands = (
   const trackSsh = trackCommands.includes("ssh");
 
   for (const b of blocks) {
-    if (b.kind !== "tool_call" || b.name !== "bash") continue;
-    const cmd = typeof b.args.command === "string" ? b.args.command : "";
+    const cmd = commandOf(b);
     if (!cmd) continue;
 
     for (const name of trackCommands) {

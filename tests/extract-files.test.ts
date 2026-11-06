@@ -12,7 +12,7 @@ describe("extractFiles", () => {
       { kind: "tool_call", name: "read", args: { path: "a.ts" } },
       { kind: "tool_call", name: "Read", args: { path: "b.ts" } },
       { kind: "tool_call", name: "Write", args: { path: "c.ts" } },
-      { kind: "tool_call", name: "MultiEdit", args: { path: "d.ts" } },
+      { kind: "tool_call", name: "Edit", args: { path: "d.ts" } },
     ];
     const r = extractFiles(blocks);
     expect([...r.read].sort()).toEqual(["a.ts", "b.ts"]);
@@ -46,13 +46,16 @@ describe("extractFiles", () => {
     expect([...r.read]).toEqual(["src/money.py"]);
   });
 
-  it("records modern edit tools as modifications", () => {
+  it("records omp's ast_edit, and another extension's tool by its edit arguments, as modifications", () => {
     const blocks: NormalizedBlock[] = [
-      { kind: "tool_call", name: "quick_edit", args: { path: "a.ts" } },
-      { kind: "tool_call", name: "target_edit", args: { path: "b.ts" } },
+      { kind: "tool_call", name: "ast_edit", args: { ops: [{ pat: "a", out: "b" }], paths: ["c.ts"] } },
+      { kind: "tool_call", name: "quick_edit", args: { path: "a.ts", old_string: "x", new_string: "y" } },
+      { kind: "tool_call", name: "target_edit", args: { path: "b.ts", edits: [{ oldText: "x", newText: "y" }] } },
+      { kind: "tool_call", name: "lookup", args: { path: "d.ts" } },
     ];
     const r = extractFiles(blocks);
-    expect([...r.modified].sort()).toEqual(["a.ts", "b.ts"]);
+    expect([...r.modified].sort()).toEqual(["a.ts", "b.ts", "c.ts"]);
+    expect([...r.read]).toEqual([]);
   });
 
   it("records every path of a multi-path edit tool", () => {

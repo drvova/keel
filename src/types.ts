@@ -19,7 +19,8 @@ export type NormalizedBlock =
   | { kind: "user"; text: string; sourceIndex?: number; injected?: boolean }
   | { kind: "assistant"; text: string; sourceIndex?: number }
   // `failed`: the call's result came back as an error (toolResult isError).
-  | { kind: "tool_call"; name: string; args: Record<string, unknown>; sourceIndex?: number; failed?: true }
-  | { kind: "tool_result"; name: string; text: string; sourceIndex?: number }
+  | { kind: "tool_call"; id?: string; name: string; args: Record<string, unknown>; sourceIndex?: number; failed?: true }
+  // `callId`: the id of the call this is the result of.
+  | { kind: "tool_result"; callId?: string; name: string; text: string; sourceIndex?: number }
   // A command the user ran themselves: `!cmd`, or (lang "python") a python cell.
   | { kind: "bash"; command: string; output: string; exitCode: number | undefined; sourceIndex?: number; lang?: "python" };

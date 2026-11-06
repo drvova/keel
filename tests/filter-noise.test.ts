@@ -3,17 +3,6 @@ import { filterNoise } from "../src/core/filter-noise";
 import type { NormalizedBlock } from "../src/types";
 
 describe("filterNoise", () => {
-  it("removes noise tool calls and results", () => {
-    const blocks: NormalizedBlock[] = [
-      { kind: "tool_call", name: "TodoWrite", args: {} },
-      { kind: "tool_result", name: "TodoWrite", text: "ok" },
-      { kind: "tool_call", name: "Read", args: { path: "x.ts" } },
-    ];
-    const result = filterNoise(blocks);
-    expect(result).toHaveLength(1);
-    expect(result[0]).toEqual({ kind: "tool_call", name: "Read", args: { path: "x.ts" } });
-  });
-
   it("removes user blocks that are pure XML wrappers", () => {
     const blocks: NormalizedBlock[] = [
       { kind: "user", text: "<system-reminder>some noise</system-reminder>" },

@@ -435,3 +435,37 @@ describe("failed tool calls", () => {
     expect(failed.score).toBeGreaterThan(passed.score);
   });
 });
+
+describe("tool lines", () => {
+  it("a search shows its pattern, whatever the host's casing", () => {
+    const brief = compileBrief([
+      { kind: "tool_call", name: "grep", args: { pattern: "authRetry", path: "src" }, sourceIndex: 1 },
+      { kind: "tool_call", name: "Grep", args: { pattern: "billingRetry" }, sourceIndex: 2 },
+      { kind: "tool_call", name: "ast_grep", args: { pat: "retry($A)", path: "src" }, sourceIndex: 3 },
+    ]);
+    expect(brief).toContain('* grep "authRetry" (#1)');
+    expect(brief).toContain('* Grep "billingRetry" (#2)');
+    expect(brief).toContain('* ast_grep "retry($A)" (#3)');
+  });
+
+  it("identical calls in a row are one line with every #N; markdown bullets in the text are not calls", () => {
+    const brief = compileBrief([
+      { kind: "assistant", text: "Checked:\n* tests pass", sourceIndex: 1 },
+      { kind: "assistant", text: "* tests pass", sourceIndex: 2 },
+      { kind: "tool_call", name: "read", args: { path: "a.ts" }, sourceIndex: 2 },
+      { kind: "tool_call", name: "read", args: { path: "a.ts" }, sourceIndex: 3 },
+    ]);
+    expect(brief).toContain("* tests pass (#1)\n* tests pass (#2)");
+    expect(brief).toContain('* read "a.ts" (#2, #3) x2');
+  });
+
+  it("past eight calls in a turn the earliest are counted, not shown; text lines stay", () => {
+    const blocks: NormalizedBlock[] = [{ kind: "assistant", text: "* a bullet, not a call", sourceIndex: 0 }];
+    for (let i = 1; i <= 10; i++) blocks.push({ kind: "tool_call", name: "read", args: { path: `f${i}.ts` }, sourceIndex: i });
+    const brief = compileBrief(blocks);
+    expect(brief).toContain("* a bullet, not a call (#0)");
+    expect(brief).toContain("* (2 earlier tool-call entries omitted)");
+    expect(brief).not.toContain('"f2.ts"');
+    expect(brief).toContain('* read "f3.ts" (#3)');
+  });
+});

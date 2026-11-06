@@ -133,6 +133,16 @@ describe("extractTrackedCommands", () => {
     const act = extractTrackedCommands([{ kind: "tool_call", name: "read", args: { path: "a.ts" } }], TRACK);
     expect(act.byCommand.get("ssh")!.size).toBe(0);
   });
+
+  it("reads commands the user ran with !cmd and Pi's powershell tool too", () => {
+    const act = extractTrackedCommands([
+      { kind: "bash", command: "docker compose up -d", output: "", exitCode: 0 },
+      { kind: "tool_call", name: "powershell", args: { command: "kubectl get pods" } },
+      { kind: "bash", command: "docker ps", output: "", exitCode: 0, lang: "python" },
+    ], TRACK);
+    expect([...act.byCommand.get("docker")!]).toEqual(["docker compose up -d"]);
+    expect([...act.byCommand.get("kubectl")!]).toEqual(["kubectl get pods"]);
+  });
 });
 
 describe("formatTrackedCommands", () => {

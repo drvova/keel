@@ -1,6 +1,7 @@
 import type { Message } from "@oh-my-pi/pi-ai";
 import { buildSections } from "./build-sections";
 import { clip } from "./content";
+import { filesOf } from "./tools";
 import { normalize } from "./normalize";
 import { renderMessage } from "./render-entries";
 import { searchEntries } from "./search-entries";
@@ -96,12 +97,7 @@ const inputCharsOf = (messages: Message[]): number =>
 const topFilesOf = (messages: Message[]): string[] => {
   const files = new Set<string>();
   for (const block of normalize(messages)) {
-    if (block.kind === "tool_call") {
-      for (const key of ["path", "file_path", "filePath", "file"]) {
-        const val = block.args[key];
-        if (typeof val === "string") { files.add(val); break; }
-      }
-    }
+    if (block.kind === "tool_call") for (const file of filesOf(block)) files.add(file);
   }
   return [...files].slice(0, 10);
 };
@@ -156,15 +152,7 @@ const probesOf = (messages: Message[], summary: string): RecallProbe[] => {
   const data = buildSections({ blocks });
 
   // Find first file from tool calls
-  let firstFile = "";
-  for (const b of blocks) {
-    if (b.kind === "tool_call") {
-      for (const key of ["path", "file_path", "filePath", "file"]) {
-        if (typeof b.args[key] === "string") { firstFile = b.args[key] as string; break; }
-      }
-      if (firstFile) break;
-    }
-  }
+  const firstFile = blocks.flatMap((b) => (b.kind === "tool_call" ? filesOf(b) : []))[0] ?? "";
 
   const rawProbes = [
     { label: "request", text: data.earlyRequests[0] ?? "" },

@@ -5,11 +5,10 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { join } from "path";
 import { homedir } from "os";
 import { applyTailBudget, buildOwnCut, registerHook } from "./support/host";
-import { extractPaths, hashlineEditPaths, stripReadSelector } from "../src/core/tool-args";
+import { callKind, fileWriteOf, namedPaths, readsPart, stripReadSelector, writtenText } from "../src/core/tools";
 import { extractFiles } from "../src/extract/files";
 import { renderMessage } from "../src/core/render-entries";
 import { getTouchedFiles } from "../src/core/search-entries";
-import { extractToolCallText, isContentBearing } from "../src/core/content";
 import { setSettingsAgentDir, settingsPath } from "../src/core/settings";
 
 const msg = (id: string, role: "user" | "assistant", content = `text of ${id}`) => ({
@@ -69,11 +68,22 @@ describe("omp tool shapes", () => {
   const hashline = "*** Begin Patch\n[src/auth/session.ts#1A2B]\nPUT 4.=4:\n+x\n[lib/util.py#3c4d]\nCUT 1.=2\n*** End Patch";
 
   test("a hashline edit names the files of its [PATH#TAG] sections", () => {
-    expect(hashlineEditPaths({ input: hashline })).toEqual(["src/auth/session.ts", "lib/util.py"]);
-    expect(extractPaths({ input: hashline })).toEqual(["src/auth/session.ts", "lib/util.py"]);
-    expect(hashlineEditPaths({ input: "[not a header] text" })).toEqual([]);
+    expect(namedPaths({ input: hashline })).toEqual(["src/auth/session.ts", "lib/util.py"]);
+    expect(namedPaths({ input: "[not a header] text" })).toEqual([]);
     // A path argument still wins.
-    expect(extractPaths({ path: "a.ts", input: hashline })).toEqual(["a.ts"]);
+    expect(namedPaths({ path: "a.ts", input: hashline })).toEqual(["a.ts"]);
+  });
+
+  test("an apply_patch edit names the files of its headers", () => {
+    const patch = "*** Begin Patch\n*** Add File: hello.txt\n+Hello\n*** Update File: src/app.py\n*** Move to: src/main.py\n@@\n-a\n+b\n*** Delete File: old.txt\n*** End Patch\n";
+    expect(namedPaths({ input: patch })).toEqual(["hello.txt", "src/app.py", "src/main.py", "old.txt"]);
+    expect(callKind({ name: "edit", args: { input: patch } })).toBe("edit");
+  });
+
+  test("a read of lines is a read of part of the file; :raw and a whole read are not", () => {
+    const read = (path: string) => readsPart({ name: "read", args: { path } });
+    for (const p of ["src/a.ts:50-100", "src/a.ts:L50-L60", "src/a.ts:-20", "src/a.ts:1-12,-15", "src/a.ts:raw:50-100", "src/a.ts:50+10"]) expect(read(p)).toBe(true);
+    for (const p of ["src/a.ts", "src/a.ts:raw", "src/a.ts:img", "db.sqlite:table"]) expect(read(p)).toBe(false);
   });
 
   test("read selectors are dropped, other colons kept", () => {
@@ -108,8 +118,9 @@ describe("omp's replace edit (old_string/new_string)", () => {
   const edit: any = { role: "assistant", content: [{ type: "toolCall", id: "t", name: "edit", arguments: { path: "src/money.ts", old_string: "floor + 1 : floor", new_string: "floor : floor + 1" } }] };
 
   test("is a change: listed and drillable in mode:'touched', its text searchable", () => {
-    expect(isContentBearing(edit.content[0].arguments)).toBe(true);
-    expect(extractToolCallText(edit.content[0].arguments)).toBe("floor + 1 : floor\nfloor : floor + 1\n");
+    const call = { name: "edit", args: edit.content[0].arguments };
+    expect(fileWriteOf(call)).toEqual({ path: "src/money.ts", replace: { oldText: "floor + 1 : floor", newText: "floor : floor + 1" } });
+    expect(writtenText(call.args)).toBe("floor + 1 : floor\nfloor : floor + 1\n");
     const touched = getTouchedFiles([edit], [{ index: 4, role: "assistant", summary: "" }]);
     expect(touched[0].entries).toEqual([{ index: 4, toolName: "edit" }]);
   });

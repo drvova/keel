@@ -1,5 +1,5 @@
 import type { NormalizedBlock, FileOps } from "../types";
-import { extractPath } from "./tool-args";
+import { callKind, callSubject, commandOf, filesOf } from "./tools";
 import { compileBrief, heredocCloseIndex } from "./brief";
 
 export interface BriefRankingOptions {
@@ -42,8 +42,6 @@ export interface RankedBlock {
 const DEFAULT_MAX_BLOCKS = 80;
 const DEFAULT_RECENT_BLOCKS = 16;
 
-const EDIT_TOOL_RE = /^(edit|write|multiedit|quick_edit|target_edit|apply_patch)$/i;
-const READ_TOOL_RE = /^(read|glob|grep|ls|find|semantic_query|semantic_grep|semantic_show)$/i;
 const TEST_COMMAND_RE = /\b(?:bun|npm|pnpm|yarn|node|pytest|cargo|go|mvn|gradle)\b[^\n]*(?:test|spec|check|lint|build|tsc)/i;
 const GH_PR_POLL_RE = /(?:^|\s)gh\s+pr\s+(?:view|checks)\s+(\d+)\b/i;
 // Durable workflow facts: which PR/issue was acted on, and git state changes.
@@ -77,16 +75,12 @@ const isTrivialOnlyBash = (raw: string): boolean => {
 
 const asPathSet = (paths?: string[]): Set<string> => new Set((paths ?? []).filter(Boolean));
 
-const bashCommandFromBlock = (block: NormalizedBlock): string | undefined => {
-  if (block.kind === "bash") return block.command;
-  if (block.kind === "tool_call" && /^bash$/i.test(block.name) && typeof block.args.command === "string") {
-    return block.args.command;
-  }
-  return undefined;
-};
+/** The code a block ran: a shell command (the agent's or the user's `!cmd`), or a python cell the user ran. */
+const ranCode = (block: NormalizedBlock): string | undefined =>
+  block.kind === "bash" ? block.command : commandOf(block);
 
 const pathFromBlock = (block: NormalizedBlock): string | undefined => {
-  if (block.kind === "tool_call") return extractPath(block.args) ?? undefined;
+  if (block.kind === "tool_call") return filesOf(block)[0];
   if (block.kind === "bash") {
     const match = block.command.match(/(?:^|\s)([\w./-]+\.[\w-]+)(?:\s|$)/);
     return match?.[1];
@@ -115,10 +109,11 @@ const scoreBlock = (
   if (block.kind === "tool_result") add(ranked, 1, "tool-result-low-value");
 
   if (block.kind === "tool_call") {
-    const command = bashCommandFromBlock(block);
-    if (EDIT_TOOL_RE.test(block.name)) add(ranked, 34, "edit-tool");
+    const command = commandOf(block);
+    const kind = callKind(block);
+    if (kind === "edit" || kind === "write") add(ranked, 34, "edit-tool");
     else if (command && TEST_COMMAND_RE.test(command)) add(ranked, 26, "test-command");
-    else if (READ_TOOL_RE.test(block.name)) add(ranked, 6, "read-tool");
+    else if (kind === "read" || kind === "search") add(ranked, 6, "read-tool");
     else add(ranked, 12, "tool-call");
     if (command && WORKFLOW_COMMAND_RE.test(command)) add(ranked, 14, "workflow-command");
     // An error state is the fact most worth carrying forward (as nonzero-exit for a user-run command).
@@ -195,7 +190,7 @@ const boostSegmentClosingAssistants = (ranked: RankedBlock[]) => {
 };
 
 const dedupKey = (block: NormalizedBlock): string | undefined => {
-  const command = bashCommandFromBlock(block);
+  const command = ranCode(block);
   const ghPrPoll = command?.match(GH_PR_POLL_RE);
   if (ghPrPoll) return `gh-pr-poll:${ghPrPoll[1]}`;
   if (command) {
@@ -203,8 +198,8 @@ const dedupKey = (block: NormalizedBlock): string | undefined => {
     return normalized ? `bash:${normalized}` : undefined;
   }
   if (block.kind === "tool_call") {
-    const path = pathFromBlock(block);
-    return path ? `tool:${block.name.toLowerCase()}:${path}` : undefined;
+    const subject = callSubject(block);
+    return subject ? `tool:${block.name.toLowerCase()}:${subject.value}` : undefined;
   }
   return undefined;
 };

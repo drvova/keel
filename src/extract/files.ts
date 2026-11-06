@@ -1,31 +1,11 @@
 import type { FileOps, NormalizedBlock } from "../types";
-import { extractPaths, isUrlPath, stripReadSelector } from "../core/tool-args";
+import { callKind, filesOf, isUrlPath } from "../core/tools";
 
 interface FileActivity {
   read: Set<string>;
   modified: Set<string>;
   created: Set<string>;
 }
-
-// Tool names are matched case-insensitively (see `matches`), mirroring the /i
-// regexes in core/rank.ts. Entries must be lowercase.
-const FILE_READ_TOOLS = new Set([
-  "read", "read_file", "view",
-]);
-
-// Multi-file patch tools (apply_patch) carry their paths inside the diff payload,
-// not in a path arg, so extractPaths yields nothing for them; those files are
-// recovered from the hook-provided fileOps below.
-const FILE_WRITE_TOOLS = new Set([
-  "edit", "write", "edit_file", "write_file",
-  "multiedit", "quick_edit", "target_edit", "apply_patch",
-]);
-
-const FILE_CREATE_TOOLS = new Set([
-  "write", "write_file",
-]);
-
-const matches = (tools: Set<string>, name: string): boolean => tools.has(name.toLowerCase());
 
 /**
  * Find the longest common directory prefix among absolute paths.
@@ -75,22 +55,21 @@ export const extractFiles = (
 
   for (const b of blocks) {
     if (b.kind !== "tool_call") continue;
-    for (const raw of extractPaths(b.args)) {
-      if (isUrlPath(raw)) continue;
-      if (matches(FILE_READ_TOOLS, b.name)) {
-        const p = stripReadSelector(raw);
+    const kind = callKind(b);
+    for (const p of filesOf(b)) {
+      if (kind === "read") {
         act.read.add(p);
         // A read that failed says nothing about the file existing.
         if (!b.failed) seen.add(p);
-      } else if (matches(FILE_CREATE_TOOLS, b.name)) {
+      } else if (kind === "write") {
         if (!b.failed) {
-          if (seen.has(raw)) change(raw);
-          else act.created.add(raw);
+          if (seen.has(p)) change(p);
+          else act.created.add(p);
         }
-        seen.add(raw);
-      } else if (matches(FILE_WRITE_TOOLS, b.name)) {
-        change(raw);
-        seen.add(raw);
+        seen.add(p);
+      } else if (kind === "edit") {
+        change(p);
+        seen.add(p);
       }
     }
   }

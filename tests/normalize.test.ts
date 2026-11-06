@@ -41,14 +41,14 @@ describe("normalize", () => {
   it("normalizes tool call", () => {
     const blocks = normalize([assistantWithToolCall("Read", { path: "a.ts" })]);
     expect(blocks).toEqual([{
-      kind: "tool_call", name: "Read", args: { path: "a.ts" }, sourceIndex: 0,
+      kind: "tool_call", id: "tc_1", name: "Read", args: { path: "a.ts" }, sourceIndex: 0,
     }]);
   });
 
   it("normalizes tool result", () => {
     const blocks = normalize([toolResult("Read", "file contents")]);
     expect(blocks).toEqual([{
-      kind: "tool_result", name: "Read",
+      kind: "tool_result", callId: "tc_1", name: "Read",
       text: "file contents", sourceIndex: 0,
     }]);
   });
