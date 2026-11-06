@@ -1208,3 +1208,27 @@ describe("what a compaction stores for the next one", () => {
     expect(two.compaction.summary).not.toContain("something the text alone says");
   });
 });
+
+describe("what the hook tells the user", () => {
+  test("a cancel's reason goes to the UI, or to stderr where there is none (print and json modes)", () => {
+    const entries = [msg("u1", "user", "hi"), msg("a1", "assistant", "hello")];
+    const ui = createMockOmp();
+    register(ui.pi);
+    expect(ui.invokeBefore(makeEvent(entries, OMP_VCC_COMPACT_INSTRUCTION)).cancel).toBe(true);
+    expect(ui.notifyCalls.map((c) => c.msg)).toEqual(["omp-vcc: Too few messages to compact"]);
+
+    const written: string[] = [];
+    const write = process.stderr.write;
+    (process.stderr as any).write = (chunk: string) => (written.push(String(chunk)), true);
+    try {
+      const print = createMockOmp();
+      register(print.pi);
+      print.ctx.hasUI = false;
+      print.invokeBefore(makeEvent(entries, OMP_VCC_COMPACT_INSTRUCTION));
+      expect(print.notifyCalls).toEqual([]);
+    } finally {
+      (process.stderr as any).write = write;
+    }
+    expect(written).toEqual(["omp-vcc: Too few messages to compact\n"]);
+  });
+});

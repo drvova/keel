@@ -190,7 +190,7 @@ describe("/omp-vcc", () => {
     expect(cleared.notifyCalls[0].msg).toStartWith("Nothing to compact yet: the whole session still fits");
   });
 
-  test("when omp-vcc's hook cancelled, print mode gets its reason; a UI already showed it", async () => {
+  test("when omp-vcc's hook cancelled, the command adds nothing: the hook told the user why", async () => {
     const written: string[] = [];
     const write = process.stderr.write;
     (process.stderr as any).write = (chunk: string) => (written.push(String(chunk)), true);
@@ -199,7 +199,7 @@ describe("/omp-vcc", () => {
       await print.invoke();
       print.state.lastCancelNotice = "omp-vcc: Too few messages to compact";
       print.compactCalls[0].onError?.(new Error("Compaction cancelled"));
-      expect(written).toEqual(["omp-vcc: Too few messages to compact\n"]);
+      expect(written).toEqual([]);
     } finally {
       (process.stderr as any).write = write;
     }

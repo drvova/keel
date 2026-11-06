@@ -7,11 +7,11 @@
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { writeFileSync } from "fs";
 import { indexById, readEntries } from "../core/session-file";
-import { parseKeepAndPrompt, OMP_VCC_COMPACT_INSTRUCTION } from "../core/compact-args";
+import { parseInstructions } from "../core/compact-args";
 import type { VccSettings } from "../core/settings";
 import { calibrateCharsPerToken, DEFAULT_CHARS_PER_TOKEN, estimateMessageChars, estimateTokensFromChars } from "../core/token-estimate";
 import { compactionBudgets } from "../core/window";
-import { isRecovery, type Binding } from "../host";
+import { isRecovery, tell, type Binding } from "../host";
 export type { CompactionTrigger } from "../host";
 import { applyContextEdits } from "../core/context-edits";
 import { modelKey } from "../core/model-limits";
@@ -61,37 +61,6 @@ export const createCompactionState = (): CompactionState => ({
   lastCancelNotice: null,
 });
 
-
-const parseCompactionInstructions = (customInstructions?: string): {
-  fromCommand: boolean;
-  keepUserTurns: number;
-  keepUserTurnsExplicit: boolean;
-  followUpPrompt: string | null;
-} => {
-  const trimmed = customInstructions?.trim();
-  if (trimmed === OMP_VCC_COMPACT_INSTRUCTION) {
-    return { fromCommand: true, keepUserTurns: 1, keepUserTurnsExplicit: false, followUpPrompt: null };
-  }
-
-  const keepPrefix = `${OMP_VCC_COMPACT_INSTRUCTION} `;
-  if (trimmed?.startsWith(keepPrefix)) {
-    const parsed = parseKeepAndPrompt(trimmed.slice(keepPrefix.length));
-    return {
-      fromCommand: true,
-      keepUserTurns: parsed.keepUserTurns ?? 1,
-      keepUserTurnsExplicit: parsed.keepUserTurnsExplicit,
-      followUpPrompt: null,
-    };
-  }
-
-  const parsed = parseKeepAndPrompt(customInstructions);
-  return {
-    fromCommand: false,
-    keepUserTurns: parsed.keepUserTurns ?? 1,
-    keepUserTurnsExplicit: parsed.keepUserTurnsExplicit,
-    followUpPrompt: parsed.followUpPrompt || null,
-  };
-};
 
 /** With the `debug` setting on, each compaction's decisions are written here. */
 const DEBUG_PATH = "/tmp/omp-vcc-debug.json";
@@ -156,9 +125,10 @@ export const registerCompactionHook = (
 ) => {
   const convert = host.convertToLlm;
   const notify = (ctx: any, message: string) => {
+    // /omp-vcc reads it to know the user was told why.
     state.lastCancelNotice = message;
-    // The UI may be gone (print mode, a closed session); the notice is kept for /omp-vcc.
-    try { ctx?.ui?.notify?.(message, "warning"); } catch {}
+    // The UI may be gone (a closed session).
+    try { tell(ctx, message, "warning"); } catch {}
   };
 
   pi.on("session_before_compact", (event, ctx) => {
@@ -177,7 +147,7 @@ export const registerCompactionHook = (
 
     // Always handle the /omp-vcc marker.
     // Otherwise, only handle when user opted in via settings.
-    const { fromCommand, keepUserTurns, keepUserTurnsExplicit, followUpPrompt } = parseCompactionInstructions(customInstructions);
+    const { fromCommand, keepUserTurns, keepUserTurnsExplicit, followUpPrompt } = parseInstructions(customInstructions);
     state.pendingFollowUpPrompt = null;
     if (!fromCommand && !settings.overrideDefaultCompaction) return;
     // Provider-level opt-out (#27): defer to the provider's own compaction

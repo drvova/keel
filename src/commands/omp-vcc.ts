@@ -33,13 +33,7 @@ export const registerOmpVccCommand = (pi: ExtensionAPI, state: CompactionState, 
           // A follow-up prompt replaces omp's resume of a turn the compaction interrupted.
           ...(followUpPrompt ? { suppressContinuation: true } : {}),
           onComplete: () => reportCompactDone(ctx, state.lastStats, followUpPrompt, (content) => pi.sendUserMessage(content)),
-          onError: (err: Error) => {
-            // The TUI already shows "Compaction cancelled" / "Compaction failed: …";
-            // there omp-vcc adds only its hint for a session that is still too short.
-            if (!(ctx.mode === "tui" && !err.message.startsWith("Nothing to compact"))) {
-              reportCompactError(ctx, err, state.lastCancelNotice, host.displayName);
-            }
-          },
+          onError: (err: Error) => reportCompactError(ctx, err, state.lastCancelNotice, host.displayName),
         });
       } catch {
         // A compact() that throws has reported through onError.

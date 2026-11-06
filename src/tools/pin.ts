@@ -1,20 +1,10 @@
 // vcc_pin and the pin commands: the text the agent reads, vcc_pin's JSON Schema, and
 // what a call does. unpin also takes "#3"; omp has no prepareArguments, so
 // executePin reads either form.
-import { lastIndex } from "../core/session-file";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import type { HostProfile } from "../host";
-import {
-  formatPin,
-  formatPinList,
-  nextPinId,
-  PIN_CHARS,
-  pinText,
-  readPins,
-  type PinAuthor,
-  type PinOp,
-} from "../core/pins";
-import { PIN_ENTRY_TYPE, PIN_TOOL } from "../names";
+import { addPin, listPins, PIN_CHARS, removePin, type PinHost, type PinSession } from "../core/pins";
+import { PIN_TOOL } from "../names";
 
 export const PIN_TOOL_LABEL = "VCC Pin";
 
@@ -36,61 +26,13 @@ export const PIN_PARAM_DESCRIPTIONS = {
   unpin: "The [N] of a pinned note to remove.",
 } as const;
 
-export interface PinHost {
-  appendEntry: (customType: string, data?: unknown) => void;
-}
-
-export interface PinSession {
-  getBranch: () => any[];
-  getEntries?: () => any[];
-}
-
-const branchOf = (session: PinSession): any[] => {
-  try { return session.getBranch() ?? []; } catch { return []; }
-};
-
-/** "3", "#3", "[3]", 3 -> 3. */
-export const toPinId = (value: unknown): number | undefined => {
-  if (typeof value === "number") return Number.isInteger(value) ? value : undefined;
-  if (typeof value !== "string") return undefined;
-  const m = value.trim().match(/^\[?#?(\d+)\]?$/);
-  return m ? Number(m[1]) : undefined;
-};
-
-export const addPin = (host: PinHost, session: PinSession, raw: string, by: PinAuthor): string => {
-  const { text, clipped } = pinText(raw);
-  if (!text) return "Nothing to pin: give the note text.";
-  const branch = branchOf(session);
-  const existing = readPins(branch).find((n) => n.text === text);
-  if (existing) return `Already pinned: ${formatPin(existing)}.`;
-  let entries: any[] = branch;
-  try { entries = session.getEntries?.() ?? branch; } catch {}
-  const op: PinOp = { v: 1, op: "add", id: nextPinId(branch), text, by, ...withAt(lastIndex(entries)) };
-  host.appendEntry(PIN_ENTRY_TYPE, op);
-  const note = { id: op.id, text, by, ...withAt(op.at) };
-  return `Pinned ${formatPin(note)}${clipped ? ` (clipped to ${PIN_CHARS} chars)` : ""}.`;
-};
-
-const withAt = (at: number | undefined) => (at != null ? { at } : {});
-
-export const removePin = (host: PinHost, session: PinSession, idValue: unknown): string => {
-  const id = toPinId(idValue);
-  const notes = readPins(branchOf(session));
-  const note = id == null ? undefined : notes.find((n) => n.id === id);
-  if (!note) return `No pinned note ${id == null ? JSON.stringify(idValue) : `[${id}]`}. ${formatPinList(notes)}`;
-  host.appendEntry(PIN_ENTRY_TYPE, { v: 1, op: "remove", id: note.id } satisfies PinOp);
-  return `Unpinned ${formatPin(note)}.`;
-};
-
-export const listPins = (session: PinSession): string => formatPinList(readPins(branchOf(session)));
-
 /** One vcc_pin call: note pins, unpin removes, neither lists. */
 export const executePin = (params: unknown, host: PinHost, session: PinSession): string => {
   const p = (params && typeof params === "object" ? params : {}) as { note?: unknown; unpin?: unknown };
   const note = typeof p.note === "string" ? p.note : undefined;
   if (note && p.unpin !== undefined) return "Send note or unpin, not both, in one call.";
-  if (note) return addPin(host, session, note, "agent");
-  if (p.unpin !== undefined) return removePin(host, session, p.unpin);
+  if (note) return addPin(host, session, note, "agent").text;
+  if (p.unpin !== undefined) return removePin(host, session, p.unpin).text;
   return listPins(session);
 };
 

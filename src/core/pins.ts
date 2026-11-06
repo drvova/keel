@@ -13,7 +13,7 @@
 // or retried turn drops the ones made after the edit point. omp's /clear (a
 // reset_boundary) hides earlier pins, as it does omp's own context notes.
 import { clip } from "./content";
-import { afterReset } from "./session-file";
+import { afterReset, lastIndex } from "./session-file";
 import { PIN_ENTRY_TYPE, PIN_TOOL } from "../names";
 
 /** One note is clipped to this many characters. */
@@ -89,3 +89,62 @@ export const formatPinList = (notes: readonly PinnedNote[]): string =>
   notes.length === 0
     ? "No pinned notes."
     : `Pinned notes (kept at the top of every summary):\n${notes.map((n) => `- ${formatPin(n)}`).join("\n")}`;
+
+// ── Pinning and unpinning, for the tool and the commands ──
+
+/** Where a pin or unpin is written: the host's appendEntry. */
+export interface PinHost {
+  appendEntry: (customType: string, data?: unknown) => void;
+}
+
+export interface PinSession {
+  getBranch: () => any[];
+  getEntries?: () => any[];
+}
+
+const branchOf = (session: PinSession): any[] => {
+  try { return session.getBranch() ?? []; } catch { return []; }
+};
+
+/** "3", "#3", "[3]", 3 -> 3. */
+export const toPinId = (value: unknown): number | undefined => {
+  if (typeof value === "number") return Number.isInteger(value) ? value : undefined;
+  if (typeof value !== "string") return undefined;
+  const m = value.trim().match(/^\[?#?(\d+)\]?$/);
+  return m ? Number(m[1]) : undefined;
+};
+
+/** Pin a note; `done` says whether it was pinned, `text` what happened. */
+export const addPin = (host: PinHost, session: PinSession, raw: string, by: PinAuthor): PinResult => {
+  const { text, clipped } = pinText(raw);
+  if (!text) return { done: false, text: "Nothing to pin: give the note text." };
+  const branch = branchOf(session);
+  const existing = readPins(branch).find((n) => n.text === text);
+  if (existing) return { done: false, text: `Already pinned: ${formatPin(existing)}.` };
+  let entries: any[] = branch;
+  try { entries = session.getEntries?.() ?? branch; } catch {}
+  const op: PinOp = { v: 1, op: "add", id: nextPinId(branch), text, by, ...withAt(lastIndex(entries)) };
+  host.appendEntry(PIN_ENTRY_TYPE, op);
+  const note = { id: op.id, text, by, ...withAt(op.at) };
+  return { done: true, text: `Pinned ${formatPin(note)}${clipped ? ` (clipped to ${PIN_CHARS} chars)` : ""}.` };
+};
+
+const withAt = (at: number | undefined) => (at != null ? { at } : {});
+
+/** Unpin a note by its id ("3", "#3", "[3]", 3). */
+export const removePin = (host: PinHost, session: PinSession, idValue: unknown): PinResult => {
+  const id = toPinId(idValue);
+  const notes = readPins(branchOf(session));
+  const note = id == null ? undefined : notes.find((n) => n.id === id);
+  if (!note) return { done: false, text: `No pinned note ${id == null ? JSON.stringify(idValue) : `[${id}]`}. ${formatPinList(notes)}` };
+  host.appendEntry(PIN_ENTRY_TYPE, { v: 1, op: "remove", id: note.id } satisfies PinOp);
+  return { done: true, text: `Unpinned ${formatPin(note)}.` };
+};
+
+export const listPins = (session: PinSession): string => formatPinList(readPins(branchOf(session)));
+
+/** What a pin or unpin did: `done` when the note changed, `text` what to tell. */
+export interface PinResult {
+  done: boolean;
+  text: string;
+}

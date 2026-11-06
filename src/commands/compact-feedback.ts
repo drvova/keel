@@ -1,15 +1,9 @@
 // What omp-vcc's commands tell the user, and what /omp-vcc says once a
 // compaction it asked for ends.
-import { afterReset, type SessionManagerLike } from "../core/session-file";
-import type { HostProfile } from "../host";
+import { afterReset } from "../core/session-file";
+import { tell, type HostProfile, type NotifyCtx } from "../host";
+export { tell, type NotifyCtx } from "../host";
 import { formatCompactionStats, scheduleCompactionStatsNotify, type CompactionStats } from "../compaction/stats";
-
-export interface NotifyCtx {
-  /** False in omp's print and json modes, whose extension UI drops notify. */
-  hasUI?: boolean;
-  ui: { notify: (message: string, type?: "info" | "warning" | "error") => void };
-  sessionManager?: SessionManagerLike;
-}
 
 /** The branch has a compaction still in effect (none, or one before omp's /clear, does not count). */
 const compactedBefore = (ctx: NotifyCtx): boolean => {
@@ -18,21 +12,6 @@ const compactedBefore = (ctx: NotifyCtx): boolean => {
     branch = ctx.sessionManager?.getBranch?.() ?? [];
   } catch {}
   return afterReset(branch).some((e) => e?.type === "compaction");
-};
-
-/**
- * Tell the user: omp's notify where there is a UI. Print and json modes have
- * none (their notify is a no-op), so there it goes to stderr, as omp's own
- * commands' output does, and stdout stays the model's.
- */
-export const tell = (ctx: NotifyCtx, message: string, type: "info" | "warning" | "error" = "info"): void => {
-  if (ctx.hasUI === false) {
-    try {
-      process.stderr.write(`${message}\n`);
-    } catch {}
-    return;
-  }
-  ctx.ui.notify(message, type);
 };
 
 export const reportCompactDone = (
@@ -52,12 +31,15 @@ export const reportCompactDone = (
 };
 
 /**
- * Why a compaction /omp-vcc asked for did not happen. `cancelNotice` is the
- * hook's own reason when it cancelled; where there is a UI it was shown already.
+ * Why a compaction /omp-vcc asked for did not happen, from the host's error.
+ * `cancelNotice` is the hook's own reason when it cancelled, which it told
+ * already. omp's TUI shows its own "Compaction cancelled" / "Compaction
+ * failed: …", so there only the hint for a session still too short is added.
  */
-export const reportCompactError = (ctx: NotifyCtx, err: Error, cancelNotice: string | null | undefined, hostName: HostProfile["displayName"]): void => {
+export const reportCompactError = (ctx: NotifyCtx & { mode?: string }, err: Error, cancelNotice: string | null | undefined, hostName: HostProfile["displayName"]): void => {
+  if (ctx.mode === "tui" && !err.message.startsWith("Nothing to compact")) return;
   if (err.message === "Compaction cancelled" && cancelNotice) {
-    if (ctx.hasUI === false) tell(ctx, cancelNotice, "warning");
+    return;
   } else if (err.message === "Already compacted") {
     tell(ctx, "Nothing to compact: the session was just compacted.", "warning");
   } else if (err.message === "Compaction cancelled") {

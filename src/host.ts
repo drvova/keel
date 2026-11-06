@@ -5,6 +5,7 @@
 import { OMP_TRIGGER_RULE, PI_TRIGGER_RULE, type TriggerRule } from "./core/window";
 import { isRecoveryReason, type CompactionReason } from "./types";
 import type { Config } from "./core/settings";
+import type { SessionManagerLike } from "./core/session-file";
 
 export type HostName = "omp" | "pi";
 
@@ -107,3 +108,25 @@ export const compactAndWait = (
       (returned as Promise<unknown>).then(() => resolve(), () => resolve());
     }
   });
+
+export interface NotifyCtx {
+  /** False in omp's print and json modes, whose extension UI drops notify. */
+  hasUI?: boolean;
+  ui: { notify: (message: string, type?: "info" | "warning" | "error") => void };
+  sessionManager?: SessionManagerLike;
+}
+
+/**
+ * Tell the user: omp's notify where there is a UI. Print and json modes have
+ * none (their notify is a no-op), so there it goes to stderr, as omp's own
+ * commands' output does, and stdout stays the model's.
+ */
+export const tell = (ctx: NotifyCtx, message: string, type: "info" | "warning" | "error" = "info"): void => {
+  if (ctx.hasUI === false) {
+    try {
+      process.stderr.write(`${message}\n`);
+    } catch {}
+    return;
+  }
+  ctx.ui.notify(message, type);
+};

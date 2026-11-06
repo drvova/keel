@@ -3,9 +3,9 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { nextPinId, PIN_CHARS, readPins } from "../src/core/pins";
+import { nextPinId, PIN_CHARS, readPins, addPin, removePin } from "../src/core/pins";
 import { PIN_ENTRY_TYPE } from "../src/names";
-import { addPin, executePin, removePin } from "../src/tools/pin";
+import { executePin } from "../src/tools/pin";
 import { registerPinCommands } from "../src/commands/pin";
 import { registerHook } from "./support/host";
 
@@ -26,10 +26,10 @@ const message = (id: string, role = "user", text = "hello there") =>
 describe("pinned notes: storage", () => {
   it("replays pins and unpins along the branch, recording the #N they were made at", () => {
     const s = session([message("m1"), message("m2", "assistant")]);
-    expect(addPin(s.host, s.sm, "never edit migrations/", "user")).toBe("Pinned [1] never edit migrations/ (user, #1).");
-    expect(addPin(s.host, s.sm, "  sessions   in SQLite ", "agent")).toBe("Pinned [2] sessions in SQLite (agent, #1).");
+    expect(addPin(s.host, s.sm, "never edit migrations/", "user").text).toBe("Pinned [1] never edit migrations/ (user, #1).");
+    expect(addPin(s.host, s.sm, "  sessions   in SQLite ", "agent").text).toBe("Pinned [2] sessions in SQLite (agent, #1).");
     expect(readPins(s.entries).map((n) => [n.id, n.text, n.by])).toEqual([[1, "never edit migrations/", "user"], [2, "sessions in SQLite", "agent"]]);
-    expect(removePin(s.host, s.sm, "#1")).toBe("Unpinned [1] never edit migrations/ (user, #1).");
+    expect(removePin(s.host, s.sm, "#1").text).toBe("Unpinned [1] never edit migrations/ (user, #1).");
     expect(readPins(s.entries).map((n) => n.id)).toEqual([2]);
     // An id is never reused, so an old [1] cannot come to mean a new note.
     expect(nextPinId(s.entries)).toBe(3);
@@ -37,10 +37,10 @@ describe("pinned notes: storage", () => {
 
   it("refuses an empty note and a duplicate, clips a long one", () => {
     const s = session();
-    expect(addPin(s.host, s.sm, "   ", "user")).toBe("Nothing to pin: give the note text.");
+    expect(addPin(s.host, s.sm, "   ", "user").text).toBe("Nothing to pin: give the note text.");
     addPin(s.host, s.sm, "keep the API stable", "user");
-    expect(addPin(s.host, s.sm, "keep the API stable", "agent")).toBe("Already pinned: [1] keep the API stable (user).");
-    expect(addPin(s.host, s.sm, "x".repeat(PIN_CHARS + 50), "agent")).toContain(`(clipped to ${PIN_CHARS} chars)`);
+    expect(addPin(s.host, s.sm, "keep the API stable", "agent").text).toBe("Already pinned: [1] keep the API stable (user).");
+    expect(addPin(s.host, s.sm, "x".repeat(PIN_CHARS + 50), "agent").text).toContain(`(clipped to ${PIN_CHARS} chars)`);
   });
 
   it("ignores other extensions' entries and malformed data, and hides pins made before omp's /clear", () => {
