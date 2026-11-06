@@ -13,7 +13,7 @@
 // or retried turn drops the ones made after the edit point. omp's /clear (a
 // reset_boundary) hides earlier pins, as it does omp's own context notes.
 import { clip } from "./content";
-import { afterReset, hostBranch, hostEntries, lastIndex, type SessionManagerLike } from "./session-file";
+import { afterReset, hostBranch, hostEntries, lastIndex, RESET_ENTRY_TYPE, type SessionManagerLike } from "./session-file";
 import { PIN_ENTRY_TYPE, PIN_TOOL } from "../names";
 
 /** One note is clipped to this many characters. */
@@ -36,6 +36,9 @@ type PinOp =
   | { v: 1; op: "remove"; id: number };
 
 const isPinEntry = (e: any): boolean => e?.type === "custom" && e.customType === PIN_ENTRY_TYPE && e.data && typeof e.data === "object";
+
+/** An entry readPins replays: a pin op, or a /clear boundary that ends what came before it. */
+export const replaysPins = (e: any): boolean => isPinEntry(e) || e?.type === RESET_ENTRY_TYPE;
 
 /** The notes pinned on this branch, oldest first. */
 export const readPins = (branch: readonly any[]): PinnedNote[] => {

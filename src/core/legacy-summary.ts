@@ -3,8 +3,21 @@
 // so the next compaction can merge into it like any other. Also what reads a
 // section of a summary's text (tests, reports).
 import { EARLY_REQUESTS_KEPT } from "../extract/user-messages";
-import { COMMAND_SEPARATOR, RECALL_NOTE, SECTION, SEPARATOR } from "./format";
 import type { Commit, PreviousSummary, SummaryState } from "./summary-state";
+
+// The text older versions wrote, as they wrote it. Frozen here, not read from
+// core/format.ts: renaming a section or rewording the note there is a change
+// to what is written from now on, and must not stop older summaries being read.
+const SEPARATOR = "\n\n---\n\n";
+const COMMAND_SEPARATOR = " | ";
+const RECALL_NOTE = "Use `vcc_recall` to search for prior work, decisions, and context from before this summary. Do not redo work already completed.";
+const SECTION = {
+  early: "Early Session Requests",
+  files: "Files And Changes",
+  commits: "Commits",
+  tracked: "Tracked Commands",
+  userMessages: "User Messages",
+} as const;
 
 // A header section is a "[Title Case]" line standing alone in the header area
 // (the text before the first separator) plus the lines up to the next blank

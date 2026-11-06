@@ -10,10 +10,9 @@
 // index space.
 import { readdirSync, realpathSync, statSync } from "fs";
 import { dirname, join } from "path";
-import { readHeader, RESET_ENTRY_TYPE, scanLines } from "./session-file";
+import { readHeader, scanLines } from "./session-file";
 import { clip, textOf } from "./content";
-import { formatPin, readPins } from "./pins";
-import { PIN_ENTRY_TYPE } from "../names";
+import { formatPin, readPins, replaysPins } from "./pins";
 
 export interface SessionInfo {
   file: string;
@@ -54,7 +53,7 @@ const scanSession = (file: string): SessionInfo | undefined => {
   let title: string | undefined;
   let firstRequest: string | undefined;
   let messages = 0;
-  // Pin ops and /clear boundaries, with their ids, to replay along the branch.
+  // What readPins replays, with their ids, to replay along the branch.
   const pinEntries: any[] = [];
   let branch: Set<string> | undefined;
   try {
@@ -67,16 +66,12 @@ const scanSession = (file: string): SessionInfo | undefined => {
         }
         return;
       }
-      if (head.type === RESET_ENTRY_TYPE || (head.type === "custom" && line.includes(PIN_ENTRY_TYPE))) {
-        const e = parse(line);
-        if (e) pinEntries.push(e);
-        return;
-      }
+      // A compaction's summary is the bulk of what is left; nothing here reads it.
+      if (head.type === "compaction") return;
+      const e = parse(line);
+      if (replaysPins(e)) pinEntries.push(e);
       // omp's title slot (its first line, rewritten in place) and later renames.
-      if (head.type === "title" || head.type === "title_change") {
-        const e = parse(line);
-        if (typeof e?.title === "string" && e.title.trim()) title = e.title.trim();
-      }
+      else if ((head.type === "title" || head.type === "title_change") && typeof e?.title === "string" && e.title.trim()) title = e.title.trim();
     });
   } catch {
     return undefined;
