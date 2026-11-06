@@ -5,7 +5,7 @@ import { compileBrief, heredocCloseIndex } from "./brief";
 export interface BriefRankingOptions {
   /** Maximum normalized blocks used to build the brief transcript. */
   maxBlocks?: number;
-  /** Always keep this many latest blocks to preserve local continuity. */
+  /** Keep this many latest blocks to preserve local continuity (within the char budget, when one is set). */
   preserveRecentBlocks?: number;
   /** Hook-provided file activity, used as structural signal instead of prose guessing. */
   fileOps?: FileOps;
@@ -231,7 +231,6 @@ export const selectRankedBriefBlocks = (
           ),
         )
       : options.maxBriefChars;
-  // Fast path: nothing to trim by count and no char budget to enforce.
   if (blocks.length <= maxBlocks && maxBriefChars == null) return blocks;
 
   const preserveRecentBlocks = Math.min(options.preserveRecentBlocks ?? DEFAULT_RECENT_BLOCKS, maxBlocks);

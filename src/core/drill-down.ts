@@ -16,8 +16,6 @@
  */
 import { fileWriteOf, toolCallsOf, type FileWrite } from "./tools";
 
-// ── Helpers ───────────────────────────────────────────────────────────────
-
 /** A message's writes and edits, each with the file it changes and what it puts there. */
 const fileWritesOf = (message: unknown): Array<FileWrite & { name: string }> =>
   toolCallsOf(message).flatMap((call) => {
@@ -25,10 +23,9 @@ const fileWritesOf = (message: unknown): Array<FileWrite & { name: string }> =>
     return write ? [{ ...write, name: call.name }] : [];
   });
 
-/** Format content for display with optional offset/limit slicing.
- *
- * When full=true, shows everything ignoring offset/limit.
- * When offset/limit given, shows a window with "Lines X-Y (of Z)" header.
+/**
+ * When full=true, shows everything up to `maxChars`, ignoring offset/limit.
+ * When offset is given, shows `limit` lines (30 by default) under a "Lines X-Y (of Z)" header.
  * When neither, shows preview (first 30 lines) with truncation hint.
  */
 function formatToolCallContent(
@@ -76,7 +73,6 @@ ${body}`;
   }
 
   if (offset !== undefined) {
-    // Offset-based window: show slice
     const startLine = Math.max(0, offset);
     const maxLines = limit ?? 30;
     const endLine = Math.min(startLine + maxLines, totalLines);
@@ -103,7 +99,6 @@ Lines ${displayStart}-${endLine} (of ${totalLines}):
     return result;
   }
 
-  // Default preview mode: first ${previewLimit} lines
   if (totalLines > previewLimit) {
     const preview = allLines.slice(0, previewLimit).join("\n");
     return `File: ${tc.path}
@@ -119,8 +114,6 @@ Tool: ${tc.name}
 
 ${body}`;
 }
-
-// ── Parse drill-down query ────────────────────────────────────────────────
 
 /**
  * Pattern: #N:path, #N:path:full, #N:path:offset, or #N:path:offset:limit
@@ -164,7 +157,6 @@ export function parseDrillDown(query: string): {
   }
 
   if (suffix !== undefined) {
-    // Parse "offset" or "offset:limit"
     const parts = suffix.split(":");
     const offset = parseInt(parts[0], 10);
     const limit = parts[1] !== undefined ? parseInt(parts[1], 10) : undefined;
@@ -182,8 +174,6 @@ export function parseDrillDown(query: string): {
   };
 }
 
-// ── Main export ───────────────────────────────────────────────────────────
-
 /**
  * Expand a drill-down query (#N:path) to tool call content.
  *
@@ -196,10 +186,9 @@ export function parseDrillDown(query: string): {
  * @param message - The message at #N (undefined when there is none)
  * @param entryIndex - The message index (#N)
  * @param pathPattern - File path substring to match (or "file" keyword)
- * @param full - If true, return complete content without truncation
+ * @param full - If true, return all of the content, up to one recall result's cap
  * @param offset - Line offset (0-indexed) for windowed content
  * @param limit - Max lines to show (default 30 for windowed, ignored if full=true)
- * @returns Formatted content string
  */
 export function expandEntryFile(
   message: unknown,
@@ -225,7 +214,6 @@ export function expandEntryFile(
     if (calls.length === 1) {
       return formatToolCallContent(calls[0], entryIndex, { full, offset, limit, ...output });
     }
-    // Multiple content-bearing calls — list them
     const items = calls.map(
       (tc) => `  [#${entryIndex}:${tc.path}] ${tc.name}(${tc.path})`,
     );

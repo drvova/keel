@@ -71,5 +71,4 @@ export const compileSummary = (input: RankedCompileInput): CompiledSummary => {
   return { text, state: capState(merged, input.limits), sections };
 };
 
-/** The summary's text. */
 export const compile = (input: RankedCompileInput): string => compileSummary(input).text;

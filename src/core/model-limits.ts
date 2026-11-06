@@ -1,11 +1,12 @@
-// Where omp-vcc learns a model's real context window when omp's is too high.
+// Where omp-vcc learns a model's real context window when the host's is too high.
 //
-// omp-vcc takes the window from omp (its model's contextWindow, which omp's own
-// discovery fills from the provider when it is configured to) and makes no
-// network call of its own. When a provider serves less than omp was told, its
-// overflow error often states the limit ("maximum context length is 32768
-// tokens"); that limit is kept per model in omp-vcc-models.json next to the
-// config, so the next session starts with it.
+// omp-vcc takes the window from the host (its model's contextWindow, which omp's
+// own discovery fills from the provider when it is configured to, and Pi's from
+// its catalog and models.json) and makes no network call of its own. When a
+// provider serves less than the host was told, its overflow error often states
+// the limit ("maximum context length is 32768 tokens"); that limit is kept per
+// model in omp-vcc-models.json next to the config, so the next session starts
+// with it.
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 
@@ -17,8 +18,6 @@ export interface ModelLike {
 
 export const modelKey = (model: ModelLike | undefined): string | undefined =>
   model?.provider && model?.id ? `${model.provider}/${model.id}` : undefined;
-
-// ── learned limits (from overflow errors) ──
 
 const LIMITS_FILE = "omp-vcc-models.json";
 

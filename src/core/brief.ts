@@ -15,18 +15,14 @@ const ASSISTANT_TAIL_WORDS = 120;
 const SELF_TALK_PREFIX_RE =
   /^\s*(?:hmm|wait|actually|oh|okay|ok|well|so)[,.!\s-]+/i;
 
-// ── noise filtering ──
-
 const isNoiseUser = (text: string): boolean => {
   return !text.trim();
 };
 
-// ── truncation ──
-
 // Unicode-aware word segmentation via Intl.Segmenter (built-in, zero dependency)
 const segmenter = new Intl.Segmenter(undefined, { granularity: "word" });
 
-/** Check if segment is a word (Bun's isWordLike is unreliable for alphanumeric tokens) */
+/** Bun's isWordLike is unreliable for alphanumeric tokens. */
 const isWord = (seg: { segment: string; isWordLike?: boolean }): boolean =>
   seg.isWordLike || /[\p{L}\p{N}]/u.test(seg.segment);
 
@@ -105,8 +101,6 @@ const isSegmentClosingAssistant = (blocks: NormalizedBlock[], index: number): bo
   const next = nextRenderableBlock(blocks, index);
   return !next || next.kind === "user";
 };
-
-// ── bash command compression ──
 
 const BASH_CAP = 240;
 const PIPE_TAIL_RE = /\s*\|\s*(?:head|tail|sort|wc|column|tr|cut|awk|uniq|python3|node|bun)(?:\s[^|]*)?$/;
@@ -200,8 +194,8 @@ const compressBash = (raw: string): string => {
     .filter(l => !TRIVIAL_LINE_RE.test(l))
     .map(l => stripPipeTail(stripCdPrefix(l)))
     .filter(Boolean);
-  // If everything was trivial (e.g. a bare `set -e` or `ls`), fall back to the
-  // first line so we never emit an empty marker.
+  // If everything was trivial (e.g. a bare `set -e` or `cd dir`), fall back to
+  // the first line so the marker is never empty.
   const chosen = meaningful.length ? meaningful : [stripPipeTail(stripCdPrefix(lines[0]))].filter(Boolean);
 
   const cmd = chosen.join("; ");
@@ -216,8 +210,6 @@ const compressCode = (raw: string): string => {
   const cmd = raw.split("\n").map((l) => l.trim()).filter(Boolean).join("; ");
   return cmd.length > BASH_CAP ? cmd.slice(0, BASH_CAP - 3) + "..." : cmd;
 };
-
-// ── tool summary ──
 
 /** A recall arg as the agent would write it again: `[1, 25]`, `sessions`. */
 const recallArg = (value: unknown): string =>
@@ -282,9 +274,6 @@ const renderItem = (item: BriefItem): string => {
 /** Cap tool calls per [assistant] turn, keeping the tail: the latest actions tend to be the deciding edits and writes, the head exploration. */
 const TOOL_CALLS_PER_TURN = 8;
 
-/**
- * Build BriefLine sections from NormalizedBlocks.
- */
 export const buildBriefSections = (blocks: NormalizedBlock[]): BriefLine[] => {
   const sections: BriefLine[] = [];
   let lastHeader = "";
@@ -379,9 +368,6 @@ export const buildBriefSections = (blocks: NormalizedBlock[]): BriefLine[] => {
   return sections;
 };
 
-/**
- * Stringify BriefLine sections into text format.
- */
 export const stringifyBrief = (sections: BriefLine[]): string => {
   // No blank line between consecutive sections of tool calls only.
   const out: string[] = [];
@@ -395,6 +381,5 @@ export const stringifyBrief = (sections: BriefLine[]): string => {
   return out.join("\n");
 };
 
-/** Convenience: build sections from blocks and stringify to text */
 export const compileBrief = (blocks: NormalizedBlock[]): string =>
   stringifyBrief(buildBriefSections(blocks));

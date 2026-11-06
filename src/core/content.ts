@@ -30,7 +30,6 @@ export const readableMessage = (message: Record<string, unknown>): Message => {
 
 export const clip = (text: string, max = 200): string => {
   if (text.length <= max) return text;
-  // Try to cut at a word boundary
   const cut = text.lastIndexOf(" ", max);
   let end = cut > max * 0.6 ? cut : max;
   // Avoid splitting a surrogate pair
