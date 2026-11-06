@@ -16,6 +16,7 @@ import { clip } from "./content";
 import { afterReset, hostBranch, hostEntries, lastIndex, RESET_ENTRY_TYPE, type SessionManagerLike } from "./session-file";
 import { PIN_ENTRY_TYPE, PIN_PARAMS, PIN_TOOL } from "../names";
 import { isUnset } from "./tools";
+import { callCore } from "./lisp-core";
 
 /** One note is clipped to this many characters. */
 export const PIN_CHARS = 300;
@@ -159,3 +160,28 @@ interface PinResult {
   done: boolean;
   text: string;
 }
+
+/** A vcc_pin call, or the text of /…-pin or /…-unpin. */
+export type PinCall = { surface: "tool"; params: unknown } | { surface: "command"; name: "pin" | "unpin"; args: string };
+
+/** What the Lisp core made of a pin call: what to tell, and for a command, how and what the agent hears. */
+export interface PinAnswer extends PinResult {
+  severity?: "info" | "warning";
+  agentNote?: string;
+}
+
+/**
+ * The call in the Lisp core (lisp/src/pins.lisp, op pin), with the op it
+ * decided appended through the host; undefined without the core. It gets the
+ * branch's pin entries and /clear boundaries, and of every entry what #N
+ * counts (its type, whether it holds a message).
+ */
+export const pinInCore = (host: PinHost, session: SessionManagerLike, call: PinCall): PinAnswer | undefined => {
+  const branch = branchOf(session);
+  const entries = (hostEntries(session) ?? branch).map((e: any) => ({ type: e?.type, ...(e?.message != null ? { message: 1 } : {}) }));
+  const reply = callCore({ op: "pin", input: { call, branch: branch.filter(replaysPins), entries } });
+  const answer = reply?.pin as (PinAnswer & { op?: PinOp }) | undefined;
+  if (!answer) return undefined;
+  if (answer.op) host.appendEntry(PIN_ENTRY_TYPE, answer.op);
+  return { done: answer.done, text: answer.text, ...(answer.severity ? { severity: answer.severity } : {}), ...(answer.agentNote ? { agentNote: answer.agentNote } : {}) };
+};

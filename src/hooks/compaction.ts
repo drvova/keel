@@ -9,25 +9,12 @@ import { writeFileSync } from "fs";
 import { indexById, readEntries } from "../core/session-file";
 import { parseInstructions } from "../core/compact-args";
 import { handlesHostCompactions, type VccSettings } from "../core/settings";
-import { calibrateCharsPerToken, DEFAULT_CHARS_PER_TOKEN, estimateMessageChars, estimateTokensFromChars } from "../core/token-estimate";
-import { compactionBudgets, triggerFor } from "../core/window";
 import { isRecovery, tell, type Binding } from "../host";
-import { applyContextEdits } from "../core/context-edits";
 import { modelKey, recordHostPolicy } from "../core/model-limits";
 import type { WindowState } from "./window-limits";
 import { vccDetailsOf, type VccCompactionDetails } from "../details";
 import { COMPACTOR } from "../names";
-import {
-  applyTailBudget,
-  buildOwnCut,
-  collectLiveMessages,
-  keptChars,
-  resolveSmartKeepUserTurns,
-  runningTurnCut,
-  wholeWindowCut,
-  type OwnCutCancelReason,
-} from "../compaction/cut";
-import { assembleSummary } from "../compaction/assemble";
+import { planCompaction } from "../compaction/plan";
 import { tellCompactionStats, type CompactionStats } from "../compaction/stats";
 
 /** What the compaction hook needs of its host. */
@@ -68,48 +55,6 @@ const dbg = (settings: VccSettings, data: Record<string, unknown>) => {
 };
 
 /**
- * Prompt tokens of the session's first request less what its messages account
- * for: the system prompt and tool schemas every request carries. Undefined when
- * no request recorded its usage.
- */
-const measuredOverheadTokens = (branchEntries: any[]): number | undefined => {
-  let chars = 0;
-  for (const e of branchEntries) {
-    if (e?.type !== "message" || !e.message) continue;
-    const m = e.message;
-    const u = m.role === "assistant" ? m.usage : undefined;
-    const prompt = u ? (Number(u.input) || 0) + (Number(u.cacheRead) || 0) + (Number(u.cacheWrite) || 0) : 0;
-    if (prompt > 0) return Math.max(0, prompt - estimateTokensFromChars(chars, DEFAULT_CHARS_PER_TOKEN));
-    chars += estimateMessageChars(m);
-  }
-  return undefined;
-};
-
-/**
- * The context as a compaction sizes it: chars per token calibrated on the
- * messages, and what a compaction cannot remove (system prompt, tool schemas).
- * The session's first request measured that: its prompt held little else.
- * Without one, the provider-counted context less what the messages account for
- * at 4 chars/token, which overstates it for dense text.
- */
-const measureContext = (branchEntries: any[], tokensBefore: number, previousSummary: string | undefined) => {
-  const messageChars = collectLiveMessages(branchEntries).reduce((sum, m) => sum + estimateMessageChars(m.message), 0);
-  const contentChars = messageChars + (previousSummary?.length ?? 0);
-  const measured = measuredOverheadTokens(branchEntries);
-  // Calibrated on the messages alone where the overhead is known, so a summary's
-  // token budget maps to the chars the messages actually take.
-  const tokenEstimate = calibrateCharsPerToken(contentChars, measured !== undefined && tokensBefore > measured ? tokensBefore - measured : tokensBefore);
-  const overheadTokens = measured
-    ?? (tokensBefore > 0 ? Math.max(0, tokensBefore - estimateTokensFromChars(contentChars, DEFAULT_CHARS_PER_TOKEN)) : 0);
-  return { tokenEstimate, overheadTokens };
-};
-
-const REASON_MESSAGES: Record<OwnCutCancelReason, string> = {
-  no_live_messages: "omp-vcc: Nothing to compact (no live messages)",
-  too_few_live_messages: "omp-vcc: Too few messages to compact",
-};
-
-/**
  * omp binds the factory once per session (subagents too), so each binding
  * passes its own `state`.
  */
@@ -129,9 +74,8 @@ export const registerCompactionHook = (
 
   pi.on("session_before_compact", (event, ctx) => {
     const { preparation } = event;
-    // What the context holds: Pi's context edits applied, as Pi applies them
-    // (core/context-edits.ts). An omp branch has none and comes back as it is.
-    const branchEntries = applyContextEdits(event.branchEntries as any[]) as any[];
+    // As the host has it: the plan reads it through Pi's context edits (core/context-edits.ts).
+    const branchEntries = event.branchEntries as any[];
     const { rule } = host;
     // Read on every run: omp's tracker forgets its trigger once read.
     const hostTrigger = host.triggerOf(event);
@@ -145,84 +89,9 @@ export const registerCompactionHook = (
     state.pendingFollowUpPrompt = null;
     if (!fromCommand && !handlesHostCompactions(settings, ctx?.model?.provider)) return;
 
-    const { tokenEstimate, overheadTokens } = measureContext(branchEntries, preparation.tokensBefore, previousSummary);
-    // Budgets from the model's real window and where the next compaction comes (core/window.ts).
     const window = host.window(ctx?.model);
-    const key = modelKey(ctx?.model);
-    const policy = rule.policyOf((preparation as { settings?: unknown }).settings);
-    // Kept beside the learned window, for the compaction omp-vcc starts in the host's stead (window-limits.ts).
-    recordHostPolicy(host.config.dir(), key, policy);
     // A pass that must shrink the context: an overflow, a cut-off reply, one the host retries.
     const recovering = !fromCommand && isRecovery({ reason, willRetry });
-    const trigger = triggerFor(window.effective, recovering, preparation.tokensBefore, policy, rule);
-    // A pass omp-vcc started itself went by the policy as last recorded; this
-    // one carries the current policy, which may since say no: compaction off,
-    // or a trigger the context (measured as the end-of-run check measured it) is under.
-    if (windows.selfTrigger) {
-      const used = ctx?.getContextUsage?.()?.tokens;
-      if (!rule.autoCompacts(policy) || (typeof used === "number" && trigger !== undefined && used < trigger)) return { cancel: true };
-    }
-    const budgets = compactionBudgets(trigger, overheadTokens, settings.workingSet);
-    const cutOptions = { charsPerToken: tokenEstimate.charsPerToken, skipCustomTypes: settings.skipCustomTypes, maxTokens: budgets.maxTailTokens };
-
-    // Smart keep-tail: boost default keep when the tail is small.
-    // Explicit keep:N from the user is always respected (resolver no-ops).
-    const smartKeep = resolveSmartKeepUserTurns({
-      branchEntries,
-      requestedKeepUserTurns: keepUserTurns,
-      smartKeepTail: settings.smartKeepTail,
-      skipCustomTypes: settings.skipCustomTypes,
-      charsPerToken: tokenEstimate.charsPerToken,
-      minTokens: budgets.minTailTokens,
-      maxTokens: budgets.maxTailTokens,
-      convert,
-    });
-    let ownCut = buildOwnCut(convert, branchEntries, smartKeep.keepUserTurns, settings.skipCustomTypes);
-    // Default path only: rescue autonomous / oversized-tail sessions with a
-    // token-budget cut. Explicit keep:N is respected absolutely (no-op here).
-    if (ownCut.ok && keepUserTurns === null) ownCut = applyTailBudget(convert, branchEntries, ownCut, cutOptions);
-    // A recovery pass (an overflow, a cut-off reply) must shrink the context.
-    // omp-vcc answers it itself: stepping aside hands it to the method omp picked
-    // (snapcompact, handoff, server compaction, an LLM summary). What is kept and
-    // still too big, omp's rescue shakes after the compaction commits.
-    // An automatic pass on a turn still running (its last message is a tool result:
-    // omp compacts between the tool calls of one turn) whose live window has no
-    // earlier user turn and fits the tail budget: the only cut left is compact-all,
-    // which would summarize away the request and tool output the agent is working
-    // from. A threshold or idle pass waits until the turn has ended; a recovery
-    // pass keeps the turn's newest steps and summarizes the rest.
-    if (
-      ownCut.ok && ownCut.compactAll && ownCut.keepFallbackToCompactAll && !fromCommand
-      && ownCut.messages[ownCut.messages.length - 1]?.role === "toolResult"
-      && reason !== "manual"
-    ) {
-      if (!recovering) {
-        dbg(settings, { deferredRunningTurn: true, compaction: { reason, willRetry }, liveMessages: ownCut.messages.length });
-        return { cancel: true };
-      }
-      ownCut = runningTurnCut(convert, branchEntries, cutOptions) ?? ownCut;
-      dbg(settings, { runningTurnRecovery: true, compaction: { reason, willRetry }, budgetCut: ownCut.ok ? ownCut.budgetCut : undefined });
-    }
-    // One or two messages too big for the window: summarized whole on a recovery pass.
-    if (!ownCut.ok && recovering && ownCut.reason === "too_few_live_messages") {
-      ownCut = wholeWindowCut(convert, branchEntries, settings.skipCustomTypes) ?? ownCut;
-    }
-    if (!ownCut.ok) {
-      const live = collectLiveMessages(branchEntries).map((m) => m.message.role);
-      dbg(settings, {
-        // Nothing live to summarize: no method of the host's can shrink it either, so a recovery pass is left to it.
-        cancelled: !recovering,
-        reason: ownCut.reason,
-        compaction: { reason, willRetry },
-        fromCommand,
-        entries: branchEntries.length,
-        liveRoles: live.length <= 30 ? live : [...live.slice(0, 10), "...", ...live.slice(-10)],
-      });
-      if (recovering) return;
-      notify(ctx, REASON_MESSAGES[ownCut.reason]);
-      return { cancel: true };
-    }
-
     let globalIndexById: Map<string, number> | undefined;
     // Recall numbers messages across the whole session file (all windows, all
     // branches): the host's in-memory tree, else the file.
@@ -236,66 +105,64 @@ export const registerCompactionHook = (
       globalIndexById = undefined;
     }
 
-    const assembled = assembleSummary({
+    const plan = planCompaction({
       branchEntries,
-      cut: ownCut,
       convert,
+      keepUserTurns,
+      fromCommand,
+      reason,
+      recovering,
+      settings,
+      rule,
+      window: window.effective,
+      tokensBefore: preparation.tokensBefore,
+      hostSettings: (preparation as { settings?: unknown }).settings,
+      // A pass omp-vcc started itself went by the policy as last recorded; this
+      // one carries the current policy, which may since say no.
+      ...(windows.selfTrigger ? { selfStarted: { usedTokens: ctx?.getContextUsage?.()?.tokens } } : {}),
       sessionFile: (ctx as any)?.sessionManager?.getSessionFile?.(),
       indexById: globalIndexById,
       previousSummary,
       fileOps: { read: [...preparation.fileOps.read], changed: [...preparation.fileOps.edited, ...preparation.fileOps.written] },
-      settings,
-      budgets,
-      charsPerToken: tokenEstimate.charsPerToken,
     });
-    const { compiled, growth } = assembled;
-    const summary = compiled.text;
-    const { firstKeptEntryId } = ownCut;
 
-    // Growth guard: a compaction that leaves the context bigger is not written,
-    // and a manual pass says why (an automatic one would say so on every turn
-    // until the prefix grows). Recovering, it is written when it keeps part of
-    // the window: what overflows is that kept part, and omp's rescue shakes its
-    // oversized tool output once this commits. When even summarizing the whole
-    // window grows the context, what fills it is what no compaction removes.
-    if (growth.grows) {
-      dbg(settings, { growthGuard: growth, writtenForRescue: recovering && !ownCut.compactAll, compaction: { reason, willRetry }, summarized: ownCut.messages.length });
-      if (!recovering || ownCut.compactAll) {
+    const { policy, trigger, overheadTokens, tokenEstimate, budgets } = plan.sizing;
+    // Kept beside the learned window, for the compaction omp-vcc starts in the host's stead (window-limits.ts).
+    recordHostPolicy(host.config.dir(), modelKey(ctx?.model), policy);
+    if (plan.kind === "step_aside") {
+      dbg(settings, { cancelled: false, reason: plan.cutReason, compaction: { reason, willRetry }, fromCommand, entries: branchEntries.length, liveRoles: plan.liveRoles });
+      return;
+    }
+    if (plan.kind === "cancel") {
+      if (plan.why === "policy") return { cancel: true };
+      if (plan.why === "running_turn") dbg(settings, { deferredRunningTurn: true, compaction: { reason, willRetry }, liveMessages: plan.summarized });
+      else if (plan.why === "no_cut") dbg(settings, { cancelled: true, reason: plan.cutReason, compaction: { reason, willRetry }, fromCommand, entries: branchEntries.length, liveRoles: plan.liveRoles });
+      else {
+        dbg(settings, { growthGuard: plan.growth, writtenForRescue: false, compaction: { reason, willRetry }, summarized: plan.summarized });
         state.lastStats = null;
-        if (recovering) {
-          notify(ctx, `omp-vcc: Not compacted: the ${ownCut.messages.length} messages left are smaller than a summary of them; the context is full of what no compaction removes (the system prompt and tools).`);
-        } else if (reason === "manual") {
-          const more = ownCut.compactAll ? "" : " keep:0 summarizes everything.";
-          notify(ctx, `omp-vcc: Not compacted: the summary would be ${growth.netChars} chars larger than the ${ownCut.messages.length} messages it replaces.${more}`);
-        }
-        return { cancel: true };
       }
+      if (plan.notice) notify(ctx, plan.notice);
+      return { cancel: true };
     }
 
-    const keptIdx = branchEntries.findIndex((e: any) => e.id === firstKeptEntryId);
-    const kept = keptIdx >= 0 ? branchEntries.slice(keptIdx) : [];
-    const stats: CompactionStats = {
-      summarized: assembled.summarized,
-      keptUserTurns: ownCut.keptUserTurns,
-      totalUserTurns: ownCut.totalUserTurns,
-      keptTokensEst: estimateTokensFromChars(keptChars(kept), tokenEstimate.charsPerToken),
-      smartKeepAdjusted: smartKeep.smartAdjusted,
-      budgetCut: ownCut.budgetCut,
-    };
-    state.lastStats = stats;
+    const summary = plan.summary;
+    const { firstKeptEntryId } = plan;
+    if (plan.runningTurnRecovery) dbg(settings, { runningTurnRecovery: true, compaction: { reason, willRetry }, budgetCut: plan.budgetCut });
+    if (plan.writtenForRescue) dbg(settings, { growthGuard: plan.writtenForRescue.growth, writtenForRescue: true, compaction: { reason, willRetry }, summarized: plan.writtenForRescue.summarized });
+    state.lastStats = plan.stats;
     state.pendingFollowUpPrompt = followUpPrompt;
     state.lastCompactFromCommand = fromCommand;
 
     dbg(settings, {
       compaction: { reason, willRetry },
-      budgetCut: ownCut.budgetCut,
-      summarized: assembled.summarized,
+      budgetCut: plan.budgetCut,
+      summarized: plan.summarized,
       firstKeptEntryId,
       tokensBefore: preparation.tokensBefore,
       tokenEstimate,
       summaryLength: summary.length,
       summaryPreview: summary.slice(0, 500),
-      sections: compiled.sections,
+      sections: plan.sections,
     });
 
     const details: VccCompactionDetails = {
@@ -303,14 +170,14 @@ export const registerCompactionHook = (
       // version 2 = refs are session-global (recall index space); version 1
       // summaries carried window-relative refs (issue #28).
       version: 2,
-      sections: compiled.sections,
-      summaryState: compiled.state,
-      sourceMessageCount: assembled.summarized,
+      sections: plan.sections,
+      summaryState: plan.summaryState as VccCompactionDetails["summaryState"],
+      sourceMessageCount: plan.summarized,
       previousSummaryUsed: Boolean(previousSummary),
       reason,
       willRetry,
-      ...(assembled.historyIndex ? { historyIndex: assembled.historyIndex } : {}),
-      ...(assembled.workingSet ? { workingSet: assembled.workingSet } : {}),
+      ...(plan.historyIndex ? { historyIndex: plan.historyIndex as VccCompactionDetails["historyIndex"] } : {}),
+      ...(plan.workingSet ? { workingSet: plan.workingSet } : {}),
       // What the budgets were sized from, for debugging a compaction that kept too much or too little.
       limits: {
         ...(window.effective ? { contextWindow: window.effective, windowSource: window.source } : {}),

@@ -9,7 +9,7 @@ import { RECALL_COMMAND_MESSAGE_TYPE } from "../names";
 const scopeArg = (scope: RecallScope) => (scope === "all" ? " scope:all" : scope === "project" ? " scope:project" : "");
 
 /** Follow-up hints as the command is typed; inside an earlier session they carry session:<id>. */
-const commandHints = (name: string) => (short?: string): RecallPagingHints => {
+export const commandHints = (name: string) => (short?: string): RecallPagingHints => {
   const at = short ? ` session:${short}` : "";
   return {
     outOfRange: (query, scope, totalPages, truncated) =>
@@ -31,7 +31,7 @@ export const registerVccRecallCommand = (pi: ExtensionAPI, host: Pick<Binding, "
       "scope:project this project's earlier sessions; 'sessions' lists them, session:<id> reads one.",
     handler: async (args: string, ctx) => {
       const result = recall(
-        { request: parseCommandRequest(args), sessionManager: ctx.sessionManager, contextWindow: host.window(ctx.model).effective },
+        { request: parseCommandRequest(args), sessionManager: ctx.sessionManager, contextWindow: host.window(ctx.model).effective, call: { surface: "command", name, args } },
         commandHints(name),
       );
       if (!result.ok) {

@@ -79,7 +79,7 @@ export const executeRecall = (
   options: { contextWindow?: number } = {},
 ): string =>
   // The agent has its current turn in context, and its question would match itself.
-  recall({ request: parseToolRequest(params), sessionManager, ...options, skipCurrentTurn: true }, toolHints).text;
+  recall({ request: parseToolRequest(params), sessionManager, ...options, skipCurrentTurn: true, call: { surface: "tool", params } }, toolHints).text;
 
 const numberOrText = { anyOf: [{ type: "number" }, { type: "string" }] };
 const indices = { anyOf: [{ type: "array", items: numberOrText }, { type: "string" }, { type: "number" }] };

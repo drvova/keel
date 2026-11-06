@@ -73,6 +73,14 @@ jobs:
           bun -e "import { VERSION } from '@oh-my-pi/pi-coding-agent'; console.log('omp', VERSION)"
           bun -e "import { VERSION } from '@earendil-works/pi-coding-agent'; console.log('pi', VERSION)"
 
+      # The Lisp core (lisp/): Ubuntu's SBCL builds it, its own tests run, and
+      # bun run test below builds the executable and compares it with the TS
+      # search (tests/lisp-core.test.ts) and runs it in real omp and Pi.
+      - name: Install SBCL
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends sbcl
+      - name: Lisp core tests
+        run: sbcl --noinform --non-interactive --eval '(require :asdf)' --eval '(push (truename "lisp/") asdf:*central-registry*)' --eval '(asdf:test-system "omp-vcc-core")'
+
       - run: bun run typecheck
 
       # The shared code imports no package at runtime, omp's included: the omp
@@ -86,7 +94,7 @@ jobs:
             bun build "$1" --target bun --packages external > /tmp/bundle.js
             ALLOWED="$2" bun -e '
               const extra = (process.env.ALLOWED ?? "").split(",").filter(Boolean);
-              const allowed = (p) => /^(node:)?(fs|path|os)$/.test(p) || extra.includes(p);
+              const allowed = (p) => /^(node:)?(fs|path|os|child_process)$/.test(p) || extra.includes(p);
               const found = new Bun.Transpiler({ loader: "js" }).scanImports(await Bun.file("/tmp/bundle.js").text());
               const bad = [...new Set(found.map((i) => i.path).filter((p) => !allowed(p)))];
               if (bad.length) { console.error("omp-vcc must not import packages at runtime:", bad.join(", ")); process.exit(1); }
@@ -97,3 +105,7 @@ jobs:
 
       # Each file in a fresh module registry: omp answers Pi's package names once it is loaded (tests/support/pi.ts).
       - run: bun run test
+
+      # The same suite with every recall search answered by the Lisp core.
+      - name: Tests through the Lisp core
+        run: OMP_VCC_CORE="$PWD/lisp/build/omp-vcc-core" OMP_VCC_CORE_STRICT=1 bun run test

@@ -6,6 +6,7 @@
 //
 // Runs only where @earendil-works/pi-coding-agent is installed (`bun run setup:pi`).
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { lispCore, tracedCore, withCoreAsync } from "./support/lisp-core";
 import { assertRealPi, piInstalled } from "./support/pi";
 import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
@@ -196,5 +197,13 @@ describe.skipIf(!piInstalled())("Pi host", () => {
     expect(listed).toContain('"Rotate the staging API key"');
     const found = (await tool.execute("s", { query: "vault", scope: "project" }, undefined, undefined)).content[0].text;
     expect(found).toContain(`[session ${short}] #1 [assistant]`);
+    // The same search through the Lisp core answers the same text.
+    const core = lispCore();
+    if (core) {
+      const traced = tracedCore(core, work);
+      const viaCore = await withCoreAsync(traced.path, () => tool.execute("q", { query: "vault", scope: "project" }, undefined, undefined));
+      expect(viaCore.content[0].text).toBe(found);
+      expect(traced.starts()).toBeGreaterThan(0);
+    }
   });
 });

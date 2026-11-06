@@ -3,7 +3,7 @@
 // number or a string and removePin (core/pins.ts) reads either form.
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import type { HostProfile } from "../host";
-import { addPin, listPins, PIN_CHARS, pinCallOf, removePin, type PinHost } from "../core/pins";
+import { addPin, listPins, PIN_CHARS, pinCallOf, pinInCore, removePin, type PinHost } from "../core/pins";
 import type { SessionManagerLike } from "../core/session-file";
 import { PIN_PARAMS, PIN_TOOL } from "../names";
 
@@ -29,6 +29,8 @@ const PIN_PARAM_DESCRIPTIONS = {
 
 /** One vcc_pin call: note pins, unpin removes, neither lists. */
 export const executePin = (params: unknown, host: PinHost, session: SessionManagerLike): string => {
+  const inCore = pinInCore(host, session, { surface: "tool", params: params ?? null });
+  if (inCore) return inCore.text;
   const call = pinCallOf((params && typeof params === "object" ? params : {}) as Record<string, unknown>);
   if ("both" in call) return "Send note or unpin, not both, in one call.";
   if ("note" in call) return addPin(host, session, call.note, "agent").text;

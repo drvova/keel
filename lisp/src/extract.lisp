@@ -1,0 +1,360 @@
+;;;; extract.lisp --- the summary's sections, one extractor each.
+;;;;
+;;;; SPDX-License-Identifier: MIT
+;;;;
+;;;; A port of src/extract/: user-messages.ts (what the user wrote, and the
+;;;; session's first requests), files.ts (files read, modified, created),
+;;;; commits.ts (git commits and their hashes) and tracked-commands.ts (the
+;;;; invocations of the commands settings name). Each is held to the TS output
+;;;; by tests/lisp-summary.test.ts.
+
+(in-package #:omp-vcc)
+
+;;; --- words -------------------------------------------------------------------
+;;;
+;;; The TS counts words with Intl.Segmenter, here SBCL's UAX #29 segmentation:
+;;; the two agree on scripts written with spaces, and not on those ICU segments
+;;; by dictionary (Chinese, Japanese, Thai, Lao, Khmer, Myanmar), whose text is
+;;; left to the TS code.
+
+(defparameter +dictionary-scripts+ '(:han :hiragana :katakana :thai :lao :khmer :myanmar))
+
+(defun word-segments (text)
+  "TEXT's segments as (SEGMENT START END), START and END in code units."
+  (when (some (lambda (c) (member (sb-unicode:script c) +dictionary-scripts+)) text)
+    (error 'left-to-ts :detail "text in a script segmented by dictionary"))
+  (let ((at 0))
+    (mapcar (lambda (seg) (prog1 (list seg at (+ at (js-length seg))) (incf at (js-length seg))))
+            (sb-unicode:words text))))
+
+(defun letter-or-number-p (c)
+  (member (sb-unicode:general-category c) '(:lu :ll :lt :lm :lo :nd :nl :no)))
+
+(defun wordish-p (segment) (some #'letter-or-number-p segment))
+
+(defun two-words-p (text)
+  "TEXT holds two words or more, as Intl.Segmenter counts them. Two runs of ASCII
+letters or digits with whitespace between are two words under any segmenter,
+which settles most text without segmenting it."
+  (or (rx-test (rx "[A-Za-z0-9]\\s+[A-Za-z0-9]") text)
+      (>= (segment-word-count text) 2)))
+
+(defun segment-word-count (text)
+  "TEXT's words as Intl.Segmenter counts them: segments holding a letter or a number."
+  (count-if (lambda (s) (wordish-p (first s))) (word-segments text)))
+
+;;; --- [User Messages] and [Early Session Requests] ---------------------------------
+
+(defparameter +user-message-chars+ 300 "Each user message is clipped to this: user-messages.ts USER_MESSAGE_CHARS.")
+(defparameter +early-requests-kept+ 3 "user-messages.ts EARLY_REQUESTS_KEPT.")
+
+(defun collapse-whitespace (text)
+  "TEXT with each run of whitespace one space: replace(/\\s+/g, \" \")."
+  (rx-replace (rx "\\s+") text " " :all t))
+
+(defun user-words (text)
+  "The user's own words in a message on one line, and the skills it expanded:
+(values WORDS SKILLS), WORDS \"\" when there are none."
+  (let* ((skills '())
+         (rest (js-trim (collapse-whitespace
+                         (rx-replace (skill-block-regex) text
+                                     (lambda (m) (push (rx-group m 1) skills) " ")
+                                     :all t)))))
+    (values (if (or (starts-with "<" rest) (not (two-words-p rest))) "" rest)
+            (nreverse skills))))
+
+(defun user-line (text index)
+  (multiple-value-bind (rest skills) (user-words text)
+    (when (plusp (length rest))
+      (let* ((line (if skills (format nil "[skill: ~a] ~a" (join-strings skills ", ") rest) rest))
+             (clipped (js-clip line +user-message-chars+)))
+        (if (= (js-length clipped) (js-length line))
+            line
+            (format nil "~a…~@[ (#~d)~]" (js-trim-end clipped) index))))))
+
+(defun extract-user-messages (blocks)
+  "What the user wrote, oldest first, clipped; injected text left out."
+  (loop for b in blocks
+        when (and (eq (block-kind b) :user) (not (block-injected b)))
+          append (let ((line (user-line (block-text b) (block-index b)))) (and line (list line)))))
+
+;;; --- [Files And Changes] ------------------------------------------------------------
+
+(defstruct (oset (:constructor make-oset ())) (items (make-array 0 :adjustable t :fill-pointer t)) (seen (make-hash-table :test 'equal)))
+(defun oset-add (set x) (unless (gethash x (oset-seen set)) (setf (gethash x (oset-seen set)) t) (vector-push-extend x (oset-items set))))
+(defun oset-has (set x) (gethash x (oset-seen set)))
+(defun oset-list (set) (coerce (oset-items set) 'list))
+
+(defun extract-files (blocks file-ops)
+  "Files read, modified and created, in order, as (values READ MODIFIED CREATED):
+extract/files.ts extractFiles."
+  (let ((read (make-oset)) (modified (make-oset)) (created (make-oset))
+        (seen (make-hash-table :test 'equal)) (shown (make-hash-table :test 'equal)))
+    (flet ((change (p) (unless (oset-has created p) (oset-add modified p))))
+      (dolist (b blocks)
+        (when (eq (block-kind b) :tool-call)
+          (let ((kind (call-kind (block-call b))))
+            (dolist (p (files-of (block-call b)))
+              (setf (gethash p shown) t)
+              (case kind
+                (:read (unless (block-failed b) (oset-add read p) (setf (gethash p seen) t)))
+                (:write (unless (block-failed b) (if (gethash p seen) (change p) (oset-add created p)))
+                 (setf (gethash p seen) t))
+                (:edit (unless (block-failed b) (change p)) (setf (gethash p seen) t)))))))
+      (dolist (p (coerce (json-get file-ops "read" #()) 'list))
+        (when (and (stringp p) (not (url-path-p p)) (not (gethash p shown))) (oset-add read p)))
+      (dolist (p (coerce (json-get file-ops "changed" #()) 'list))
+        (when (and (stringp p) (not (url-path-p p)) (not (gethash p shown))) (change p))))
+    (values (oset-list read) (oset-list modified) (oset-list created))))
+
+;;; --- [Commits] ------------------------------------------------------------------------
+
+(defstruct (commit (:constructor make-commit (message &optional hash))) message hash)
+
+(defun add-commit (commits c)
+  "COMMITS (a list, oldest first) with C added: one entry per commit, first seen
+first; the same message hashless and hashed is one commit, kept hashed."
+  (let ((dup (find-if (lambda (o) (and (string= (commit-message o) (commit-message c))
+                                       (or (null (commit-hash o)) (null (commit-hash c))
+                                           (string= (commit-hash o) (commit-hash c)))))
+                      commits)))
+    (cond ((null dup) (append commits (list (copy-commit c))))
+          (t (when (and (commit-hash c) (null (commit-hash dup))) (setf (commit-hash dup) (commit-hash c)))
+             commits))))
+
+(defun clean-message (msg)
+  (js-trim (rx-replace (rx "\\\\'") (rx-replace (rx "\\\\\"") msg "\"" :all t) "'" :all t)))
+
+(defun lines-of (text) (rx-split (rx "\\\\n|\\n") text))
+
+(defun first-line-of (text) (js-trim (or (first (lines-of text)) "")))
+
+(defun first-heredoc-body-line (rest delim)
+  (dolist (line (lines-of rest) "")
+    (let ((trimmed (js-trim (rx-replace (rx "^\\t+") line ""))))
+      (when (string= trimmed delim) (return ""))
+      (when (plusp (length trimmed)) (return trimmed)))))
+
+(defun delim-of (m) (or (rx-group m 1) (rx-group m 2) (rx-group m 3) ""))
+
+(defun subject-from-heredoc-cmd (cmd)
+  (let ((m (rx-exec (rx "^git\\s+commit[^\\n\"'&;|]*?\\s-[A-Za-z]*m\\s+\"\\$\\(cat\\s+<<-?\\s*(?:'([^']+)'|\"([^\"]+)\"|([A-Za-z_]\\w*))(?:\\r?\\n|\\\\n)") cmd)))
+    (and m (clean-message (first-heredoc-body-line (js-slice cmd (rx-match-end m)) (delim-of m))))))
+
+(defun subject-from-stdin-heredoc (cmd)
+  (let ((m (rx-exec (rx "git\\s+commit[^\\n]*?(?:\\s-[A-Za-z]*F|\\s--file)(?:\\s+|=)-(?=\\s)[^\\n]*?<<-?\\s*(?:'([^']+)'|\"([^\"]+)\"|([A-Za-z_]\\w*))[^\\n]*(?:\\r?\\n|\\\\n)") cmd)))
+    (and m (clean-message (first-heredoc-body-line (js-slice cmd (rx-match-end m)) (delim-of m))))))
+
+(defun commit-segments (cmd)
+  "Each `git commit` of CMD that starts a command, to the next one."
+  (let ((starts '()))
+    (dolist (m (rx-all (rx "\\bgit\\s+commit\\b") cmd))
+      (when (or (null starts) (rx-test (rx "(?:^|[;&|(\\n])\\s*$") (js-slice cmd 0 (rx-match-start m))))
+        (setf starts (append starts (list (rx-match-start m))))))
+    (loop for (at next) on starts collect (js-slice cmd at next))))
+
+(defun subject-of (seg)
+  (let ((m (rx-exec (rx "git\\s+commit[^\\n]*?\\s-[A-Za-z]*m\\s+(?:\"((?:[^\"\\\\]|\\\\.)*)\"|'((?:[^'\\\\]|\\\\.)*)'|\\$?'((?:[^'\\\\]|\\\\.)*)')") seg)))
+    (if (null m)
+        (or (subject-from-stdin-heredoc seg) "")
+        (let* ((heredoc (and (rx-group m 1) (rx-test (rx "^\\$\\(cat\\s+<<") (rx-group m 1))
+                             (subject-from-heredoc-cmd (js-slice seg (rx-match-start m)))))
+               (message (or heredoc (first-line-of (clean-message (or (rx-group m 1) (rx-group m 2) (rx-group m 3) ""))))))
+          (if (and (null heredoc) (rx-test (rx "^\\$\\(cat\\s+<<") message)) "" message)))))
+
+(defun hash-subject-regex ()
+  (rx "(?:\\[[^\\]\\s]+(?:\\s+\\([^)]*\\))?\\s+([0-9a-f]{7,12})\\]|^\\s*([0-9a-f]{7,12})(?:\\s+\\([^)]*\\))?)\\s+(.*)"))
+
+(defun result-lines (results) (mapcan (lambda (text) (split-string text #\Newline)) results))
+
+(defun hash-for-subject (results message)
+  (dolist (line (result-lines results))
+    (let ((m (rx-exec (hash-subject-regex) line)))
+      (when (and m (string= (js-trim (rx-group m 3)) message)) (return (or (rx-group m 1) (rx-group m 2)))))))
+
+(defun committed-line (results message)
+  (dolist (line (result-lines results))
+    (let ((m (rx-exec (rx "\\[[^\\]\\s]+(?:\\s+\\([^)]*\\))?\\s+([0-9a-f]{7,12})\\]\\s+(.*)") line)))
+      (when (and m (string= (js-trim (rx-group m 2)) message)) (return (rx-group m 1))))))
+
+(defun hash-from-results (results message)
+  (or (dolist (text results)
+        (let ((m (rx-exec (rx "\\[[^\\]\\s]+(?:\\s+\\([^)]*\\))?\\s+([0-9a-f]{7,12})\\]") text)))
+          (when m (return (rx-group m 1)))))
+      (hash-for-subject results message)
+      (dolist (text results)
+        (let ((m (rx-exec (rx "\\b([0-9a-f]{7,12})\\.\\.([0-9a-f]{7,12})\\b") text)))
+          (when m (return (rx-group m 2)))))
+      (dolist (line (result-lines results))
+        (let ((m (rx-exec (rx "^\\s*([0-9a-f]{7,40})\\s*$") line)))
+          (when (and m (rx-test (rx "[a-f]") (rx-group m 1))) (return (js-slice (rx-group m 1) 0 12)))))))
+
+(defun amended-commit (results)
+  (dolist (line (result-lines results))
+    (let ((m (rx-exec (hash-subject-regex) line)))
+      (when (and m (plusp (length (js-trim (rx-group m 3)))))
+        (return (make-commit (js-trim (rx-group m 3)) (or (rx-group m 1) (rx-group m 2))))))))
+
+(defun outcome-of (blocks i)
+  "What the command block I printed and whether it failed, as (values RESULTS FAILED)."
+  (let ((b (nth i blocks)))
+    (if (eq (block-kind b) :bash)
+        (values (list (block-output b)) (nonzero-exit-p (block-exit-code b)))
+        (values (when (and (eq (block-kind b) :tool-call) (block-id b))
+                  (loop for r in (nthcdr (1+ i) blocks)
+                        until (eq (block-kind r) :user)
+                        when (and (eq (block-kind r) :tool-result) (equal (block-call-id r) (block-id b)))
+                          collect (block-text r)))
+                (and (eq (block-kind b) :tool-call) (block-failed b))))))
+
+(defun extract-commits (blocks)
+  "Git commits the session made, each with the hash its output reported."
+  (let ((commits '()))
+    (loop for b in blocks
+          for i from 0
+          do (let ((segments (commit-segments (or (command-of b) ""))))
+               (when segments
+                 (multiple-value-bind (results failed) (outcome-of blocks i)
+                   (dolist (seg segments)
+                     (let* ((amend (rx-test (rx "\\s--amend\\b") seg))
+                            (message (subject-of seg)))
+                       (unless (and failed (not (if (plusp (length message))
+                                                    (committed-line results message)
+                                                    (and amend (amended-commit results)))))
+                         (if amend
+                             (let* ((reported (if (plusp (length message)) nil (amended-commit results)))
+                                    (subject (if (plusp (length message)) message (and reported (commit-message reported))))
+                                    (hash (if (plusp (length message))
+                                              (if (= (length segments) 1) (hash-from-results results message) (hash-for-subject results message))
+                                              (and reported (commit-hash reported))))
+                                    (target (find-if (lambda (c) (if (and (zerop (length message)) subject)
+                                                                     (string= (commit-message c) subject)
+                                                                     t))
+                                                     commits :from-end t)))
+                               (cond ((and target subject) (setf (commit-message target) subject (commit-hash target) hash))
+                                     (target (setf (commit-hash target) nil))
+                                     (subject (setf commits (append commits (list (make-commit subject hash)))))))
+                             (when (plusp (length message))
+                               (setf commits (add-commit commits
+                                                         (make-commit message (if (= (length segments) 1)
+                                                                                  (hash-from-results results message)
+                                                                                  (hash-for-subject results message))))))))))))))
+    commits))
+
+;;; --- [Tracked Commands] ----------------------------------------------------------------
+;;;
+;;; Commands are scanned by code unit, as the TS indexes them.
+
+(defun units-slice (units start &optional end)
+  "The string of UNITS from START below END, a pair cut in half left as its surrogate."
+  (let ((end (min (or end (length units)) (length units))))
+    (with-output-to-string (out)
+      (loop with i = start
+            while (< i end)
+            do (let ((u (aref units i)))
+                 (if (and (<= #xD800 u #xDBFF) (< (1+ i) end) (<= #xDC00 (aref units (1+ i)) #xDFFF))
+                     (progn (write-char (code-char (+ #x10000 (ash (- u #xD800) 10) (- (aref units (1+ i)) #xDC00))) out) (incf i 2))
+                     (progn (write-char (code-char u) out) (incf i))))))))
+
+(defun unit-is (units i char) (and (<= 0 i) (< i (length units)) (= (aref units i) (char-code char))))
+(defun unit-space-p (units i) (and (<= 0 i) (< i (length units)) (js-whitespace-p (code-char (aref units i)))))
+
+(defun unquoted-separators (units)
+  "The unit index of every unquoted shell separator (; & | newline)."
+  (let ((seps '()) (quote nil) (i 0) (n (length units)))
+    (loop while (< i n)
+          do (let ((c (code-char (aref units i))))
+               (cond (quote (cond ((and (char= c #\\) (char= quote #\")) (incf i))
+                                  ((char= c quote) (setf quote nil))))
+                     ((char= c #\\) (incf i))
+                     ((member c '(#\' #\")) (setf quote c))
+                     ((and (char= c #\#) (or (zerop i) (unit-space-p units (1- i))
+                                             (member (code-char (aref units (1- i))) '(#\; #\& #\| #\())))
+                      (loop while (and (< (1+ i) n) (not (unit-is units (1+ i) #\Newline))) do (incf i)))
+                     ((and (char= c #\&) (or (unit-is units (1- i) #\>) (unit-is units (1- i) #\<) (unit-is units (1+ i) #\>))))
+                     ((member c '(#\; #\& #\| #\Newline)) (push i seps))))
+             (incf i))
+    (nreverse seps)))
+
+(defun capture-entry (text)
+  "TEXT up to its first unquoted separator, trimmed."
+  (let* ((units (string-units text)) (seps (unquoted-separators units)))
+    (js-trim (if seps (units-slice units 0 (first seps)) text))))
+
+(defun token-at (units pos)
+  "The next token on the line from POS, as (values TOKEN-UNITS-LENGTH START)."
+  (loop while (and (< pos (length units)) (member (aref units pos) '(32 9))) do (incf pos))
+  (let ((end pos))
+    (loop while (and (< end (length units)) (not (unit-space-p units end))) do (incf end))
+    (values (- end pos) pos)))
+
+(defparameter +wrappers+ '("sudo" "env" "nohup" "time" "command"))
+
+(defun skip-to-command (units pos)
+  "Where the real command begins at POS, past VAR=val prefixes and wrapper commands."
+  (loop
+    (multiple-value-bind (len at) (token-at units pos)
+      (when (zerop len) (return at))
+      (let ((tok (units-slice units at (+ at len))))
+        (cond ((rx-test (rx "^[A-Za-z_]\\w*=") tok) (setf pos (+ at len)))
+              ((not (member tok +wrappers+ :test #'string=)) (return at))
+              (t (setf pos (+ at len))
+                 (loop (multiple-value-bind (flen fat) (token-at units pos)
+                         (let ((flag (units-slice units fat (+ fat flen))))
+                           (unless (starts-with "-" flag) (return))
+                           (setf pos (+ fat flen))
+                           (when (or (and (string= tok "sudo") (rx-test (rx "^-[ugpCDRT]$") flag))
+                                     (and (string= tok "env") (rx-test (rx "^-[uS]$") flag)))
+                             (multiple-value-bind (vlen vat) (token-at units pos)
+                               (setf pos (+ vat vlen)))))))))))))
+
+(defun top-level-invocations (units name)
+  "The segment starts where NAME is invoked: after an unquoted separator, its own word."
+  (let ((name-units (string-units name)) (starts '()))
+    (dolist (bound (cons 0 (mapcar #'1+ (unquoted-separators units))) (nreverse starts))
+      (let ((pos (skip-to-command units bound)))
+        (when (and (<= (+ pos (length name-units)) (length units))
+                   (loop for k below (length name-units) always (= (aref units (+ pos k)) (aref name-units k)))
+                   (let ((after (+ pos (length name-units))))
+                     (or (>= after (length units)) (unit-space-p units after))))
+          (push bound starts))))))
+
+(defun ssh-remote-command (after-ssh)
+  "What ssh runs remotely: the arguments after its target, or NIL."
+  (let* ((tokens (rx-all (rx "\\S+") after-ssh)) (i 0))
+    (loop while (and (< i (length tokens)) (starts-with "-" (rx-group (nth i tokens))))
+          do (incf i (if (rx-test (rx "^-[46ACfGgKkMNTtVvXxYynaq]+$") (rx-group (nth i tokens))) 1 2)))
+    (let ((target (nth i tokens)))
+      (when target
+        (let ((rest (js-trim (js-slice after-ssh (rx-match-end target)))))
+          (and (plusp (length rest)) rest))))))
+
+(defun extract-tracked-commands (blocks names)
+  "Per tracked command name, its invocations oldest first (one re-run moves to
+the end), as an alist (NAME . ENTRIES) in the order NAMES gives them."
+  (let ((by (mapcar (lambda (n) (cons n '())) (remove-duplicates names :test #'string= :from-end t))))
+    (flet ((record (name item)
+             (let ((cell (assoc name by :test #'string=)))
+               (setf (cdr cell) (append (remove item (cdr cell) :test #'string=) (list item))))))
+      (when names
+        (dolist (b blocks)
+          (let ((cmd (command-of b)))
+            (when (and cmd (plusp (length cmd)))
+              (let ((units (string-units cmd)))
+                (dolist (name names)
+                  (dolist (start (top-level-invocations units name))
+                    (let ((item (capture-entry (js-trim (units-slice units start)))))
+                      (when (plusp (length item)) (record name item)))))
+                (when (member "ssh" names :test #'string=)
+                  (dolist (bound (top-level-invocations units "ssh"))
+                    (let* ((seg (string-units (units-slice units bound)))
+                           (remote (ssh-remote-command (units-slice seg (+ (skip-to-command seg 0) 3)))))
+                      (when remote
+                        (let* ((unquoted (rx-replace (rx "['\"]") remote "" :all t))
+                               (uu (string-units unquoted)))
+                          (dolist (name names)
+                            (unless (string= name "ssh")
+                              (dolist (start (top-level-invocations uu name))
+                                (let ((item (capture-entry (js-trim (units-slice uu start)))))
+                                  (when (plusp (length item)) (record name item)))))))))))))))))
+    by))

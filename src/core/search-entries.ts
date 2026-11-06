@@ -4,6 +4,7 @@ import type { LoadedEntry } from "./load-messages";
 import { textOf, clip } from "./content";
 import { argsText, isOwnTool, toolCallsOf } from "./tools";
 import { RECALL_TOOL } from "../names";
+import { callCore } from "./lisp-core";
 
 export interface SearchHit extends RenderedEntry {
   /** Context snippet around the first matched term (only when query provided) */
@@ -197,8 +198,10 @@ const looksEncoded = (run: string): boolean => {
 /** An entry's text as search sees it: encoded data is dropped, as search engines drop
  *  overlong tokens. Terms match as substrings, so a short term would hit inside it
  *  hundreds of times, and it would count as one word of length. */
+export const rawSearchText = (msg: Message | undefined, e: RenderedEntry): string => (msg ? fullText(msg) : e.summary);
+
 const searchableText = (msg: Message | undefined, e: RenderedEntry): string =>
-  (msg ? fullText(msg) : e.summary).replace(BASE64_RUN, (run) => (looksEncoded(run) ? "…" : run));
+  rawSearchText(msg, e).replace(BASE64_RUN, (run) => (looksEncoded(run) ? "…" : run));
 
 interface BM25Context {
   n: number;         // total docs
@@ -466,6 +469,25 @@ const capHits = (hits: SearchHit[], cap: number): SearchResult => {
   return { hits: capped, totalBeforeCap, truncated: capped.length < totalBeforeCap };
 };
 
+/** The term search run by the Lisp core (lisp/src/search.lisp), or undefined when it is not there or fails. */
+const searchInCore = (
+  entries: RenderedEntry[],
+  messages: Message[],
+  query: string,
+  floor: number,
+  cap: number,
+): SearchResult | undefined => {
+  const docs = entries.map((e, i) => ({ role: e.role, text: rawSearchText(messages[i], e), files: e.files ?? [] }));
+  const reply = callCore({ op: "search", query, docs, floor, cap });
+  if (!reply || !Array.isArray(reply.hits)) return undefined;
+  if (typeof reply.aborted === "string") throw new SearchAborted(reply.aborted);
+  const hits = (reply.hits as Array<{ index: number; snippet: string | null }>).map((h) => ({
+    ...entries[h.index],
+    snippet: h.snippet ?? undefined,
+  }));
+  return { hits, totalBeforeCap: reply.totalBeforeCap as number, truncated: reply.truncated === true };
+};
+
 /** Full search with truncation metadata, so a caller can report a capped result set honestly. */
 export const searchEntries = (
   items: readonly LoadedEntry[],
@@ -491,6 +513,8 @@ const search = (
   const relativeFloor = tuning?.relativeFloor ?? BM25_RELATIVE_FLOOR;
   const cap = tuning?.cap ?? SEARCH_RESULT_CAP;
   const rawQuery = query.trim();
+  const inCore = searchInCore(entries, messages, query, relativeFloor, cap);
+  if (inCore) return inCore;
   const checkBudget = startBudget();
   // What each entry is found by (snippets come from it), and the document scored: with its role and files.
   const texts = messages.map((msg, i) => {

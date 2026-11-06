@@ -1,5 +1,6 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
+import { callCore } from "./lisp-core";
 
 const SETTINGS_FILE = "omp-vcc-config.json";
 /** The file pi-vcc read on omp before the rename; copied to SETTINGS_FILE once. */
@@ -149,8 +150,11 @@ export const openConfig = (agentDir: () => string): Config => {
   return {
     path,
     dir: () => dirname(path()),
-    load: () => parseSettings(readJson(path())),
+    // The Lisp core reads and scaffolds the file itself (lisp/src/settings.lisp, op settings) when there is one.
+    load: () => (callCore({ op: "settings", path: path() })?.settings as VccSettings | undefined) ?? parseSettings(readJson(path())),
     scaffold() {
+      const legacy = process.env.OMP_VCC_CONFIG_PATH == null ? join(dirname(path()), LEGACY_SETTINGS_FILE) : null;
+      if (callCore({ op: "settings", path: path(), legacy, scaffold: true })) return;
       try {
         const file = path();
         const dir = dirname(file);
