@@ -52,6 +52,9 @@
      (:file "compaction")
      ;; window: where the host compacts next, and the budgets below it.
      (:file "window")
+     ;; settings and pins: the config file, and pinning and unpinning notes.
+     (:file "settings")
+     (:file "pins")
      ;; The rest of recall: the request, the project's sessions, the call.
      (:file "request")
      (:file "sessions")

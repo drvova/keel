@@ -183,21 +183,26 @@ never between the halves of a pair: content.ts's clip."
           (js-slice text 0 end)))))
 
 (defun js-number-string (x)
-  "The number X as JavaScript's String() writes it, for the numbers JSON holds."
-  (if (integerp x)
+  "The number X as JavaScript's String() writes it (Number::toString): the
+shortest digits that read back as the double, in plain notation from 1e-6 up to
+1e21 and in exponent notation outside it."
+  (if (and (integerp x) (<= (abs x) 9007199254740992))
       (format nil "~d" x)
       (let ((d (coerce x 'double-float)))
-        (if (and (= d (ftruncate d)) (< (abs d) 1d21))
-            (format nil "~d" (truncate d))
-            (let* ((*read-default-float-format* 'double-float)
-                   (text (princ-to-string d)))
-              ;; SBCL writes 1.0e21 where JavaScript writes 1e+21.
-              (let ((e (position #\e text)))
-                (if e
-                    (let ((mantissa (string-right-trim "." (string-right-trim "0" (subseq text 0 e))))
-                          (exponent (subseq text (1+ e))))
-                      (format nil "~a~a~a" mantissa (if (char= (char exponent 0) #\-) "e" "e+") exponent))
-                    text)))))))
+        (if (zerop d)
+            "0"
+            (multiple-value-bind (n digits) (sb-impl::flonum-to-digits (abs d))
+              (let* ((k (length digits))
+                     (sign (if (minusp d) "-" ""))
+                     (zeros (lambda (m) (make-string m :initial-element #\0)))
+                     (body (cond ((<= k n 21) (concatenate 'string digits (funcall zeros (- n k))))
+                                 ((< 0 n 22) (concatenate 'string (subseq digits 0 n) "." (subseq digits n)))
+                                 ((< -6 n 1) (concatenate 'string "0." (funcall zeros (- n)) digits))
+                                 (t (let ((e (1- n)))
+                                      (concatenate 'string (subseq digits 0 1)
+                                                   (if (> k 1) (concatenate 'string "." (subseq digits 1)) "")
+                                                   (if (>= e 0) "e+" "e-") (format nil "~d" (abs e))))))))
+                (concatenate 'string sign body)))))))
 
 (defun js-string-of (value)
   "VALUE (a JSON value, or NIL for undefined) as JavaScript's String() or a

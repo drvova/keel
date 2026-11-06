@@ -123,25 +123,32 @@ whitespace around it."
                                     (t (fail "bad escape")))))
                            (t (when (< (char-code c) 32) (fail "control character in string"))
                               (write-char c out)))))))
+             (digits ()
+               ;; One digit at least, as JSON.parse wants after a sign, a point or an exponent.
+               (let ((from pos))
+                 (loop while (and (< pos n) (digit-char-p (char text pos))) do (incf pos))
+                 (when (= pos from) (fail "bad number"))))
              (number ()
                (let ((start pos))
                  (when (and (< pos n) (char= (char text pos) #\-)) (incf pos))
-                 (loop while (and (< pos n) (digit-char-p (char text pos))) do (incf pos))
-                 (let ((integral (= pos (+ start (if (char= (char text start) #\-) 1 0)))))
-                   (when integral (fail "bad number")))
+                 ;; No leading zero: "01" is not JSON.
+                 (if (and (< pos n) (char= (char text pos) #\0))
+                     (incf pos)
+                     (digits))
                  (let ((fraction nil))
                    (when (and (< pos n) (char= (char text pos) #\.))
-                     (setf fraction t) (incf pos)
-                     (loop while (and (< pos n) (digit-char-p (char text pos))) do (incf pos)))
+                     (setf fraction t) (incf pos) (digits))
                    (when (and (< pos n) (char-equal (char text pos) #\e))
                      (setf fraction t) (incf pos)
                      (when (and (< pos n) (find (char text pos) "+-")) (incf pos))
-                     (loop while (and (< pos n) (digit-char-p (char text pos))) do (incf pos)))
+                     (digits))
                    (if fraction
                        (let ((*read-default-float-format* 'double-float))
                          ;; Only digits, sign, point and exponent reach the reader here.
                          (coerce (let ((*read-eval* nil)) (read-from-string text t nil :start start :end pos)) 'double-float))
-                       (parse-integer text :start start :end pos))))))
+                       ;; Past 2^53 JavaScript holds the nearest double, and so does this.
+                       (let ((v (parse-integer text :start start :end pos)))
+                         (if (> (abs v) 9007199254740992) (coerce v 'double-float) v)))))))
       (prog1 (value)
         (skip-ws)
         (when (< pos n) (fail "trailing text"))))))
@@ -182,7 +189,8 @@ whitespace around it."
      (loop for i from 0 for v across value
            do (when (plusp i) (write-char #\, out)) (write-json v out))
      (write-char #\] out))
-    (integer (format out "~d" value))
+    ;; An integer past 2^53 as the double JavaScript would hold.
+    (integer (if (<= (abs value) 9007199254740992) (format out "~d" value) (write-string (js-number-string value) out)))
     (real (write-string (js-number-string value) out))
     ((member :true) (write-string "true" out))
     ((member :false) (write-string "false" out))
@@ -191,6 +199,30 @@ whitespace around it."
 (defun json-string (value)
   "VALUE written as JSON text."
   (with-output-to-string (out) (write-json value out)))
+
+(defun write-json-indented (value out depth)
+  "VALUE as JSON.stringify(VALUE, null, 2) writes it, DEPTH levels in."
+  (flet ((newline (d) (terpri out) (loop repeat (* 2 d) do (write-char #\Space out))))
+    (cond ((and (hash-table-p value) (plusp (hash-table-count value)))
+           (write-char #\{ out)
+           (loop for k in (json-keys value) for first = t then nil
+                 do (unless first (write-char #\, out))
+                    (newline (1+ depth))
+                    (write-json-string k out) (write-string ": " out)
+                    (write-json-indented (gethash k value) out (1+ depth)))
+           (newline depth) (write-char #\} out))
+          ((and (vectorp value) (not (stringp value)) (plusp (length value)))
+           (write-char #\[ out)
+           (loop for v across value for first = t then nil
+                 do (unless first (write-char #\, out))
+                    (newline (1+ depth))
+                    (write-json-indented v out (1+ depth)))
+           (newline depth) (write-char #\] out))
+          (t (write-json value out)))))
+
+(defun json-pretty-string (value)
+  "VALUE as JSON.stringify(VALUE, null, 2) writes it."
+  (with-output-to-string (out) (write-json-indented value out 0)))
 
 ;;; --- objects -----------------------------------------------------------------
 

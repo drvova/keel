@@ -100,9 +100,6 @@
                              (and title (js-clip title 80)) first-request
                              (mapcar #'format-pin (read-pins (coerce on-branch 'vector)))))))))
 
-(defun format-pin (n)
-  (format nil "[~a] ~a (~a~@[, #~a~])" (json-get n "id") (json-get n "text") (json-get n "by") (json-get n "at")))
-
 (defun list-project-sessions (files)
   "The project's other sessions, the newest 50, and whether there are older ones."
   (let ((ids (project-ids files)))

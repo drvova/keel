@@ -48,6 +48,17 @@
 ;;;;   {"op":"context-edits","branch":[ENTRY...]} -> {"ok":true,"entries":[ENTRY...]}
 ;;;;   (op compact applies the same projection to its BRANCH and NOTES)
 ;;;;
+;;;; settings: omp-vcc's config file (src/core/settings.ts), which the core reads and scaffolds itself
+;;;;   {"op":"settings","path":P,"legacy":L|null,"scaffold":B}
+;;;;   -> {"ok":true,"settings":SETTINGS}; with scaffold, the file is made whole
+;;;;   first (from LEGACY, pi-vcc's file, when given and there is none at P).
+;;;;
+;;;; pin: one vcc_pin call or /…-pin, /…-unpin command (src/core/pins.ts)
+;;;;   {"op":"pin","input":{call:{surface:"tool",params}|{surface:"command",name:"pin"|"unpin",args},
+;;;;    branch:[the branch's pin entries and /clear boundaries], entries:[{type, message?}...]}}
+;;;;   -> {"ok":true,"pin":{done, text, op?, severity?, agentNote?}}; OP is the
+;;;;   omp-vcc.pin entry's data for the host to append.
+;;;;
 ;;;; window: the window rules (src/core/window.ts), case by case
 ;;;;   {"op":"window","cases":[{"error":TEXT} | {ruleName, window, hostSettings|policy,
 ;;;;    recovering, tokensBefore, overheadTokens, workingSet}...]}
@@ -213,6 +224,21 @@ parity test compares with JavaScript's own."
   (let ((branch (coerce (json-get request "branch" #()) 'vector)))
     (json-object "ok" :true "entries" (values (apply-context-edits branch (make-array (length branch) :initial-element nil))))))
 
+(defun handle-settings (request)
+  "The settings at REQUEST's path, the file scaffolded first when it asks."
+  (let ((path (json-get request "path")))
+    (unless (stringp path) (return-from handle-settings (json-object "ok" :false "error" "settings: no path")))
+    (when (eq (json-get request "scaffold") :true)
+      (scaffold-settings path (let ((l (json-get request "legacy"))) (and (stringp l) l))))
+    (json-object "ok" :true "settings" (load-settings path))))
+
+(defun handle-pin (request)
+  "A pin call (pins.lisp run-pin): what to tell, and the op to append."
+  (handler-case
+      (multiple-value-bind (done text op severity note) (run-pin (json-get request "input"))
+        (json-object "ok" :true "pin" (json-object "done" (if done :true :false) "text" text "op" op "severity" severity "agentNote" note)))
+    (regex-unsupported () (json-object "ok" :false "unsupported" "pin"))))
+
 (defun handle-window (request)
   "The window rules on each of REQUEST's cases (window.lisp window-case)."
   (json-object "ok" :true "results" (map 'vector #'window-case (json-get request "cases" #()))))
@@ -228,6 +254,8 @@ parity test compares with JavaScript's own."
           ((equal op "compact") (handle-compact request))
           ((equal op "recall") (handle-recall request))
           ((equal op "window") (handle-window request))
+          ((equal op "settings") (handle-settings request))
+          ((equal op "pin") (handle-pin request))
           ((equal op "context-edits") (handle-context-edits request))
           (t (json-object "ok" :false "error" (format nil "unknown op ~a" (json-string (or op :null))))))))
 

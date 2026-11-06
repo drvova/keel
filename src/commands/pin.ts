@@ -1,7 +1,7 @@
 // /omp-vcc-pin and /omp-vcc-unpin (/pi-vcc-pin and /pi-vcc-unpin on Pi).
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { PIN_NOTICE_TYPE } from "../names";
-import { addPin, listPins, removePin } from "../core/pins";
+import { addPin, listPins, pinInCore, removePin, type PinAnswer } from "../core/pins";
 import { tell, type HostProfile } from "../host";
 
 const lowerFirst = (text: string): string => text.charAt(0).toLowerCase() + text.slice(1);
@@ -13,10 +13,19 @@ const noteForAgent = (pi: ExtensionAPI, content: string) => {
   } catch {}
 };
 
+/** The core's answer to a pin command, told as the command tells its own. */
+const answer = (pi: ExtensionAPI, ctx: any, result: PinAnswer) => {
+  if (result.severity) tell(ctx, result.text, result.severity);
+  else tell(ctx, result.text);
+  if (result.agentNote) noteForAgent(pi, result.agentNote);
+};
+
 export const registerPinCommands = (pi: ExtensionAPI, host: HostProfile) => {
   pi.registerCommand(`${host.command}-pin`, {
     description: "Pin a note that stays at the top of every omp-vcc summary. No text lists the pinned notes.",
     handler: async (args: string, ctx) => {
+      const inCore = pinInCore(pi, ctx.sessionManager, { surface: "command", name: "pin", args });
+      if (inCore) return answer(pi, ctx, inCore);
       if (!args.trim()) {
         tell(ctx, listPins(ctx.sessionManager));
         return;
@@ -30,6 +39,8 @@ export const registerPinCommands = (pi: ExtensionAPI, host: HostProfile) => {
   pi.registerCommand(`${host.command}-unpin`, {
     description: "Unpin an omp-vcc note by its [N].",
     handler: async (args: string, ctx) => {
+      const inCore = pinInCore(pi, ctx.sessionManager, { surface: "command", name: "unpin", args });
+      if (inCore) return answer(pi, ctx, inCore);
       const result = removePin(pi, ctx.sessionManager, args.trim());
       tell(ctx, result.text, result.done ? "info" : "warning");
       if (result.done) noteForAgent(pi, `The user ${lowerFirst(result.text)} It no longer holds.`);
