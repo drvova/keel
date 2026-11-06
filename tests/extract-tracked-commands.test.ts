@@ -76,7 +76,7 @@ describe("extractTrackedCommands", () => {
     const act = extractTrackedCommands([bash(`aws ec2 ${longArgs}`)], TRACK);
     const stored = [...act.byCommand.get("aws")!][0];
     expect(stored.length).toBeGreaterThan(200); // full fidelity for dedup
-    const rendered = formatTrackedCommands(act)[0];
+    const rendered = formatTrackedCommands(act, 10)[0];
     expect(rendered).toContain("…");
     expect(rendered.length).toBeLessThanOrEqual(5 + 80 + 1); // "aws: " + entry + "…"
   });
@@ -124,7 +124,7 @@ describe("extractTrackedCommands", () => {
   it("re-running a command moves it to the tail (most-recently-used)", () => {
     const cmds = [...Array.from({ length: 11 }, (_, i) => bash(`ssh host${i}`)), bash("ssh host0")];
     const act = extractTrackedCommands(cmds, ["ssh"]);
-    const [line] = formatTrackedCommands(act);
+    const [line] = formatTrackedCommands(act, 10);
     expect(line).toContain("ssh host0"); // refreshed — survives the tail cap
     expect(line).not.toContain("ssh host1 |"); // oldest dropped instead
   });
@@ -148,18 +148,18 @@ describe("extractTrackedCommands", () => {
 describe("formatTrackedCommands", () => {
   it("formats one line per command name that had a match, in insertion order", () => {
     const act = extractTrackedCommands([bash("ssh prod-server"), bash("docker ps")], ["ssh", "docker"]);
-    expect(formatTrackedCommands(act)).toEqual(["ssh: ssh prod-server", "docker: docker ps"]);
+    expect(formatTrackedCommands(act, 10)).toEqual(["ssh: ssh prod-server", "docker: docker ps"]);
   });
 
   it("omits command names with zero matches", () => {
     const act = extractTrackedCommands([bash("ssh prod-server")], ["ssh", "docker"]);
-    expect(formatTrackedCommands(act)).toEqual(["ssh: ssh prod-server"]);
+    expect(formatTrackedCommands(act, 10)).toEqual(["ssh: ssh prod-server"]);
   });
 
   it("caps entries per command at 10 keeping the NEWEST (recency ledger)", () => {
     const cmds = Array.from({ length: 12 }, (_, i) => bash(`ssh host${i}`));
     const act = extractTrackedCommands(cmds, ["ssh"]);
-    const [line] = formatTrackedCommands(act);
+    const [line] = formatTrackedCommands(act, 10);
     expect(line).toContain("(+2 earlier)");
     expect(line).toContain("ssh host11"); // newest kept
     expect(line).not.toContain("ssh host0 "); // oldest overflowed
@@ -167,7 +167,7 @@ describe("formatTrackedCommands", () => {
 
   it("a quoted multi-line argument renders on one line", () => {
     const act = extractTrackedCommands([bash("python3 -c 'import os\nprint(1)'")], ["python3"]);
-    expect(formatTrackedCommands(act)).toEqual(["python3: python3 -c 'import os print(1)'"]);
+    expect(formatTrackedCommands(act, 10)).toEqual(["python3: python3 -c 'import os print(1)'"]);
   });
 
   it("separators inside quotes are not boundaries — either direction", () => {

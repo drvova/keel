@@ -229,6 +229,8 @@ export interface SummaryLimits {
   historyRanges: number;
   /** Brief transcript lines, a merged one included. */
   briefLines: number;
+  /** [Tracked Commands] invocations kept per command name. */
+  commandsPerName: number;
 }
 
 /** The section sizes from before the window was known; still those of a ~128K window. */
@@ -238,6 +240,7 @@ export const DEFAULT_SUMMARY_LIMITS: SummaryLimits = {
   commits: 8,
   historyRanges: 8,
   briefLines: 120,
+  commandsPerName: 10,
 };
 
 /** Never fewer than these, however small the window. */
@@ -247,6 +250,7 @@ const SUMMARY_LIMIT_FLOORS: SummaryLimits = {
   commits: 2,
   historyRanges: 3,
   briefLines: 30,
+  commandsPerName: 3,
 };
 
 export interface CompactionBudgets {
@@ -254,9 +258,12 @@ export interface CompactionBudgets {
   maxTailTokens: number;
   /** Smart keep-tail grows keep:1 only when its tail is at most this. */
   minTailTokens: number;
-  /** The ranked brief's floor and ceiling. */
+  /** The ranked brief's floor and ceiling, and what each block it covers adds between them. */
   briefTokens: number;
   briefCeilingTokens: number;
+  briefTokensPerBlock: number;
+  /** Blocks the ranked brief takes at most, whatever their size. */
+  briefMaxBlocks: number;
   /**
    * Chars a summary may add beyond what it replaces before it is not written
    * (or a share of the prefix, when larger): its framing, which grows with its sections.
@@ -275,6 +282,8 @@ export const DEFAULT_BUDGETS: CompactionBudgets = {
   minTailTokens: 5_000,
   briefTokens: 1_100,
   briefCeilingTokens: 2_000,
+  briefTokensPerBlock: 15,
+  briefMaxBlocks: 80,
   growthMarginChars: 500,
   summary: { ...DEFAULT_SUMMARY_LIMITS },
   summaryScale: 1,
@@ -339,6 +348,9 @@ export const compactionBudgets = (trigger?: number, overheadTokens = 0, withWork
     minTailTokens: Math.round(maxTailTokens / 5),
     briefTokens,
     briefCeilingTokens,
+    briefTokensPerBlock: DEFAULT_BUDGETS.briefTokensPerBlock,
+    // A brief whose ceiling grows past a ~128K window's may cover more blocks too.
+    briefMaxBlocks: Math.round(DEFAULT_BUDGETS.briefMaxBlocks * Math.max(1, scale)),
     growthMarginChars: Math.round(DEFAULT_BUDGETS.growthMarginChars * Math.max(1, scale)),
     summary: summaryLimits(scale),
     summaryScale: Math.round(scale * 100) / 100,

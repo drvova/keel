@@ -65,6 +65,7 @@ All notable changes to `@drvova/omp-vcc` are documented in this file. Entries fr
   - `[Working Set]` reads omp's `:-20` (the last lines) and `:L50-L60` as part of a file, not the whole of it, names a search by its pattern, and offers only the latest run of a repeated call (the same grep three times was three items).
   - Drilling into an edit that only deletes text (`#N:path`) shows what it removed, not "no file content".
   - The brief no longer reads a markdown bullet in the agent's text as a tool call: two identical `* tests pass` lines were merged into `(#1, #2) x2`, and bullets counted toward a turn's eight calls.
+- **Two sizes that did not follow the window now do** — the ranked brief took at most 80 blocks on any window, so the larger brief a very large window allows (up to 3.4k tokens on ~1M) could not be filled; the block cap now grows with it. `[Tracked Commands]` kept 10 invocations per command on every window; it now scales like the other sections (10 on ~128K, never under 3). Nothing changes on a ~128K window.
 - **An earlier session's pins are those of its active branch** — `mode:'sessions'` replayed every pin in another session's file, so a note pinned on a branch that was later edited away was still listed. It now replays them along that session's own branch, as the current session's are.
 
 Found by running omp-vcc on omp with a real model:

@@ -9,6 +9,7 @@ import type { Message } from "@oh-my-pi/pi-ai";
 import { describeSession, listProjectSessions, type SessionInfo } from "./sessions";
 import { currentBranchIds, type SessionManagerLike } from "./session-file";
 import { toolCallsOf } from "./tools";
+import { DEFAULT_CHARS_PER_TOKEN } from "./token-estimate";
 
 export const SEARCH_PAGE_SIZE = 5;
 export const RANGE_PAGE_SIZE = 20;
@@ -203,7 +204,7 @@ const MIN_RECALL_OUTPUT_CHARS = 8 * 1024;
  */
 export const recallOutputChars = (contextWindow?: number): number =>
   typeof contextWindow === "number" && contextWindow > 0
-    ? Math.max(MIN_RECALL_OUTPUT_CHARS, Math.min(RECALL_OUTPUT_CHARS, Math.round(contextWindow * 4 * 0.1)))
+    ? Math.max(MIN_RECALL_OUTPUT_CHARS, Math.min(RECALL_OUTPUT_CHARS, Math.round(contextWindow * DEFAULT_CHARS_PER_TOKEN * 0.1)))
     : RECALL_OUTPUT_CHARS;
 
 const kb = (chars: number): string => `${Math.round(chars / 1024)} KB`;
@@ -232,8 +233,7 @@ const runAction = (request: RecallRequest, view: RecallView, hints: RecallPaging
 
   switch (action.kind) {
     case "drill": {
-      // expandEntryFile loads unfiltered so #N stays aligned with the global
-      // message index; scope only decides whether the entry is off-path.
+      // The entry is read from any branch; scope only decides whether it is off-path.
       const t = action.target;
       const offPath = !scopeAll && !view.load(false).rendered.some((m) => m.index === t.index);
       return (offPath ? OFF_PATH_NOTE : "") +
@@ -263,16 +263,13 @@ const runAction = (request: RecallRequest, view: RecallView, hints: RecallPaging
   }
 };
 
-/** Tool output shown with an expanded call under the 50 KB cap, clipped so one expand cannot flood the context. */
-export const PAIRED_RESULT_CHARS = EXPAND_DETAIL_CHARS;
-
 /** What expand shows of one call's arguments and of its result: the same share of a smaller cap (a smaller window) as 4,000 chars of 50 KB. */
 export const expandDetailChars = (maxChars: number = RECALL_OUTPUT_CHARS): number =>
-  Math.max(1, Math.round((maxChars * PAIRED_RESULT_CHARS) / RECALL_OUTPUT_CHARS));
+  Math.max(1, Math.round((maxChars * EXPAND_DETAIL_CHARS) / RECALL_OUTPUT_CHARS));
 
 /**
  * Full text of the requested entries. An expanded tool call brings its tool
- * results along (matched by toolCallId, clipped to PAIRED_RESULT_CHARS), so
+ * results along (matched by toolCallId, clipped to the view's detailChars), so
  * the agent does not have to know the result sits at a later #N. Entries off
  * the current path are served from the whole session and named in a note.
  */

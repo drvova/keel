@@ -1104,13 +1104,13 @@ describe("compaction hook: growth guard", () => {
 
   test("summaryGrowth: net growth past a fixed margin or a quarter of the prefix", async () => {
     const { summaryGrowth } = await import("../src/hooks/compaction");
-    expect(summaryGrowth(400, 0, 10)).toMatchObject({ grows: false, netChars: 390, allowedChars: 500 });
-    expect(summaryGrowth(2_000, 0, 100)).toMatchObject({ grows: true, netChars: 1_900 });
+    expect(summaryGrowth(400, 0, 10, 500)).toMatchObject({ grows: false, netChars: 390, allowedChars: 500 });
+    expect(summaryGrowth(2_000, 0, 100, 500)).toMatchObject({ grows: true, netChars: 1_900 });
     // The previous summary is replaced, so only what the new one adds counts.
-    expect(summaryGrowth(9_000, 8_000, 100)).toMatchObject({ grows: true, netChars: 900 });
-    expect(summaryGrowth(9_000, 8_500, 4_000)).toMatchObject({ grows: false });
+    expect(summaryGrowth(9_000, 8_000, 100, 500)).toMatchObject({ grows: true, netChars: 900 });
+    expect(summaryGrowth(9_000, 8_500, 4_000, 500)).toMatchObject({ grows: false });
     // A big prefix allows a quarter of itself.
-    expect(summaryGrowth(12_000, 0, 10_000)).toMatchObject({ grows: false, allowedChars: 2_500 });
+    expect(summaryGrowth(12_000, 0, 10_000, 500)).toMatchObject({ grows: false, allowedChars: 2_500 });
   });
 
   const pinned = (n: number) => Array.from({ length: n }, (_, i) => ({

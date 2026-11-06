@@ -55,7 +55,7 @@ export const buildSections = (input: BuildSectionsInput): SectionData => {
     filesAndChanges: formatFileActivity(blocks, input.fileOps, limits.filesPerCategory),
     commits: formatCommits(extractCommits(blocks), limits.commits),
     userMessages: keepNewestUserMessages(messages.slice(early.length), limits.userMessages),
-    trackedCommands: formatTrackedCommands(extractTrackedCommands(blocks, input.trackCommands ?? [])),
+    trackedCommands: formatTrackedCommands(extractTrackedCommands(blocks, input.trackCommands ?? []), limits.commandsPerName),
     briefTranscript: stringifyBrief(briefSections),
   };
 };

@@ -1,10 +1,10 @@
+import { DEFAULT_SUMMARY_LIMITS } from "../src/core/window";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import {
   formatHistoryRange,
-  MAX_RANGES,
   mergeHistoryIndex,
   rangeOfWindow,
   readHistoryIndex,
@@ -50,10 +50,10 @@ describe("rangeOfWindow", () => {
 });
 
 describe("mergeHistoryIndex", () => {
-  it("stays at MAX_RANGES, covers the whole history, and keeps the newest range on its own", () => {
+  it("stays at its line limit, covers the whole history, and keeps the newest range on its own", () => {
     let index: HistoryRange[] = [];
-    for (let i = 0; i < 40; i++) index = mergeHistoryIndex(index, range(i * 10, i * 10 + 9));
-    expect(index).toHaveLength(MAX_RANGES);
+    for (let i = 0; i < 40; i++) index = mergeHistoryIndex(index, range(i * 10, i * 10 + 9), DEFAULT_SUMMARY_LIMITS.historyRanges);
+    expect(index).toHaveLength(DEFAULT_SUMMARY_LIMITS.historyRanges);
     expect(index[0].from).toBe(0);
     expect(index.at(-1)).toMatchObject({ from: 390, to: 399 });
     for (let i = 1; i < index.length; i++) expect(index[i].from).toBe(index[i - 1].to + 1);
@@ -70,8 +70,9 @@ describe("mergeHistoryIndex", () => {
 
   it("a merged range keeps the longest asks and adds up counts", () => {
     const merged = mergeHistoryIndex(
-      Array.from({ length: MAX_RANGES }, (_, i) => range(i * 10, i * 10 + 9, { asks: [i === 0 ? "the long constraint from the start" : "x"], failed: 1, commitCount: 1, commits: [`c${i}`] })),
+      Array.from({ length: DEFAULT_SUMMARY_LIMITS.historyRanges }, (_, i) => range(i * 10, i * 10 + 9, { asks: [i === 0 ? "the long constraint from the start" : "x"], failed: 1, commitCount: 1, commits: [`c${i}`] })),
       range(80, 89),
+      DEFAULT_SUMMARY_LIMITS.historyRanges,
     );
     expect(merged[0].asks[0]).toBe("the long constraint from the start");
     expect(merged[0].failed).toBe(2);
@@ -82,10 +83,10 @@ describe("mergeHistoryIndex", () => {
   // summarized that reply alone, which rendered as an empty "#10–#10" line.
   it("a range that names nothing extends the one before it instead of adding a line", () => {
     const empty = { from: 10, to: 10, requests: 0, asks: [], files: [], commits: [], commitCount: 0, failed: 0 };
-    expect(mergeHistoryIndex([range(0, 9)], empty)).toEqual([{ ...range(0, 9), to: 10 }]);
+    expect(mergeHistoryIndex([range(0, 9)], empty, 8)).toEqual([{ ...range(0, 9), to: 10 }]);
     // Something to name, or no range before it: a line of its own as before.
-    expect(mergeHistoryIndex([range(0, 9)], { ...empty, failed: 1 })).toHaveLength(2);
-    expect(mergeHistoryIndex([], empty)).toEqual([empty]);
+    expect(mergeHistoryIndex([range(0, 9)], { ...empty, failed: 1 }, 8)).toHaveLength(2);
+    expect(mergeHistoryIndex([], empty, 8)).toEqual([empty]);
   });
 });
 

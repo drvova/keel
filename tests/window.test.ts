@@ -125,8 +125,11 @@ describe("compactionBudgets", () => {
     expect(b.briefCeilingTokens).toBe(3_400);
     // The sections grow with the brief's ceiling, and so does the framing a summary may add.
     expect(b.summaryScale).toBe(1.7);
-    expect(b.summary).toEqual({ userMessages: 26, filesPerCategory: 17, commits: 14, historyRanges: 14, briefLines: 204 });
+    expect(b.summary).toEqual({ userMessages: 26, filesPerCategory: 17, commits: 14, historyRanges: 14, briefLines: 204, commandsPerName: 17 });
     expect(b.growthMarginChars).toBe(850);
+    // The ranked brief may cover more blocks too: 80 capped it on any window.
+    expect(b.briefMaxBlocks).toBe(136);
+    expect(compactionBudgets(ompDefaultTrigger(128_000)).briefMaxBlocks).toBe(DEFAULT_BUDGETS.briefMaxBlocks);
   });
 
   it("shrinks each summary section on a small window, never under its floor", () => {
@@ -134,9 +137,9 @@ describe("compactionBudgets", () => {
     const b = compactionBudgets(ompDefaultTrigger(32_768), 8_000);
     // The square root of the trigger's share of a ~128K window's.
     expect(b.summaryScale).toBe(0.39);
-    expect(b.summary).toEqual({ userMessages: 6, filesPerCategory: 4, commits: 3, historyRanges: 3, briefLines: 47 });
+    expect(b.summary).toEqual({ userMessages: 6, filesPerCategory: 4, commits: 3, historyRanges: 3, briefLines: 47, commandsPerName: 4 });
     expect(b.growthMarginChars).toBe(DEFAULT_BUDGETS.growthMarginChars);
-    expect(compactionBudgets(2_000).summary).toEqual({ userMessages: 4, filesPerCategory: 3, commits: 2, historyRanges: 3, briefLines: 30 });
+    expect(compactionBudgets(2_000).summary).toEqual({ userMessages: 4, filesPerCategory: 3, commits: 2, historyRanges: 3, briefLines: 30, commandsPerName: 3 });
   });
 });
 

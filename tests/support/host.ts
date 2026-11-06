@@ -1,5 +1,6 @@
 // The compaction hook on omp's own convertToLlm, the way index.ts binds it, for
 // tests that drive the hook or the cut helpers without a running omp.
+import { DEFAULT_BUDGETS } from "../../src/core/window";
 import { convertToLlm } from "@oh-my-pi/pi-coding-agent/session/messages";
 import {
   applyTailBudget as applyTailBudgetFor,
@@ -30,14 +31,15 @@ export const renderedBlocks = (messages: any[]) =>
 export const buildOwnCut = (branchEntries: any[], keepUserTurns?: number, skipCustomTypes?: readonly string[]): OwnCutResult =>
   buildOwnCutFor(testHost, branchEntries, keepUserTurns, skipCustomTypes);
 
+/** The tail functions at a ~128K window's budgets unless a test sets its own. */
 export const applyTailBudget = (
   branchEntries: any[],
   cut: OwnCutResult,
-  opts?: Parameters<typeof applyTailBudgetFor>[3],
-): OwnCutResult => applyTailBudgetFor(testHost, branchEntries, cut, opts);
+  opts: Partial<Parameters<typeof applyTailBudgetFor>[3]> = {},
+): OwnCutResult => applyTailBudgetFor(testHost, branchEntries, cut, { maxTokens: DEFAULT_BUDGETS.maxTailTokens, ...opts });
 
-export const resolveSmartKeepUserTurns = (opts: Omit<ResolveSmartKeepOptions, "host">) =>
-  resolveSmartKeepFor({ ...opts, host: testHost });
+export const resolveSmartKeepUserTurns = (opts: Omit<ResolveSmartKeepOptions, "host" | "minTokens" | "maxTokens"> & Partial<Pick<ResolveSmartKeepOptions, "minTokens" | "maxTokens">>) =>
+  resolveSmartKeepFor({ minTokens: DEFAULT_BUDGETS.minTailTokens, maxTokens: DEFAULT_BUDGETS.maxTailTokens, ...opts, host: testHost });
 
 export interface RegisteredHook {
   state: CompactionState;

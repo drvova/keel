@@ -8,7 +8,7 @@
 // changed, its commits and failed calls. That gives the agent ranges to read and
 // words to search for, however far back the work was.
 //
-// It stays bounded: past MAX_RANGES lines, the two adjacent ranges that span
+// It stays bounded: past its line limit (SummaryLimits.historyRanges), the two adjacent ranges that span
 // the fewest entries merge. Recent ranges stay fine and old ones coarsen, about
 // geometrically. Each range is built from the messages, never from summary text,
 // and is stored in the compaction's details, so it is not re-parsed or reworded
@@ -22,7 +22,6 @@ import { vccDetailsOf } from "../details";
 import { extractFiles } from "../extract/files";
 import { extractCommits } from "../extract/commits";
 import { extractUserMessages } from "../extract/user-messages";
-import { DEFAULT_SUMMARY_LIMITS } from "./window";
 import { RECALL_TOOL } from "../names";
 
 export interface HistoryRange {
@@ -43,8 +42,6 @@ export interface HistoryRange {
   failed: number;
 }
 
-/** Lines on a ~128K window; core/window.ts scales it with the model's window. */
-export const MAX_RANGES = DEFAULT_SUMMARY_LIMITS.historyRanges;
 const ASKS_KEPT = 4;
 const ASKS_SHOWN = 1;
 const ASK_CHARS = 80;
@@ -104,7 +101,7 @@ const saysNothing = (r: HistoryRange): boolean =>
  * it has nothing to name (say the previous turn's final reply, kept by the last
  * compaction): then it is the end of the range before it, not a line of its own.
  */
-export const mergeHistoryIndex = (previous: HistoryRange[], fresh: HistoryRange | undefined, maxRanges = MAX_RANGES): HistoryRange[] => {
+export const mergeHistoryIndex = (previous: HistoryRange[], fresh: HistoryRange | undefined, maxRanges: number): HistoryRange[] => {
   const ranges = [...previous];
   const last = ranges[ranges.length - 1];
   if (fresh && last && saysNothing(fresh) && fresh.from <= last.to + 1 && fresh.to > last.to) {

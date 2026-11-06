@@ -494,12 +494,12 @@ export const runningTurnCut = (
   host: CompactionHost,
   branchEntries: any[],
   cut: OwnCutResult,
-  opts: { maxTokens?: number; charsPerToken?: number; skipCustomTypes?: readonly string[] } = {},
+  opts: { maxTokens: number; charsPerToken?: number; skipCustomTypes?: readonly string[] },
 ): OwnCutResult | undefined => {
   if (!cut.ok) return undefined;
   const live = collectLiveMessages(branchEntries);
   const tokens = live.map((m) => estimateMessageTokens(m.message, opts.charsPerToken));
-  const target = Math.min(opts.maxTokens ?? MAX_SMART_TAIL_TOKENS, tokens.reduce((a, b) => a + b, 0) / 2);
+  const target = Math.min(opts.maxTokens, tokens.reduce((a, b) => a + b, 0) / 2);
   let tail = 0;
   let best = -1;
   for (let i = live.length - 1; i >= 1; i--) {
@@ -543,10 +543,10 @@ export const applyTailBudget = (
   host: CompactionHost,
   branchEntries: any[],
   cut: OwnCutResult,
-  opts: { maxTokens?: number; oversizedFactor?: number; charsPerToken?: number; skipCustomTypes?: readonly string[] } = {},
+  opts: { maxTokens: number; oversizedFactor?: number; charsPerToken?: number; skipCustomTypes?: readonly string[] },
 ): OwnCutResult => {
   if (!cut.ok) return cut;
-  const maxTokens = opts.maxTokens ?? MAX_SMART_TAIL_TOKENS;
+  const maxTokens = opts.maxTokens;
   const factor = opts.oversizedFactor ?? OVERSIZED_TAIL_FACTOR;
   const live = collectLiveMessages(branchEntries);
   // Same guard as buildOwnCut, for the compact-all re-cut: a budget cut right
@@ -602,9 +602,6 @@ export const applyTailBudget = (
 
 // ── smart keep-tail: boost default keep when tail is small ──
 
-export const MIN_SMART_TAIL_TOKENS = 5_000;
-export const MAX_SMART_TAIL_TOKENS = 25_000;
-
 export interface ResolveSmartKeepOptions {
   branchEntries: any[];
   /** Requested keep:N; null when user did not specify (default path). */
@@ -613,9 +610,9 @@ export interface ResolveSmartKeepOptions {
   explicit: boolean;
   /** Setting toggle. */
   smartKeepTail: boolean;
-  /** Injectable thresholds for tests. */
-  minTokens?: number;
-  maxTokens?: number;
+  /** The budgets' minTailTokens and maxTailTokens. */
+  minTokens: number;
+  maxTokens: number;
   /** Calibrated chars/token for the current session; defaults to heuristic when omitted. */
   charsPerToken?: number;
   host: CompactionHost;
@@ -655,8 +652,7 @@ const tailTokensForKeep = (
  *   largest N whose tail stays <= maxTokens. Stops at compact-all boundary.
  */
 export const resolveSmartKeepUserTurns = (opts: ResolveSmartKeepOptions): ResolveSmartKeepResult => {
-  const minTokens = opts.minTokens ?? MIN_SMART_TAIL_TOKENS;
-  const maxTokens = opts.maxTokens ?? MAX_SMART_TAIL_TOKENS;
+  const { minTokens, maxTokens } = opts;
   const baseKeep = opts.requestedKeepUserTurns ?? 1;
 
   if (opts.explicit || !opts.smartKeepTail) {
@@ -708,8 +704,7 @@ const measuredOverheadTokens = (branchEntries: any[]): number | undefined => {
 const WORKING_SET_SHARE_OF_REMOVED = 0.5;
 
 /** Growth a summary may add before it is not worth writing: its framing (the
- * budgets' growthMarginChars, 500 up to a very large window), or a share of what it replaces. */
-const GROWTH_MARGIN_CHARS = 500;
+ * budgets' growthMarginChars), or this share of what it replaces. */
 const GROWTH_MARGIN_SHARE = 0.25;
 
 export interface SummaryGrowth {
@@ -730,7 +725,7 @@ export const summaryGrowth = (
   summaryChars: number,
   previousSummaryChars: number,
   prefixChars: number,
-  marginChars = GROWTH_MARGIN_CHARS,
+  marginChars: number,
 ): SummaryGrowth => {
   const netChars = summaryChars - previousSummaryChars - prefixChars;
   const allowedChars = Math.max(marginChars, Math.round(prefixChars * GROWTH_MARGIN_SHARE));
@@ -1012,9 +1007,6 @@ export const registerCompactionHook = (
     // long-tail losers 100/369 -> 67/369; fact density stays ~1.4x master.
     // Floor and ceiling follow the trigger (core/window.ts): 1100 and 2000 on a
     // ~128K window, less on a small one, a higher ceiling on a very large one.
-    const RANKED_BRIEF_BUDGET_TOKENS = budgets.briefTokens;
-    const RANKED_BRIEF_CEILING_TOKENS = budgets.briefCeilingTokens;
-    const RANKED_BRIEF_TOKENS_PER_BLOCK = 15;
     // [History Index]: this window's range added to the one the previous omp-vcc
     // compaction stored. Only a compaction still in context counts: after omp's
     // /clear (a later reset_boundary) the index starts over, as the summary does.
@@ -1079,9 +1071,10 @@ export const registerCompactionHook = (
       trackCommands: settings.trackCommands,
       limits: budgets.summary,
       ranking: {
-        maxBriefChars: Math.round(RANKED_BRIEF_BUDGET_TOKENS * tokenEstimate.charsPerToken),
-        maxBriefCharsCeiling: Math.round(RANKED_BRIEF_CEILING_TOKENS * tokenEstimate.charsPerToken),
-        briefCharsPerBlock: Math.round(RANKED_BRIEF_TOKENS_PER_BLOCK * tokenEstimate.charsPerToken),
+        maxBriefChars: Math.round(budgets.briefTokens * tokenEstimate.charsPerToken),
+        maxBriefCharsCeiling: Math.round(budgets.briefCeilingTokens * tokenEstimate.charsPerToken),
+        briefCharsPerBlock: Math.round(budgets.briefTokensPerBlock * tokenEstimate.charsPerToken),
+        maxBlocks: budgets.briefMaxBlocks,
       },
     });
 

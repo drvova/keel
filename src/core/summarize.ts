@@ -5,7 +5,7 @@ import { filterNoise } from "./filter-noise";
 import { buildSections } from "./build-sections";
 import { EARLY_REQUESTS_KEPT, keepNewestUserMessages } from "../extract/user-messages";
 import { formatSummary, capBrief, capItems, stripCapMarker, RECALL_NOTE, wrapLongLines } from "./format";
-import { COMMAND_SEPARATOR, COMMANDS_PER_NAME } from "../extract/tracked-commands";
+import { COMMAND_SEPARATOR } from "../extract/tracked-commands";
 import { selectRankedBriefBlocks, type BriefRankingOptions } from "./rank";
 import { formatHistoryRange, type HistoryRange } from "./history-index";
 import { formatPinLines, type PinnedNote } from "./pins";
@@ -134,7 +134,7 @@ const mergeHeaderSection = (header: string, prev: string, fresh: string, limits:
   // fixed list, so a config change between compactions doesn't orphan a
   // category that was already recorded.
   if (header === "Tracked Commands") {
-    return mergeTrackedCommandLines(prev, fresh);
+    return mergeTrackedCommandLines(prev, fresh, limits.commandsPerName);
   }
 
   const prevLines = prev.split("\n").filter(isClean);
@@ -238,10 +238,10 @@ const discoverCategoryNames = (text: string): string[] => {
  * fresh (not a fixed category list, since trackCommands is user-config).
  * Line format (separator, cap) is owned by extract/tracked-commands.ts.
  */
-const mergeTrackedCommandLines = (prev: string, fresh: string): string => {
+const mergeTrackedCommandLines = (prev: string, fresh: string, perName: number): string => {
   const categories = [...new Set([...discoverCategoryNames(prev), ...discoverCategoryNames(fresh)])];
   const merged = mergeCategorizedLines(categories, prev, fresh, COMMAND_SEPARATOR, true);
-  return formatCategorizedLines("Tracked Commands", merged, categories, COMMAND_SEPARATOR, COMMANDS_PER_NAME);
+  return formatCategorizedLines("Tracked Commands", merged, categories, COMMAND_SEPARATOR, perName);
 };
 
 const mergeBriefTranscript = (prev: string, fresh: string): string => {

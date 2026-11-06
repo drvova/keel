@@ -202,11 +202,10 @@ export const extractTrackedCommands = (
 };
 
 /** Line format of `[Tracked Commands]`, shared with the merge in
- * core/summarize.ts: `- <name>: <entry> | <entry> ...`, newest
- * COMMANDS_PER_NAME kept. " | " rather than "," since an entry (e.g.
- * `kubectl get pods,svc`) can legitimately contain a comma. */
+ * core/summarize.ts: `- <name>: <entry> | <entry> ...`, the newest
+ * (SummaryLimits.commandsPerName) kept. " | " rather than "," since an entry
+ * (e.g. `kubectl get pods,svc`) can legitimately contain a comma. */
 export const COMMAND_SEPARATOR = " | ";
-export const COMMANDS_PER_NAME = 10;
 
 /** Render form: one line (a quoted multi-line argument such as
  * `python3 -c '...'` would otherwise break the line format), with an inner
@@ -221,11 +220,11 @@ const renderEntry = (entry: string): string => {
  * tracked command name that had at least one match. Keeps the NEWEST
  * entries: a ledger of what was run recently must not freeze at its first
  * ten while everything later drowns in a permanent "(+N more)". */
-export const formatTrackedCommands = (act: TrackedCommandActivity): string[] => {
+export const formatTrackedCommands = (act: TrackedCommandActivity, perName: number): string[] => {
   const lines: string[] = [];
   for (const [name, entries] of act.byCommand) {
     if (entries.size > 0) {
-      lines.push(`${name}: ${capItems([...entries].map(renderEntry), COMMANDS_PER_NAME, COMMAND_SEPARATOR)}`);
+      lines.push(`${name}: ${capItems([...entries].map(renderEntry), perName, COMMAND_SEPARATOR)}`);
     }
   }
   return lines;

@@ -41,10 +41,10 @@ export interface VccSettings {
   overrideDefaultCompaction: boolean;
   /**
    * When true (default), omp-vcc boosts the default keep-tail when the current
-   * keep:1 tail is small enough. Specifically: if the estimated tail for keep:1
-   * is <= MIN_SMART_TAIL_TOKENS (5k), increase keep up to the largest N whose
-   * tail stays <= MAX_SMART_TAIL_TOKENS (25k). Explicit `keep:N` from the user
-   * is always respected and never adjusted.
+   * keep:1 tail is small enough: if the estimated tail for keep:1 is at most
+   * the budgets' minTailTokens (5k on a ~128K window), increase keep up to the
+   * largest N whose tail stays within maxTailTokens (25k there). Explicit
+   * `keep:N` from the user is always respected and never adjusted.
    */
   smartKeepTail: boolean;
   /** Write debug snapshot to /tmp/omp-vcc-debug.json on each compaction. */
