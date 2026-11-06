@@ -30,6 +30,10 @@
      (:file "js-string")
      (:file "json")
      (:file "search")
+     ;; session and render read a session file as recall does: the entries,
+     ;; their #N, the branch, the kept originals, and each one rendered.
+     (:file "session")
+     (:file "render")
      (:file "server"))))
   :in-order-to ((test-op (test-op "omp-vcc-core/test"))))
 

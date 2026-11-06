@@ -30,3 +30,7 @@
 (deftest refuses-bad-json
   (dolist (bad '("" "{" "[1,]" "{\"a\"}" "tru" "\"x" "1 2" "01x"))
     (is (handler-case (progn (parse-json bad) nil) (error () t)) (format nil "~s was accepted" bad))))
+
+(deftest keys-in-javascripts-order
+  ;; JSON-KEYS relies on SBCL's hash tables iterating in insertion order.
+  (is (equal (json-keys (parse-json "{\"b\":1,\"2\":2,\"a\":3,\"01\":4,\"0\":5}")) '("0" "2" "b" "a" "01"))))

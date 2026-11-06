@@ -22,7 +22,12 @@
 
 (defun js-length (string)
   "STRING's length in UTF-16 code units: JavaScript's .length."
-  (loop for c across string sum (if (astral-p c) 2 1)))
+  (if (typep string '(simple-array character (*)))
+      (let ((n (length string)))
+        (declare (type (simple-array character (*)) string) (fixnum n) (optimize speed))
+        (loop for c across string count (> (char-code c) #xFFFF) into astral
+              finally (return (+ n astral))))
+      (loop for c across string sum (if (astral-p c) 2 1))))
 
 (defun js-slice (string start &optional end)
   "STRING from code unit START below code unit END, as JavaScript's slice
@@ -32,6 +37,9 @@ JavaScript's does."
          (end (min (or end length) length))
          (start (min (max start 0) end))
          (unit 0))
+    ;; Without a character past the BMP, a code unit is a character.
+    (when (= length (length string))
+      (return-from js-slice (subseq string start end)))
     (with-output-to-string (out)
       (loop for c across string
             while (< unit end)
@@ -107,3 +115,69 @@ past the BMP are compared as their code units, which no case maps."
     (loop for (s . rest) on strings
           do (write-string s out)
              (when rest (write-string separator out)))))
+
+(defun js-code-unit (string unit)
+  "The UTF-16 code unit at UNIT of STRING, or NIL past its end."
+  (let ((u 0))
+    (loop for c across string
+          for code = (char-code c)
+          do (if (> code #xFFFF)
+                 (let ((v (- code #x10000)))
+                   (cond ((= u unit) (return (+ #xD800 (ash v -10))))
+                         ((= (1+ u) unit) (return (+ #xDC00 (logand v #x3FF)))))
+                   (incf u 2))
+                 (progn (when (= u unit) (return code))
+                        (incf u))))))
+
+(defun js-last-space (string limit)
+  "The code unit offset of the last space at or before LIMIT, or -1: lastIndexOf(\" \", LIMIT)."
+  (let ((u 0) (found -1))
+    (loop for c across string
+          while (<= u limit)
+          do (when (char= c #\Space) (setf found u))
+             (incf u (if (> (char-code c) #xFFFF) 2 1)))
+    found))
+
+(defun js-clip (text &optional (max 200))
+  "TEXT cut to MAX code units at a space past 60% of MAX when there is one,
+never between the halves of a pair: content.ts's clip."
+  (let ((length (js-length text)))
+    (if (<= length max)
+        text
+        (let* ((cut (js-last-space text max))
+               (end (if (> cut (* max 0.6d0)) cut max)))
+          (when (and (> end 0) (< end length))
+            (let ((code (js-code-unit text (1- end))))
+              (when (and code (<= #xD800 code #xDBFF)) (decf end))))
+          (js-slice text 0 end)))))
+
+(defun js-number-string (x)
+  "The number X as JavaScript's String() writes it, for the numbers JSON holds."
+  (if (integerp x)
+      (format nil "~d" x)
+      (let ((d (coerce x 'double-float)))
+        (if (and (= d (ftruncate d)) (< (abs d) 1d21))
+            (format nil "~d" (truncate d))
+            (let* ((*read-default-float-format* 'double-float)
+                   (text (princ-to-string d)))
+              ;; SBCL writes 1.0e21 where JavaScript writes 1e+21.
+              (let ((e (position #\e text)))
+                (if e
+                    (let ((mantissa (string-right-trim "." (string-right-trim "0" (subseq text 0 e))))
+                          (exponent (subseq text (1+ e))))
+                      (format nil "~a~a~a" mantissa (if (char= (char exponent 0) #\-) "e" "e+") exponent))
+                    text)))))))
+
+(defun js-string-of (value)
+  "VALUE (a JSON value, or NIL for undefined) as JavaScript's String() or a
+template literal writes it."
+  (cond ((null value) "undefined")
+        ((stringp value) value)
+        ((eq value :null) "null")
+        ((eq value :true) "true")
+        ((eq value :false) "false")
+        ((realp value) (js-number-string value))
+        ((hash-table-p value) "[object Object]")
+        ((vectorp value)
+         (join-strings (map 'list (lambda (v) (if (or (null v) (eq v :null)) "" (js-string-of v))) value) ","))
+        (t (princ-to-string value))))

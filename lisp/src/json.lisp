@@ -28,9 +28,10 @@
 
 ;;; --- reading -----------------------------------------------------------------
 
-(defun parse-json (text)
-  "The one JSON value TEXT holds, with nothing but whitespace around it."
-  (let ((pos 0) (n (length text)))
+(defun parse-json (text &key (start 0) end)
+  "The one JSON value TEXT holds between START and END, with nothing but
+whitespace around it."
+  (let ((pos start) (n (or end (length text))))
     (labels ((fail (detail) (error 'json-parse-error :position pos :detail detail))
              (peek () (if (< pos n) (char text pos) (fail "unexpected end")))
              (skip-ws ()
@@ -92,6 +93,10 @@
                  (incf pos 4)))
              (str ()
                (incf pos)
+               ;; Most strings hold no escape: copied out whole, not character by character.
+               (let ((end (position-if (lambda (c) (or (char= c #\") (char= c #\\) (< (char-code c) 32))) text :start pos :end n)))
+                 (when (and end (char= (char text end) #\"))
+                   (return-from str (prog1 (subseq text pos end) (setf pos (1+ end))))))
                (with-output-to-string (out)
                  (loop (let ((c (peek)))
                          (incf pos)
@@ -203,3 +208,24 @@
       (multiple-value-bind (v found) (gethash key object)
         (if found v default))
       default))
+
+(defun array-index-key-p (key)
+  "True when KEY is a canonical array index, which JavaScript lists first."
+  (and (plusp (length key))
+       (every #'digit-char-p key)
+       (or (string= key "0") (char/= (char key 0) #\0))
+       (< (parse-integer key) 4294967295)))
+
+(defun json-keys (object)
+  "OBJECT's keys in JavaScript's order (Object.keys): array indices ascending,
+then the rest in the order they were read. SBCL's hash tables keep insertion
+order (test/json.lisp pins it)."
+  (let ((indices '()) (names '()))
+    (maphash (lambda (k v) (declare (ignore v))
+               (if (array-index-key-p k) (push k indices) (push k names)))
+             object)
+    (append (sort indices #'< :key #'parse-integer) (nreverse names))))
+
+(defun json-values (object)
+  "OBJECT's values in the order of JSON-KEYS."
+  (mapcar (lambda (k) (gethash k object)) (json-keys object)))

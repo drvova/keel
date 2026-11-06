@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import type { SearchHit, SearchResult } from "./search-entries";
 
 /**
  * The Lisp core (lisp/): one JSON request on its stdin, one response on its
@@ -21,4 +22,42 @@ export const callCore = (request: object): Record<string, unknown> | undefined =
   } catch {
     return undefined;
   }
+};
+
+/** A session file for the core to read and search: the entries on `ids` (the file's own active branch for "active", all for null), less `skip`. */
+export interface CoreSource {
+  file: string;
+  ids: string[] | "active" | null;
+  skip?: number[];
+  /** Short id of an earlier session, set on its hits. */
+  session?: string;
+  /** The file's size, which a project search counts against its byte bound. */
+  bytes?: number;
+}
+
+/**
+ * Search session files in the core (op search-sessions, lisp/src/server.lisp):
+ * the first source always, each later one while the corpus stays within the
+ * bounds. Undefined when there is no core, it fails, or the query is a regex it
+ * leaves to the TS search.
+ */
+export const searchSessionsInCore = (
+  query: string,
+  sources: CoreSource[],
+  bounds: { maxBytes?: number; maxEntries?: number } = {},
+): { result: SearchResult; searched: number } | undefined => {
+  const reply = callCore({ op: "search-sessions", query, sources, ...bounds });
+  if (!reply || !Array.isArray(reply.hits)) return undefined;
+  const hits: SearchHit[] = (reply.hits as Array<Record<string, any>>).map((h) => ({
+    index: h.index,
+    role: h.role,
+    summary: h.summary,
+    ...(Array.isArray(h.files) ? { files: h.files } : {}),
+    ...(typeof h.session === "string" ? { session: h.session } : {}),
+    snippet: h.snippet ?? undefined,
+  }));
+  return {
+    result: { hits, totalBeforeCap: reply.totalBeforeCap as number, truncated: reply.truncated === true },
+    searched: reply.searched as number,
+  };
 };

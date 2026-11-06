@@ -10,6 +10,7 @@ import { countProjectSessions, describeSession, findSession, listProjectSessions
 import { currentBranchIds, hostBranch, type SessionManagerLike } from "./session-file";
 import { toolCallsOf } from "./tools";
 import { DEFAULT_CHARS_PER_TOKEN } from "./token-estimate";
+import { searchSessionsInCore, type CoreSource } from "./lisp-core";
 
 export const SEARCH_PAGE_SIZE = 5;
 export const RANGE_PAGE_SIZE = 20;
@@ -26,6 +27,8 @@ interface RecallView {
   /** Set when the view is over one of those earlier sessions instead of the current one. */
   session?: SessionInfo;
   load(full: boolean): LoadedEntry[];
+  /** The file and branch `load` reads, less the `#N` in `skip`, as the Lisp core reads them. */
+  source(skip?: Set<number>): CoreSource;
   /** What the action may take of one recall result: the cap (recallOutputChars) less what recall puts in front. */
   maxChars: number;
   /** The message at `#N`, on any branch. */
@@ -67,6 +70,8 @@ interface ViewOptions {
   detailChars?: number;
   /** The file, read once for every view of it in this call. */
   read?: () => SessionRead;
+  /** The branch is the file's own active one (an earlier session's), not the session manager's. */
+  branchFromFile?: boolean;
 }
 
 const once = <T>(f: () => T): (() => T) => {
@@ -101,6 +106,10 @@ const openRecallView = (
       }
       return loaded;
     },
+    source(skip) {
+      const ids = scope === "all" ? null : options.branchFromFile ? "active" as const : [...(lineageEntryIds ?? [])];
+      return { file: sessionFile, ids, ...(skip?.size ? { skip: [...skip] } : {}), ...(options.session ? { session: options.session.short } : {}) };
+    },
     message(index) {
       return read().messages.find((m) => m.index === index)?.message;
     },
@@ -123,7 +132,7 @@ const openSessionView = (session: SessionInfo, scope: RecallScope, size: Pick<Vi
   // A file without entry ids (an old format) has no branch to follow: read all of it.
   const effective = ids.size === 0 ? "all" : scope === "project" ? "lineage" : scope;
   const branch = [...ids].map((id) => ({ id }));
-  return openRecallView(session.file, effective, { getBranch: () => branch }, { session, ...size, read });
+  return openRecallView(session.file, effective, { getBranch: () => branch }, { session, ...size, read, branchFromFile: true });
 };
 
 /** What a follow-up call inside an earlier session adds, so it reads that session again. */
@@ -396,7 +405,9 @@ const runRange = (range: [number, number], page: number, view: RecallView): stri
  * term fallback never ran), set the relative floor, and fill the hit cap,
  * which hid earlier matches.
  */
-const searchBefore = (view: RecallView, query: string, skip: Set<number> | undefined) => {
+const searchBefore = (view: RecallView, query: string, skip: Set<number> | undefined): SearchResult => {
+  const inCore = searchSessionsInCore(query, [view.source(skip)]);
+  if (inCore) return inCore.result;
   const loaded = view.load(false);
   return searchEntries(skip?.size ? loaded.filter((m) => !skip.has(m.entry.index)) : loaded, query);
 };
@@ -506,12 +517,11 @@ const runSessions = (page: number, view: RecallView, hints: RecallPagingHints): 
  * the ranking is comparable across them. Bounded by session count, bytes and
  * entries; a hit names its session.
  */
-const runProjectSearch = (query: string, page: number, view: RecallView, surface: RecallSurface, skip?: Set<number>): string => {
-  const hints = surface();
+/** The project search's corpus, read and ranked in TypeScript: what searchSessionsInCore does when there is a core. */
+const projectSearchInTs = (query: string, view: RecallView, all: SessionInfo[], skip?: Set<number>): { result: SearchResult; searched: number } => {
   const corpus: LoadedEntry[] = view.load(false).filter((m) => !skip?.has(m.entry.index));
   let bytes = 0;
   let searched = 0;
-  const all = view.project?.list() ?? [];
   for (const s of all.slice(0, PROJECT_SEARCH_SESSIONS)) {
     if (bytes + s.bytes > PROJECT_SEARCH_BYTES && searched > 0) break;
     const loaded = openSessionView(s, "lineage").load(false);
@@ -520,11 +530,19 @@ const runProjectSearch = (query: string, page: number, view: RecallView, surface
     bytes += s.bytes;
     searched++;
   }
+  return { result: searchEntries(corpus, query), searched };
+};
+
+const runProjectSearch = (query: string, page: number, view: RecallView, surface: RecallSurface, skip?: Set<number>): string => {
+  const hints = surface();
+  const all = view.project?.list() ?? [];
+  const others: CoreSource[] = all.slice(0, PROJECT_SEARCH_SESSIONS).map((s) => ({ file: s.file, ids: "active", session: s.short, bytes: s.bytes }));
+  const { result, searched } = searchSessionsInCore(query, [view.source(skip), ...others], { maxBytes: PROJECT_SEARCH_BYTES, maxEntries: PROJECT_SEARCH_ENTRIES })
+    ?? projectSearchInTs(query, view, all, skip);
   const covered = searched === 0
     ? "this session (no earlier sessions in this project)"
     : `this session and ${searched} earlier session${searched === 1 ? "" : "s"}${searched < all.length ? ` (the newest ${searched} of ${all.length}; session:'id' reads an older one)` : ""}`;
 
-  const result = searchEntries(corpus, query);
   if (result.aborted) return `${result.aborted} Searching ${covered}: narrow the query, or read one session with session:'id' (mode:'sessions' lists them).`;
   if (result.hits.length === 0) return `No matches for "${query}" in ${covered}.`;
   return pageOfHits(result, query, page, {

@@ -198,7 +198,7 @@ const looksEncoded = (run: string): boolean => {
 /** An entry's text as search sees it: encoded data is dropped, as search engines drop
  *  overlong tokens. Terms match as substrings, so a short term would hit inside it
  *  hundreds of times, and it would count as one word of length. */
-const rawSearchText = (msg: Message | undefined, e: RenderedEntry): string => (msg ? fullText(msg) : e.summary);
+export const rawSearchText = (msg: Message | undefined, e: RenderedEntry): string => (msg ? fullText(msg) : e.summary);
 
 const searchableText = (msg: Message | undefined, e: RenderedEntry): string =>
   rawSearchText(msg, e).replace(BASE64_RUN, (run) => (looksEncoded(run) ? "…" : run));
