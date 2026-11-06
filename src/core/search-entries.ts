@@ -469,7 +469,7 @@ const capHits = (hits: SearchHit[], cap: number): SearchResult => {
 /** Full search with truncation metadata, so a caller can report a capped result set honestly. */
 export const searchEntries = (
   items: readonly LoadedEntry[],
-  query?: string,
+  query: string,
   tuning?: SearchTuning,
 ): SearchResult => {
   try {
@@ -483,10 +483,10 @@ export const searchEntries = (
 const search = (
   entries: RenderedEntry[],
   messages: Message[],
-  query?: string,
+  query: string,
   tuning?: SearchTuning,
 ): SearchResult => {
-  if (!query?.trim()) return { hits: entries, totalBeforeCap: entries.length, truncated: false };
+  if (!query.trim()) return { hits: [], totalBeforeCap: 0, truncated: false };
 
   const relativeFloor = tuning?.relativeFloor ?? BM25_RELATIVE_FLOOR;
   const cap = tuning?.cap ?? SEARCH_RESULT_CAP;

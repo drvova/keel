@@ -232,8 +232,9 @@ describe("vcc_recall drill-down", () => {
     const { dir, file, ids } = makeSession(entries);
     try {
       const tool = register();
-      const out = await invoke(tool, file, ids, { query: "#0:/w/big.txt:full", range: [0, 0] });
-      expect(out).toStartWith("Ignored: range");
+      // A long note in front (here an unknown param 700 chars long) comes out of the same result.
+      const out = await invoke(tool, file, ids, { query: "#0:/w/big.txt:full", range: [0, 0], note: "n".repeat(700) });
+      expect(out).toStartWith("Ignored: note");
       expect(out).toMatch(/Use #0:\/w\/big\.txt:\d+ for the lines from \d+ on\.\)$/);
       expect(out).not.toContain("output clipped");
     } finally {

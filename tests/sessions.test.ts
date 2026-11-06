@@ -64,6 +64,17 @@ beforeAll(() => {
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
 describe("listProjectSessions", () => {
+  it("lists a session by the first request the user wrote, read as the summary reads one", () => {
+    const skillDir = mkdtempSync(join(tmpdir(), "omp-vcc-first-request-"));
+    try {
+      const c = chain([["user", '<skill name="tdd">Write the test first.</skill>'], ["user", "ok"], ["user", "Add refunds to the ledger"], ["assistant", "Done."]]);
+      write(join(skillDir, "s.jsonl"), [header("eeee5555-0000-7000-8000-000000000005", "2026-10-05T10:00:00.000Z"), ...c], 5_000);
+      expect(listProjectSessions(skillDir)[0].firstRequest).toBe("Add refunds to the ledger");
+    } finally {
+      rmSync(skillDir, { recursive: true, force: true });
+    }
+  });
+
   it("names a Pi session by its /name, the latest one", () => {
     const piDir = mkdtempSync(join(tmpdir(), "omp-vcc-pi-names-"));
     try {
@@ -135,6 +146,16 @@ describe("vcc_recall across sessions", () => {
     expect(out).toContain("in this session and 2 earlier sessions");
     expect(out).toMatch(/\[session aaaa1111\] #1 \[assistant\]/);
     expect(out).toContain("session:'aaaa1111', expand:[1]");
+  });
+
+  it("a hit off the current path is read around in its scope, both calls", () => {
+    expect(toolHintsOf().aroundHit!(3, "all")).toBe("\n--- Read around a hit: range:[0, 6], scope:'all'; full text: expand:[3], scope:'all' ---");
+    expect(toolHintsOf("aaaa1111").aroundHit!(1, "all")).toBe("\n--- Read around a hit: session:'aaaa1111', range:[0, 4], scope:'all'; full text: session:'aaaa1111', expand:[1], scope:'all' ---");
+  });
+
+  it("the command takes the quoted forms recall's own output shows", () => {
+    expect(parseCommandRequest("session:'aaaa1111' release")).toMatchObject({ session: "aaaa1111", action: { kind: "search", query: "release" } });
+    expect(parseCommandRequest("release scope:'project'")).toMatchObject({ scope: "project", action: { kind: "search", query: "release" } });
   });
 
   it("the next page of a scope:'project' search keeps the scope", () => {

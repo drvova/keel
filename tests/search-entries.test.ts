@@ -19,9 +19,8 @@ const messages: Message[] = [
 ];
 
 describe("searchEntries", () => {
-  it("returns all for empty query", () => {
-    expect(searchHits(pairs(entries, messages))).toEqual(entries);
-    expect(searchHits(pairs(entries, messages), "")).toEqual(entries);
+  it("finds nothing for an empty query", () => {
+    expect(searchHits(pairs(entries, messages), "  ")).toEqual([]);
   });
 
   it("filters by single term", () => {
@@ -317,16 +316,6 @@ describe("searchEntries recall toolResult exclusion", () => {
     const r = searchHits(pairs(e, m), "MARKER_VALUE");
     expect(r).toHaveLength(1);
     expect(r[0].snippet).toContain("MARKER_VALUE");
-  });
-
-  it("does not affect browse/no-query results — entries are returned unchanged", () => {
-    const e: RenderedEntry[] = [{ index: 0, role: "tool_result", summary: '[vcc_recall] 1 matches for "MARKER"' }];
-    const m: Message[] = [{
-      role: "toolResult", toolName: "vcc_recall",
-      content: [{ type: "text", text: '1 matches for "MARKER"' }],
-    } as any];
-    expect(searchHits(pairs(e, m))).toEqual(e);
-    expect(searchHits(pairs(e, m), "")).toEqual(e);
   });
 
   it("excludes the recall toolResult case-insensitively", () => {

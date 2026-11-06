@@ -12,6 +12,7 @@ import { readdirSync, realpathSync, statSync } from "fs";
 import { dirname, join } from "path";
 import { readHeader, scanLines } from "./session-file";
 import { clip, textOf } from "./content";
+import { userWords } from "../extract/user-messages";
 import { formatPin, readPins, replaysPins } from "./pins";
 
 export interface SessionInfo {
@@ -40,11 +41,6 @@ const parse = (line: Buffer): any => {
 };
 
 /**
- * One pass over a session file: header, message count, first user request,
- * title, pins (replayed along its active branch). Only the lines those need
- * are parsed; the rest are read by their heads (session-file.ts entryHead).
- */
-/**
  * A session's name as each host writes it: omp's title slot (its first line,
  * rewritten in place) and renames, `title`; Pi's `/name`, a session_info entry's
  * `name` (docs/session-format.md). The latest wins.
@@ -54,6 +50,12 @@ const nameOf = (e: any): string | undefined => {
   return typeof name === "string" && name.trim() ? name.trim() : undefined;
 };
 
+/**
+ * One pass over a session file: header, message count, first user request,
+ * title, pins (replayed along its active branch). Only the lines those need
+ * are parsed (compactions, the bulk of the rest, never); messages are read by
+ * their heads (session-file.ts entryHead).
+ */
 const scanSession = (file: string): SessionInfo | undefined => {
   let stat;
   try { stat = statSync(file); } catch { return undefined; }
@@ -70,8 +72,10 @@ const scanSession = (file: string): SessionInfo | undefined => {
       if (head.type === "message") {
         messages++;
         if (firstRequest === undefined && line.includes('"role":"user"')) {
-          const text = textOf(parse(line)?.message?.content ?? "").replace(/\s+/g, " ").trim();
-          if (text && !text.startsWith("<")) firstRequest = clip(text, 100);
+          const m = parse(line)?.message;
+          // What the user wrote, as the summary reads it; not what an extension sent as the user.
+          const words = m?.role === "user" && m.attribution !== "agent" ? userWords(textOf(m.content ?? "")).words : "";
+          if (words) firstRequest = clip(words, 100);
         }
         return;
       }

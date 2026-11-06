@@ -5,4 +5,4 @@ import { searchEntries, type SearchHit } from "../../src/core/search-entries";
 export const pairs = (entries: readonly any[], messages: readonly any[]): LoadedEntry[] =>
   entries.map((entry, i) => ({ entry, message: messages[i] }));
 
-export const searchHits = (items: readonly LoadedEntry[], query?: string): SearchHit[] => searchEntries(items, query).hits;
+export const searchHits = (items: readonly LoadedEntry[], query: string): SearchHit[] => searchEntries(items, query).hits;

@@ -8,7 +8,7 @@
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import type { Binding } from "../host";
 import { parseToolRequest, RECALL_PARAMS, type RecallScope } from "../core/recall-request";
-import { sessionParam, withParams } from "../core/format-recall";
+import { scopeParam, sessionParam, withParams } from "../core/format-recall";
 import { RANGE_PAGE_SIZE, RECALL_OUTPUT_CHARS, recall, SEARCH_PAGE_SIZE, type RecallInput, type RecallPagingHints } from "../core/recall-run";
 import { SESSION_REF_MIN_CHARS } from "../core/sessions";
 import { RECALL_TOOL } from "../names";
@@ -52,18 +52,17 @@ const RECALL_PARAM_DESCRIPTIONS: Record<(typeof RECALL_PARAMS)[number], string> 
 /** Follow-up hints in the tool's own params; inside an earlier session they carry session:'id'. */
 export const toolHints = (short?: string): RecallPagingHints => {
   const session = sessionParam(short);
-  const scopeParam = (scope: RecallScope) => (scope === "lineage" ? undefined : `scope:'${scope}'`);
+  /** A call's params, written as the agent sends them: what it reads, in which session and scope. */
+  const call = (param: string, scope: RecallScope) => [session, param, scopeParam(scope)].filter(Boolean).join(", ");
   return {
     outOfRange: (_query, _scope, totalPages, truncated) => truncated
       ? `Use a page between 1 and ${totalPages}.`
       : `Use a page between 1 and ${totalPages}, or refine your query.`,
     nextPage: (_query, scope, page) => `\n--- Use page:${page}${withParams(session, scopeParam(scope))} for more results ---`,
     listPage: (mode, page) => `\n--- Use mode:'${mode}' page:${page}${withParams(session)} for more results ---`,
-    // The agent has its current turn in context, and its question would match itself (an earlier session has none).
-    skipCurrentTurn: true,
-    aroundHit: (n, scope) => short
-      ? `\n--- Read around a hit: session:'${short}', range:[${Math.max(0, n - 3)}, ${n + 3}]; full text: session:'${short}', expand:[${n}] ---`
-      : `\n--- Read around a hit: range:[${Math.max(0, n - 3)}, ${n + 3}]; full text: expand:[${n}]${scope === "all" ? " (with scope:'all')" : ""} ---`,
+    // Both calls in the hit's scope: off the current path, a range without scope:'all' skips the hit.
+    aroundHit: (n, scope) =>
+      `\n--- Read around a hit: ${call(`range:[${Math.max(0, n - 3)}, ${n + 3}]`, scope)}; full text: ${call(`expand:[${n}]`, scope)} ---`,
     otherSessions: (n) =>
       `This project has ${n} earlier session${n === 1 ? "" : "s"}: scope:'project' searches ${n === 1 ? "it" : "them"} too; mode:'sessions' lists ${n === 1 ? "it" : "them"}.`,
   };
@@ -79,7 +78,8 @@ export const executeRecall = (
   sessionManager: RecallInput["sessionManager"],
   options: { contextWindow?: number } = {},
 ): string =>
-  recall({ request: parseToolRequest(params), sessionManager, ...options }, toolHints).text;
+  // The agent has its current turn in context, and its question would match itself.
+  recall({ request: parseToolRequest(params), sessionManager, ...options, skipCurrentTurn: true }, toolHints).text;
 
 const numberOrText = { anyOf: [{ type: "number" }, { type: "string" }] };
 const indices = { anyOf: [{ type: "array", items: numberOrText }, { type: "string" }, { type: "number" }] };

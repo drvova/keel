@@ -80,8 +80,8 @@ const indexList = (s: string): number[] | undefined => {
   return (t.match(/\d+/g) ?? []).map(Number);
 };
 
-/** "@01a1", "session:01a1" -> "01a1": how a session id is written in output and by hand. */
-export const sessionRef = (ref: string): string => ref.trim().replace(/^(?:@|session:)/i, "");
+/** "@01a1", "session:01a1", "'01a1'" -> "01a1": how a session id is written in output and by hand. */
+export const sessionRef = (ref: string): string => ref.trim().replace(/^(?:@|session:)/i, "").replace(/^(['"])(.*)\1$/, "$2");
 
 /**
  * Repair argument mistakes whose meaning is certain, in execute(), after the
@@ -98,6 +98,11 @@ export const normalizeToolParams = (raw: unknown): { params: RecallToolParams; d
   const p: Record<string, unknown> = { ...(raw as Record<string, unknown>) };
   const dropped: string[] = [];
   const drop = (key: string, why: string) => { dropped.push(`${key} ${JSON.stringify(p[key])} (${why})`); delete p[key]; };
+  // A param sent empty is not sent: a model that fills in every param must not get an Ignored: note per call.
+  for (const key of Object.keys(p)) {
+    const v = p[key];
+    if (v == null || (typeof v === "string" && v.trim() === "") || (Array.isArray(v) && v.length === 0)) delete p[key];
+  }
 
   for (const key of Object.keys(p)) {
     if (!(RECALL_PARAMS as readonly string[]).includes(key)) drop(key, "not a vcc_recall param");
@@ -238,9 +243,10 @@ export const parseCommandRequest = (args: string): RecallRequest => {
     if (m) text = text.replace(re, " ").replace(/\s+/g, " ").trim();
     return m?.[1];
   };
-  const scope = take(/\bscope:(lineage|all|project)\b/i)?.toLowerCase() as RecallScope | undefined;
+  // Quoted or not: recall's own output writes scope:'all' and session:'id'.
+  const scope = take(/\bscope:['"]?(lineage|all|project)\b['"]?/i)?.toLowerCase() as RecallScope | undefined;
   const session = take(/(?:^|\s)session:(\S+)/i);
-  const page = take(/\bpage:(\d+)\b/i);
+  const page = take(/\bpage:['"]?(\d+)\b['"]?/i);
   const sessions = !session && /^sessions$/i.test(text);
   return requestOf({
     query: sessions ? undefined : text,

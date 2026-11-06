@@ -89,6 +89,10 @@ describe("normalizeToolParams", () => {
     expect(ignoredNote(r).startsWith("Ignored: limit 20 (not a vcc_recall param), page 0")).toBe(true);
   });
 
+  it("reads a param sent empty as not sent, with no Ignored: note", () => {
+    expect(normalizeToolParams({ query: "auth", range: [], scope: "", mode: " ", session: "", expand: null })).toEqual({ params: { query: "auth" }, dropped: [] });
+  });
+
   it("leaves well-formed params untouched", () => {
     const args = { query: "auth", range: [1, 2], expand: [3], page: 2, scope: "all", mode: "touched" };
     expect(normalizeToolParams(args).params).toEqual(args);

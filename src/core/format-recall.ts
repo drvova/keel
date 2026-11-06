@@ -9,6 +9,9 @@ export const withParams = (...params: Array<string | undefined>): string => {
 /** session:'id' for a call into an earlier session; nothing for this one. */
 export const sessionParam = (short?: string): string | undefined => (short ? `session:'${short}'` : undefined);
 
+/** scope:'…' for any scope but the default. */
+export const scopeParam = (scope: string): string | undefined => (scope === "lineage" ? undefined : `scope:'${scope}'`);
+
 /** The one answer for a page past the last of a paged listing. */
 export const outsidePage = (page: number, totalPages: number, what: string): string =>
   `Page ${page} is outside the available range 1-${totalPages} (${what}).`;
