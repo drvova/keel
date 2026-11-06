@@ -93,11 +93,20 @@ const readJson = (path: string): Record<string, unknown> | null => {
 const coerceStringArray = (v: unknown): string[] =>
   Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
 
+/** A switch as written: a boolean, or "true"/"false" in quotes; anything else is not one. */
+const switchOf = (v: unknown): boolean | undefined =>
+  typeof v === "boolean" ? v : typeof v === "string" && /^(true|false)$/i.test(v.trim()) ? v.trim().toLowerCase() === "true" : undefined;
+
 const parseSettings = (parsed: Record<string, unknown> | null): VccSettings => {
-  if (!parsed || typeof parsed !== "object") return { ...DEFAULT_SETTINGS };
-  const merged = { ...DEFAULT_SETTINGS, ...(parsed as Partial<VccSettings>) };
-  // A blind spread would leak a malformed array value (e.g. a bare string,
-  // where .includes becomes substring matching) into the provider check.
+  const merged: VccSettings = { ...DEFAULT_SETTINGS };
+  if (!parsed || typeof parsed !== "object") return merged;
+  // Each value only in its default's type: a blind spread let "debug": "no"
+  // (truthy) turn debug on, and a bare string where a list goes made .includes
+  // a substring match in the provider check.
+  for (const key of Object.keys(DEFAULT_SETTINGS) as Array<keyof VccSettings>) {
+    const on = typeof DEFAULT_SETTINGS[key] === "boolean" ? switchOf(parsed[key]) : undefined;
+    if (on !== undefined) (merged as unknown as Record<string, unknown>)[key] = on;
+  }
   merged.skipForProviders = coerceStringArray(parsed.skipForProviders);
   merged.skipCustomTypes = coerceStringArray(parsed.skipCustomTypes);
   // Blank names would match every command; duplicates would repeat lines.

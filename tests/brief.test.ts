@@ -16,6 +16,7 @@ describe("compileBrief", () => {
       call("vcc_recall", { mode: "sessions" }, 2),
       call("vcc_recall", { expand: "[1, 25]" }, 3),
       call("vcc_recall", { session: "01a19511", range: [28, 34] }, 4),
+      call("vcc_recall", { query: "build tag", page: 2 }, 7),
       call("vcc_pin", { note: "The deploy host has no Redis" }, 5),
       call("vcc_pin", { unpin: 2 }, 6),
     ]);
@@ -23,6 +24,8 @@ describe("compileBrief", () => {
     expect(r).toContain("* vcc_recall mode:sessions (#2)");
     expect(r).toContain("* vcc_recall expand:[1, 25] (#3)");
     expect(r).toContain("* vcc_recall range:[28, 34] session:01a19511 (#4)");
+    // Page 2 is another call than page 1, not a repeat of it.
+    expect(r).toContain(`* vcc_recall "build tag" page:2 (#7)`);
     expect(r).toContain(`* vcc_pin "The deploy host has no Redis" (#5)`);
     expect(r).toContain("* vcc_pin unpin:2 (#6)");
     expect(r).not.toContain("intent text");

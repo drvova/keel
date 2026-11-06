@@ -3,6 +3,7 @@ import { clip } from "./content";
 import { callKind, callSubject } from "./tools";
 import { collapseSkillText } from "./skill-collapse";
 import { PIN_TOOL, RECALL_TOOL } from "../names";
+import { RECALL_PARAMS } from "./recall-request";
 
 const TRUNCATE_USER = 256;
 const SEGMENT_CLOSING_ASSISTANT_HEAD_WORDS = 120;
@@ -224,9 +225,11 @@ const vccToolLine = (name: string, args: Record<string, unknown>): string | unde
   if (name === RECALL_TOOL) {
     const parts: string[] = [];
     if (typeof args.query === "string" && args.query.trim()) parts.push(`"${clip(args.query, 60)}"`);
-    for (const key of ["range", "expand", "mode", "scope", "session"]) {
+    // Every param the tool takes, so a page-2 call is not merged with page 1 as `x2`.
+    for (const key of RECALL_PARAMS) {
       const value = args[key];
-      if (value == null || value === "" || (Array.isArray(value) && value.length === 0)) continue;
+      if (key === "query" || value == null || value === "" || (Array.isArray(value) && value.length === 0)) continue;
+      if (key === "page" && Number(value) === 1) continue;
       parts.push(`${key}:${recallArg(value)}`);
     }
     return parts.length > 0 ? `* ${name} ${parts.join(" ")}` : `* ${name}`;

@@ -76,4 +76,14 @@ describe("settings", () => {
     write(["ssh", "kubectl"]);
     expect(config.load().trackCommands).toEqual(["ssh", "kubectl"]);
   });
+
+  test("a switch is a boolean, or true/false in quotes; any other value leaves the default", () => {
+    const config = openConfig(() => dir);
+    const load = (settings: Record<string, unknown>) => {
+      writeFileSync(join(dir, "omp-vcc-config.json"), JSON.stringify(settings));
+      return config.load();
+    };
+    expect(load({ debug: "no", overrideDefaultCompaction: 0 })).toMatchObject({ debug: false, overrideDefaultCompaction: true });
+    expect(load({ debug: "true", overrideDefaultCompaction: "FALSE", workingSet: false })).toMatchObject({ debug: true, overrideDefaultCompaction: false, workingSet: false });
+  });
 });
