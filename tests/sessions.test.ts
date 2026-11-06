@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, utimesSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { listProjectSessions, resolveSession, type SessionInfo } from "../src/core/sessions";
+import { listProjectSessions, MAX_LISTED_SESSIONS, resolveSession, type SessionInfo } from "../src/core/sessions";
 import { executeRecall } from "../src/tools/recall";
 import { parseCommandRequest, sessionRef } from "../src/core/recall-request";
 import { PIN_ENTRY_TYPE } from "../src/names";
@@ -160,5 +160,28 @@ describe("/omp-vcc-recall arguments", () => {
     expect(parseCommandRequest("sessions").action).toEqual({ kind: "sessions", page: 1 });
     expect(parseCommandRequest("session:aaaa1111 rolled back")).toMatchObject({ session: "aaaa1111", action: { kind: "search", query: "rolled back" } });
     expect(parseCommandRequest("rolled back scope:project")).toMatchObject({ scope: "project", action: { kind: "search", query: "rolled back" } });
+  });
+});
+
+describe("reading an earlier session", () => {
+  it("names it in the follow-up calls it suggests, and finds one older than the listed ones", () => {
+    const d = mkdtempSync(join(tmpdir(), "omp-vcc-sessions-older-"));
+    try {
+      const write1 = { type: "message", id: "w1", parentId: null, timestamp: "2026-10-01T00:00:00.000Z", message: { role: "assistant", content: [{ type: "toolCall", id: "c1", name: "write", arguments: { path: "src/a.ts", content: "export const a = 1;\n" } }] } };
+      const id = (n: number) => `${String(n).padStart(8, "0")}-0000-7000-8000-000000000000`;
+      // The oldest session holds the write; MAX_LISTED_SESSIONS newer ones push it out of the listing.
+      const oldId = "a0a0a0a0-0000-7000-8000-000000000000";
+      write(join(d, `old_${oldId}.jsonl`), [header(oldId, "2026-10-01T00:00:00.000Z"), write1], 1_000);
+      for (let n = 1; n <= MAX_LISTED_SESSIONS; n++) write(join(d, `s_${id(n)}.jsonl`), [header(id(n), "2026-10-02T00:00:00.000Z"), msg("user", `session ${n} here`, null)], 2_000 + n);
+      const cur = join(d, "current.jsonl");
+      write(cur, [header("ffffffff-0000-7000-8000-000000000000", "2026-10-03T00:00:00.000Z")], 9_000);
+      const manager = { getSessionFile: () => cur, getSessionDir: () => d, getBranch: () => [], getEntries: () => [] };
+      const touched = executeRecall({ session: "a0a0", mode: "touched" }, manager);
+      expect(touched).toStartWith("Session a0a0a0a0");
+      expect(touched).toContain("query:'#0:a.ts' with session:'a0a0a0a0'");
+      expect(executeRecall({ mode: "sessions" }, manager)).toContain(`the newest ${MAX_LISTED_SESSIONS} (session:'id' reads an older one)`);
+    } finally {
+      rmSync(d, { recursive: true, force: true });
+    }
   });
 });

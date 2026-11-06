@@ -5,7 +5,7 @@ import { expandEntryFile } from "./drill-down";
 import { EXPAND_DETAIL_CHARS } from "./render-entries";
 import { ignoredNote, type RecallRequest, type RecallScope } from "./recall-request";
 import type { Message } from "@oh-my-pi/pi-ai";
-import { describeSession, listProjectSessions, resolveSession, sessionDirOf, type SessionInfo } from "./sessions";
+import { describeSession, listProjectSessions, MAX_LISTED_SESSIONS, resolveSession, sessionDirOf, type SessionInfo } from "./sessions";
 import { currentBranchIds, type SessionManagerLike } from "./session-file";
 import { toolCallsOf } from "./tools";
 import { DEFAULT_CHARS_PER_TOKEN } from "./token-estimate";
@@ -26,6 +26,8 @@ export interface RecallView {
   /** Set when the view is over one of those earlier sessions instead of the current one. */
   session?: SessionInfo;
   load(full: boolean): LoadedMessages;
+  /** One recall result's cap (recallOutputChars). */
+  maxChars: number;
   /** The message at `#N`, on any branch. */
   message(index: number): Message | undefined;
   /** What expand shows of one call's arguments and of its paired result (expandDetailChars). */
@@ -43,18 +45,27 @@ export interface RecallView {
 /** The project's other session files, listed once per recall call. */
 export interface ProjectSessions {
   dir: string;
-  list(): SessionInfo[];
+  /** The newest MAX_LISTED_SESSIONS; `more` when there are older ones. */
+  list(): SessionInfo[] & { more: boolean };
+  /** Every one: an id older than the listed ones still names its session. */
+  all(): SessionInfo[];
 }
 
 export const projectSessions = (dir: string, currentFile: string): ProjectSessions => {
-  let listed: SessionInfo[] | undefined;
-  return { dir, list: () => (listed ??= listProjectSessions(dir, currentFile)) };
+  let listed: ReturnType<typeof listProjectSessions> | undefined;
+  let all: SessionInfo[] | undefined;
+  return {
+    dir,
+    list: () => (listed ??= listProjectSessions(dir, currentFile)),
+    all: () => (all ??= listProjectSessions(dir, currentFile, Infinity)),
+  };
 };
 
 interface ViewOptions {
   project?: ProjectSessions;
   session?: SessionInfo;
-  detailChars?: number;
+  /** One recall result's cap; expand's clips follow it (expandDetailChars). */
+  maxChars?: number;
   /** The file, read once for every view of it in this call. */
   read?: () => SessionRead;
 }
@@ -82,7 +93,8 @@ export const openRecallView = (
     scope,
     ...(options.project ? { project: options.project } : {}),
     ...(options.session ? { session: options.session } : {}),
-    detailChars: options.detailChars ?? EXPAND_DETAIL_CHARS,
+    maxChars: options.maxChars ?? RECALL_OUTPUT_CHARS,
+    detailChars: expandDetailChars(options.maxChars ?? RECALL_OUTPUT_CHARS),
     load(full) {
       let loaded = cache.get(full);
       if (!loaded) {
@@ -107,14 +119,17 @@ export const openRecallView = (
 };
 
 /** A view over one of the project's earlier sessions, on its own active branch. */
-export const openSessionView = (session: SessionInfo, scope: RecallScope, project?: ProjectSessions, detailChars?: number): RecallView => {
+export const openSessionView = (session: SessionInfo, scope: RecallScope, project?: ProjectSessions, maxChars?: number): RecallView => {
   const read = once(() => readSession(session.file));
   const ids = read().branchIds;
   // A file without entry ids (an old format) has no branch to follow: read all of it.
   const effective = ids.size === 0 ? "all" : scope === "project" ? "lineage" : scope;
   const branch = [...ids].map((id) => ({ id }));
-  return openRecallView(session.file, effective, { getBranch: () => branch }, { project, session, detailChars, read });
+  return openRecallView(session.file, effective, { getBranch: () => branch }, { project, session, maxChars, read });
 };
+
+/** What a follow-up call inside an earlier session adds, so it reads that session again. */
+const inSession = (view: RecallView): string => (view.session ? ` with session:'${view.session.short}'` : "");
 
 /** "Session 01a194d8 · …" line that opens output read from an earlier session. */
 export const sessionHeader = (s: SessionInfo): string => `Session ${describeSession(s)}\n\n`;
@@ -219,15 +234,15 @@ export const recall = (input: RecallInput, surface: RecallSurface): { ok: true; 
   if (!sessionFile) return { ok: false, text: "No session file available.", severity: "error" };
   const project = projectSessions(sessionDirOf(sessionManager, sessionFile), sessionFile);
   const maxChars = recallOutputChars(input.contextWindow);
-  const detailChars = expandDetailChars(maxChars);
   if (request.session) {
-    const target = resolveSession(request.session, project.list());
+    const listed = resolveSession(request.session, project.list());
+    const target = "error" in listed && project.list().more ? resolveSession(request.session, project.all()) : listed;
     if ("error" in target) return { ok: false, text: target.error, severity: "warning" };
     const header = sessionHeader(target);
-    const view = openSessionView(target, request.scope, project, detailChars);
+    const view = openSessionView(target, request.scope, project, maxChars - header.length);
     return { ok: true, text: header + capOutput(ignoredNote(request) + runAction(request, view, surface(target.short)), Math.max(0, maxChars - header.length)) };
   }
-  const view = openRecallView(sessionFile, request.scope, sessionManager, { project, detailChars });
+  const view = openRecallView(sessionFile, request.scope, sessionManager, { project, maxChars });
   return { ok: true, text: capOutput(ignoredNote(request) + runAction(request, view, surface()), maxChars) };
 };
 
@@ -241,7 +256,7 @@ const runAction = (request: RecallRequest, view: RecallView, hints: RecallPaging
       const t = action.target;
       const offPath = !scopeAll && !view.load(false).rendered.some((m) => m.index === t.index);
       return (offPath ? OFF_PATH_NOTE : "") +
-        expandEntryFile(view.message(t.index), t.index, t.pathPattern, t.full, t.offset, t.limit);
+        expandEntryFile(view.message(t.index), t.index, t.pathPattern, t.full, t.offset, t.limit, { maxChars: view.maxChars, via: inSession(view) });
     }
 
     case "touched":
@@ -312,7 +327,7 @@ const runExpand = (indices: number[], view: RecallView): string => {
       if (requested.has(res.index)) continue;
       const clipAt = v.detailChars;
       const summary = res.summary.length > clipAt
-        ? `${res.summary.slice(0, clipAt)}\n...[result of #${entry.index} clipped at ${clipAt} of ${res.summary.length} chars; expand:[${res.index}] for all of it]`
+        ? `${res.summary.slice(0, clipAt)}\n...[result of #${entry.index} clipped at ${clipAt} of ${res.summary.length} chars; expand:[${res.index}]${inSession(v)} for all of it]`
         : res.summary;
       out.push({ ...res, summary });
     }
@@ -391,7 +406,9 @@ const otherSessionsNote = (view: RecallView, hints: RecallPagingHints): string =
 };
 
 const runSearch = (query: string, page: number, view: RecallView, hints: RecallPagingHints, skip?: Set<number>): string => {
-  const { hits, totalBeforeCap, truncated } = searchBefore(view, query, skip);
+  const result = searchBefore(view, query, skip);
+  if (result.aborted) return result.aborted;
+  const { hits, totalBeforeCap, truncated } = result;
   if (hits.length === 0 && view.scope === "lineage") {
     const wide = view.widen();
     if (searchBefore(wide, query, skip).hits.length > 0) {
@@ -448,7 +465,7 @@ const runTouched = (page: number | undefined, view: RecallView): string => {
     const write = [...tf.entries].reverse().find((e) => e.drillable !== false);
     if (!write) continue;
     const name = tf.path.replace(/\\/g, "/").split("/").pop();
-    return `${text}\n--- File content at an entry: query:'#${write.index}:${name}' ---`;
+    return `${text}\n--- File content at an entry: query:'#${write.index}:${name}'${inSession(view)} ---`;
   }
   return text;
 };
@@ -469,9 +486,10 @@ const runSessions = (page: number, view: RecallView): string => {
   const start = (page - 1) * SESSIONS_PAGE_SIZE;
   const lines = sessions.slice(start, start + SESSIONS_PAGE_SIZE).map((s) =>
     `${describeSession(s)}${s.pins.length > 0 ? `\n  pinned: ${s.pins.join("; ")}` : ""}`);
+  const more = view.project?.list().more ? `, the newest ${MAX_LISTED_SESSIONS} (session:'id' reads an older one)` : "";
   const header = totalPages > 1
-    ? `Earlier sessions in this project, newest first, page ${page}/${totalPages} (${sessions.length} sessions):`
-    : `${sessions.length} earlier session${sessions.length === 1 ? "" : "s"} in this project, newest first:`;
+    ? `Earlier sessions in this project, newest first, page ${page}/${totalPages} (${sessions.length} sessions${more}):`
+    : `${sessions.length} earlier session${sessions.length === 1 ? "" : "s"} in this project, newest first${more}:`;
   const next = page < totalPages ? `\n--- Use mode:'sessions' page:${page + 1} for more ---` : "";
   const first = sessions[start].short;
   return `${header}\n\n${lines.join("\n")}\n` +
@@ -512,12 +530,8 @@ const runProjectSearch = (query: string, page: number, view: RecallView, hints: 
     ? "this session (no earlier sessions in this project)"
     : `this session and ${searched} earlier session${searched === 1 ? "" : "s"}${searched < all.length ? ` (the newest ${searched} of ${all.length}; session:'id' reads an older one)` : ""}`;
 
-  let result;
-  try {
-    result = searchEntriesDetailed(rendered, raws, query);
-  } catch (err) {
-    return `${(err as Error).message} Searching ${covered}: narrow the query, or read one session with session:'id' (mode:'sessions' lists them).`;
-  }
+  const result = searchEntriesDetailed(rendered, raws, query);
+  if (result.aborted) return `${result.aborted} Searching ${covered}: narrow the query, or read one session with session:'id' (mode:'sessions' lists them).`;
   const { hits, totalBeforeCap, truncated } = result;
   if (hits.length === 0) return `No matches for "${query}" in ${covered}.`;
   const totalPages = Math.ceil(hits.length / SEARCH_PAGE_SIZE);

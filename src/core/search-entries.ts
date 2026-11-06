@@ -23,6 +23,8 @@ export interface SearchResult {
   totalBeforeCap: number;
   /** True when the hard cap discarded matches (`totalBeforeCap > hits.length`). */
   truncated: boolean;
+  /** Why the search stopped before it finished (its time budget); no hits then. */
+  aborted?: string;
 }
 /** A file touched in one entry — used by mode:touched aggregation. */
 export interface FileTouch {
@@ -109,11 +111,13 @@ const safeRegex = (pattern: string): RegExp => {
  */
 const SEARCH_BUDGET_MS = 3000;
 
+class SearchAborted extends Error {}
+
 const startBudget = (): (() => void) => {
   const deadline = Date.now() + SEARCH_BUDGET_MS;
   return () => {
     if (Date.now() > deadline) {
-      throw new Error(
+      throw new SearchAborted(
         `Search aborted: query exceeded ${SEARCH_BUDGET_MS}ms. Use fewer or more specific words; ` +
         "for a regex, avoid nested quantifiers such as (a+)+.",
       );
@@ -124,12 +128,6 @@ const startBudget = (): (() => void) => {
 /** Detect if the query looks like a single regex pattern (contains regex metacharacters). */
 const looksLikeRegex = (query: string): boolean =>
   /[|*+?{}()[\]\\^$.]/.test(query);
-
-/** Build a regex for snippet highlighting — matches first available term. */
-const snippetRegex = (terms: string[]): RegExp => {
-  const alts = terms.map((t) => safeRegex(t).source);
-  return new RegExp(alts.join("|"), "i");
-};
 
 // ── Stopwords for natural language queries ──
 const STOPWORDS = new Set([
@@ -552,6 +550,20 @@ export const searchEntriesDetailed = (
   query?: string,
   tuning?: SearchTuning,
 ): SearchResult => {
+  try {
+    return search(entries, messages, query, tuning);
+  } catch (err) {
+    if (err instanceof SearchAborted) return { hits: [], totalBeforeCap: 0, truncated: false, aborted: err.message };
+    throw err;
+  }
+};
+
+const search = (
+  entries: RenderedEntry[],
+  messages: Message[],
+  query?: string,
+  tuning?: SearchTuning,
+): SearchResult => {
   if (!query?.trim()) return { hits: entries, totalBeforeCap: entries.length, truncated: false };
 
   const relativeFloor = tuning?.relativeFloor ?? BM25_RELATIVE_FLOOR;
@@ -591,7 +603,6 @@ export const searchEntriesDetailed = (
   // Natural language / multi-word query: BM25 scoring
   const rawTerms = rawQuery.split(/\s+/);
   const terms = filterStopwords(rawTerms);
-  const snipRe = snippetRegex(terms);
 
   // Build all docs for BM25 context
   const docs: string[] = [];
@@ -604,6 +615,8 @@ export const searchEntriesDetailed = (
   }
 
   const compiled = compileTerms(terms);
+  // The snippet shows where a term matched as matching does, its stem included.
+  const snipRe = new RegExp(compiled.map((c) => c.re.source).join("|"), "i");
   const docLens = docs.map(wordCount);
   const ctx = buildBM25Context(docs, docLens, compiled, checkBudget);
 

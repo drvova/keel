@@ -100,19 +100,24 @@ const sameFile = (a: string, b: string): boolean => {
   try { return realpathSync(a) === realpathSync(b); } catch { return a === b; }
 };
 
-/** The project's other sessions, newest first (by last write). */
-export const listProjectSessions = (dir: string, currentFile?: string, limit = MAX_LISTED_SESSIONS): SessionInfo[] => {
+/** The project's other session files, newest first (by last write). */
+const projectFiles = (dir: string, currentFile?: string): string[] => {
   let names: string[];
   try { names = readdirSync(dir); } catch { return []; }
-  const files = names
+  return names
     .filter((n) => n.endsWith(".jsonl"))
     .map((n) => join(dir, n))
     .filter((f) => !currentFile || !sameFile(f, currentFile))
     .map((f) => { try { return { f, mtime: statSync(f).mtimeMs }; } catch { return undefined; } })
     .filter((x): x is { f: string; mtime: number } => !!x)
     .sort((a, b) => b.mtime - a.mtime)
-    .slice(0, limit);
-  return files.map((x) => scanSession(x.f)).filter((s): s is SessionInfo => !!s);
+    .map((x) => x.f);
+};
+
+/** The project's other sessions, newest first, from its newest `limit` session files; `more` when there are older files. */
+export const listProjectSessions = (dir: string, currentFile?: string, limit = MAX_LISTED_SESSIONS): SessionInfo[] & { more: boolean } => {
+  const files = projectFiles(dir, currentFile);
+  return Object.assign(files.slice(0, limit).map(scanSession).filter((s): s is SessionInfo => !!s), { more: files.length > limit });
 };
 
 /** An id prefix ("01a194d8", "01a1", "01a194d8-…"; core/recall-request.ts sessionRef strips "@"/"session:") -> the one session it names, or why not. */

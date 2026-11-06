@@ -520,3 +520,13 @@ describe("searchEntriesDetailed hard result cap", () => {
     expect(r.truncated).toBe(false);
   });
 });
+
+describe("a hit's snippet", () => {
+  it("shows where the term matched, also when only its stem did", () => {
+    const e: RenderedEntry[] = [{ index: 0, role: "assistant", summary: "x" }];
+    const m: Message[] = [{ role: "assistant", content: [{ type: "text", text: `${"filler line\n".repeat(12)}the totals round down here\nlast line` }] } as any];
+    // "rounding" matches "round" by its stem only.
+    const [hit] = searchEntries(e, m, "rounding");
+    expect(hit.snippet).toContain("round down");
+  });
+});
