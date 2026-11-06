@@ -40,9 +40,10 @@ export interface RecallRequest {
   dropped?: string[];
 }
 
-/** vcc_recall's params: the one list of them, for the type, the known keys and the JSON Schema. */
+/** vcc_recall's params: the one list of them, for the known keys, the JSON Schema and the brief; RecallToolParams has a field for each. */
 export const RECALL_PARAMS = ["query", "range", "expand", "page", "scope", "mode", "session"] as const;
 
+/** The params as normalizeToolParams leaves them. */
 export interface RecallToolParams {
   query?: string;
   expand?: number[];
@@ -53,8 +54,11 @@ export interface RecallToolParams {
   session?: string;
 }
 
-/** Where normalizeToolParams records values it had to drop; read by parseToolRequest. */
-const DROPPED_KEY = "_vccDropped";
+// A param added to RECALL_PARAMS without a field here (or a field without the
+// param) fails to compile, instead of being accepted and then not used.
+type RecallParam = (typeof RECALL_PARAMS)[number];
+const sameParams: [RecallParam] extends [keyof RecallToolParams] ? ([keyof RecallToolParams] extends [RecallParam] ? true : never) : never = true;
+void sameParams;
 
 const isScope = (v: unknown): v is RecallScope => (SCOPES as readonly unknown[]).includes(v);
 const isMode = (v: unknown): v is RecallMode => (MODES as readonly unknown[]).includes(v);
@@ -80,22 +84,23 @@ const indexList = (s: string): number[] | undefined => {
 export const sessionRef = (ref: string): string => ref.trim().replace(/^(?:@|session:)/i, "");
 
 /**
- * Repair argument mistakes whose meaning is certain, before the host
- * validates the schema: numbers sent as strings or with a leading #, a single
+ * Repair argument mistakes whose meaning is certain, in execute(), after the
+ * host's schema check let the loose forms through (the schema accepts them,
+ * tools/recall.ts): numbers sent as strings or with a leading #, a single
  * index where a list is expected, a range written as "10-20" or reversed, enum
  * values in the wrong case, and a scope value put in mode. Values that cannot
- * be repaired are removed and listed under DROPPED_KEY, so the output names
- * them instead of the host rejecting the whole call or recall dropping them
+ * be repaired, and keys that are no param, are removed and listed in
+ * `dropped`, so the output names them instead of recall dropping them
  * silently.
  */
-export const normalizeToolParams = (raw: unknown): Record<string, unknown> => {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+export const normalizeToolParams = (raw: unknown): { params: RecallToolParams; dropped: string[] } => {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { params: {}, dropped: [] };
   const p: Record<string, unknown> = { ...(raw as Record<string, unknown>) };
   const dropped: string[] = [];
   const drop = (key: string, why: string) => { dropped.push(`${key} ${JSON.stringify(p[key])} (${why})`); delete p[key]; };
 
   for (const key of Object.keys(p)) {
-    if (!(RECALL_PARAMS as readonly string[]).includes(key) && key !== DROPPED_KEY) drop(key, "not a vcc_recall param");
+    if (!(RECALL_PARAMS as readonly string[]).includes(key)) drop(key, "not a vcc_recall param");
   }
 
   if (p.page !== undefined) {
@@ -141,8 +146,7 @@ export const normalizeToolParams = (raw: unknown): Record<string, unknown> => {
   }
   if (p.query !== undefined && typeof p.query !== "string") drop("query", "not text");
 
-  if (dropped.length > 0) p[DROPPED_KEY] = dropped;
-  return p;
+  return { params: p as RecallToolParams, dropped };
 };
 
 /** What a call names, whichever surface it came from. */
@@ -163,7 +167,7 @@ const ALONE: Record<Exclude<RecallAction["kind"], "search">, string> = {
   sessions: "mode:'sessions' runs alone",
   expand: "expand runs alone; send the rest in a separate call",
   range: "range runs alone; send the rest in a separate call",
-  recent: "page applies to query or range results",
+  recent: "page applies to a query, a range, touched or sessions",
 };
 
 /**
@@ -213,13 +217,13 @@ const requestOf = (parts: RequestParts): RecallRequest => {
   };
 };
 
-/** Tool params (normalizeToolParams' output) -> request. */
-export const parseToolRequest = (params: RecallToolParams): RecallRequest => {
-  const droppedRaw = (params as Record<string, unknown>)[DROPPED_KEY];
+/** The tool's params as the host passed them -> request, the loose forms repaired (normalizeToolParams). */
+export const parseToolRequest = (raw: unknown): RecallRequest => {
+  const { params, dropped } = normalizeToolParams(raw);
   return requestOf({
     ...params,
     range: Array.isArray(params.range) && params.range.length === 2 ? [params.range[0], params.range[1]] : undefined,
-    dropped: Array.isArray(droppedRaw) ? droppedRaw.map(String) : undefined,
+    dropped,
   });
 };
 

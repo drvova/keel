@@ -4,10 +4,10 @@
 // prepareArguments hook, so the schema also accepts the loose forms
 // normalizeToolParams repairs (an index as "#12", a range as "10-20", a scope
 // value in mode, enum values in another case); executeRecall then normalizes
-// them. omp drops unknown keys itself, before execute().
+// them. A key that is no param reaches execute() too, and is named as ignored.
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import type { Binding } from "../host";
-import { normalizeToolParams, parseToolRequest, RECALL_PARAMS, type RecallScope, type RecallToolParams } from "../core/recall-request";
+import { parseToolRequest, RECALL_PARAMS, type RecallScope } from "../core/recall-request";
 import { sessionParam, withParams } from "../core/format-recall";
 import { RANGE_PAGE_SIZE, RECALL_OUTPUT_CHARS, recall, SEARCH_PAGE_SIZE, type RecallInput, type RecallPagingHints } from "../core/recall-run";
 import { SESSION_REF_MIN_CHARS } from "../core/sessions";
@@ -79,7 +79,7 @@ export const executeRecall = (
   sessionManager: RecallInput["sessionManager"],
   options: { contextWindow?: number } = {},
 ): string =>
-  recall({ request: parseToolRequest(normalizeToolParams(params) as RecallToolParams), sessionManager, ...options }, toolHints).text;
+  recall({ request: parseToolRequest(params), sessionManager, ...options }, toolHints).text;
 
 const numberOrText = { anyOf: [{ type: "number" }, { type: "string" }] };
 const indices = { anyOf: [{ type: "array", items: numberOrText }, { type: "string" }, { type: "number" }] };

@@ -31,18 +31,18 @@ export const EXPAND_DETAIL_CHARS = 4000;
 /** omp's per-call intent line, shown in its UI; not an argument of the call. */
 const NOT_ARGUMENTS = new Set(["i"]);
 
-/**
- * The arguments the one-line `name(…)` summary leaves out, for the full view.
- * Search reads every argument, so a hit inside one (a write's content, an
- * edit's new text) is shown by expand too. String values print as written,
- * indented; others as JSON.
- */
 /** How expand clips one call's arguments, and what a follow-up call adds (session:'id' in an earlier session). */
 export interface ExpandDetail {
   chars: number;
   via: string;
 }
 
+/**
+ * The arguments the one-line `name(…)` summary leaves out, for the full view.
+ * Search reads every argument, so a hit inside one (a write's content, an
+ * edit's new text) is shown by expand too. String values print as written,
+ * indented; others as JSON.
+ */
 const fullToolArgs = (calls: ToolCall[], index: number, { chars: maxChars, via }: ExpandDetail): string => {
   const blocks = calls.map((c) => {
     const shown = new Set(callSubject(c)?.keys ?? []);

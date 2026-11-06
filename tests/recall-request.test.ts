@@ -35,11 +35,11 @@ describe("parseToolRequest", () => {
   it("names page without anything to page", () => {
     const r = parseToolRequest({ page: 3 });
     expect(r.action.kind).toBe("recent");
-    expect(ignoredNote(r)).toBe("Ignored: page (page applies to query or range results).\n\n");
+    expect(ignoredNote(r)).toBe("Ignored: page (page applies to a query, a range, touched or sessions).\n\n");
   });
 
   it("with a session, project is named as ignored on either surface", () => {
-    const fromTool = parseToolRequest(normalizeToolParams({ query: "x", scope: "project", session: "@abcd" }) as any);
+    const fromTool = parseToolRequest({ query: "x", scope: "project", session: "@abcd" });
     const fromCommand = parseCommandRequest("x scope:project session:abcd");
     for (const r of [fromTool, fromCommand]) {
       expect(r).toMatchObject({ scope: "lineage", session: "abcd" });
@@ -60,24 +60,24 @@ describe("parseCommandRequest", () => {
 
 describe("normalizeToolParams", () => {
   it("repairs mistakes whose meaning is certain", () => {
-    expect(normalizeToolParams({ expand: ["459", "#460", 461] })).toEqual({ expand: [459, 460, 461] });
-    expect(normalizeToolParams({ expand: 459 })).toEqual({ expand: [459] });
-    expect(normalizeToolParams({ expand: "#12, #15" })).toEqual({ expand: [12, 15] });
-    expect(normalizeToolParams({ range: "10-20" })).toEqual({ range: [10, 20] });
-    expect(normalizeToolParams({ range: "#10..#20" })).toEqual({ range: [10, 20] });
-    expect(normalizeToolParams({ range: ["20", 10] })).toEqual({ range: [10, 20] });
-    for (const range of [[5], 5, "#5", "5"]) expect(normalizeToolParams({ range })).toEqual({ range: [5, 5] });
-    expect(normalizeToolParams({ page: "2" })).toEqual({ page: 2 });
-    expect(normalizeToolParams({ scope: " ALL ", mode: "Touched" })).toEqual({ scope: "all", mode: "touched" });
+    expect(normalizeToolParams({ expand: ["459", "#460", 461] }).params).toEqual({ expand: [459, 460, 461] });
+    expect(normalizeToolParams({ expand: 459 }).params).toEqual({ expand: [459] });
+    expect(normalizeToolParams({ expand: "#12, #15" }).params).toEqual({ expand: [12, 15] });
+    expect(normalizeToolParams({ range: "10-20" }).params).toEqual({ range: [10, 20] });
+    expect(normalizeToolParams({ range: "#10..#20" }).params).toEqual({ range: [10, 20] });
+    expect(normalizeToolParams({ range: ["20", 10] }).params).toEqual({ range: [10, 20] });
+    for (const range of [[5], 5, "#5", "5"]) expect(normalizeToolParams({ range }).params).toEqual({ range: [5, 5] });
+    expect(normalizeToolParams({ page: "2" }).params).toEqual({ page: 2 });
+    expect(normalizeToolParams({ scope: " ALL ", mode: "Touched" }).params).toEqual({ scope: "all", mode: "touched" });
     // seen in a real session: pi rejected the whole call
-    expect(normalizeToolParams({ query: "jpeg flag", mode: "all" })).toEqual({ query: "jpeg flag", scope: "all" });
+    expect(normalizeToolParams({ query: "jpeg flag", mode: "all" }).params).toEqual({ query: "jpeg flag", scope: "all" });
   });
 
   it("drops what it cannot repair and says so", () => {
-    const p = normalizeToolParams({ query: "x", limit: 20, range: [5, 6, 7], expand: "the auth one", scope: "branch", page: 0 });
-    expect(p).toEqual({
-      query: "x",
-      _vccDropped: [
+    const raw = { query: "x", limit: 20, range: [5, 6, 7], expand: "the auth one", scope: "branch", page: 0 };
+    expect(normalizeToolParams(raw)).toEqual({
+      params: { query: "x" },
+      dropped: [
         'limit 20 (not a vcc_recall param)',
         'page 0 (not a page number)',
         'expand "the auth one" (not #N indices)',
@@ -85,13 +85,13 @@ describe("normalizeToolParams", () => {
         'scope "branch" (use \'lineage\', \'all\' or \'project\')',
       ],
     });
-    const r = parseToolRequest(p);
+    const r = parseToolRequest(raw);
     expect(ignoredNote(r).startsWith("Ignored: limit 20 (not a vcc_recall param), page 0")).toBe(true);
   });
 
   it("leaves well-formed params untouched", () => {
     const args = { query: "auth", range: [1, 2], expand: [3], page: 2, scope: "all", mode: "touched" };
-    expect(normalizeToolParams(args)).toEqual(args);
+    expect(normalizeToolParams(args).params).toEqual(args);
   });
 
   it("omp's own validator lets the loose forms through, for normalizeToolParams to repair", () => {
@@ -99,7 +99,7 @@ describe("normalizeToolParams", () => {
     registerRecallTool({ registerTool: (t: any) => { tool = t; } } as any, ompBinding);
     const raw = { query: "jpeg", mode: "all", expand: "459", limit: 20 };
     const args = validateToolArguments(tool, { id: "1", name: "vcc_recall", arguments: raw } as any);
-    expect(normalizeToolParams(args)).toMatchObject({ query: "jpeg", scope: "all", expand: [459], _vccDropped: ["limit 20 (not a vcc_recall param)"] });
+    expect(normalizeToolParams(args)).toMatchObject({ params: { query: "jpeg", scope: "all", expand: [459] }, dropped: ["limit 20 (not a vcc_recall param)"] });
     // A shape no repair could read still fails omp's check before execute().
     expect(() => validateToolArguments(tool, { id: "1", name: "vcc_recall", arguments: { range: { from: 1 } } } as any)).toThrow();
   });

@@ -214,18 +214,6 @@ export const fileWriteOf = (call: Pick<ToolCall, "name" | "args">): FileWrite | 
 };
 
 /**
- * The text a write or edit puts into files: a write's content, each edit's old
- * and new text (or omp's patch diff), a single replace's, an omp edit's `input`.
- */
-export const writtenText = (args: Record<string, unknown>): string => {
-  const parts: (string | undefined)[] = [str(args.content)];
-  for (const e of editEntries(args)) parts.push(oldTextOf(e), newTextOf(e), str(e.diff));
-  if (!Array.isArray(args.edits)) parts.push(oldTextOf(args), newTextOf(args));
-  parts.push(str(args.input));
-  return parts.filter((p): p is string => p !== undefined).map((p) => `${p}\n`).join("");
-};
-
-/**
  * Every string argument of a call, for search: top-level strings and strings
  * one level into arrays (`edits`, `paths`). Unbounded: search applies one
  * budget across all of a message's calls.

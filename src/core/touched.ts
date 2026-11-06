@@ -2,7 +2,7 @@
 // the entries that changed it, a page at a time.
 import type { LoadedEntry } from "./load-messages";
 import { outsidePage } from "./format-recall";
-import { callKind, filesOf, fileWriteOf, toolCallsOf, writtenText } from "./tools";
+import { callKind, filesOf, fileWriteOf, toolCallsOf } from "./tools";
 
 const TOUCHED_PAGE_SIZE = 5;
 
@@ -19,17 +19,13 @@ interface TouchedFile {
   entries: FileTouch[];
 }
 
-/**
- * The files a message's writes and edits change, each with the lines the call
- * carries and whether the drill-down can show them (`#N:path`).
- */
-const fileIndicators = (message: unknown): { toolName: string; path: string; lineCount: number; drillable: boolean }[] =>
+/** The files a message's writes and edits change, each with whether the drill-down can show it (`#N:path`). */
+const fileIndicators = (message: unknown): { toolName: string; path: string; drillable: boolean }[] =>
   toolCallsOf(message).flatMap((call) => {
     const kind = callKind(call);
     if (kind !== "write" && kind !== "edit") return [];
-    const lineCount = writtenText(call.args).split("\n").filter((l) => l.trim().length > 0).length;
     const drillable = fileWriteOf(call) !== undefined;
-    return filesOf(call).map((path) => ({ toolName: call.name, path, lineCount, drillable }));
+    return filesOf(call).map((path) => ({ toolName: call.name, path, drillable }));
   });
 
 /** Every file the entries change, first changed first, with the entries that changed it. */

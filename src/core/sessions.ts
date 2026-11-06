@@ -21,7 +21,6 @@ export interface SessionInfo {
   short: string;
   /** Header timestamp (session start), ISO. */
   started?: string;
-  modifiedMs: number;
   bytes: number;
   messages: number;
   title?: string;
@@ -91,7 +90,6 @@ const scanSession = (file: string): SessionInfo | undefined => {
     id: header.id,
     short: header.id.replace(/-/g, "").slice(0, 8),
     started: typeof header.timestamp === "string" ? header.timestamp : undefined,
-    modifiedMs: stat.mtimeMs,
     bytes: stat.size,
     messages,
     ...(title ? { title: clip(title, 80) } : {}),

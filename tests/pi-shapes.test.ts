@@ -15,7 +15,7 @@ import { toSummaryMessage } from "../src/compaction/summary-input";
 import { normalize } from "../src/core/normalize";
 import { extractFiles } from "../src/extract/files";
 import { touchedFiles } from "../src/core/touched";
-import { fileWriteOf, writtenText } from "../src/core/tools";
+import { fileWriteOf } from "../src/core/tools";
 import { openConfig } from "../src/core/settings";
 import { bind, MANUAL_TRIGGER, PI_HOST } from "../src/host";
 
@@ -72,9 +72,8 @@ describe.skipIf(!piInstalled())("Pi shapes", () => {
     const args = { path: "src/money.ts", edits: [{ oldText: "floor + 1 : floor", newText: "floor : floor + 1" }, { oldText: "a", newText: "b" }] };
     const edit: any = { role: "assistant", content: [{ type: "toolCall", id: "t", name: "edit", arguments: args }] };
 
-    test("is a change: listed as modified, drillable in mode:'touched', its text searchable", () => {
+    test("is a change: listed as modified, drillable in mode:'touched'", () => {
       expect(fileWriteOf({ name: "edit", args })?.edits).toHaveLength(2);
-      expect(writtenText(args)).toContain("floor : floor + 1");
       const files = extractFiles([{ kind: "tool_call", name: "edit", args } as any]);
       expect([...files.modified]).toEqual(["src/money.ts"]);
       const touched = touchedFiles([{ entry: { index: 4, role: "assistant", summary: "" }, message: edit }]);

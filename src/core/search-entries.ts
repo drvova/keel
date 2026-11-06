@@ -8,8 +8,6 @@ import { RECALL_TOOL } from "../names";
 export interface SearchHit extends RenderedEntry {
   /** Context snippet around the first matched term (only when query provided) */
   snippet?: string;
-  /** Number of query terms matched (for ranking) */
-  matchCount?: number;
 }
 
 /** Result of a search, with enough metadata for a caller to report truncation honestly. */
@@ -206,7 +204,7 @@ interface BM25Context {
   n: number;         // total docs
   avgDl: number;     // average doc length (words)
   df: Map<string, number>; // term -> number of docs containing it
-  /** Per doc, the terms it contains: found once here, reused for matchCount and scoring. */
+  /** Per doc, the terms it contains: found once here, reused for scoring. */
   matched: Term[][];
 }
 
@@ -332,10 +330,9 @@ const toolCallArgsText = (msg: Message): string => {
  * The recall tool's own toolResult is excluded (searchable text ""): it
  * echoes back `N matches for "<query>"` from the *previous* recall call, so
  * indexing it would make a repeated query self-match and grow with every
- * search. This only affects search indexing — browse/no-query returns
- * entries before fullText runs (see `search`), and #N expand reads
- * the message/entry directly, not through this function, so the toolResult
- * is still fully visible there.
+ * search. This only affects search indexing: #N expand reads the message
+ * directly, not through this function, so the toolResult is still fully
+ * visible there.
  */
 const fullText = (msg: Message): string => {
   if ((msg as any).role === "bashExecution") {
@@ -518,7 +515,7 @@ const search = (
     const hits: SearchHit[] = [];
     for (let i = 0; i < entries.length; i++) {
       checkBudget();
-      if (regex.test(docs[i])) hits.push({ ...entries[i], snippet: lineSnippet(texts[i], regex), matchCount: 1 });
+      if (regex.test(docs[i])) hits.push({ ...entries[i], snippet: lineSnippet(texts[i], regex) });
     }
     if (hits.length > 0) return capHits(hits, cap);
   }
@@ -538,13 +535,12 @@ const search = (
     const e = entries[i];
     const hay = docs[i];
     const here = ctx.matched[i];
-    const mc = here.length;
-    if (mc === 0) continue;
+    if (here.length === 0) continue;
     // Terms absent from the doc add 0, so scoring only the matched ones gives the same sum in the same order.
     const score = bm25Score(hay, docLens[i], here, ctx);
     const snip = lineSnippet(texts[i], snipRe);
     scored.push({
-      hit: { ...e, snippet: snip, matchCount: mc },
+      hit: { ...e, snippet: snip },
       score,
     });
   }

@@ -5,7 +5,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { join } from "path";
 import { homedir } from "os";
 import { applyTailBudget, buildOwnCut, registerHook } from "./support/host";
-import { callKind, fileWriteOf, namedPaths, readsPart, stripReadSelector, writtenText } from "../src/core/tools";
+import { callKind, fileWriteOf, namedPaths, readsPart, stripReadSelector } from "../src/core/tools";
 import { extractFiles } from "../src/extract/files";
 import { renderMessage } from "../src/core/render-entries";
 import { touchedFiles } from "../src/core/touched";
@@ -118,10 +118,9 @@ describe("omp tool shapes", () => {
 describe("omp's replace edit (old_string/new_string)", () => {
   const edit: any = { role: "assistant", content: [{ type: "toolCall", id: "t", name: "edit", arguments: { path: "src/money.ts", old_string: "floor + 1 : floor", new_string: "floor : floor + 1" } }] };
 
-  test("is a change: listed and drillable in mode:'touched', its text searchable", () => {
+  test("is a change: listed and drillable in mode:'touched'", () => {
     const call = { name: "edit", args: edit.content[0].arguments };
     expect(fileWriteOf(call)).toEqual({ path: "src/money.ts", replace: { oldText: "floor + 1 : floor", newText: "floor : floor + 1" } });
-    expect(writtenText(call.args)).toBe("floor + 1 : floor\nfloor : floor + 1\n");
     const touched = touchedFiles([{ entry: { index: 4, role: "assistant", summary: "" }, message: edit }]);
     expect(touched[0].entries).toEqual([{ index: 4, toolName: "edit" }]);
   });
