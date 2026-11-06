@@ -43,9 +43,8 @@ const userLine = (text: string, sourceIndex?: number): string => {
 
 /**
  * What the user wrote, oldest first, verbatim and clipped (a clipped one ends
- * with `… (#N)`). Messages the
- * user did not write (`injected`) are left out. No wording is interpreted, so this works
- * the same in every language.
+ * with `… (#N)`). Messages the user did not write (`injected`) are left out.
+ * No wording is interpreted, so this works the same in every language.
  */
 export const extractUserMessages = (blocks: NormalizedBlock[]): string[] => {
   const lines: string[] = [];

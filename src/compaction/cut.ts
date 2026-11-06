@@ -110,7 +110,7 @@ export function buildOwnCut(
   if (liveMessages.length <= 2) return { ok: false, reason: "too_few_live_messages" };
   // A window with nothing renderable compiles to "" whichever cut is chosen, so
   // the hook would store an empty summary while keeping everything. Treat it as
-  // nothing to compact — include it in compactAll, declare it empty.
+  // nothing to compact.
   if (!prefixHasRenderableContent(liveMessages, skipCustomTypes, convert)) return { ok: false, reason: "no_live_messages" };
 
   const userIndices = liveMessages.reduce<number[]>((acc, e, i) => {
@@ -146,10 +146,10 @@ export function buildOwnCut(
   // A prefix that renders no block would compile to "", storing an empty summary
   // while keeping every message: context never shrinks and the next agent_end
   // re-triggers compaction indefinitely. A role:"system" entry renders nothing
-  // (omp's convertToLlm drops it), so when it alone precedes the first user
-  // message the prefix is empty; a custom_message listed in skipCustomTypes does
-  // the same. Fall back
-  // to compact-all, the same path already used when no safe boundary exists;
+  // (omp's convertToLlm drops it; Pi's passes it through and normalize skips
+  // it), so when it alone precedes the first user message the prefix is empty;
+  // a custom_message listed in skipCustomTypes does the same. Fall back to
+  // compact-all, the same path already used when no safe boundary exists;
   // applyTailBudget then decides the tail.
   if (!prefixHasRenderableContent(liveMessages.slice(0, cutIdx), skipCustomTypes, convert)) return compactAll(true);
 
@@ -313,8 +313,7 @@ export const applyTailBudget = (
     return cut;
   }
 
-  // Case B: oversized user-boundary tail. Only re-cut when the kept tail exceeds
-  // maxTokens * factor (tolerance zone below is unchanged).
+  // Case B: oversized user-boundary tail.
   const tailStart = cut.messages.length; // equals the cut index in the live window
   let tailTokens = 0;
   for (let i = tailStart; i < live.length; i++) {
@@ -326,15 +325,12 @@ export const applyTailBudget = (
   return budgetResult(idx, "oversized_tail");
 };
 
-// ── smart keep-tail: boost default keep when tail is small ──
-
 export interface ResolveSmartKeepOptions {
   branchEntries: any[];
   /** Requested keep:N; null when user did not specify (default path). */
   requestedKeepUserTurns: number | null;
   /** True when user typed keep:N explicitly — always respected. */
   explicit: boolean;
-  /** Setting toggle. */
   smartKeepTail: boolean;
   /** The budgets' minTailTokens and maxTailTokens. */
   minTokens: number;
@@ -352,10 +348,9 @@ interface ResolveSmartKeepResult {
 }
 
 /**
- * Estimate tail tokens for a given keep:N.
- * Returns null when keep would trigger compact-all (tail lost) or cancel,
- * so the resolver can stop growing instead of selecting a value that
- * discards the tail entirely.
+ * Null when keep:N would trigger compact-all (tail lost) or cancel, so the
+ * resolver can stop growing instead of selecting a value that discards the
+ * tail entirely.
  */
 const tailTokensForKeep = (
   branchEntries: any[],

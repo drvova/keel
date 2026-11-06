@@ -11,9 +11,9 @@ const COMMIT_MSG_RE = /git\s+commit[^\n]*?\s-[A-Za-z]*m\s+(?:"((?:[^"\\]|\\.)*)"
 // A file path after -F cannot be read from the transcript, so it is not matched.
 const STDIN_HEREDOC_COMMIT_RE =
   /git\s+commit[^\n]*?(?:\s-[A-Za-z]*F|\s--file)(?:\s+|=)-(?=\s)[^\n]*?<<-?\s*(?:'([^']+)'|"([^"]+)"|([A-Za-z_]\w*))[^\n]*(?:\r?\n|\\n)/;
-// A line that is only a hash, as `git rev-parse --short HEAD` prints it. It must
-// contain a letter: a bare number on its own line (a count, a random tag) is far
-// more often output of something else.
+// A line that is only a hash, as `git rev-parse --short HEAD` prints it. It
+// counts only with a letter in it (hashFromResults checks): a bare number on its
+// own line (a count, a random tag) is far more often output of something else.
 const LONE_HASH_LINE_RE = /^\s*([0-9a-f]{7,40})\s*$/;
 
 const cleanMessage = (msg: string): string =>

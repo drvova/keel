@@ -1,6 +1,6 @@
-// vcc_pin and the pin commands: the text the agent reads, vcc_pin's JSON Schema, and
-// what a call does. unpin also takes "#3"; omp has no prepareArguments, so
-// executePin reads either form.
+// vcc_pin: the text the agent reads, its JSON Schema, and what a call does.
+// unpin also takes "#3"; omp has no prepareArguments, so the schema takes a
+// number or a string and removePin (core/pins.ts) reads either form.
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import type { HostProfile } from "../host";
 import { addPin, listPins, PIN_CHARS, removePin, type PinHost, type PinSession } from "../core/pins";

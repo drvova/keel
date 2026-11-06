@@ -24,8 +24,6 @@ const toLlmSafe = (message: unknown, convert: ConvertToLlm): any[] => {
 
 /**
  * One live message as the summarizer reads it, or null when it adds nothing.
- * The single mapping behind both the summary input and the "would the prefix
- * render" check, so the two cannot disagree.
  *
  * - A user-run `!cmd` (bashExecution) and omp's user-run python cell stay as they
  *   are: the brief shows each as one line, with the output behind `vcc_recall`.
@@ -82,7 +80,8 @@ export const summaryInputOf = (
 /** True when the prefix would contribute at least one block to the summary.
  * Runs the same path as the summarizer (skipCustomTypes filter, toSummaryMessage,
  * normalize): custom_message and branch_summary become user content and render,
- * while role "system" passes through unchanged and renders nothing. */
+ * while role "system" renders nothing (omp's convertToLlm drops it; Pi's passes
+ * it through and normalize skips it). */
 export const prefixHasRenderableContent = (
   prefix: EntryWithMessage[],
   skipCustomTypes: readonly string[],

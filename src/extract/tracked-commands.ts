@@ -73,7 +73,7 @@ const skipToCommand = (cmd: string, pos: number): number => {
       if (!flag.startsWith("-")) break;
       pos = fat + flag.length;
       if (WRAPPER_VALUE_FLAGS[tok]?.test(flag)) {
-        const [value, vat] = tokenAt(cmd, pos); // consume the flag's value
+        const [value, vat] = tokenAt(cmd, pos);
         pos = vat + value.length;
       }
     }

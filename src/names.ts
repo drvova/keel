@@ -3,7 +3,6 @@
 
 /** The recall tool, named in the summary, in hints and in omp's placeholders. */
 export const RECALL_TOOL = "vcc_recall";
-/** The pin tool. */
 export const PIN_TOOL = "vcc_pin";
 
 /** Custom entries that hold a pin or unpin (core/pins.ts): in the session file, never in the model's context. */

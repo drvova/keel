@@ -39,7 +39,6 @@ const RECALL_TOOL_DESCRIPTION = [
   `One result is capped at ${Math.round(RECALL_OUTPUT_CHARS / 1024)} KB (less on a small context window).`,
 ].join("\n");
 
-/** Per-parameter descriptions, one per RECALL_PARAMS entry. */
 const RECALL_PARAM_DESCRIPTIONS: Record<(typeof RECALL_PARAMS)[number], string> = {
   query: "What to recall, in plain keywords (e.g. 'redis cache decision'). Multi-word queries are ranked by relevance. A regex pattern also works. '#N:path' instead shows a file's content from entry N.",
   range: `[from, to]: every entry from #from to #to (inclusive) in order, ${RANGE_PAGE_SIZE} per page. #N is the number in summary refs like (#12) and in recall results.`,

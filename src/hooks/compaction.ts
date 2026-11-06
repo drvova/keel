@@ -114,8 +114,8 @@ const REASON_MESSAGES: Record<OwnCutCancelReason, string> = {
 };
 
 /**
- * Register the compaction hook on `pi`. omp binds the factory once per session
- * (subagents too), so each binding passes its own `state`.
+ * omp binds the factory once per session (subagents too), so each binding
+ * passes its own `state`.
  */
 export const registerCompactionHook = (
   pi: ExtensionAPI,
@@ -145,8 +145,6 @@ export const registerCompactionHook = (
     const settings = host.config.load();
     const previousSummary = typeof preparation.previousSummary === "string" ? preparation.previousSummary : undefined;
 
-    // Always handle the /omp-vcc marker.
-    // Otherwise, only handle when user opted in via settings.
     const { fromCommand, keepUserTurns, keepUserTurnsExplicit, followUpPrompt } = parseInstructions(customInstructions);
     state.pendingFollowUpPrompt = null;
     if (!fromCommand && !settings.overrideDefaultCompaction) return;
