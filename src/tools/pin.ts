@@ -1,8 +1,9 @@
-// vcc_pin and /omp-vcc-pin: the text the agent reads, vcc_pin's JSON Schema, and
+// vcc_pin and the pin commands: the text the agent reads, vcc_pin's JSON Schema, and
 // what a call does. unpin also takes "#3"; omp has no prepareArguments, so
 // executePin reads either form.
 import { lastIndex } from "../core/session-file";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+import type { HostProfile } from "../host";
 import {
   formatPin,
   formatPinList,
@@ -17,7 +18,8 @@ import { PIN_ENTRY_TYPE, PIN_TOOL } from "../names";
 
 export const PIN_TOOL_LABEL = "VCC Pin";
 
-export const PIN_TOOL_DESCRIPTION = [
+/** What the agent reads about vcc_pin; `command` is omp-vcc's command prefix on the host. */
+export const pinToolDescription = (command: string): string => [
   "Pin a short note that must survive every compaction: a decision and its reason, a constraint, a fact",
   "the rest of the task depends on. Pinned notes are kept verbatim at the top of every summary until",
   "unpinned; everything else in a summary ages out on a long task.",
@@ -26,7 +28,7 @@ export const PIN_TOOL_DESCRIPTION = [
   "- unpin: the [N] of a note that no longer holds.",
   "- neither: list the pinned notes.",
   "",
-  "Pin sparingly, what you would need if you lost the conversation; the user pins with /omp-vcc-pin.",
+  `Pin sparingly, what you would need if you lost the conversation; the user pins with /${command}-pin.`,
 ].join("\n");
 
 export const PIN_PARAM_DESCRIPTIONS = {
@@ -100,11 +102,11 @@ export const PIN_PARAMETERS = {
   },
 } as const;
 
-export const registerPinTool = (pi: ExtensionAPI) => {
+export const registerPinTool = (pi: ExtensionAPI, host: Pick<HostProfile, "command">) => {
   pi.registerTool({
     name: PIN_TOOL,
     label: PIN_TOOL_LABEL,
-    description: PIN_TOOL_DESCRIPTION,
+    description: pinToolDescription(host.command),
     parameters: PIN_PARAMETERS,
     loadMode: "essential",
     // It writes only omp-vcc's own session entry, not the workspace.

@@ -1,5 +1,6 @@
 // vcc_recall keeps the originals of what omp rewrites in the session file
 // (src/core/raw-store.ts, src/hooks/raw-capture.ts), with no omp setting changed.
+import { OMP_HOST } from "../src/host";
 import { sessionLineage } from "../src/core/session-file";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
@@ -66,7 +67,7 @@ describe("what is kept", () => {
 describe("with omp's own session manager", () => {
   const recallOn = async (sm: any, params: Record<string, unknown>) => {
     let tool: any;
-    registerRecallTool({ registerTool: (t: any) => { tool = t; } } as any);
+    registerRecallTool({ registerTool: (t: any) => { tool = t; } } as any, OMP_HOST);
     const result = await tool.execute("call", params, undefined, undefined, { sessionManager: sm });
     return result.content[0].text as string;
   };
@@ -225,7 +226,7 @@ describe("a fork reads its parent's originals", () => {
     expect(captureNewEntries(state, sm)).toBe(0);
 
     let tool: any;
-    registerRecallTool({ registerTool: (t: any) => { tool = t; } } as any);
+    registerRecallTool({ registerTool: (t: any) => { tool = t; } } as any, OMP_HOST);
     const found = (await tool.execute("f", { query: "pelican healthcheck" }, undefined, undefined, { sessionManager: sm })).content[0].text;
     expect(found).toContain("deploy aborted: pelican-7 healthcheck timed out");
   });

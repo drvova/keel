@@ -1,3 +1,4 @@
+import { OMP_HOST } from "../src/host";
 import { describe, it, expect } from "bun:test";
 import { mkdtempSync, writeFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
@@ -35,7 +36,7 @@ const register = () => {
       sent.push(msg);
     },
   } as any;
-  registerVccRecallCommand(pi);
+  registerVccRecallCommand(pi, OMP_HOST);
   return { handler: handler!, sent };
 };
 

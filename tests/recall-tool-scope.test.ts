@@ -1,3 +1,4 @@
+import { OMP_HOST } from "../src/host";
 import { describe, it, expect } from "bun:test";
 import { mkdtempSync, writeFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
@@ -17,7 +18,7 @@ const makeSession = () => {
 
 const register = () => {
   let tool: any;
-  registerRecallTool({ registerTool: (t: any) => { tool = t; } } as any);
+  registerRecallTool({ registerTool: (t: any) => { tool = t; } } as any, OMP_HOST);
   return tool;
 };
 

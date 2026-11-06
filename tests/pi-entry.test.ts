@@ -110,6 +110,10 @@ describe.skipIf(!piInstalled())("Pi entry", () => {
     expect([...pi.handlers.keys()].sort()).toEqual(["agent_settled", "message_end", "session_before_compact", "session_compact"]);
     expect([...pi.commands.keys()].sort()).toEqual(["pi-vcc", "pi-vcc-pin", "pi-vcc-recall", "pi-vcc-unpin"]);
     expect(pi.tools.map((t: any) => t.name)).toEqual(["vcc_recall", "vcc_pin"]);
+    // The tools name Pi's commands: vcc_pin told the agent the user pins with /omp-vcc-pin.
+    const pin = pi.tools.find((t: any) => t.name === "vcc_pin");
+    expect(pin.description).toContain("/pi-vcc-pin");
+    expect(pin.description).not.toContain("omp-vcc");
   });
 
   test("the trigger is the one Pi's event carries, and the budgets are sized for Pi's own threshold", async () => {

@@ -2,6 +2,7 @@ import type { CompactionReason } from "./types";
 import type { HistoryRange } from "./core/history-index";
 import type { SummaryState } from "./core/summary-state";
 import { COMPACTOR, LEGACY_COMPACTOR } from "./names";
+import type { HostName } from "./host";
 
 /** Compactions stored before the rename say "pi-vcc"; both are read as this extension's. */
 export type VccCompactor = typeof COMPACTOR | typeof LEGACY_COMPACTOR;
@@ -26,7 +27,7 @@ export interface VccCompactionDetails {
   /** The window and trigger the budgets were sized from (core/window.ts). */
   limits?: {
     contextWindow?: number;
-    windowSource?: "omp" | "pi" | "overflow-error" | "unknown";
+    windowSource?: HostName | "overflow-error" | "unknown";
     trigger?: number;
     /** System prompt and tools, which a compaction cannot remove. */
     overheadTokens?: number;

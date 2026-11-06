@@ -1,5 +1,6 @@
 // /omp-vcc's argument handling and what it reports, against a fake omp API.
 // tests/omp-entry.test.ts covers the command wired to the hook through index.ts.
+import { OMP_HOST } from "../src/host";
 import { describe, expect, test } from "bun:test";
 import { registerOmpVccCommand } from "../src/commands/omp-vcc";
 import { createCompactionState, OMP_VCC_COMPACT_INSTRUCTION } from "../src/hooks/compaction";
@@ -44,7 +45,7 @@ function createHarness(sendUserMessage?: (content: string | unknown[]) => unknow
     },
   };
 
-  registerOmpVccCommand(pi, state);
+  registerOmpVccCommand(pi, state, OMP_HOST);
 
   return {
     invoke: async (args = "") => handler!(args, ctx),

@@ -186,21 +186,18 @@ export const piAutoCompacts = (policy: PiCompactionPolicy | undefined): boolean 
  * compacts next, so the rule is the host's, never a guess.
  */
 export interface TriggerRule {
-  host: "omp" | "pi";
   policyOf(settings: unknown): object | undefined;
   trigger(window: number, policy?: object): number;
   autoCompacts(policy: object | undefined): boolean;
 }
 
 export const OMP_TRIGGER_RULE: TriggerRule = {
-  host: "omp",
   policyOf: ompPolicyOf,
   trigger: (window, policy) => ompTrigger(window, policy as OmpCompactionPolicy | undefined),
   autoCompacts: (policy) => ompAutoCompacts(policy as OmpCompactionPolicy | undefined),
 };
 
 export const PI_TRIGGER_RULE: TriggerRule = {
-  host: "pi",
   policyOf: piPolicyOf,
   trigger: (window, policy) => piTrigger(window, policy as PiCompactionPolicy | undefined),
   autoCompacts: (policy) => piAutoCompacts(policy as PiCompactionPolicy | undefined),

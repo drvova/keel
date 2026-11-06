@@ -1,3 +1,4 @@
+import { OMP_HOST } from "../src/host";
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import { mkdtempSync, writeFileSync, rmSync } from "fs";
 import { createHash } from "crypto";
@@ -49,7 +50,7 @@ afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
 const recall = async (params: Record<string, unknown>) => {
   let tool: any;
-  registerRecallTool({ registerTool: (t: any) => { tool = t; } } as any);
+  registerRecallTool({ registerTool: (t: any) => { tool = t; } } as any, OMP_HOST);
   const result = await tool.execute("call", params, undefined, undefined, {
     sessionManager: { getSessionFile: () => file, getBranch: () => ids.map((id) => ({ id })), getEntries: () => ids.map((id) => ({ id })) },
   });

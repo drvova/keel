@@ -3,8 +3,9 @@
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { learnedWindow, modelKey, recordLearnedWindow, type ModelLike } from "../core/model-limits";
 import { loadSettings } from "../core/settings";
-import { effectiveWindow, limitFromOverflowError, OMP_TRIGGER_RULE, type TriggerRule } from "../core/window";
-import { OMP_HOST, type HostName, type HostProfile } from "../host";
+import { effectiveWindow, limitFromOverflowError, type TriggerRule } from "../core/window";
+import { compactAndWait, type HostName, type HostProfile } from "../host";
+import { isRecoveryReason, type CompactionReason } from "../types";
 import type { CompactionState } from "./compaction";
 
 export interface WindowInfo {
@@ -17,7 +18,7 @@ export interface WindowInfo {
   source: HostName | "overflow-error" | "unknown";
 }
 
-export const windowOf = (model: ModelLike | undefined, hostName: HostName = "omp"): WindowInfo => {
+export const windowOf = (model: ModelLike | undefined, hostName: HostName): WindowInfo => {
   const host = typeof model?.contextWindow === "number" && model.contextWindow > 0 ? model.contextWindow : undefined;
   const learned = learnedWindow(modelKey(model));
   const effective = effectiveWindow(host, learned);
@@ -50,16 +51,16 @@ export const triggerFor = (
   w: WindowInfo,
   state: CompactionState,
   key: string | undefined,
-  reason: string,
+  reason: CompactionReason,
   tokensBefore: number | undefined,
-  policy?: object,
-  rule: TriggerRule = OMP_TRIGGER_RULE,
+  policy: object | undefined,
+  rule: TriggerRule,
 ): number | undefined => {
   const before = typeof tokensBefore === "number" && tokensBefore > 0 ? tokensBefore : undefined;
   if (policy) state.hostPolicy = { key, policy };
   const known = policy ?? knownHostPolicy(state, key);
   const bounded = (t: number | undefined) =>
-    (reason === "overflow" || reason === "incomplete") && before ? (t ? Math.min(t, before) : before) : t;
+    isRecoveryReason(reason) && before ? (t ? Math.min(t, before) : before) : t;
   if (hostOverestimates(w)) return bounded(rule.trigger(w.effective!, known));
   if (known && w.effective) return bounded(rule.trigger(w.effective, known));
   if (reason === "threshold" && before && key) {
@@ -75,7 +76,7 @@ export const triggerFor = (
  * own trigger on a model whose window the host overestimates (the host would
  * only notice at the overflow).
  */
-export const registerWindowTracking = (pi: ExtensionAPI, state: CompactionState, host: HostProfile = OMP_HOST): void => {
+export const registerWindowTracking = (pi: ExtensionAPI, state: CompactionState, host: HostProfile): void => {
   // One compaction of omp-vcc's own at a time, per binding.
   let scheduled = false;
 
@@ -126,12 +127,7 @@ export const registerWindowTracking = (pi: ExtensionAPI, state: CompactionState,
       try {
         if (ctx.isIdle?.() === false) return done();
         state.selfTrigger = { reason: "threshold", willRetry: false };
-        // omp's compact() settles with the compaction; Pi's starts it and reports through the callbacks.
-        const settled = new Promise<void>((resolve) => {
-          const r = ctx.compact({ onComplete: () => resolve(), onError: () => resolve() });
-          if (r && typeof r.then === "function") Promise.resolve(r).then(() => resolve(), () => resolve());
-        });
-        void settled.catch(() => {}).finally(done);
+        void compactAndWait(ctx).finally(done);
       } catch {
         done();
       }

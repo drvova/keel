@@ -4,8 +4,8 @@
 import { normalize } from "../core/normalize";
 import { UNSUMMARIZED_MESSAGE_TYPES } from "../names";
 
-/** The host's convertToLlm (omp's from `pi.pi`, Pi's from its package). */
-export type ConvertToLlm = (messages: any[]) => any[];
+import type { ConvertToLlm } from "../host";
+export type { ConvertToLlm } from "../host";
 
 export interface EntryWithMessage {
   entry: { id: string; type: string };

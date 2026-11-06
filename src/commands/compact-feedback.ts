@@ -1,6 +1,7 @@
 // What omp-vcc's commands tell the user, and what /omp-vcc says once a
 // compaction it asked for ends.
 import { afterReset, type SessionManagerLike } from "../core/session-file";
+import type { HostProfile } from "../host";
 import { formatCompactionStats, scheduleCompactionStatsNotify, type CompactionStats } from "../compaction/stats";
 
 export interface NotifyCtx {
@@ -54,7 +55,7 @@ export const reportCompactDone = (
  * Why a compaction /omp-vcc asked for did not happen. `cancelNotice` is the
  * hook's own reason when it cancelled; where there is a UI it was shown already.
  */
-export const reportCompactError = (ctx: NotifyCtx, err: Error, cancelNotice?: string | null, hostName: "omp" | "Pi" = "omp"): void => {
+export const reportCompactError = (ctx: NotifyCtx, err: Error, cancelNotice: string | null | undefined, hostName: HostProfile["displayName"]): void => {
   if (err.message === "Compaction cancelled" && cancelNotice) {
     if (ctx.hasUI === false) tell(ctx, cancelNotice, "warning");
   } else if (err.message === "Already compacted") {

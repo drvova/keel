@@ -12,14 +12,16 @@ import {
 } from "../../src/compaction/cut";
 import { toSummaryMessage } from "../../src/compaction/summary-input";
 import type { CompactionStats } from "../../src/compaction/stats";
-import { createOmpCompactionHost, trackOmpCompactionTrigger } from "../../src/hooks/omp-host";
+import { ompHost } from "../../src/hooks/omp-host";
+import { MANUAL_TRIGGER, OMP_HOST } from "../../src/host";
 import { normalize } from "../../src/core/normalize";
 import type { CompactionReason } from "../../src/types";
 
 /** omp's convertToLlm, as pi.pi.convertToLlm hands it to the hook. */
 export const ompConvertToLlm = (messages: any[]): any[] => convertToLlm(messages);
 
-export const testHost: CompactionHost = { convertToLlm: ompConvertToLlm };
+/** omp, every compaction a manual one. */
+export const testHost: CompactionHost = { ...OMP_HOST, convertToLlm: ompConvertToLlm, triggerOf: () => MANUAL_TRIGGER };
 
 /** The blocks the summarizer gets for these messages: the hook's toSummaryMessage, then normalize. */
 export const renderedBlocks = (messages: any[]) =>
@@ -62,7 +64,7 @@ export const registerHook = (pi: any): RegisteredHook => {
     pi: { ...pi.pi, convertToLlm: ompConvertToLlm },
   };
   const state = createCompactionState();
-  registerCompactionHook(bound, createOmpCompactionHost(bound, trackOmpCompactionTrigger(bound)), state);
+  registerCompactionHook(bound, ompHost(bound), state);
   lastRegistered = {
     state,
     autoCompactionStart: (reason) =>

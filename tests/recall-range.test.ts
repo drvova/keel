@@ -1,3 +1,4 @@
+import { OMP_HOST } from "../src/host";
 import { describe, it, expect, afterEach } from "bun:test";
 import { mkdtempSync, writeFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
@@ -21,7 +22,7 @@ const msg = (id: string, role: string, content: unknown, extra: Record<string, u
 
 const recall = async (file: string, params: Record<string, unknown>, branch?: string[], model?: { contextWindow: number }) => {
   let tool: any;
-  registerRecallTool({ registerTool: (t: any) => { tool = t; } } as any);
+  registerRecallTool({ registerTool: (t: any) => { tool = t; } } as any, OMP_HOST);
   const ids = branch ?? [];
   const result = await tool.execute("call", params, undefined, undefined, {
     sessionManager: {
@@ -253,7 +254,7 @@ describe("vcc_recall search skips the current turn", () => {
   it("skips nothing once the context was compacted inside the turn", async () => {
     const file = writeSession(entries);
     let tool: any;
-    registerRecallTool({ registerTool: (t: any) => { tool = t; } } as any);
+    registerRecallTool({ registerTool: (t: any) => { tool = t; } } as any, OMP_HOST);
     const branch = [
       ...["u0", "a1", "u4", "a5"].map((id) => ({ id })),
       { id: "u6", type: "message", message: { role: "user" } },

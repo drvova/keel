@@ -1,11 +1,28 @@
-// What differs between the two hosts omp-vcc runs on, omp (oh-my-pi) and Pi,
-// beyond the functions each entry hands over (convertToLlm, the agent dir).
-// Each comes from the host's own code: omp's from @oh-my-pi/pi-coding-agent,
-// Pi's from @earendil-works/pi-coding-agent. index.ts binds omp, pi.ts binds Pi.
+// The host omp-vcc runs on, omp (oh-my-pi) or Pi, as each entry binds it:
+// index.ts builds omp's from what omp hands an extension (src/hooks/omp-host.ts),
+// pi.ts builds Pi's from Pi's own package. Each piece comes from that host's
+// code; shared code reads what differs from here, never from the host's name.
 import { OMP_TRIGGER_RULE, PI_TRIGGER_RULE, type TriggerRule } from "./core/window";
+import { isRecoveryReason, type CompactionReason } from "./types";
 
 export type HostName = "omp" | "pi";
 
+/** The host's convertToLlm (omp's from `pi.pi`, Pi's from its package); omp-vcc calls it with one message at a time. */
+export type ConvertToLlm = (messages: any[]) => any[];
+
+/** What started a compaction, and whether the host retries the turn after it. */
+export interface CompactionTrigger {
+  reason: CompactionReason;
+  willRetry: boolean;
+}
+
+export const MANUAL_TRIGGER: CompactionTrigger = { reason: "manual", willRetry: false };
+
+/** A pass that must shrink the context: an overflow, or a reply cut off at the limit. */
+export const isRecovery = (trigger: CompactionTrigger): boolean =>
+  isRecoveryReason(trigger.reason) || trigger.willRetry;
+
+/** What differs between the hosts and is the same for every session of one. */
 export interface HostProfile {
   name: HostName;
   /** The host's name in what omp-vcc tells the user. */
@@ -22,6 +39,21 @@ export interface HostProfile {
   settledEvent: "agent_end" | "agent_settled";
   /** Where a user sets a model's contextWindow for the host. */
   modelsFile: string;
+  /**
+   * The host rewrites messages in the session file (omp: shake, supersedeReads,
+   * pruning), so omp-vcc keeps their originals (src/hooks/raw-capture.ts). Pi
+   * never rewrites an entry.
+   */
+  rewritesInPlace: boolean;
+}
+
+/** A host as a binding of omp-vcc uses it. */
+export interface Host extends HostProfile {
+  convertToLlm: ConvertToLlm;
+  /** The host's agent directory: where omp-vcc's config and learned limits live. */
+  agentDir: () => string;
+  /** The trigger of the compaction a session_before_compact event is for. */
+  triggerOf: (event: unknown) => CompactionTrigger;
 }
 
 export const OMP_HOST: HostProfile = {
@@ -31,6 +63,7 @@ export const OMP_HOST: HostProfile = {
   rule: OMP_TRIGGER_RULE,
   settledEvent: "agent_end",
   modelsFile: "omp's models.yml",
+  rewritesInPlace: true,
 };
 
 export const PI_HOST: HostProfile = {
@@ -40,4 +73,31 @@ export const PI_HOST: HostProfile = {
   rule: PI_TRIGGER_RULE,
   settledEvent: "agent_settled",
   modelsFile: "Pi's models.json",
+  rewritesInPlace: false,
 };
+
+/**
+ * Compact and wait until it has ended, however it ends. omp's compact()
+ * settles with the compaction (its callbacks have run by then); Pi's starts
+ * it and reports only through the callbacks.
+ */
+export const compactAndWait = (
+  ctx: { compact: (options: any) => unknown },
+  options: { customInstructions?: string; suppressContinuation?: boolean; onComplete?: () => void; onError?: (err: Error) => void } = {},
+): Promise<void> =>
+  new Promise<void>((resolve) => {
+    const returned = ctx.compact({
+      ...options,
+      onComplete: () => {
+        options.onComplete?.();
+        resolve();
+      },
+      onError: (err: Error) => {
+        options.onError?.(err);
+        resolve();
+      },
+    });
+    if (returned && typeof (returned as Promise<unknown>).then === "function") {
+      (returned as Promise<unknown>).then(() => resolve(), () => resolve());
+    }
+  });

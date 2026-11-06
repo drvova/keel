@@ -1,3 +1,4 @@
+import { OMP_HOST } from "../src/host";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
@@ -76,7 +77,7 @@ describe("/omp-vcc-pin and /omp-vcc-unpin", () => {
       registerCommand: (name: string, c: any) => commands.set(name, c.handler),
       appendEntry: s.host.appendEntry,
       sendMessage: (m: any, o: any) => sent.push({ m, o }),
-    } as any);
+    } as any, OMP_HOST);
     const ctx = { sessionManager: s.sm, ui: { notify: (m: string) => notices.push(m) } };
     await commands.get("omp-vcc-pin")!("never edit migrations/", ctx);
     expect(notices.at(-1)).toBe("Pinned [1] never edit migrations/ (user, #0).");

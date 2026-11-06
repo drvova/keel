@@ -6,6 +6,7 @@
 // value in mode, enum values in another case); executeRecall then normalizes
 // them. omp drops unknown keys itself, before execute().
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+import type { HostProfile } from "../host";
 import { windowOf } from "../hooks/window-limits";
 import { normalizeToolParams, parseToolRequest, type RecallToolParams } from "../core/recall-request";
 import { dirname } from "path";
@@ -145,7 +146,7 @@ export const RECALL_PARAMETERS = {
   },
 } as const;
 
-export const registerRecallTool = (pi: ExtensionAPI) => {
+export const registerRecallTool = (pi: ExtensionAPI, host: Pick<HostProfile, "name">) => {
   pi.registerTool({
     name: RECALL_TOOL,
     label: RECALL_TOOL_LABEL,
@@ -156,7 +157,7 @@ export const registerRecallTool = (pi: ExtensionAPI) => {
     loadMode: "essential",
     approval: "read",
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const text = executeRecall(params, ctx.sessionManager, { contextWindow: windowOf(ctx.model).effective });
+      const text = executeRecall(params, ctx.sessionManager, { contextWindow: windowOf(ctx.model, host.name).effective });
       return { content: [{ type: "text", text }], details: undefined };
     },
   });

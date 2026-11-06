@@ -10,7 +10,9 @@ import { indexById, readEntries } from "../core/session-file";
 import { parseKeepAndPrompt, OMP_VCC_COMPACT_INSTRUCTION } from "../core/compact-args";
 import { loadSettings, type VccSettings } from "../core/settings";
 import { calibrateCharsPerToken, DEFAULT_CHARS_PER_TOKEN, estimateMessageChars, estimateTokensFromChars } from "../core/token-estimate";
-import { compactionBudgets, OMP_TRIGGER_RULE, type TriggerRule } from "../core/window";
+import { compactionBudgets } from "../core/window";
+import { isRecovery, type CompactionTrigger, type Host } from "../host";
+export type { CompactionTrigger } from "../host";
 import { applyContextEdits } from "../core/context-edits";
 import { modelKey } from "../core/model-limits";
 import { triggerFor, windowOf } from "./window-limits";
@@ -32,28 +34,8 @@ import { scheduleCompactionStatsNotify, type CompactionStats } from "../compacti
 
 export { OMP_VCC_COMPACT_INSTRUCTION } from "../core/compact-args";
 
-/** What started a compaction, and whether the host retries the turn after it. */
-export interface CompactionTrigger {
-  reason: CompactionReason;
-  willRetry: boolean;
-}
-
-const MANUAL_TRIGGER: CompactionTrigger = { reason: "manual", willRetry: false };
-
-/** What the compaction hook needs from its host. */
-export interface CompactionHost {
-  /** The host's own convertToLlm; omp-vcc calls it with one message at a time. */
-  convertToLlm: (messages: any[]) => any[];
-  /**
-   * The trigger of the compaction the hook is running for, given the
-   * session_before_compact event: Pi's carries it (`reason`, `willRetry`);
-   * omp's carries none (src/hooks/omp-host.ts reads it from
-   * auto_compaction_start). Called once per hook run; omitted means manual.
-   */
-  compactionTrigger?: (event: unknown) => CompactionTrigger;
-  /** Where the host compacts, from the policy it hands the hook; omp's when omitted. */
-  rule?: TriggerRule;
-}
+/** What the compaction hook needs of its host. */
+export type CompactionHost = Pick<Host, "name" | "rule" | "convertToLlm" | "triggerOf">;
 
 /** Per-registration state. omp binds the factory again for every subagent, so it gets one per binding. */
 export interface CompactionState {
@@ -195,9 +177,10 @@ export const registerCompactionHook = (
     // What the context holds: Pi's context edits applied, as Pi applies them
     // (core/context-edits.ts). An omp branch has none and comes back as it is.
     const branchEntries = applyContextEdits(event.branchEntries as any[]) as any[];
-    const rule = host.rule ?? OMP_TRIGGER_RULE;
-    const hostTrigger = host.compactionTrigger?.(event);
-    const { reason, willRetry } = state.selfTrigger ?? hostTrigger ?? MANUAL_TRIGGER;
+    const { rule } = host;
+    // Read on every run: omp's tracker forgets its trigger once read.
+    const hostTrigger = host.triggerOf(event);
+    const { reason, willRetry } = state.selfTrigger ?? hostTrigger;
     const customInstructions = event.customInstructions
       ?? (reason === "manual" ? state.pendingManualInstructions ?? undefined : undefined);
     const settings = loadSettings();
@@ -218,7 +201,7 @@ export const registerCompactionHook = (
 
     const { tokenEstimate, overheadTokens } = measureContext(branchEntries, preparation.tokensBefore, previousSummary);
     // Budgets from the model's real window and where the next compaction comes (core/window.ts).
-    const window = windowOf(ctx?.model, rule.host);
+    const window = windowOf(ctx?.model, host.name);
     const trigger = triggerFor(window, state, modelKey(ctx?.model), reason, preparation.tokensBefore, rule.policyOf((preparation as { settings?: unknown }).settings), rule);
     const budgets = compactionBudgets(trigger, overheadTokens, settings.workingSet);
     const cutOptions = { charsPerToken: tokenEstimate.charsPerToken, skipCustomTypes: settings.skipCustomTypes, maxTokens: budgets.maxTailTokens };
@@ -243,7 +226,7 @@ export const registerCompactionHook = (
     // omp-vcc answers it itself: stepping aside hands it to the method omp picked
     // (snapcompact, handoff, server compaction, an LLM summary). What is kept and
     // still too big, omp's rescue shakes after the compaction commits.
-    const recovering = !fromCommand && (reason === "overflow" || reason === "incomplete" || willRetry);
+    const recovering = !fromCommand && isRecovery({ reason, willRetry });
     // An automatic pass on a turn still running (its last message is a tool result:
     // omp compacts between the tool calls of one turn) whose live window has no
     // earlier user turn and fits the tail budget: the only cut left is compact-all,

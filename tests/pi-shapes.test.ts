@@ -15,7 +15,7 @@ import { extractFiles } from "../src/extract/files";
 import { getTouchedFiles } from "../src/core/search-entries";
 import { fileWriteOf, writtenText } from "../src/core/tools";
 import { setSettingsAgentDir, settingsPath } from "../src/core/settings";
-import { PI_TRIGGER_RULE } from "../src/core/window";
+import { MANUAL_TRIGGER, PI_HOST } from "../src/host";
 
 
 
@@ -28,7 +28,7 @@ describe.skipIf(!piInstalled())("Pi shapes", () => {
   beforeAll(async () => {
     assertRealPi();
     pi = await import("@earendil-works/pi-coding-agent");
-    host = { convertToLlm: (m) => pi.convertToLlm(m), rule: PI_TRIGGER_RULE };
+    host = { ...PI_HOST, convertToLlm: (m) => pi.convertToLlm(m), triggerOf: () => MANUAL_TRIGGER };
     dir = mkdtempSync(join(tmpdir(), "omp-vcc-pi-shapes-"));
     for (const key of ["OMP_VCC_CONFIG_PATH", "PI_CODING_AGENT_DIR"]) saved[key] = process.env[key];
     process.env.OMP_VCC_CONFIG_PATH = join(dir, "omp-vcc-config.json");
@@ -97,7 +97,7 @@ describe.skipIf(!piInstalled())("Pi shapes", () => {
     test("summarizes Pi's shapes as Pi's context holds them, sized for Pi's trigger", () => {
       const handlers = new Map<string, any>();
       const fake: any = { on: (name: string, h: any) => handlers.set(name, h) };
-      registerCompactionHook(fake, { ...host, compactionTrigger: () => ({ reason: "threshold", willRetry: false }) }, createCompactionState());
+      registerCompactionHook(fake, { ...host, triggerOf: () => ({ reason: "threshold", willRetry: false }) }, createCompactionState());
       const result = handlers.get("session_before_compact")(
         {
           type: "session_before_compact",

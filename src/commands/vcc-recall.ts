@@ -14,7 +14,7 @@ import { resolveSession } from "../core/sessions";
 import { sessionDirOf } from "../tools/recall";
 import { tell } from "./compact-feedback";
 import { windowOf } from "../hooks/window-limits";
-import { OMP_HOST, type HostProfile } from "../host";
+import type { HostProfile } from "../host";
 import { RECALL_COMMAND_MESSAGE_TYPE } from "../names";
 
 const scopeArg = (scope: string) => (scope === "all" ? " scope:all" : scope === "project" ? " scope:project" : "");
@@ -31,7 +31,7 @@ const commandHints = (name: string, session?: string): RecallPagingHints => {
   };
 };
 
-export const registerVccRecallCommand = (pi: ExtensionAPI, host: HostProfile = OMP_HOST) => {
+export const registerVccRecallCommand = (pi: ExtensionAPI, host: HostProfile) => {
   const name = `${host.command}-recall`;
   pi.registerCommand(name, {
     description:

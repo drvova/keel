@@ -16,13 +16,29 @@ import {
   RECOVERY_BAND,
   piPolicyOf,
   piTrigger,
+  OMP_TRIGGER_RULE,
   PI_TRIGGER_RULE,
+  type TriggerRule,
 } from "../src/core/window";
 // omp's own function, which omp-vcc ports since omp does not export it to extensions.
 import { resolveThresholdTokens } from "@oh-my-pi/pi-agent-core/compaction";
 import { learnedWindow, recordLearnedWindow } from "../src/core/model-limits";
-import { createCompactionState } from "../src/hooks/compaction";
-import { triggerFor, windowOf } from "../src/hooks/window-limits";
+import { createCompactionState, type CompactionState } from "../src/hooks/compaction";
+import type { CompactionReason } from "../src/types";
+import { triggerFor as triggerForRule, windowOf as windowOfHost } from "../src/hooks/window-limits";
+import type { HostName } from "../src/host";
+
+/** omp's unless a test names Pi's. */
+const windowOf = (model: Parameters<typeof windowOfHost>[0], host: HostName = "omp") => windowOfHost(model, host);
+const triggerFor = (
+  w: ReturnType<typeof windowOfHost>,
+  state: CompactionState,
+  key: string,
+  reason: CompactionReason,
+  before: number,
+  policy?: object,
+  rule: TriggerRule = OMP_TRIGGER_RULE,
+) => triggerForRule(w, state, key, reason, before, policy, rule);
 
 let dir: string;
 const prev = process.env.OMP_VCC_CONFIG_PATH;
