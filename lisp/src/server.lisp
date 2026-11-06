@@ -34,6 +34,13 @@
 ;;;;   or {"ok":false,"unsupported":"summary"} for input left to TS (text in a
 ;;;;   script segmented by dictionary, a regex construct it refuses)
 ;;;;
+;;;; compact: what a compaction does (src/compaction/plan.ts planCompaction)
+;;;;   {"op":"compact","input":{branch, notes, keepUserTurns, fromCommand, reason,
+;;;;    recovering, settings, budgets, charsPerToken, sessionFile, previousSummary, fileOps}}
+;;;;   -> {"ok":true,"plan":PLAN}; NOTES, parallel to BRANCH, carry for each live
+;;;;   message what the host's convertToLlm makes of it (summary-input.ts
+;;;;   toSummaryMessage), as it is and as its kept original, and its #N.
+;;;;
 ;;;; Either search may answer {"ok":false,"unsupported":"regex"}, and the caller
 ;;;; searches as before; {"ok":false,"error":MESSAGE} on any failure.
 ;;;;
@@ -172,6 +179,11 @@ parity test compares with JavaScript's own."
         (json-object "ok" :true "text" text "state" (state-json state) "sections" (coerce sections 'vector)))
     ((or left-to-ts regex-unsupported storage-condition) () (json-object "ok" :false "unsupported" "summary"))))
 
+(defun handle-compact (request)
+  "planCompaction on the PlanInput REQUEST carries in \"input\", the host's convertToLlm already applied."
+  (handler-case (json-object "ok" :true "plan" (plan-compaction (json-get request "input")))
+    ((or left-to-ts regex-unsupported storage-condition) () (json-object "ok" :false "unsupported" "compact"))))
+
 (defun handle-request (request)
   "The response object to the parsed REQUEST."
   (let ((op (json-get request "op")))
@@ -180,6 +192,7 @@ parity test compares with JavaScript's own."
           ((equal op "load") (handle-load request))
           ((equal op "regex") (handle-regex request))
           ((equal op "summarize") (handle-summarize request))
+          ((equal op "compact") (handle-compact request))
           (t (json-object "ok" :false "error" (format nil "unknown op ~a" (json-string (or op :null))))))))
 
 (defun read-stdin ()

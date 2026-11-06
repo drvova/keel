@@ -44,6 +44,9 @@
      (:file "extract")
      (:file "brief")
      (:file "summary")
+     ;; The compaction: its cut, the working set, and the plan the hook acts on.
+     (:file "working-set")
+     (:file "compaction")
      (:file "server"))))
   :in-order-to ((test-op (test-op "omp-vcc-core/test"))))
 

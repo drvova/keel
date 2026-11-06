@@ -11,6 +11,9 @@ import type { ConvertToLlm } from "../host";
 import { estimateTokensFromChars } from "../core/token-estimate";
 import { applyTailBudget, buildOwnCut, collectLiveMessages, keptChars, resolveSmartKeepUserTurns, runningTurnCut, wholeWindowCut, type OwnCutCancelReason, type OwnCutResult } from "./cut";
 import { assembleSummary } from "./assemble";
+import { toLiveMessage, toSummaryMessage } from "./summary-input";
+import { restoreOriginals } from "../core/raw-store";
+import { callCore } from "../core/lisp-core";
 import type { CompactionStats } from "./stats";
 
 export interface PlanInput {
@@ -68,7 +71,39 @@ const liveRoles = (branchEntries: any[]): string[] => {
   return live.length <= 30 ? live : [...live.slice(0, 10), "...", ...live.slice(-10)];
 };
 
+/**
+ * What the Lisp core needs of the host for each branch entry: its #N, and what
+ * convertToLlm makes of its live message for the summary (toSummaryMessage), as
+ * it is and, where omp rewrote it, as the original omp-vcc kept. The core does
+ * the rest (lisp/src/compaction.lisp).
+ */
+const hostNotes = (input: PlanInput): Array<Record<string, unknown>> => {
+  const entries = input.branchEntries;
+  const live = entries.map((e) => toLiveMessage(e));
+  const at = live.flatMap((m, i) => (m ? [i] : []));
+  const restored = restoreOriginals(at.map((i) => live[i]), at.map((i) => entries[i]?.id), input.sessionFile);
+  const restoredAt = new Map(at.map((i, k) => [i, restored[k]]));
+  return entries.map((e, i) => {
+    const m = live[i];
+    const original = restoredAt.get(i);
+    return {
+      ...(typeof e?.id === "string" && input.indexById?.has(e.id) ? { n: input.indexById.get(e.id) } : {}),
+      ...(m ? { summary: toSummaryMessage(m, input.convert) ?? null } : {}),
+      ...(m && original !== m ? { restored: toSummaryMessage(original, input.convert) ?? null } : {}),
+    };
+  });
+};
+
+/** The plan from the Lisp core, or undefined when there is none or it leaves this one to TypeScript. */
+export const planInCore = (input: PlanInput): Plan | undefined => {
+  const { convert: _convert, indexById: _indexById, branchEntries: _branch, ...rest } = input;
+  const reply = callCore({ op: "compact", input: { ...rest, branch: input.branchEntries, notes: hostNotes(input) } });
+  return reply?.plan as Plan | undefined;
+};
+
 export const planCompaction = (input: PlanInput): Plan => {
+  const inCore = planInCore(input);
+  if (inCore) return inCore;
   const { branchEntries, convert, settings, budgets, recovering } = input;
   const cutOptions = { charsPerToken: input.charsPerToken, skipCustomTypes: settings.skipCustomTypes, maxTokens: budgets.maxTailTokens };
 

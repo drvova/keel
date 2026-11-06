@@ -158,6 +158,8 @@ whitespace around it."
              (#\Newline (write-string "\\n" out))
              (#\Tab (write-string "\\t" out))
              (t (cond ((= code 13) (write-string "\\r" out))
+                      ((= code 8) (write-string "\\b" out))
+                      ((= code 12) (write-string "\\f" out))
                       ((or (< code 32) (<= #xD800 code #xDFFF)) (format out "\\u~(~4,'0x~)" code))
                       (t (write-char c out))))))
   (write-char #\" out))
@@ -167,13 +169,13 @@ whitespace around it."
   (etypecase value
     (string (write-json-string value out))
     (hash-table
+     ;; Keys in JavaScript's order, so the text is JSON.stringify's (a token
+     ;; estimate counts its length).
      (write-char #\{ out)
-     (let ((first t))
-       (maphash (lambda (k v)
-                  (unless first (write-char #\, out))
-                  (setf first nil)
-                  (write-json-string k out) (write-char #\: out) (write-json v out))
-                value))
+     (loop for k in (json-keys value)
+           for first = t then nil
+           do (unless first (write-char #\, out))
+              (write-json-string k out) (write-char #\: out) (write-json (gethash k value) out))
      (write-char #\} out))
     (vector
      (write-char #\[ out)
@@ -181,10 +183,7 @@ whitespace around it."
            do (when (plusp i) (write-char #\, out)) (write-json v out))
      (write-char #\] out))
     (integer (format out "~d" value))
-    (real (let ((d (coerce value 'double-float)))
-            (if (= d (ftruncate d))
-                (format out "~d" (truncate d))
-                (let ((*read-default-float-format* 'double-float)) (format out "~a" d)))))
+    (real (write-string (js-number-string value) out))
     ((member :true) (write-string "true" out))
     ((member :false) (write-string "false" out))
     ((member :null) (write-string "null" out))))
