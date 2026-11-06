@@ -1,6 +1,7 @@
 // vcc_recall keeps the originals of what omp rewrites in the session file
 // (src/core/raw-store.ts, src/hooks/raw-capture.ts), with no omp setting changed.
-import { OMP_HOST } from "../src/host";
+import { testConfig } from "./support/binding";
+import { ompBinding } from "./support/binding";
 import { sessionLineage } from "../src/core/session-file";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
@@ -67,7 +68,7 @@ describe("what is kept", () => {
 describe("with omp's own session manager", () => {
   const recallOn = async (sm: any, params: Record<string, unknown>) => {
     let tool: any;
-    registerRecallTool({ registerTool: (t: any) => { tool = t; } } as any, OMP_HOST);
+    registerRecallTool({ registerTool: (t: any) => { tool = t; } } as any, ompBinding);
     const result = await tool.execute("call", params, undefined, undefined, { sessionManager: sm });
     return result.content[0].text as string;
   };
@@ -121,7 +122,7 @@ describe("with omp's own session manager", () => {
 
   it("is taken on omp's events, and not when keepOriginals is off", () => {
     const handlers = new Map<string, Array<(e: unknown, c: unknown) => void>>();
-    registerRawCapture({ on: (name: string, h: any) => handlers.set(name, [...(handlers.get(name) ?? []), h]) } as any);
+    registerRawCapture({ on: (name: string, h: any) => handlers.set(name, [...(handlers.get(name) ?? []), h]) } as any, testConfig);
     expect([...handlers.keys()].sort()).toEqual(["agent_end", "context", "message_end", "session_start", "turn_end"]);
     const file = join(dir, "events.jsonl");
     const entries: any[] = [{ type: "message", id: "r1", message: { role: "toolResult", toolCallId: "c", content: text("out") } }];
@@ -226,7 +227,7 @@ describe("a fork reads its parent's originals", () => {
     expect(captureNewEntries(state, sm)).toBe(0);
 
     let tool: any;
-    registerRecallTool({ registerTool: (t: any) => { tool = t; } } as any, OMP_HOST);
+    registerRecallTool({ registerTool: (t: any) => { tool = t; } } as any, ompBinding);
     const found = (await tool.execute("f", { query: "pelican healthcheck" }, undefined, undefined, { sessionManager: sm })).content[0].text;
     expect(found).toContain("deploy aborted: pelican-7 healthcheck timed out");
   });

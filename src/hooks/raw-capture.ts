@@ -12,7 +12,7 @@
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { appendRawStore, keptContent, mayBeRewritten, rawStoreIds, type RawRecord } from "../core/raw-store";
 import { indexById, sessionLineage, type SessionManagerLike } from "../core/session-file";
-import { loadSettings } from "../core/settings";
+import type { Config } from "../core/settings";
 import { RECALL_TOOL } from "../names";
 
 /** One binding's place in its session: which file, how many entries it has looked at, which are kept. */
@@ -95,10 +95,10 @@ export const pointPlaceholders = (messages: unknown[], state: RawCaptureState, s
 };
 
 /** Keep originals for the session this binding serves (`keepOriginals`, default on). */
-export const registerRawCapture = (pi: ExtensionAPI, state: RawCaptureState = createRawCaptureState()): void => {
+export const registerRawCapture = (pi: ExtensionAPI, config: Config, state: RawCaptureState = createRawCaptureState()): void => {
   const capture = (ctx: unknown) => {
     try {
-      if (!loadSettings().keepOriginals) return;
+      if (!config.load().keepOriginals) return;
       captureNewEntries(state, (ctx as { sessionManager?: SessionManagerLike })?.sessionManager);
     } catch {}
   };
@@ -108,7 +108,7 @@ export const registerRawCapture = (pi: ExtensionAPI, state: RawCaptureState = cr
   pi.on("agent_end", (_event, ctx) => capture(ctx));
   pi.on("context", (event, ctx) => {
     try {
-      if (!loadSettings().keepOriginals) return;
+      if (!config.load().keepOriginals) return;
       const sessionManager = (ctx as { sessionManager?: SessionManagerLike })?.sessionManager;
       // Entries that arrived since the last event, so a result omp just blanked is known to be kept.
       captureNewEntries(state, sessionManager);

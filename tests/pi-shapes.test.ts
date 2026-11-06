@@ -8,13 +8,15 @@ import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { createCompactionState, registerCompactionHook, type CompactionHost } from "../src/hooks/compaction";
+import { createWindowState } from "../src/hooks/window-limits";
+import { testConfig } from "./support/binding";
 import { buildOwnCut } from "../src/compaction/cut";
 import { toSummaryMessage } from "../src/compaction/summary-input";
 import { normalize } from "../src/core/normalize";
 import { extractFiles } from "../src/extract/files";
 import { getTouchedFiles } from "../src/core/search-entries";
 import { fileWriteOf, writtenText } from "../src/core/tools";
-import { setSettingsAgentDir, settingsPath } from "../src/core/settings";
+import { openConfig } from "../src/core/settings";
 import { MANUAL_TRIGGER, PI_HOST } from "../src/host";
 
 
@@ -28,7 +30,7 @@ describe.skipIf(!piInstalled())("Pi shapes", () => {
   beforeAll(async () => {
     assertRealPi();
     pi = await import("@earendil-works/pi-coding-agent");
-    host = { ...PI_HOST, convertToLlm: (m) => pi.convertToLlm(m), triggerOf: () => MANUAL_TRIGGER };
+    host = { ...PI_HOST, convertToLlm: (m) => pi.convertToLlm(m), triggerOf: () => MANUAL_TRIGGER, config: testConfig };
     dir = mkdtempSync(join(tmpdir(), "omp-vcc-pi-shapes-"));
     for (const key of ["OMP_VCC_CONFIG_PATH", "PI_CODING_AGENT_DIR"]) saved[key] = process.env[key];
     process.env.OMP_VCC_CONFIG_PATH = join(dir, "omp-vcc-config.json");
@@ -36,7 +38,6 @@ describe.skipIf(!piInstalled())("Pi shapes", () => {
   });
 
   afterAll(() => {
-    setSettingsAgentDir();
     for (const [key, value] of Object.entries(saved)) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
@@ -97,7 +98,7 @@ describe.skipIf(!piInstalled())("Pi shapes", () => {
     test("summarizes Pi's shapes as Pi's context holds them, sized for Pi's trigger", () => {
       const handlers = new Map<string, any>();
       const fake: any = { on: (name: string, h: any) => handlers.set(name, h) };
-      registerCompactionHook(fake, { ...host, triggerOf: () => ({ reason: "threshold", willRetry: false }) }, createCompactionState());
+      registerCompactionHook(fake, { ...host, triggerOf: () => ({ reason: "threshold", willRetry: false }) }, createCompactionState(), createWindowState());
       const result = handlers.get("session_before_compact")(
         {
           type: "session_before_compact",
@@ -137,9 +138,9 @@ describe.skipIf(!piInstalled())("Pi shapes", () => {
   test("the settings follow Pi's agent dir", () => {
     delete process.env.OMP_VCC_CONFIG_PATH;
     delete process.env.PI_CODING_AGENT_DIR;
-    setSettingsAgentDir(pi.getAgentDir);
-    expect(settingsPath()).toBe(join(pi.getAgentDir(), "omp-vcc-config.json"));
-    expect(settingsPath()).toContain(join(".pi", "agent"));
+    const config = openConfig(pi.getAgentDir);
+    expect(config.path()).toBe(join(pi.getAgentDir(), "omp-vcc-config.json"));
+    expect(config.path()).toContain(join(".pi", "agent"));
     process.env.OMP_VCC_CONFIG_PATH = join(dir, "omp-vcc-config.json");
   });
 });

@@ -7,7 +7,6 @@ import { join } from "path";
 import registerOmp from "../index";
 import { ompConvertToLlm } from "./support/host";
 import { OMP_VCC_COMPACT_INSTRUCTION } from "../src/core/compact-args";
-import { setSettingsAgentDir } from "../src/core/settings";
 
 let dir: string;
 let previousConfig: string | undefined;
@@ -19,7 +18,6 @@ beforeAll(() => {
 });
 
 afterAll(() => {
-  setSettingsAgentDir();
   if (previousConfig === undefined) delete process.env.OMP_VCC_CONFIG_PATH;
   else process.env.OMP_VCC_CONFIG_PATH = previousConfig;
   rmSync(dir, { recursive: true, force: true });

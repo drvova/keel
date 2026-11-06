@@ -1,4 +1,4 @@
-import { OMP_HOST } from "../src/host";
+import { ompBinding } from "./support/binding";
 import { describe, it, expect } from "bun:test";
 import { parseToolRequest } from "../src/core/recall-request";
 import { ignoredNote } from "../src/core/recall-run";
@@ -80,7 +80,7 @@ describe("normalizeToolParams", () => {
 
   it("omp's own validator lets the loose forms through, for normalizeToolParams to repair", () => {
     let tool: any;
-    registerRecallTool({ registerTool: (t: any) => { tool = t; } } as any, OMP_HOST);
+    registerRecallTool({ registerTool: (t: any) => { tool = t; } } as any, ompBinding);
     const raw = { query: "jpeg", mode: "all", expand: "459", limit: 20 };
     const args = validateToolArguments(tool, { id: "1", name: "vcc_recall", arguments: raw } as any);
     expect(normalizeToolParams(args)).toMatchObject({ query: "jpeg", scope: "all", expand: [459], _vccDropped: ["limit 20 (not a vcc_recall param)"] });

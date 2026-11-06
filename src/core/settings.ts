@@ -1,30 +1,9 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
-import { homedir } from "os";
 import { dirname, join } from "path";
 
 const SETTINGS_FILE = "omp-vcc-config.json";
 /** The file pi-vcc read on omp before the rename; copied to SETTINGS_FILE once. */
 const LEGACY_SETTINGS_FILE = "pi-vcc-config.json";
-
-// omp's agent directory, set by the entry point from pi.pi.getAgentDir() so this
-// module imports no host package.
-let agentDirResolver: (() => string) | undefined;
-
-/** Called once by the entry point with omp's getAgentDir; no argument restores the default. */
-export const setSettingsAgentDir = (resolve?: () => string): void => {
-  agentDirResolver = resolve;
-};
-
-/** omp's own default (~/.omp/agent, or PI_CODING_AGENT_DIR), used only if no entry point set one. */
-const fallbackAgentDir = (): string => {
-  const env = process.env.PI_CODING_AGENT_DIR;
-  if (env) return env === "~" ? homedir() : env.startsWith("~/") ? join(homedir(), env.slice(2)) : env;
-  return join(homedir(), ".omp", "agent");
-};
-
-/** Resolved at every call: the env override and the host can change between loads. */
-export const settingsPath = (): string =>
-  process.env.OMP_VCC_CONFIG_PATH ?? join((agentDirResolver ?? fallbackAgentDir)(), SETTINGS_FILE);
 
 export interface VccSettings {
   /**
@@ -115,8 +94,8 @@ const readJson = (path: string): Record<string, unknown> | null => {
 const coerceStringArray = (v: unknown): string[] =>
   Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
 
-export function loadSettings(): VccSettings {
-  const parsed = readJson(settingsPath());
+/** The settings in a config file's text: defaults for what it leaves out, arrays coerced. */
+const parseSettings = (parsed: Record<string, unknown> | null): VccSettings => {
   if (!parsed || typeof parsed !== "object") return { ...DEFAULT_SETTINGS };
   const merged = { ...DEFAULT_SETTINGS, ...(parsed as Partial<VccSettings>) };
   // A blind spread would leak a malformed array value (e.g. a bare string,
@@ -128,43 +107,59 @@ export function loadSettings(): VccSettings {
     ...new Set(coerceStringArray(parsed.trackCommands).map((s) => s.trim()).filter(Boolean)),
   ];
   return merged;
+};
+
+/** omp-vcc's config for one binding: its file in the host's agent directory (or OMP_VCC_CONFIG_PATH). */
+export interface Config {
+  /** Resolved at every call: the env override can change between loads. */
+  path(): string;
+  /** The settings as the file says now: a user may edit it mid-session, and it is a few hundred bytes. */
+  load(): VccSettings;
+  /**
+   * Ensure the file exists with every default key:
+   * - missing: copy the pre-rename pi-vcc-config.json from the same directory
+   *   when there is one, else write the defaults;
+   * - not valid JSON: left alone, never clobbered;
+   * - valid: missing keys added, existing values kept.
+   */
+  scaffold(): void;
+  /** Where omp-vcc keeps what it learns next to the config (core/model-limits.ts). */
+  dir(): string;
 }
 
-/**
- * Ensure the config file (omp's agent dir, or OMP_VCC_CONFIG_PATH) exists with default keys.
- * - File missing → copy the pre-rename pi-vcc-config.json from the same directory
- *   when there is one, else create with the full default block.
- * - File exists but invalid JSON → no-op (don't clobber user file).
- * - File exists and valid → fill in missing default keys, preserve existing values.
- */
-export function scaffoldSettings(): void {
-  try {
-    const path = settingsPath();
-    const dir = dirname(path);
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-
-    if (!existsSync(path)) {
-      const legacy = join(dir, LEGACY_SETTINGS_FILE);
-      if (process.env.OMP_VCC_CONFIG_PATH == null && existsSync(legacy)) copyFileSync(legacy, path);
-      else {
-        writeFileSync(path, `${JSON.stringify(DEFAULT_SETTINGS, null, 2)}\n`);
-        return;
+export const openConfig = (agentDir: () => string): Config => {
+  const path = () => process.env.OMP_VCC_CONFIG_PATH ?? join(agentDir(), SETTINGS_FILE);
+  return {
+    path,
+    dir: () => dirname(path()),
+    load: () => parseSettings(readJson(path())),
+    scaffold() {
+      try {
+        const file = path();
+        const dir = dirname(file);
+        if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+        if (!existsSync(file)) {
+          const legacy = join(dir, LEGACY_SETTINGS_FILE);
+          if (process.env.OMP_VCC_CONFIG_PATH == null && existsSync(legacy)) copyFileSync(legacy, file);
+          else {
+            writeFileSync(file, `${JSON.stringify(DEFAULT_SETTINGS, null, 2)}\n`);
+            return;
+          }
+        }
+        const parsed = readJson(file);
+        if (!parsed || typeof parsed !== "object") return;
+        const next: Record<string, unknown> = { ...parsed };
+        let changed = false;
+        for (const [key, value] of Object.entries(DEFAULT_SETTINGS)) {
+          if (!(key in next)) {
+            next[key] = value;
+            changed = true;
+          }
+        }
+        if (changed) writeFileSync(file, `${JSON.stringify(next, null, 2)}\n`);
+      } catch {
+        // Loading the extension must not fail on its config file.
       }
-    }
-
-    const parsed = readJson(path);
-    if (!parsed || typeof parsed !== "object") return; // don't clobber
-
-    let changed = false;
-    const next: Record<string, unknown> = { ...parsed };
-    for (const [key, value] of Object.entries(DEFAULT_SETTINGS)) {
-      if (!(key in next)) {
-        next[key] = value;
-        changed = true;
-      }
-    }
-    if (changed) writeFileSync(path, `${JSON.stringify(next, null, 2)}\n`);
-  } catch {
-    // best-effort; never crash extension load
-  }
-}
+    },
+  };
+};

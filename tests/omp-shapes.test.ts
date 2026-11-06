@@ -9,7 +9,6 @@ import { callKind, fileWriteOf, namedPaths, readsPart, stripReadSelector, writte
 import { extractFiles } from "../src/extract/files";
 import { renderMessage } from "../src/core/render-entries";
 import { getTouchedFiles } from "../src/core/search-entries";
-import { setSettingsAgentDir, settingsPath } from "../src/core/settings";
 
 const msg = (id: string, role: "user" | "assistant", content = `text of ${id}`) => ({
   id,
@@ -140,23 +139,6 @@ describe("recall rendering of omp roles", () => {
   test("developer and custom messages keep their role", () => {
     expect(renderMessage({ role: "developer", content: "reminder" } as any, 5).role).toBe("developer");
     expect(renderMessage({ role: "custom", content: "card" } as any, 6).role).toBe("custom");
-  });
-});
-
-describe("settings path follows the host's agent dir", () => {
-  const previous = process.env.OMP_VCC_CONFIG_PATH;
-  afterEach(() => {
-    if (previous === undefined) delete process.env.OMP_VCC_CONFIG_PATH;
-    else process.env.OMP_VCC_CONFIG_PATH = previous;
-    setSettingsAgentDir();
-  });
-
-  test("the entry point's agent dir, unless OMP_VCC_CONFIG_PATH is set", () => {
-    delete process.env.OMP_VCC_CONFIG_PATH;
-    setSettingsAgentDir(() => join(homedir(), ".omp", "agent"));
-    expect(settingsPath()).toBe(join(homedir(), ".omp", "agent", "omp-vcc-config.json"));
-    process.env.OMP_VCC_CONFIG_PATH = "/tmp/elsewhere.json";
-    expect(settingsPath()).toBe("/tmp/elsewhere.json");
   });
 });
 

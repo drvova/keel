@@ -8,14 +8,14 @@ import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { writeFileSync } from "fs";
 import { indexById, readEntries } from "../core/session-file";
 import { parseKeepAndPrompt, OMP_VCC_COMPACT_INSTRUCTION } from "../core/compact-args";
-import { loadSettings, type VccSettings } from "../core/settings";
+import type { VccSettings } from "../core/settings";
 import { calibrateCharsPerToken, DEFAULT_CHARS_PER_TOKEN, estimateMessageChars, estimateTokensFromChars } from "../core/token-estimate";
 import { compactionBudgets } from "../core/window";
-import { isRecovery, type CompactionTrigger, type Host } from "../host";
+import { isRecovery, type Binding } from "../host";
 export type { CompactionTrigger } from "../host";
 import { applyContextEdits } from "../core/context-edits";
 import { modelKey } from "../core/model-limits";
-import { triggerFor, windowOf } from "./window-limits";
+import { observeCompaction, triggerFor, windowOf, type WindowState } from "./window-limits";
 import { vccDetailsOf, type VccCompactionDetails } from "../details";
 import { COMPACTOR } from "../names";
 import type { CompactionReason } from "../types";
@@ -35,7 +35,7 @@ import { scheduleCompactionStatsNotify, type CompactionStats } from "../compacti
 export { OMP_VCC_COMPACT_INSTRUCTION } from "../core/compact-args";
 
 /** What the compaction hook needs of its host. */
-export type CompactionHost = Pick<Host, "name" | "rule" | "convertToLlm" | "triggerOf">;
+export type CompactionHost = Pick<Binding, "name" | "rule" | "convertToLlm" | "triggerOf" | "config">;
 
 /** Per-registration state. omp binds the factory again for every subagent, so it gets one per binding. */
 export interface CompactionState {
@@ -51,14 +51,6 @@ export interface CompactionState {
   pendingManualInstructions: string | null;
   /** Why the hook last cancelled a compaction, for /omp-vcc to report where omp shows no notifications. */
   lastCancelNotice: string | null;
-  /** The host's trigger as the last threshold pass measured it (its tokensBefore), for this model. */
-  measuredTrigger: { key: string; tokens: number } | null;
-  /** The host's compaction policy as the last compaction carried it (preparation.settings, read by its TriggerRule), for this model. */
-  hostPolicy: { key: string | undefined; policy: object } | null;
-  /** The compaction omp-vcc started itself (window-limits.ts), so the hook records why. */
-  selfTrigger: CompactionTrigger | null;
-  /** The note that omp's window is above the real one was shown. */
-  windowNoticeShown: boolean;
 }
 
 export const createCompactionState = (): CompactionState => ({
@@ -67,10 +59,6 @@ export const createCompactionState = (): CompactionState => ({
   pendingFollowUpPrompt: null,
   pendingManualInstructions: null,
   lastCancelNotice: null,
-  measuredTrigger: null,
-  hostPolicy: null,
-  selfTrigger: null,
-  windowNoticeShown: false,
 });
 
 
@@ -164,6 +152,7 @@ export const registerCompactionHook = (
   pi: ExtensionAPI,
   host: CompactionHost,
   state: CompactionState,
+  windows: WindowState,
 ) => {
   const convert = host.convertToLlm;
   const notify = (ctx: any, message: string) => {
@@ -180,10 +169,10 @@ export const registerCompactionHook = (
     const { rule } = host;
     // Read on every run: omp's tracker forgets its trigger once read.
     const hostTrigger = host.triggerOf(event);
-    const { reason, willRetry } = state.selfTrigger ?? hostTrigger;
+    const { reason, willRetry } = windows.selfTrigger ?? hostTrigger;
     const customInstructions = event.customInstructions
       ?? (reason === "manual" ? state.pendingManualInstructions ?? undefined : undefined);
-    const settings = loadSettings();
+    const settings = host.config.load();
     const previousSummary = typeof preparation.previousSummary === "string" ? preparation.previousSummary : undefined;
 
     // Always handle the /omp-vcc marker.
@@ -201,8 +190,10 @@ export const registerCompactionHook = (
 
     const { tokenEstimate, overheadTokens } = measureContext(branchEntries, preparation.tokensBefore, previousSummary);
     // Budgets from the model's real window and where the next compaction comes (core/window.ts).
-    const window = windowOf(ctx?.model, host.name);
-    const trigger = triggerFor(window, state, modelKey(ctx?.model), reason, preparation.tokensBefore, rule.policyOf((preparation as { settings?: unknown }).settings), rule);
+    const window = windowOf(ctx?.model, host.name, host.config.dir());
+    const key = modelKey(ctx?.model);
+    observeCompaction(windows, window, key, reason, preparation.tokensBefore, rule.policyOf((preparation as { settings?: unknown }).settings));
+    const trigger = triggerFor(window, windows, key, reason, preparation.tokensBefore, rule);
     const budgets = compactionBudgets(trigger, overheadTokens, settings.workingSet);
     const cutOptions = { charsPerToken: tokenEstimate.charsPerToken, skipCustomTypes: settings.skipCustomTypes, maxTokens: budgets.maxTailTokens };
 

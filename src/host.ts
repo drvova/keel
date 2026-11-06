@@ -4,6 +4,7 @@
 // code; shared code reads what differs from here, never from the host's name.
 import { OMP_TRIGGER_RULE, PI_TRIGGER_RULE, type TriggerRule } from "./core/window";
 import { isRecoveryReason, type CompactionReason } from "./types";
+import type { Config } from "./core/settings";
 
 export type HostName = "omp" | "pi";
 
@@ -54,6 +55,11 @@ export interface Host extends HostProfile {
   agentDir: () => string;
   /** The trigger of the compaction a session_before_compact event is for. */
   triggerOf: (event: unknown) => CompactionTrigger;
+}
+
+/** A host as one binding of omp-vcc sees it: with its own config file. */
+export interface Binding extends Host {
+  config: Config;
 }
 
 export const OMP_HOST: HostProfile = {

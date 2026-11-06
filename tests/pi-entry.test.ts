@@ -5,9 +5,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:tes
 import { assertRealPi, piInstalled } from "./support/pi";
 import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
-import { join } from "path";
+import { join, dirname } from "path";
 import { recordLearnedWindow } from "../src/core/model-limits";
-import { setSettingsAgentDir } from "../src/core/settings";
 
 
 
@@ -23,7 +22,6 @@ beforeAll(() => {
 });
 
 afterAll(() => {
-  setSettingsAgentDir();
   for (const [key, value] of Object.entries(saved)) {
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;
@@ -141,7 +139,7 @@ describe.skipIf(!piInstalled())("Pi entry", () => {
 
   test("past its own trigger on a model whose window Pi overestimates, omp-vcc compacts once Pi settles", async () => {
     const model = { provider: "local", id: "small-model", contextWindow: 128_000 };
-    recordLearnedWindow("local/small-model", 32_768);
+    recordLearnedWindow(dirname(process.env.OMP_VCC_CONFIG_PATH!), "local/small-model", 32_768);
     const pi = await createPi(model);
     pi.setEntries(conversation());
     // Pi's reserve, once a compaction has carried it.

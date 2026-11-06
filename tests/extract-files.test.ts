@@ -3,7 +3,8 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { extractFiles } from "../src/extract/files";
-import { DEFAULT_SETTINGS, loadSettings } from "../src/core/settings";
+import { DEFAULT_SETTINGS } from "../src/core/settings";
+import { testConfig } from "./support/binding";
 import type { NormalizedBlock } from "../src/types";
 
 describe("extractFiles", () => {
@@ -82,7 +83,7 @@ describe("settings defaults", () => {
   });
 });
 
-describe("loadSettings coercion", () => {
+describe("config coercion", () => {
   // OMP_VCC_CONFIG_PATH is settings.ts' existing override — point it at a
   // tmp file so the real ~/.omp/agent/omp-vcc-config.json is never touched.
   const writeConfig = (value: unknown) => {
@@ -97,11 +98,11 @@ describe("loadSettings coercion", () => {
   it("malformed trackCommands values coerce fail-closed to string[]", () => {
     for (const bad of ["ssh", 42, [1, " kubectl ", null, "kubectl"], null, { 0: "ssh" }]) {
       writeConfig(bad);
-      const got = loadSettings().trackCommands;
+      const got = testConfig.load().trackCommands;
       expect(Array.isArray(got)).toBe(true);
       for (const x of got) expect(typeof x).toBe("string");
     }
     writeConfig(["ssh", "kubectl"]);
-    expect(loadSettings().trackCommands).toEqual(["ssh", "kubectl"]);
+    expect(testConfig.load().trackCommands).toEqual(["ssh", "kubectl"]);
   });
 });

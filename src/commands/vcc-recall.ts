@@ -14,7 +14,7 @@ import { resolveSession } from "../core/sessions";
 import { sessionDirOf } from "../tools/recall";
 import { tell } from "./compact-feedback";
 import { windowOf } from "../hooks/window-limits";
-import type { HostProfile } from "../host";
+import type { Binding } from "../host";
 import { RECALL_COMMAND_MESSAGE_TYPE } from "../names";
 
 const scopeArg = (scope: string) => (scope === "all" ? " scope:all" : scope === "project" ? " scope:project" : "");
@@ -31,7 +31,7 @@ const commandHints = (name: string, session?: string): RecallPagingHints => {
   };
 };
 
-export const registerVccRecallCommand = (pi: ExtensionAPI, host: HostProfile) => {
+export const registerVccRecallCommand = (pi: ExtensionAPI, host: Pick<Binding, "name" | "command" | "config">) => {
   const name = `${host.command}-recall`;
   pi.registerCommand(name, {
     description:
@@ -45,7 +45,7 @@ export const registerVccRecallCommand = (pi: ExtensionAPI, host: HostProfile) =>
       }
       const request = parseCommandRequest(args);
       const project = projectSessions(sessionDirOf(ctx.sessionManager as any, sessionFile), sessionFile);
-      const maxChars = recallOutputChars(windowOf(ctx.model, host.name).effective);
+      const maxChars = recallOutputChars(windowOf(ctx.model, host.name, host.config.dir()).effective);
       const detailChars = expandDetailChars(maxChars);
       let content: string;
       if (request.session) {

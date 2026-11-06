@@ -3,6 +3,8 @@
 import { DEFAULT_BUDGETS } from "../../src/core/window";
 import { convertToLlm } from "@oh-my-pi/pi-coding-agent/session/messages";
 import { createCompactionState, registerCompactionHook, type CompactionHost, type CompactionState } from "../../src/hooks/compaction";
+import { createWindowState } from "../../src/hooks/window-limits";
+import { testConfig } from "./binding";
 import {
   applyTailBudget as applyTailBudgetFor,
   buildOwnCut as buildOwnCutFor,
@@ -21,7 +23,7 @@ import type { CompactionReason } from "../../src/types";
 export const ompConvertToLlm = (messages: any[]): any[] => convertToLlm(messages);
 
 /** omp, every compaction a manual one. */
-export const testHost: CompactionHost = { ...OMP_HOST, convertToLlm: ompConvertToLlm, triggerOf: () => MANUAL_TRIGGER };
+export const testHost: CompactionHost = { ...OMP_HOST, convertToLlm: ompConvertToLlm, triggerOf: () => MANUAL_TRIGGER, config: testConfig };
 
 /** The blocks the summarizer gets for these messages: the hook's toSummaryMessage, then normalize. */
 export const renderedBlocks = (messages: any[]) =>
@@ -64,7 +66,7 @@ export const registerHook = (pi: any): RegisteredHook => {
     pi: { ...pi.pi, convertToLlm: ompConvertToLlm },
   };
   const state = createCompactionState();
-  registerCompactionHook(bound, ompHost(bound), state);
+  registerCompactionHook(bound, { ...ompHost(bound), config: testConfig }, state, createWindowState());
   lastRegistered = {
     state,
     autoCompactionStart: (reason) =>
