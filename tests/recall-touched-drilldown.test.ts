@@ -242,6 +242,20 @@ describe("vcc_recall drill-down", () => {
     }
   });
 
+  it("expand clips a call's arguments at the cap's share, whatever goes in front of it", async () => {
+    const entries = [toolMsg("m1", "write", { path: "/w/long.txt", content: "y".repeat(9000) })];
+    const { dir, file, ids } = makeSession(entries);
+    try {
+      const tool = register();
+      // No context window: the 50 KB cap, whose expand clip is 4,000; an Ignored: note goes in front.
+      const out = await invoke(tool, file, ids, { expand: [0], limit: 1 });
+      expect(out).toStartWith("Ignored: limit");
+      expect(out).toContain("...[arguments of #0 clipped at 4000 of");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("#N:path of an edit that deletes text shows what it removed", async () => {
     const entries = [toolMsg("m1", "edit", { path: "src/a.ts", old_string: "const unused = 1;", new_string: "" })];
     const { dir, file, ids } = makeSession(entries);

@@ -59,7 +59,7 @@ export const toolHints = (short?: string): RecallPagingHints => {
       ? `Use a page between 1 and ${totalPages}.`
       : `Use a page between 1 and ${totalPages}, or refine your query.`,
     nextPage: (_query, scope, page) => `\n--- Use page:${page}${withParams(session, scopeParam(scope))} for more results ---`,
-    listPage: (mode, page) => `\n--- Use mode:'${mode}' page:${page}${withParams(session)} for more results ---`,
+    listPage: (mode, page, scope) => `\n--- Use mode:'${mode}' page:${page}${withParams(session, scopeParam(scope))} for more results ---`,
     // Both calls in the hit's scope: off the current path, a range without scope:'all' skips the hit.
     aroundHit: (n, scope) =>
       `\n--- Read around a hit: ${call(`range:[${Math.max(0, n - 3)}, ${n + 3}]`, scope)}; full text: ${call(`expand:[${n}]`, scope)} ---`,

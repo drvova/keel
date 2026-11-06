@@ -11,7 +11,7 @@
 import { readdirSync, realpathSync, statSync } from "fs";
 import { dirname, join } from "path";
 import { readHeader, scanLines } from "./session-file";
-import { clip, textOf } from "./content";
+import { clip, isExtensionUserMessage, textOf } from "./content";
 import { userWords } from "../extract/user-messages";
 import { formatPin, readPins, replaysPins } from "./pins";
 
@@ -74,7 +74,7 @@ const scanSession = (file: string): SessionInfo | undefined => {
         if (firstRequest === undefined && line.includes('"role":"user"')) {
           const m = parse(line)?.message;
           // What the user wrote, as the summary reads it; not what an extension sent as the user.
-          const words = m?.role === "user" && m.attribution !== "agent" ? userWords(textOf(m.content ?? "")).words : "";
+          const words = m?.role === "user" && !isExtensionUserMessage(m) ? userWords(textOf(m.content ?? "")).words : "";
           if (words) firstRequest = clip(words, 100);
         }
         return;
@@ -126,25 +126,36 @@ export const listProjectSessions = (dir: string, currentFile?: string, limit = M
   return Object.assign(files.slice(0, limit).map(scanSession).filter((s): s is SessionInfo => !!s), { more: files.length > limit });
 };
 
-/** How many other sessions the project has, read from each file's header alone. */
-export const countProjectSessions = (dir: string, currentFile?: string): number =>
-  projectFiles(dir, currentFile).filter((f) => typeof readHeader(f)?.id === "string").length;
+/** The project's other session files with their ids, newest first, read from each file's header alone. */
+const projectIds = (dir: string, currentFile?: string): Array<{ file: string; id: string; short: string }> =>
+  projectFiles(dir, currentFile).flatMap((file) => {
+    const id = readHeader(file)?.id;
+    return typeof id === "string" ? [{ file, id, short: id.replace(/-/g, "").slice(0, 8) }] : [];
+  });
+
+/** How many other sessions the project has. */
+export const countProjectSessions = (dir: string, currentFile?: string): number => projectIds(dir, currentFile).length;
 
 /**
  * An id prefix ("01a194d8", "01a1", "01a194d8-…"; core/recall-request.ts
- * sessionRef strips "@"/"session:") -> the one session it names, or why not;
- * `unmatched` when none of these sessions starts with it, which a longer list
- * could change.
+ * sessionRef strips "@"/"session:") -> the one of these sessions it names, or why not.
  */
-export const resolveSession = (ref: string, sessions: readonly SessionInfo[]): SessionInfo | { error: string; unmatched?: true } => {
+export const resolveSession = <S extends { id: string; short: string }>(ref: string, sessions: readonly S[]): S | { error: string } => {
   const key = ref.replace(/-/g, "").toLowerCase();
   if (key.length < SESSION_REF_MIN_CHARS) return { error: `session:'${ref}' is too short: give at least ${SESSION_REF_MIN_CHARS} characters of an id from mode:'sessions'.` };
   const matches = sessions.filter((s) => s.id.replace(/-/g, "").toLowerCase().startsWith(key));
   if (matches.length === 1) return matches[0];
   if (matches.length === 0) {
-    return { error: `No earlier session of this project starts with '${ref}'. mode:'sessions' lists them.`, unmatched: true };
+    return { error: `No earlier session of this project starts with '${ref}'. mode:'sessions' lists them.` };
   }
   return { error: `session:'${ref}' matches ${matches.length} sessions (${matches.map((s) => s.short).join(", ")}): give more of the id.` };
+};
+
+/** The earlier session an id prefix names, among every one of the project's (by header), read whole once found. */
+export const findSession = (dir: string, currentFile: string, ref: string): SessionInfo | { error: string } => {
+  const found = resolveSession(ref, projectIds(dir, currentFile));
+  if ("error" in found) return found;
+  return scanSession(found.file) ?? { error: `Session ${found.short} could not be read.` };
 };
 
 const date = (iso?: string): string => (iso ? iso.replace("T", " ").slice(0, 16) : "unknown start");

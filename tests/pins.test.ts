@@ -65,6 +65,12 @@ describe("vcc_pin", () => {
     expect(executePin({ unpin: "[1]" }, s.host, s.sm)).toContain("Unpinned [1]");
     expect(executePin({ unpin: 7 }, s.host, s.sm)).toBe("No pinned note [7]. No pinned notes.");
   });
+
+  it("a param sent empty is not sent, as the brief reads the call", () => {
+    const s = session();
+    expect(executePin({ note: "Sessions live in SQLite", unpin: "" }, s.host, s.sm)).toContain("Pinned [1]");
+    expect(executePin({ note: "", unpin: null }, s.host, s.sm)).toContain("- [1] Sessions live in SQLite");
+  });
 });
 
 describe("/omp-vcc-pin and /omp-vcc-unpin", () => {

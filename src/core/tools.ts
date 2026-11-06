@@ -31,6 +31,13 @@ export const toolCallsOf = (message: unknown): ToolCall[] => {
   return Array.isArray(content) ? content.flatMap((part) => toolCallOf(part) ?? []) : [];
 };
 
+/**
+ * A tool argument sent empty, which counts as not sent: a model that fills in
+ * every param sends "", [] or null for the ones it does not mean.
+ */
+export const isUnset = (value: unknown): boolean =>
+  value == null || (typeof value === "string" && value.trim() === "") || (Array.isArray(value) && value.length === 0);
+
 /** A call of one of omp-vcc's own tools (src/names.ts), by name as the host stores it. */
 export const isOwnTool = (name: string | undefined, tool: typeof RECALL_TOOL | typeof PIN_TOOL): boolean =>
   typeof name === "string" && name.toLowerCase() === tool;

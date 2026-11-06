@@ -71,7 +71,7 @@ Tool: ${tc.name}
 
 ${shown}
 
-... (${body.length - room} more chars: one recall result holds ${maxChars}. Use #${entryIndex}:${tc.path}:${next}${via} for the lines from ${next + 1} on.)`;
+... (${body.length - room} more chars than this result has room for. Use #${entryIndex}:${tc.path}:${next}${via} for the lines from ${next + 1} on.)`;
     }
     return `File: ${tc.path}
 Tool: ${tc.name}

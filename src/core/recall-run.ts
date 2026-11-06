@@ -6,7 +6,7 @@ import { expandEntryFile } from "./drill-down";
 import { EXPAND_DETAIL_CHARS } from "./render-entries";
 import { ignoredNote, type RecallRequest, type RecallScope } from "./recall-request";
 import type { Message } from "@oh-my-pi/pi-ai";
-import { countProjectSessions, describeSession, listProjectSessions, MAX_LISTED_SESSIONS, resolveSession, sessionDirOf, type SessionInfo } from "./sessions";
+import { countProjectSessions, describeSession, findSession, listProjectSessions, MAX_LISTED_SESSIONS, sessionDirOf, type SessionInfo } from "./sessions";
 import { currentBranchIds, hostBranch, type SessionManagerLike } from "./session-file";
 import { toolCallsOf } from "./tools";
 import { DEFAULT_CHARS_PER_TOKEN } from "./token-estimate";
@@ -46,18 +46,14 @@ interface RecallView {
 interface ProjectSessions {
   /** The newest MAX_LISTED_SESSIONS; `more` when there are older ones. */
   list(): SessionInfo[] & { more: boolean };
-  /** Every one: an id older than the listed ones still names its session. */
-  all(): SessionInfo[];
   /** How many there are, from their headers: no file is read past its first lines. */
   count(): number;
 }
 
 const projectSessions = (dir: string, currentFile: string): ProjectSessions => {
   let listed: ReturnType<typeof listProjectSessions> | undefined;
-  let all: SessionInfo[] | undefined;
   return {
     list: () => (listed ??= listProjectSessions(dir, currentFile)),
-    all: () => (all ??= listProjectSessions(dir, currentFile, Infinity)),
     count: () => countProjectSessions(dir, currentFile),
   };
 };
@@ -65,8 +61,10 @@ const projectSessions = (dir: string, currentFile: string): ProjectSessions => {
 interface ViewOptions {
   project?: ProjectSessions;
   session?: SessionInfo;
-  /** One recall result's cap; expand's clips follow it (expandDetailChars). */
+  /** What the action may take of one recall result (the cap less what recall puts in front). */
   maxChars?: number;
+  /** Expand's clip for one call's arguments: from the cap itself (expandDetailChars), whatever goes in front. */
+  detailChars?: number;
   /** The file, read once for every view of it in this call. */
   read?: () => SessionRead;
 }
@@ -94,7 +92,7 @@ const openRecallView = (
     ...(options.project ? { project: options.project } : {}),
     ...(options.session ? { session: options.session } : {}),
     maxChars: options.maxChars ?? RECALL_OUTPUT_CHARS,
-    detailChars: expandDetailChars(options.maxChars ?? RECALL_OUTPUT_CHARS),
+    detailChars: options.detailChars ?? expandDetailChars(options.maxChars ?? RECALL_OUTPUT_CHARS),
     load(full) {
       let loaded = cache.get(full);
       if (!loaded) {
@@ -119,13 +117,13 @@ const openRecallView = (
 };
 
 /** A view over one of the project's earlier sessions, on its own active branch. */
-const openSessionView = (session: SessionInfo, scope: RecallScope, maxChars?: number): RecallView => {
+const openSessionView = (session: SessionInfo, scope: RecallScope, size: Pick<ViewOptions, "maxChars" | "detailChars"> = {}): RecallView => {
   const read = once(() => readSession(session.file));
   const ids = read().branchIds;
   // A file without entry ids (an old format) has no branch to follow: read all of it.
   const effective = ids.size === 0 ? "all" : scope === "project" ? "lineage" : scope;
   const branch = [...ids].map((id) => ({ id }));
-  return openRecallView(session.file, effective, { getBranch: () => branch }, { session, maxChars, read });
+  return openRecallView(session.file, effective, { getBranch: () => branch }, { session, ...size, read });
 };
 
 /** What a follow-up call inside an earlier session adds, so it reads that session again. */
@@ -169,8 +167,8 @@ const OFF_PATH_NOTE =
 export interface RecallPagingHints {
   outOfRange(query: string, scope: RecallScope, totalPages: number, truncated: boolean): string;
   nextPage(query: string, scope: RecallScope, page: number): string;
-  /** The next page of mode:'touched' or mode:'sessions'; "" where the surface has no such call. */
-  listPage(mode: "touched" | "sessions", page: number): string;
+  /** The next page of mode:'touched' or mode:'sessions', in the listing's scope; "" where the surface has no such call. */
+  listPage(mode: "touched" | "sessions", page: number, scope: RecallScope): string;
   /** Next step after a search page, pointing at its first hit. The command has none. */
   aroundHit?(index: number, scope: RecallScope): string;
   /** After a search of this session finds nothing: where the project's earlier sessions are. */
@@ -233,20 +231,22 @@ export const recall = (input: RecallInput, surface: RecallSurface): { ok: true; 
   const { request, sessionManager } = input;
   const sessionFile = sessionManager.getSessionFile?.();
   if (!sessionFile) return { ok: false, text: "No session file available.", severity: "error" };
-  const project = projectSessions(sessionDirOf(sessionManager, sessionFile), sessionFile);
+  const dir = sessionDirOf(sessionManager, sessionFile);
+  const project = projectSessions(dir, sessionFile);
   const maxChars = recallOutputChars(input.contextWindow);
   // What goes in front of the action's output comes out of the view's share of the cap.
   const note = ignoredNote(request);
+  const detailChars = expandDetailChars(maxChars);
   const skipTurn = input.skipCurrentTurn === true;
   if (request.session) {
-    const listed = resolveSession(request.session, project.list());
-    const target = "error" in listed && listed.unmatched && project.list().more ? resolveSession(request.session, project.all()) : listed;
+    // By header among all of them: an id older than the listed ones still names its session.
+    const target = findSession(dir, sessionFile, request.session);
     if ("error" in target) return { ok: false, text: target.error, severity: "warning" };
     const header = sessionHeader(target);
-    const view = openSessionView(target, request.scope, maxChars - header.length - note.length);
+    const view = openSessionView(target, request.scope, { maxChars: maxChars - header.length - note.length, detailChars });
     return { ok: true, text: header + capOutput(note + runAction(request, view, surface, skipTurn), Math.max(0, maxChars - header.length)) };
   }
-  const view = openRecallView(sessionFile, request.scope, sessionManager, { project, maxChars: maxChars - note.length });
+  const view = openRecallView(sessionFile, request.scope, sessionManager, { project, maxChars: maxChars - note.length, detailChars });
   return { ok: true, text: capOutput(note + runAction(request, view, surface, skipTurn), maxChars) };
 };
 
@@ -474,7 +474,7 @@ const pageOfHits = (
 
 /** Files worked on, plus a ready #N:path call for the first file on the page that was written. */
 const runTouched = (page: number, view: RecallView, hints: RecallPagingHints): string =>
-  formatTouched(touchedFiles(view.load(false)), page, { via: inSession(view), next: (n) => hints.listPage("touched", n) });
+  formatTouched(touchedFiles(view.load(false)), page, { via: inSession(view), next: (n) => hints.listPage("touched", n, view.scope) });
 
 const SESSIONS_PAGE_SIZE = 10;
 /** scope:'project' searches at most this much: the newest sessions first. */
@@ -494,7 +494,7 @@ const runSessions = (page: number, view: RecallView, hints: RecallPagingHints): 
   const header = totalPages > 1
     ? `Earlier sessions in this project, newest first, page ${page}/${totalPages} (${sessions.length} sessions${more}):`
     : `${sessions.length} earlier session${sessions.length === 1 ? "" : "s"} in this project, newest first${more}:`;
-  const next = page < totalPages ? hints.listPage("sessions", page + 1) : "";
+  const next = page < totalPages ? hints.listPage("sessions", page + 1, view.scope) : "";
   const first = sessions[start].short;
   return `${header}\n\n${lines.join("\n")}\n` +
     `\n--- Read one: session:'${first}' with a query, range, expand or mode:'touched'; search all: a query with scope:'project' ---${next}`;

@@ -1,6 +1,6 @@
 import type { NormalizedBlock } from "../types";
 import { clip } from "./content";
-import { callKind, callSubject, isOwnTool } from "./tools";
+import { callKind, callSubject, isOwnTool, isUnset } from "./tools";
 import { collapseSkillText } from "./skill-collapse";
 import { PIN_PARAMS, PIN_TOOL, RECALL_PARAMS, RECALL_TOOL } from "../names";
 
@@ -227,7 +227,7 @@ const vccToolLine = (name: string, args: Record<string, unknown>): string | unde
     // Every param the tool takes, so a page-2 call is not merged with page 1 as `x2`.
     for (const key of RECALL_PARAMS) {
       const value = args[key];
-      if (key === "query" || value == null || value === "" || (Array.isArray(value) && value.length === 0)) continue;
+      if (key === "query" || isUnset(value)) continue;
       if (key === "page" && Number(value) === 1) continue;
       parts.push(`${key}:${recallArg(value)}`);
     }
@@ -236,8 +236,8 @@ const vccToolLine = (name: string, args: Record<string, unknown>): string | unde
   if (isOwnTool(name, PIN_TOOL)) {
     const note = args[PIN_PARAMS.note];
     const unpin = args[PIN_PARAMS.unpin];
-    if (typeof note === "string" && note.trim()) return `* ${name} "${clip(note, 60)}"`;
-    if (unpin != null && unpin !== "") return `* ${name} ${PIN_PARAMS.unpin}:${recallArg(unpin)}`;
+    if (typeof note === "string" && !isUnset(note)) return `* ${name} "${clip(note, 60)}"`;
+    if (!isUnset(unpin)) return `* ${name} ${PIN_PARAMS.unpin}:${recallArg(unpin)}`;
     return `* ${name}`;
   }
   return undefined;

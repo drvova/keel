@@ -2,6 +2,9 @@ import type { Message } from "@oh-my-pi/pi-ai";
 
 export const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
+/** User text an extension sent on the agent's behalf (omp `attribution: "agent"`), not words the user wrote. */
+export const isExtensionUserMessage = (m: unknown): boolean => isObject(m) && m.role === "user" && m.attribution === "agent";
+
 /**
  * A message as recall and the summary can read it. Session files can hold what
  * no renderer expects (a null content part, tool-call arguments that are not an

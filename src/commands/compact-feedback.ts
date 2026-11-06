@@ -1,12 +1,11 @@
 // What omp-vcc's commands tell the user, and what /omp-vcc says once a
 // compaction it asked for ends.
-import { afterReset, hostBranch } from "../core/session-file";
+import { hostBranch, lastCompactionIndex } from "../core/session-file";
 import { tell, type HostProfile, type NotifyCtx } from "../host";
 import { tellCompactionStats, type CompactionStats } from "../compaction/stats";
 
 /** The branch has a compaction still in effect (none, or one before omp's /clear, does not count). */
-const compactedBefore = (ctx: NotifyCtx): boolean =>
-  afterReset(hostBranch(ctx.sessionManager) ?? []).some((e) => e?.type === "compaction");
+const compactedBefore = (ctx: NotifyCtx): boolean => lastCompactionIndex(hostBranch(ctx.sessionManager) ?? []) >= 0;
 
 export const reportCompactDone = (
   ctx: NotifyCtx,

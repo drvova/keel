@@ -160,6 +160,8 @@ describe("vcc_recall across sessions", () => {
 
   it("the next page of a scope:'project' search keeps the scope", () => {
     expect(toolHintsOf().nextPage("x", "project", 2)).toBe("\n--- Use page:2 with scope:'project' for more results ---");
+    // A listing that depends on the scope, too: mode:'touched' over every branch.
+    expect(toolHintsOf().listPage("touched", 2, "all")).toBe("\n--- Use mode:'touched' page:2 with scope:'all' for more results ---");
     expect(toolHintsOf("aaaa1111").nextPage("x", "all", 2)).toBe("\n--- Use page:2 with session:'aaaa1111' and scope:'all' for more results ---");
   });
 

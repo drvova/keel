@@ -2,6 +2,7 @@
 // both the summary and the cut's "would this prefix render" check, so the two
 // cannot disagree.
 import { summaryBlocks } from "../core/normalize";
+import { isExtensionUserMessage } from "../core/content";
 import { UNSUMMARIZED_MESSAGE_TYPES } from "../names";
 
 import type { ConvertToLlm } from "../host";
@@ -45,7 +46,7 @@ export const toSummaryMessage = (message: any, convert: ConvertToLlm): any | nul
   if (converted.length === 0) return null;
   if (role === "bashExecution" || role === "pythonExecution") return message;
   if (role === "custom") return { ...converted[0], role: "user", injected: true };
-  if (role === "branchSummary" || (role === "user" && message.attribution === "agent")) return { ...converted[0], injected: true };
+  if (role === "branchSummary" || isExtensionUserMessage(message)) return { ...converted[0], injected: true };
   return converted[0];
 };
 

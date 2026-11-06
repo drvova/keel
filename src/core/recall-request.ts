@@ -1,6 +1,7 @@
 // A recall call as one request, from the tool's params or the command's text.
 import { parseDrillDown } from "./drill-down";
 import { RECALL_PARAMS } from "../names";
+import { isUnset } from "./tools";
 
 type DrillTarget = NonNullable<ReturnType<typeof parseDrillDown>>;
 
@@ -97,11 +98,8 @@ export const normalizeToolParams = (raw: unknown): { params: RecallToolParams; d
   const p: Record<string, unknown> = { ...(raw as Record<string, unknown>) };
   const dropped: string[] = [];
   const drop = (key: string, why: string) => { dropped.push(`${key} ${JSON.stringify(p[key])} (${why})`); delete p[key]; };
-  // A param sent empty is not sent: a model that fills in every param must not get an Ignored: note per call.
-  for (const key of Object.keys(p)) {
-    const v = p[key];
-    if (v == null || (typeof v === "string" && v.trim() === "") || (Array.isArray(v) && v.length === 0)) delete p[key];
-  }
+  // A param sent empty is not sent: no Ignored: note for it on every call.
+  for (const key of Object.keys(p)) if (isUnset(p[key])) delete p[key];
 
   for (const key of Object.keys(p)) {
     if (!(RECALL_PARAMS as readonly string[]).includes(key)) drop(key, "not a vcc_recall param");
