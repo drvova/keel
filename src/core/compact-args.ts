@@ -4,13 +4,8 @@
 // is done (lisp/src/args.lisp, op args).
 import { core } from "./lisp-core";
 
-interface ParsedCompactionArgs {
-  followUpPrompt: string;
-  /** keep:N as typed; null when none was. */
-}
-
-/** /omp-vcc's text: the prompt to send after, keep:N, and the customInstructions it hands the host. */
-export const commandArgs = (args?: string): ParsedCompactionArgs & { instructions: string } => {
+/** /omp-vcc's text: the prompt to send after, and the customInstructions it hands the host (keep:N in them). */
+export const commandArgs = (args?: string): { followUpPrompt: string; instructions: string } => {
   const reply = core({ op: "args", command: args ?? null });
   return { followUpPrompt: reply.followUpPrompt as string, instructions: reply.instructions as string };
 };

@@ -75,7 +75,7 @@
 ;;;;   -> {"ok":true,"replace":[{i, text}...]}
 ;;;;
 ;;;; args: a compaction command's text and the instructions the hook reads (src/core/compact-args.ts)
-;;;;   {"op":"args","command":TEXT} -> {"ok":true,"followUpPrompt":P,"keepUserTurns":N|null,"instructions":I}
+;;;;   {"op":"args","command":TEXT} -> {"ok":true,"followUpPrompt":P,"instructions":I} (keep:N in I)
 ;;;;   {"op":"args","instructions":TEXT|null} -> {"ok":true,"fromCommand":B,"keepUserTurns":N|null,"followUpPrompt":P|null}
 ;;;;
 ;;;; limits: the learned-limits file alone (limits.lisp), for its tests
