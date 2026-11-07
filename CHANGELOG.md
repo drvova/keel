@@ -18,6 +18,8 @@ All notable changes to `@drvova/omp-vcc` are documented in this file. Entries fr
 
 ### Added
 
+- **The README, reorganized** — what omp-vcc does and its two ways of making room up front, then install, a quick start, the commands and tools in tables, the summary, turns out whole, recall, pinned notes, the window and tokens, config as a table, each host's details folded away, and a section on the Lisp core: how it runs and why Common Lisp on SBCL.
+
 - **The window and the tokens, learned from the provider** — catalogs disagree (one DeepSeek model is listed at 131K to 1.05M across providers, and one Claude model moved from 1M to 200K between two Pi releases), so omp-vcc keeps, per model in `omp-vcc-models.json`, what the provider proved:
   - the largest prompt it accepted, which overrules a stated limit it has since outgrown;
   - the limit an overflow error stated, now also in the shapes LiteLLM, Together, Mistral, Kimi, DashScope, OpenRouter's Poolside and DS4 servers send;
