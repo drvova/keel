@@ -2,7 +2,7 @@
 // when it cannot keep them all, and the char budget it keeps them within.
 import { describe, expect, it } from "bun:test";
 import { compile as compileAt, type CompileInput } from "../src/core/summarize";
-import { DEFAULT_SUMMARY_LIMITS } from "../src/core/window";
+import { DEFAULT_SUMMARY_LIMITS } from "./support/window";
 import type { NormalizedBlock } from "../src/types";
 import { assistantText, assistantWithToolCall, userMsg } from "./fixtures";
 import { summarize } from "./support/summary";

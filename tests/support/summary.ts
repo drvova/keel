@@ -6,7 +6,7 @@
 // and the state it stores for the next compaction.
 import type { NormalizedBlock } from "../../src/types";
 import { compileSummary, type CompileInput, type CompiledSummary } from "../../src/core/summarize";
-import { DEFAULT_SUMMARY_LIMITS } from "../../src/core/window";
+import { DEFAULT_SUMMARY_LIMITS } from "./window";
 
 /** Large enough that no section is capped: what the window gives, whole. */
 export const UNCAPPED = { userMessages: 1000, filesPerCategory: 1000, commits: 1000, historyRanges: 1000, briefLines: 100000, commandsPerName: 1000 };

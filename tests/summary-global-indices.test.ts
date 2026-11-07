@@ -18,7 +18,7 @@ import {
   readEntries,
 } from "../src/core/session-file";
 import { compile as compileAt, type CompileInput } from "../src/core/summarize";
-import { DEFAULT_SUMMARY_LIMITS } from "../src/core/window";
+import { DEFAULT_SUMMARY_LIMITS } from "./support/window";
 import { OMP_VCC_COMPACT_INSTRUCTION } from "../src/core/compact-args";
 import { registerHook } from "./support/host";
 import { userMsg, assistantWithToolCall, toolResult } from "./fixtures";

@@ -18,12 +18,10 @@ import { fileURLToPath } from "node:url";
  * While it is not there (being built, no SBCL, a failed build) a call throws
  * CoreUnavailable, which says why in words a user can act on; each surface
  * catches it and steps aside or tells (src/core/core-wait.ts). A core that
- * fails throws too. OMP_VCC_CORE=off answers undefined: the tests' TypeScript
- * side, while TypeScript copies remain to compare against.
+ * fails throws too: it is all there is.
  */
-export const callCore = (request: object): Record<string, unknown> | undefined => {
+export const core = (request: object): Record<string, unknown> => {
   const status = coreStatus();
-  if (status.state === "off") return undefined;
   if (status.state !== "ready") throw new CoreUnavailable(status);
   const run = spawnSync(status.path, [], { input: JSON.stringify(request), encoding: "utf8", maxBuffer: 1 << 30 });
   let reply: any;
@@ -32,16 +30,9 @@ export const callCore = (request: object): Record<string, unknown> | undefined =
   throw new Error(`omp-vcc's core failed: ${reply?.error ?? run.error?.message ?? (run.stderr || `exit ${run.status}`)}`);
 };
 
-/** The core's answer: callCore for code whose TypeScript copy is gone, where the core is all there is. */
-export const core = (request: object): Record<string, unknown> => {
-  const reply = callCore(request);
-  if (!reply) throw new Error("omp-vcc's core is off (OMP_VCC_CORE=off), and nothing else does this");
-  return reply;
-};
-
 /** The core cannot answer yet, or here: `message` says why, as a user is told. */
 export class CoreUnavailable extends Error {
-  constructor(readonly status: Exclude<CoreStatus, { state: "ready" } | { state: "off" }>) {
+  constructor(readonly status: Exclude<CoreStatus, { state: "ready" }>) {
     super(coreUnavailableText(status));
   }
 }
@@ -57,7 +48,6 @@ const coreUnavailableText = (status: CoreUnavailable["status"]): string => {
 /** Where the core stands: ready at a path, being built, or not buildable here (and why). */
 export type CoreStatus =
   | { state: "ready"; path: string }
-  | { state: "off" }
   | { state: "building" }
   | { state: "no-sbcl"; sbcl: string }
   | { state: "failed"; why: string };
@@ -92,7 +82,6 @@ let building: CoreStatus | undefined;
 /** The core's state now; starts the build when it is neither there nor being built. */
 export const coreStatus = (): CoreStatus => {
   const named = process.env.OMP_VCC_CORE;
-  if (named === "off") return { state: "off" };
   if (named) return { state: "ready", path: named };
   const { path } = buildOfSources();
   if (existsSync(path)) return { state: "ready", path };

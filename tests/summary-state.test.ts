@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { compileSummary, type SummaryState } from "../src/core/summarize";
-import { DEFAULT_SUMMARY_LIMITS } from "../src/core/window";
+import { DEFAULT_SUMMARY_LIMITS } from "./support/window";
 import { OMP_VCC_COMPACT_INSTRUCTION } from "../src/core/compact-args";
 import type { NormalizedBlock } from "../src/types";
 import { registerHook } from "./support/host";

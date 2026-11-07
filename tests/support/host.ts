@@ -1,6 +1,6 @@
 // The compaction hook on omp's own convertToLlm, the way index.ts binds it, for
 // tests that drive the hook or the cut helpers without a running omp.
-import { DEFAULT_BUDGETS, DEFAULT_SUMMARY_LIMITS } from "../../src/core/window";
+import { DEFAULT_BUDGETS, DEFAULT_SUMMARY_LIMITS } from "./window";
 import { compileSummary } from "../../src/core/summarize";
 import { toSummaryMessage } from "../../src/compaction/summary-input";
 import { convertToLlm } from "@oh-my-pi/pi-coding-agent/session/messages";

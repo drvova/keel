@@ -2,14 +2,31 @@
 ;;;;
 ;;;; SPDX-License-Identifier: MIT
 ;;;;
-;;;; A port of src/core/window.ts (the limit an overflow error states, each
-;;;; host's trigger from the policy it hands the hook, the budgets that follow
-;;;; the trigger) and of the context measure plan.ts sizes a compaction from
-;;;; (token-estimate.ts calibrateCharsPerToken). The learned-limits file and the
-;;;; effective window stay in TypeScript (model-limits.ts): they are file IO.
+;;;; Limits that follow the model's context window instead of fixed numbers.
 ;;;;
-;;;; JavaScript does this arithmetic on doubles, so it is done on doubles here,
-;;;; in the order the TS writes it; a division never makes a ratio.
+;;;; omp knows a model's window from its provider (with discovery configured),
+;;;; its catalog, models.yml or a 128K default, and compacts at a trigger below
+;;;; it (the window less a reserve, or the user's threshold). After a compaction
+;;;; the context must land inside omp's recovery band (80% of the trigger) or
+;;;; omp treats it as a dead end and starts shaking tool output; a 25k-token kept
+;;;; tail does that on a small window, and a 2k-token summary is needlessly thin
+;;;; on a 1M one. So the tail, the smart-keep trigger, the summary budget, the
+;;;; size of each summary section and the growth a summary may add are shares of
+;;;; the trigger, clamped like the recall cap (recall.lisp recall-output-chars):
+;;;; the same numbers as before on a typical 128K window, smaller below it, a
+;;;; larger summary far above it.
+;;;;
+;;;; The window is the smaller of the host's and a limit an overflow error
+;;;; stated (limits.lisp); omp-vcc makes no network call. The trigger is the
+;;;; host's own: its compaction policy (omp: threshold, reserve, the model's
+;;;; entry; Pi: its reserve) arrives with every compaction (preparation.settings),
+;;;; and the host's rule applies it to that window as the host does. Pi
+;;;; re-compacts only past its trigger, so the landing below omp's recovery band
+;;;; suits it too. Also here: the context measure a compaction is sized from (the
+;;;; chars per token, calibrated on the context the host counted).
+;;;;
+;;;; JavaScript did this arithmetic on doubles, so it is done on doubles here, in
+;;;; the order it was written; a division never makes a ratio.
 
 (in-package #:omp-vcc)
 
@@ -84,7 +101,12 @@
   (max 0 (min (- window 1) (- window (omp-reserve window policy)))))
 
 (defun omp-trigger (window &optional policy)
-  "window.ts ompTrigger: where omp compacts on WINDOW under POLICY."
+  "Where omp compacts on WINDOW under POLICY: pi-agent-core's resolveThresholdTokens,
+which omp does not export to extensions. A fixed token threshold is exact unless
+it is at or past the window (then the window less its reserve); otherwise a
+percentage of the window (or of a model entry's base), or by default the window
+less a reserve of 15% or 16,384 tokens, whichever is larger (15% alone when that
+would not fit). tests/window.test.ts holds it to omp's own."
   (let ((fixed (finite-positive (json-get policy "thresholdTokens"))))
     (if fixed
         (if (>= fixed window) (omp-prompt-budget window policy) (min (- window 1) (max 1 fixed)))
@@ -108,6 +130,9 @@
       policy)))
 
 (defun pi-trigger (window &optional policy)
+  "Where Pi compacts on WINDOW: its shouldCompact, contextTokens > contextWindow -
+reserveTokens, which Pi applies with `enabled` on. A reserve at or past the window
+would compact every turn; the trigger is then 1."
   (let* ((set (json-get policy "reserveTokens"))
          (reserve (if (realp set) (max 0 set) +pi-default-reserve-tokens+)))
     (max 1 (floor (- window reserve)))))
@@ -129,13 +154,18 @@
 
 ;;; --- the budgets ------------------------------------------------------------------------
 
-(defparameter +landing-share+ 0.6d0)
-(defparameter +tail-share+ 0.25d0)
-(defparameter +sections-tokens+ 600)
+(defparameter +recovery-band+ 0.8d0 "omp re-compacts unless the result lands at or under this share of the trigger.")
+(defparameter +landing-share+ 0.6d0 "omp-vcc aims lower, so the turn after a compaction has room before the next one.")
+(defparameter +tail-share+ 0.25d0 "The kept tail is at most this share of the trigger.")
+(defparameter +sections-tokens+ 600 "A rough allowance for the summary's sections around the brief, at full size.")
+;; [Working Set] takes at most this share of the trigger, and nothing when that is
+;; under the floor. A smaller window needs it most: in real runs on a 40K window,
+;; a 3.5% share (about 3k chars) held no whole source file, and the agent read the
+;; files again; 14% holds them. On a ~128K window the 3,800-token cap binds first.
 (defparameter +working-set-share+ 0.14d0)
 (defparameter +min-working-set-tokens+ 400)
-(defparameter +min-tail-tokens+ 1000)
-(defparameter +reference-trigger+ (omp-default-trigger 128000))
+(defparameter +min-tail-tokens+ 1000 "The kept tail's floor: the working set takes only the landing room above it.")
+(defparameter +reference-trigger+ (omp-default-trigger 128000) "omp's trigger on a 128K window: where the fixed numbers were tuned.")
 
 ;; (KEY DEFAULT FLOOR), in DEFAULT_SUMMARY_LIMITS' order.
 (defparameter +summary-limits+
@@ -149,12 +179,21 @@
     limits))
 
 (defun summary-scale (trigger brief-ceiling)
+  "How much of each section list a summary keeps, against a ~128K window. Below
+it, the square root of the trigger's share (a 32K window keeps about 40%), never
+under a quarter: a small window needs the room, but the lists are where a long
+task keeps its bearings. Above it, nothing changes until the brief's ceiling
+grows (a trigger past 500K), then the lists grow with it."
   (if (< trigger +reference-trigger+)
       (max 0.25d0 (sqrt (/ (dbl trigger) (dbl +reference-trigger+))))
       (max 1 (/ (dbl brief-ceiling) 2000d0))))
 
 (defun compaction-budgets (trigger overhead with-working-set)
-  "window.ts compactionBudgets."
+  "Budgets for a compaction that runs at TRIGGER tokens, with OVERHEAD of context
+it cannot remove (system prompt, tool schemas): what is kept plus the summary lands
+at or under +landing-share+ of the trigger. An unknown trigger gets the fixed
+numbers from before the window was known, still a ~128K window's. Without a
+working set (the setting off), its room goes to the kept tail."
   (let ((tt (positive-floor trigger)))
     (if (null tt)
         (json-object "maxTailTokens" 25000 "minTailTokens" 5000 "briefTokens" 1100 "briefCeilingTokens" 2000
@@ -240,8 +279,11 @@
              (policy (if (nth-value 1 (gethash "hostSettings" c))
                          (rule-policy-of rule (json-get c "hostSettings"))
                          (json-get c "policy")))
-             (trigger (trigger-for (json-get c "window") (eq (json-get c "recovering") :true)
-                                   (let ((v (json-get c "tokensBefore"))) (and (realp v) v)) policy rule))
+             ;; A trigger the case names is taken as it is, for the budgets below it.
+             (trigger (if (realp (json-get c "trigger"))
+                          (json-get c "trigger")
+                          (trigger-for (json-get c "window") (eq (json-get c "recovering") :true)
+                                       (let ((v (json-get c "tokensBefore"))) (and (realp v) v)) policy rule)))
              (overhead (let ((v (json-get c "overheadTokens"))) (if (realp v) v 0))))
         (json-object "policy" policy "trigger" trigger
                      "autoCompacts" (if (rule-auto-compacts-p rule policy) :true :false)

@@ -61,7 +61,7 @@ describe.skipIf(!realModel())(`long-horizon session, on a real model in ${sessio
   });
 
   // The same 60-turn session on a 32K and a 1M window: budgets and section sizes
-  // follow omp's trigger (core/window.ts), recall and pointers do not.
+  // follow omp's trigger (lisp/src/window.lisp), recall and pointers do not.
   it("a 32K window gets about half the summary's sections, and keeps every pointer and recall", () => {
     const { small, r60: typical } = runs;
     expect(small.byOmpVcc).toBe(small.compactions);

@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { core } from "../src/core/lisp-core";
-import { compactionBudgets, ompDefaultTrigger } from "../src/core/window";
+import { compactionBudgets, ompDefaultTrigger } from "./support/window";
 import { registerHook } from "./support/host";
 
 let dir: string;

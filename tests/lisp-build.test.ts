@@ -1,5 +1,5 @@
 // Where omp-vcc's core comes from (src/core/lisp-core.ts): OMP_VCC_CORE when it
-// names one, off when it says off, else the build of this copy's sources with
+// names one, else the build of this copy's sources with
 // the user's SBCL, named by their hash; without SBCL it says so.
 import { afterEach, describe, expect, it } from "bun:test";
 import { existsSync } from "node:fs";
@@ -15,11 +15,9 @@ afterEach(() => {
 });
 
 describe("the core's source", () => {
-  it("is the executable OMP_VCC_CORE names, or none when it says off", () => {
+  it("is the executable OMP_VCC_CORE names", () => {
     process.env.OMP_VCC_CORE = "/opt/omp-vcc-core";
     expect(coreStatus()).toEqual({ state: "ready", path: "/opt/omp-vcc-core" });
-    process.env.OMP_VCC_CORE = "off";
-    expect(coreStatus()).toEqual({ state: "off" });
   });
 
   it.skipIf(!lispCore())("builds this copy's sources with SBCL, under a name their hash gives", async () => {

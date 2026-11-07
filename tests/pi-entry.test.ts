@@ -7,7 +7,6 @@ import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join, dirname } from "path";
 import { recordLearnedWindow } from "../src/core/model-limits";
-import { lispCore, withCore } from "./support/lisp-core";
 
 
 
@@ -127,7 +126,7 @@ describe.skipIf(!piInstalled())("Pi entry", () => {
   });
 
   test("the summary reads the branch as Pi's context holds it: an omitted attempt and a redacted result", async () => {
-    for (const on of [lispCore()]) {
+    {
       const pi = await createPi();
       const attempt = assistant("A first attempt that Pi retried away");
       const call = entry({ role: "assistant", content: [{ type: "toolCall", id: "k1", name: "bash", arguments: { command: "cat .env" } }] });
@@ -138,9 +137,10 @@ describe.skipIf(!piInstalled())("Pi entry", () => {
         { id: `p${++n}`, type: "context_edit", targetId: result.id, replacement: { content: "[redacted by the user]" } },
         ...conversation(),
       ]);
-      const summary: string = withCore(on, () => pi.beforeCompact({ reason: "threshold", willRetry: false })).compaction.summary;
-      expect({ on, has: summary.includes("Zeroth request") }).toEqual({ on, has: true });
-      expect({ on, secret: summary.includes("hunter2"), attempt: summary.includes("Pi retried away") }).toEqual({ on, secret: false, attempt: false });
+      const summary: string = pi.beforeCompact({ reason: "threshold", willRetry: false }).compaction.summary;
+      expect(summary).toContain("Zeroth request");
+      expect(summary).not.toContain("hunter2");
+      expect(summary).not.toContain("Pi retried away");
     }
   });
 

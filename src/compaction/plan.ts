@@ -12,13 +12,12 @@ import type { VccSettings } from "../core/settings";
 import type { ConvertToLlm } from "../host";
 import { toLiveMessage, toSummaryMessage } from "./summary-input";
 import { restoreOriginals } from "../core/raw-store";
-import { projectContextEdits } from "../core/context-edits";
 import { core } from "../core/lisp-core";
 import type { CompactionStats } from "./stats";
 import type { VccCompactionDetails } from "../details";
 
 export interface PlanInput {
-  /** The branch as the host has it; the plan reads it as the context holds it (Pi's context edits applied). */
+  /** The branch as the host has it; the plan reads it as the context holds it (asContextHolds). */
   branchEntries: any[];
   convert: ConvertToLlm;
   /** keep:N the user typed; null when none was. */
@@ -98,9 +97,7 @@ export type Plan = (
  * the rest (lisp/src/compaction.lisp).
  */
 export const hostNotes = (input: Pick<PlanInput, "branchEntries" | "convert" | "sessionFile" | "indexById">): Array<Record<string, unknown>> => {
-  // Of each entry as the context holds it: the core drops what Pi's edits omit, and reads its replacements, itself.
-  const raw = input.branchEntries;
-  const entries = projectContextEdits(raw) ?? raw;
+  const entries = input.branchEntries;
   const live = entries.map((e) => (e ? toLiveMessage(e) : undefined));
   const at = live.flatMap((m, i) => (m ? [i] : []));
   const restored = restoreOriginals(at.map((i) => live[i]), at.map((i) => entries[i]?.id), input.sessionFile);
@@ -116,8 +113,17 @@ export const hostNotes = (input: Pick<PlanInput, "branchEntries" | "convert" | "
   });
 };
 
-/** The compaction's plan, from the core. */
+/**
+ * The branch as the context holds it: Pi's context_edit entries applied as Pi
+ * applies them (lisp/src/context-edits.lisp, op context-edits), what they omit
+ * and the edits themselves left out. An omp branch has none, and is its own.
+ */
+export const asContextHolds = (branch: any[]): any[] =>
+  branch.some((e) => e?.type === "context_edit") ? (core({ op: "context-edits", branch }).entries as any[]) : branch;
+
+/** The compaction's plan, from the core, on the branch as the context holds it. */
 export const planCompaction = (input: PlanInput): Plan => {
   const { convert: _convert, indexById: _indexById, branchEntries: _branch, rule, ...rest } = input;
-  return core({ op: "compact", input: { ...rest, ruleName: rule.name, branch: input.branchEntries, notes: hostNotes(input) } }).plan as Plan;
+  const branch = asContextHolds(input.branchEntries);
+  return core({ op: "compact", input: { ...rest, ruleName: rule, branch, notes: hostNotes({ ...input, branchEntries: branch }) } }).plan as Plan;
 };

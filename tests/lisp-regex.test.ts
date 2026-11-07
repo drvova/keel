@@ -3,13 +3,10 @@
 // texts; whether it compiles, test, search and the global match count are
 // compared. The core supports the whole non-unicode dialect but a
 // back-reference into or inside a look-behind (matched backwards in
-// JavaScript), which it refuses; those must stay rare. Skips without SBCL.
+// JavaScript), which it refuses; those must stay rare.
 import { describe, expect, it } from "bun:test";
-import { callCore } from "../src/core/lisp-core";
-import { lispCore, withCore } from "./support/lisp-core";
+import { core as callCore } from "../src/core/lisp-core";
 
-const core = lispCore();
-const maybe = core ? describe : describe.skip;
 
 const rng = (seed: number) => () => {
   seed = (seed * 1103515245 + 12345) & 0x7fffffff;
@@ -84,7 +81,7 @@ const jsSide = (p: string, texts: string[]) => {
   };
 };
 
-maybe("Lisp core regex", () => {
+describe("Lisp core regex", () => {
   it("compiles and matches as JavaScript does", () => {
     let compared = 0;
     let unsupported = 0;
@@ -92,7 +89,7 @@ maybe("Lisp core regex", () => {
     const patterns = [...HAND_PICKED, ...Array.from({ length: 1500 }, () => pattern(r))];
     for (const [i, p] of patterns.entries()) {
       const texts = Array.from({ length: 12 }, () => text(r));
-      const lisp = withCore(core, () => callCore({ op: "regex", pattern: p, texts })) as any;
+      const lisp = callCore({ op: "regex", pattern: p, texts }) as any;
       expect(lisp).toBeDefined();
       if (lisp.status === "unsupported") { unsupported++; continue; }
       const { ok: _ok, ...got } = lisp;
@@ -100,7 +97,7 @@ maybe("Lisp core regex", () => {
       compared++;
     }
     for (const [p, texts] of TARGETED) {
-      const lisp = withCore(core, () => callCore({ op: "regex", pattern: p, texts })) as any;
+      const lisp = callCore({ op: "regex", pattern: p, texts }) as any;
       expect(lisp.status).toBe("ok");
       const { ok: _ok, ...got } = lisp;
       expect({ p, ...got }).toEqual({ p, ...jsSide(p, texts) });
@@ -110,8 +107,8 @@ maybe("Lisp core regex", () => {
     // Group names by the spec's ID_Start and ID_Continue, as V8 (Node, where Pi runs) reads them;
     // JavaScriptCore (Bun, where these tests run) refuses letter numbers and the Other_ID_* code points.
     for (const [p, ok] of [["(?<Ⅻ>x)\\k<Ⅻ>", true], ["(?<aⅫ>x)", true], ["(?<a·>x)", true], ["(?<℘>x)", true], ["(?<·a>x)", false], ["(?<a-b>x)", false]] as const) {
-      expect({ p, status: (withCore(core, () => callCore({ op: "regex", pattern: p, texts: ["x"] })) as any).status }).toEqual({ p, status: ok ? "ok" : "syntax" });
+      expect({ p, status: (callCore({ op: "regex", pattern: p, texts: ["x"] }) as any).status }).toEqual({ p, status: ok ? "ok" : "syntax" });
     }
-    for (const p of BACKWARDS) expect({ p, status: (withCore(core, () => callCore({ op: "regex", pattern: p, texts: ["ab"] })) as any).status }).toEqual({ p, status: "unsupported" });
+    for (const p of BACKWARDS) expect({ p, status: (callCore({ op: "regex", pattern: p, texts: ["ab"] }) as any).status }).toEqual({ p, status: "unsupported" });
   }, 120_000);
 });

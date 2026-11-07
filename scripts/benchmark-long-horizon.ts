@@ -8,7 +8,7 @@
  * omp's idle pass (on Pi, which has none, Pi's /compact) runs every
  * `compactEvery` turns, and the host compacts on its own when the context passes
  * its trigger. The window omp is told defaults to 128K;
- * the budgets and section sizes follow omp's trigger on it (core/window.ts).
+ * the budgets and section sizes follow omp's trigger on it (lisp/src/window.lisp).
  * `all` runs 32K, 128K and 1M. Each turn is a model turn: expect minutes per
  * 10 turns.
  *

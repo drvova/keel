@@ -1,6 +1,6 @@
 import { describe, it, expect } from "bun:test";
 import { compile as compileAt, compileSummary, type CompileInput } from "../src/core/summarize";
-import { DEFAULT_SUMMARY_LIMITS } from "../src/core/window";
+import { DEFAULT_SUMMARY_LIMITS } from "./support/window";
 import {
   userMsg,
   assistantText,

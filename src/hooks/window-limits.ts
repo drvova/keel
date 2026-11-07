@@ -37,7 +37,7 @@ const settled = (host: Pick<Binding, "rule" | "displayName" | "modelsFile" | "co
   const m = ctx?.model;
   const reply = core({
     op: "limits", action: "settled", dir: host.config.dir(), configPath: host.config.path(), provider: m?.provider ?? null,
-    model: m ? { provider: m.provider, id: m.id, contextWindow: m.contextWindow } : null, ruleName: host.rule.name, hostName: host.name,
+    model: m ? { provider: m.provider, id: m.id, contextWindow: m.contextWindow } : null, ruleName: host.rule, hostName: host.name,
     displayName: host.displayName, modelsFile: host.modelsFile, usedTokens: ctx?.getContextUsage?.()?.tokens ?? null,
   });
   return (reply.settled as { notice: string } | undefined) ?? null;

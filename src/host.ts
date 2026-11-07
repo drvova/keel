@@ -2,7 +2,7 @@
 // index.ts builds omp's from what omp hands an extension (src/hooks/omp-host.ts),
 // pi.ts builds Pi's from Pi's own package. Each piece comes from that host's
 // code; shared code reads what differs from here, never from the host's name.
-import { OMP_TRIGGER_RULE, PI_TRIGGER_RULE, type TriggerRule } from "./core/window";
+import type { TriggerRule } from "./core/window";
 import { isRecoveryReason, type CompactionReason } from "./types";
 import type { Config } from "./core/settings";
 import { windowOf, type ModelLike, type WindowInfo } from "./core/model-limits";
@@ -77,7 +77,7 @@ export const OMP_HOST: HostProfile = {
   name: "omp",
   displayName: "omp",
   command: "omp-vcc",
-  rule: OMP_TRIGGER_RULE,
+  rule: "omp",
   settledEvent: "agent_end",
   modelsFile: "omp's models.yml",
   rewritesInPlace: true,
@@ -87,7 +87,7 @@ export const PI_HOST: HostProfile = {
   name: "pi",
   displayName: "Pi",
   command: "pi-vcc",
-  rule: PI_TRIGGER_RULE,
+  rule: "pi",
   settledEvent: "agent_settled",
   modelsFile: "Pi's models.json",
   rewritesInPlace: false,

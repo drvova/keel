@@ -92,7 +92,7 @@ export const registerCompactionHook = (
 
   const beforeCompact = (event: any, ctx: any) => {
     const { preparation } = event;
-    // As the host has it: the plan reads it through Pi's context edits (core/context-edits.ts).
+    // As the host has it: the plan reads it through Pi's context edits (plan.ts asContextHolds).
     const branchEntries = event.branchEntries as any[];
     const { rule } = host;
     // Read on every run: omp's tracker forgets its trigger once read.

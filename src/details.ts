@@ -31,7 +31,7 @@ export interface VccCompactionDetails {
     overheadTokens?: number;
     maxTailTokens: number;
     briefCeilingTokens: number;
-    /** Section sizes against a ~128K window's, when they differ (core/window.ts summaryScale). */
+    /** Section sizes against a ~128K window's, when they differ (lisp/src/window.lisp summary-scale). */
     summaryScale?: number;
     /** What [Working Set] could bring back. */
     workingSetTokens?: number;

@@ -1,7 +1,7 @@
 // [History Index]: each compaction's window as a #N range, carried in the
 // compaction's details and merged down to the window's line limit. The core
 // builds it (lisp/src/compaction.lisp) and writes it (lisp/src/summary.lisp).
-import { DEFAULT_SUMMARY_LIMITS } from "../src/core/window";
+import { DEFAULT_SUMMARY_LIMITS } from "./support/window";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";

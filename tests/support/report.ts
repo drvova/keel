@@ -3,7 +3,7 @@ import type { Message } from "@oh-my-pi/pi-ai";
 // A before/after report of one compile over a session's messages, for the
 // real-session tests and the benchmark scripts, at a ~128K window's limits.
 import { type CompileInput, type CompiledSummary, compileSummary } from "../../src/core/summarize";
-import { DEFAULT_SUMMARY_LIMITS } from "../../src/core/window";
+import { DEFAULT_SUMMARY_LIMITS } from "./window";
 
 /** Tokens at the heuristic ~4 chars each, rounded up. */
 const estimateTokensFromChars = (chars: number): number => Math.ceil(chars / 4);

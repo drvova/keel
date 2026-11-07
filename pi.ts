@@ -11,7 +11,7 @@
 // differs arrives through the host: Pi's trigger rule (its window less
 // reserveTokens), the trigger its session_before_compact carries, agent_settled,
 // and the /pi-vcc command names. Pi rewrites nothing in place (its context edits
-// are entries of their own, applied in core/context-edits.ts), so there are no
+// are entries of their own, which the compaction plan applies), so there are no
 // originals to keep and no placeholders to point at: no raw capture.
 import type { ExtensionAPI as PiExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { convertToLlm, getAgentDir } from "@earendil-works/pi-coding-agent";

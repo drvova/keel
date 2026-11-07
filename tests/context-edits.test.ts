@@ -1,7 +1,7 @@
-// Pi's context edits as the compaction hook applies them (core/context-edits.ts),
-// checked against Pi's own projection where Pi is installed.
+// Pi's context edits as the compaction plan applies them (lisp/src/context-edits.lisp,
+// through plan.ts asContextHolds), checked against Pi's own projection where Pi is installed.
 import { describe, expect, test } from "bun:test";
-import { applyContextEdits } from "../src/core/context-edits";
+import { asContextHolds as applyContextEdits } from "../src/compaction/plan";
 import { assertRealPi, piInstalled } from "./support/pi";
 
 const msg = (id: string, message: any) => ({ type: "message", id, parentId: null, timestamp: "2026-11-06T00:00:00.000Z", message });
@@ -16,7 +16,7 @@ const branch = () => [
   msg("x1", { role: "bashExecution", command: "ls", output: "a b", exitCode: 0, timestamp: 5 }),
 ];
 
-describe("applyContextEdits", () => {
+describe("the branch as Pi's context holds it", () => {
   test("a branch without edits (every omp branch) comes back as the same array", () => {
     const b = branch();
     expect(applyContextEdits(b)).toBe(b);
@@ -37,6 +37,11 @@ describe("applyContextEdits", () => {
     expect(out.find((e) => e.id === "c1").content).toBe("final");
     // The raw entries are not changed.
     expect((b[3] as any).message.content[0].text).toBe("API_KEY=secret");
+  });
+
+  test("an edit aimed at no entry changes nothing, and is itself left out", () => {
+    const out = applyContextEdits([...branch(), edit("e1", "nope", null)]) as any[];
+    expect(out.map((e) => e.id)).toEqual(["u1", "a1", "a2", "t1", "c1", "x1"]);
   });
 
   test("the latest edit of a target wins, and a role Pi does not edit keeps its content", () => {
