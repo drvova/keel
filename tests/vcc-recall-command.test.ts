@@ -1,8 +1,8 @@
 import { ompBinding } from "./support/binding";
 import { describe, it, expect } from "bun:test";
-import { mkdtempSync, writeFileSync, rmSync } from "fs";
-import { tmpdir } from "os";
+import { rmSync } from "fs";
 import { join } from "path";
+import { freshDir, sessionFileOfEntries } from "./support/session-files";
 import { registerVccRecallCommand } from "../src/commands/vcc-recall";
 
 // The search header and truncation note come from the core recall() both
@@ -15,14 +15,10 @@ const userMsg = (id: string, content: string) => ({
   message: { role: "user", content },
 });
 
-let dirCount = 0;
+/** A session of N user messages, the Ith saying textOf(I). */
 const makeSession = (n: number, textOf: (i: number) => string) => {
-  const dir = mkdtempSync(join(tmpdir(), `omp-vcc-recall-command-${dirCount++}-`));
-  const file = join(dir, "session.jsonl");
-  const ids = Array.from({ length: n }, (_, i) => `m${i}`);
-  const lines = ids.map((id, i) => JSON.stringify(userMsg(id, textOf(i))));
-  writeFileSync(file, lines.join("\n") + "\n", "utf8");
-  return { dir, file, ids };
+  const entries = Array.from({ length: n }, (_, i) => userMsg(`m${i}`, textOf(i)));
+  return { ...sessionFileOfEntries(entries), ids: entries.map((e) => e.id) };
 };
 
 const register = () => {
@@ -96,7 +92,7 @@ describe("/omp-vcc-recall paging hints", () => {
 // Issue #1: a brand-new session has no JSONL on disk yet.
 describe("/omp-vcc-recall in a fresh session with no session file on disk", () => {
   const freshSessionFile = () => {
-    const dir = mkdtempSync(join(tmpdir(), "omp-vcc-recall-fresh-"));
+    const dir = freshDir();
     return { dir, file: join(dir, "sessions", "not-written-yet.jsonl") };
   };
 

@@ -100,14 +100,45 @@ const failed = (status: Exclude<CoreStatus, { state: "ready" | "building" }>): C
   return status;
 };
 
+/** What builds the core: build.lisp, writing the executable where OMP_VCC_CORE_OUT says. */
+const BUILD_ARGS = ["--noinform", "--non-interactive", "--load", join(LISP_DIR, "build.lisp")];
+const hasSbcl = (sbcl: string): boolean => spawnSync(sbcl, ["--version"], { stdio: "ignore" }).status === 0;
+
+/** A finished build OUT installed as PATH, the builds of older sources removed. */
+const install = (out: string, path: string): void => {
+  renameSync(out, path);
+  const dir = buildDir();
+  for (const f of readdirSync(dir)) if (/^omp-vcc-core-[0-9a-f]+$/.test(f) && join(dir, f) !== path) rmSync(join(dir, f), { force: true });
+};
+
+/**
+ * The build of these sources, built now when it is not there, for a test run
+ * or a script that cannot wait for the background build: its path, or
+ * undefined without SBCL. A failed build throws, with SBCL's output.
+ */
+export const buildCoreNow = (): string | undefined => {
+  const { path } = buildOfSources();
+  if (existsSync(path)) return path;
+  const sbcl = process.env.SBCL ?? "sbcl";
+  if (!hasSbcl(sbcl)) return undefined;
+  mkdirSync(buildDir(), { recursive: true });
+  const out = `${path}.tmp-${process.pid}`;
+  const run = spawnSync(sbcl, BUILD_ARGS, { env: { ...process.env, OMP_VCC_CORE_OUT: out }, encoding: "utf8" });
+  if (run.status !== 0 || !existsSync(out)) {
+    rmSync(out, { force: true });
+    throw new Error(`omp-vcc's core did not build:\n${run.stdout}\n${run.stderr}`);
+  }
+  install(out, path);
+  return path;
+};
+
 const startBuild = (path: string): CoreStatus => {
   // Another process (another omp or Pi session) may be building it already.
   const lock = `${path}.lock`;
   if (existsSync(lock) && Date.now() - statSync(lock).mtimeMs <= STALE_LOCK_MS) return { state: "building" };
   const sbcl = process.env.SBCL ?? "sbcl";
-  if (spawnSync(sbcl, ["--version"], { stdio: "ignore" }).status !== 0) return failed({ state: "no-sbcl", sbcl });
-  const dir = buildDir();
-  mkdirSync(dir, { recursive: true });
+  if (!hasSbcl(sbcl)) return failed({ state: "no-sbcl", sbcl });
+  mkdirSync(buildDir(), { recursive: true });
   try {
     rmSync(lock, { force: true });
     closeSync(openSync(lock, "wx"));
@@ -117,7 +148,7 @@ const startBuild = (path: string): CoreStatus => {
   ownBuild = true;
   const out = `${path}.tmp-${process.pid}`;
   let stderr = "";
-  const child = spawn(sbcl, ["--noinform", "--non-interactive", "--load", join(LISP_DIR, "build.lisp")], {
+  const child = spawn(sbcl, BUILD_ARGS, {
     env: { ...process.env, OMP_VCC_CORE_OUT: out },
     stdio: ["ignore", "ignore", "pipe"],
     detached: true,
@@ -126,9 +157,7 @@ const startBuild = (path: string): CoreStatus => {
   child.on("exit", (code) => {
     try {
       if (code === 0 && existsSync(out)) {
-        renameSync(out, path);
-        // Builds of older sources are of no use now.
-        for (const f of readdirSync(dir)) if (/^omp-vcc-core-[0-9a-f]+$/.test(f) && join(dir, f) !== path) rmSync(join(dir, f), { force: true });
+        install(out, path);
       } else {
         rmSync(out, { force: true });
         failed({ state: "failed", why: stderr.trim().split("\n").slice(-5).join("\n") || `sbcl exited with ${code}` });

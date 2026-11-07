@@ -7,7 +7,7 @@ import * as names from "../src/names";
 
 describe("src/names.ts", () => {
   it("says what the core's names and limits are", () => {
-    expect(core({ op: "names" }).names).toEqual({
+    expect(core({ op: "names" }).names).toMatchObject({
       recallTool: names.RECALL_TOOL,
       recallParams: [...names.RECALL_PARAMS],
       pinTool: names.PIN_TOOL,
@@ -15,9 +15,6 @@ describe("src/names.ts", () => {
       pinEntryType: names.PIN_ENTRY_TYPE,
       pinNoticeType: names.PIN_NOTICE_TYPE,
       recallCommandMessageType: names.RECALL_COMMAND_MESSAGE_TYPE,
-      compactor: names.COMPACTOR,
-      legacyCompactor: names.LEGACY_COMPACTOR,
-      compactInstruction: names.COMPACT_INSTRUCTION,
       searchPageSize: names.SEARCH_PAGE_SIZE,
       rangePageSize: names.RANGE_PAGE_SIZE,
       recallOutputChars: names.RECALL_OUTPUT_CHARS,

@@ -26,8 +26,10 @@
 (deftest trim-uses-javascripts-set
   (is (string= (js-trim (format nil "~c x ~c" (code-char #xFEFF) (code-char #xA0))) "x")))
 
+(defun folds-together-p (a b) (char= (js-canonical a) (js-canonical b)))
+
 (deftest case-folding-follows-non-unicode-i
-  (is (js-char-equal #\a #\A))
-  (is (js-char-equal #\я #\Я))
-  (is (not (js-char-equal (code-char #x131) #\i)) "dotless i does not fold to ASCII")
-  (is (not (js-char-equal (code-char #x17F) #\s)) "long s does not fold to ASCII"))
+  (is (folds-together-p #\a #\A))
+  (is (folds-together-p #\я #\Я))
+  (is (not (folds-together-p (code-char #x131) #\i)) "dotless i does not fold to ASCII")
+  (is (not (folds-together-p (code-char #x17F) #\s)) "long s does not fold to ASCII"))

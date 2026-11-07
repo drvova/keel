@@ -8,7 +8,7 @@
   (:export
    ;; --- js-string ---
    #:js-length #:js-slice #:js-whitespace-p #:js-trim #:js-split-whitespace
-   #:js-char-equal #:join-strings #:split-string
+   #:join-strings #:split-string
    ;; --- json ---
    #:parse-json #:write-json #:json-string #:json-get #:json-object #:json-keys #:json-values
    ;; --- search ---

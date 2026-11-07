@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { COMPACT_INSTRUCTION } from "../src/names";
+import { COMPACT_INSTRUCTION } from "./support/names";
 import { registerHook } from "./support/host";
 import { sectionLines } from "./support/summary";
 

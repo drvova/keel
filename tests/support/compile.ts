@@ -4,7 +4,6 @@
 // (lisp/src/summary.lisp, op summarize); these are the shapes it takes and
 // gives, which a compaction's details store.
 import type { Message } from "@oh-my-pi/pi-ai";
-import type { PinnedNote } from "../../src/core/pins";
 import type { SummaryLimits } from "./window-shapes";
 import { core } from "../../src/core/lisp-core";
 
@@ -28,6 +27,14 @@ export type NormalizedBlock =
   | { kind: "tool_result"; callId?: string; name: string; text: string; sourceIndex?: number }
   // A command the user ran themselves: `!cmd`, or (lang "python") a python cell.
   | { kind: "bash"; command: string; output: string; exitCode: number | undefined; sourceIndex?: number; lang?: "python" };
+
+export interface PinnedNote {
+  id: number;
+  text: string;
+  by: "user" | "agent";
+  /** Session-wide #N of the last message when the note was pinned. */
+  at?: number;
+}
 
 /** A commit the summary lists: its hash when git printed one, and its subject. */
 export interface Commit {

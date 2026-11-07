@@ -1,7 +1,6 @@
-import { ompBinding } from "./support/binding";
+import { callRecallTool, recallTool } from "./support/binding";
 import { describe, it, expect } from "bun:test";
 import { rmSync } from "fs";
-import { registerRecallTool } from "../src/tools/recall";
 import { sessionFileOfEntries } from "./support/session-files";
 import { core } from "../src/core/lisp-core";
 
@@ -27,28 +26,8 @@ const makeSession = (entries: any[]) => ({
   ids: entries.filter((e) => e.type === "message" && e.message).map((e) => e.id),
 });
 
-const register = () => {
-  let tool: any;
-  registerRecallTool({ registerTool: (t: any) => { tool = t; } } as any, ompBinding);
-  return tool;
-};
-
-const invoke = async (
-  tool: any,
-  file: string,
-  ids: string[],
-  params: Record<string, unknown>,
-  branch?: string[],
-) => {
-  const result = await tool.execute("tool-call", params, undefined, undefined, {
-    sessionManager: {
-      getSessionFile: () => file,
-      getBranch: () => (branch ?? ids).map((id) => ({ id })),
-      getEntries: () => ids.map((id) => ({ id })),
-    },
-  });
-  return result.content[0].text as string;
-};
+const register = recallTool;
+const invoke = (tool: any, file: string, ids: string[], params: Record<string, unknown>, branch?: string[]) => callRecallTool(tool, file, params, ids, branch);
 
 // ── mode:touched ─────────────────────────────────────────────────────────
 

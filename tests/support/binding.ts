@@ -22,3 +22,26 @@ export const executePin = (params: unknown, host: { appendEntry: (customType: st
   const { pin } = require("../../src/core/pins") as typeof import("../../src/core/pins");
   return pin(host, ompBinding, { sessionManager }, { surface: "tool", params: params ?? null }).text;
 };
+
+/** omp's vcc_recall tool as the extension registers it, for tests of the tool's own surface. */
+export const recallTool = (): any => {
+  const { registerRecallTool } = require("../../src/tools/recall") as typeof import("../../src/tools/recall");
+  let tool: any;
+  registerRecallTool({ registerTool: (t: any) => { tool = t; } } as any, ompBinding);
+  return tool;
+};
+
+/**
+ * One call of that tool on the session file FILE, the session manager holding
+ * the entries ENTRIES (ids) with BRANCH (ids, all of them by default) its path.
+ */
+export const callRecallTool = async (tool: any, file: string, params: Record<string, unknown>, entries: readonly string[], branch: readonly string[] = entries): Promise<string> => {
+  const result = await tool.execute("tool-call", params, undefined, undefined, {
+    sessionManager: {
+      getSessionFile: () => file,
+      getBranch: () => branch.map((id) => ({ id })),
+      getEntries: () => entries.map((id) => ({ id })),
+    },
+  });
+  return result.content[0].text as string;
+};

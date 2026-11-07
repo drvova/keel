@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach, afterEach, beforeAll, afterAll, jes
 import { existsSync, unlinkSync, writeFileSync, readFileSync, mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { COMPACT_INSTRUCTION } from "../src/names";
+import { COMPACT_INSTRUCTION } from "./support/names";
 import { applyTailBudget, buildOwnCut, getLastCompactionStats, registerHook, type RegisteredHook } from "./support/host";
 
 let tmpDir: string;

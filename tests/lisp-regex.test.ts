@@ -90,7 +90,6 @@ describe("Lisp core regex", () => {
     for (const [i, p] of patterns.entries()) {
       const texts = Array.from({ length: 12 }, () => text(r));
       const lisp = callCore({ op: "regex", pattern: p, texts }) as any;
-      expect(lisp).toBeDefined();
       if (lisp.status === "unsupported") { unsupported++; continue; }
       const { ok: _ok, ...got } = lisp;
       expect({ i, p, ...got }).toEqual({ i, p, ...jsSide(p, texts) });

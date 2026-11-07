@@ -5,8 +5,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { coreStatus } from "../src/core/lisp-core";
-import { lispCore } from "./support/lisp-core";
+import { buildCoreNow, coreStatus } from "../src/core/lisp-core";
 
 const saved = { core: process.env.OMP_VCC_CORE, sbcl: process.env.SBCL, dir: process.env.OMP_VCC_CORE_BUILD_DIR };
 afterEach(() => {
@@ -23,7 +22,7 @@ describe("the core's source", () => {
     expect(coreStatus()).toEqual({ state: "ready", path: "/opt/omp-vcc-core" });
   });
 
-  it.skipIf(!lispCore())("builds this copy's sources with SBCL, under a name their hash gives", async () => {
+  it.skipIf(!buildCoreNow())("builds this copy's sources with SBCL, under a name their hash gives", async () => {
     delete process.env.OMP_VCC_CORE;
     let s = coreStatus();
     for (let i = 0; i < 120 && s.state === "building"; i++) {

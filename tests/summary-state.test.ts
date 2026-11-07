@@ -6,7 +6,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { compileSummary, type SummaryState } from "./support/compile";
 import { DEFAULT_SUMMARY_LIMITS } from "./support/window";
-import { COMPACT_INSTRUCTION } from "../src/names";
+import { COMPACT_INSTRUCTION } from "./support/names";
 import type { NormalizedBlock } from "./support/compile";
 import { registerHook } from "./support/host";
 import { sectionLines, summarize } from "./support/summary";

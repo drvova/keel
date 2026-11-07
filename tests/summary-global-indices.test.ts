@@ -14,7 +14,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { compile as compileAt, type CompileInput } from "./support/compile";
 import { DEFAULT_SUMMARY_LIMITS } from "./support/window";
-import { COMPACT_INSTRUCTION } from "../src/names";
+import { COMPACT_INSTRUCTION } from "./support/names";
 import { registerHook } from "./support/host";
 import { userMsg, assistantWithToolCall, toolResult } from "./fixtures";
 /** compile at a ~128K window's section limits unless a test sets its own. */

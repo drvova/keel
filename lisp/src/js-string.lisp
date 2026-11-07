@@ -131,10 +131,6 @@ leaves an empty string at that edge, and \"\" splits into (\"\")."
 the BMP are compared as their code units, which no case maps."
   (if (astral-p char) char (code-char (canon (char-code char)))))
 
-(defun js-char-equal (a b)
-  "True when A and B are the same character under a non-unicode /i regex."
-  (char= (js-canonical a) (js-canonical b)))
-
 (defun split-string (string char)
   "STRING split at every CHAR, empty parts kept: JavaScript's split(CHAR)."
   (loop with start = 0

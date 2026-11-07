@@ -11,7 +11,7 @@
   ;; Internals a test holds to their numbers.
   (:import-from #:omp-vcc #:recall-output-chars #:tokens-from-chars #:calibrate-chars-per-token
                 #:content-chars #:message-chars #:make-call #:reads-part-p #:strip-read-selector
-                #:open-failures #:read-calls #:result-text #:result-index
+                #:js-canonical #:open-failures #:read-calls #:result-text #:result-index
                 #:js-number-of #:was-rewritten-p #:with-original-content #:index-by-id #:counted-entry-p)
   (:export #:run-all))
 

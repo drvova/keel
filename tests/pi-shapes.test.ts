@@ -12,7 +12,7 @@ import { createWindowState } from "../src/hooks/window-limits";
 import { testConfig } from "./support/binding";
 import { core } from "../src/core/lisp-core";
 import { summarize } from "./support/summary";
-import { COMPACT_INSTRUCTION } from "../src/names";
+import { COMPACT_INSTRUCTION } from "./support/names";
 import { recallOn } from "./support/pairs";
 import { openConfig } from "../src/core/settings";
 import { bind, MANUAL_TRIGGER, PI_HOST } from "../src/host";

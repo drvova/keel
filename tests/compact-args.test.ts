@@ -1,10 +1,17 @@
 // What /omp-vcc makes of its text, and what the hook reads back from a
-// compaction's customInstructions (src/core/compact-args.ts, the core's op args):
+// compaction's customInstructions (the core's op args; src/core/compact-args.ts for the command):
 // keep:N first or last, the rest a prompt to send after; the marker says the
 // pass is the command's.
 import { describe, expect, it } from "bun:test";
-import { commandArgs, parseInstructions } from "../src/core/compact-args";
-import { COMPACT_INSTRUCTION as M } from "../src/names";
+import { commandArgs } from "../src/core/compact-args";
+import { core } from "../src/core/lisp-core";
+import { COMPACT_INSTRUCTION as M } from "./support/names";
+
+/** A compaction's customInstructions as the core reads them for op compact. */
+const parseInstructions = (customInstructions?: string) => {
+  const reply = core({ op: "args", instructions: customInstructions ?? null });
+  return { fromCommand: reply.fromCommand === true, keepUserTurns: reply.keepUserTurns as number | null, followUpPrompt: reply.followUpPrompt as string | null };
+};
 
 describe("the command's text", () => {
   it.each([

@@ -6,7 +6,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import registerOmp from "../index";
 import { ompConvertToLlm } from "./support/host";
-import { COMPACT_INSTRUCTION } from "../src/names";
+import { COMPACT_INSTRUCTION } from "./support/names";
 
 let dir: string;
 let previousConfig: string | undefined;

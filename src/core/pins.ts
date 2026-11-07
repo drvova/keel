@@ -17,13 +17,6 @@ import { core } from "./lisp-core";
 import { hostSnapshot, type HostCtx } from "./host-snapshot";
 import type { Binding } from "../host";
 
-export interface PinnedNote {
-  id: number;
-  text: string;
-  by: "user" | "agent";
-  /** Session-wide #N of the last message when the note was pinned. */
-  at?: number;
-}
 
 /** Where a pin or unpin is written: the host's appendEntry. */
 export interface PinHost {

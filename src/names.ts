@@ -16,11 +16,6 @@ export const PIN_ENTRY_TYPE = "omp-vcc.pin";
 export const PIN_NOTICE_TYPE = "omp-vcc-pin";
 /** The custom message carrying /…-recall output to the agent. */
 export const RECALL_COMMAND_MESSAGE_TYPE = "vcc-recall";
-/** The compactor id in a compaction's details; pi-vcc's is read as ours. */
-export const COMPACTOR = "omp-vcc";
-export const LEGACY_COMPACTOR = "pi-vcc";
-/** What /omp-vcc puts first in the customInstructions it hands the host. */
-export const COMPACT_INSTRUCTION = "__omp_vcc__";
 
 /** Hits on one page of a search, entries on one page of a range. */
 export const SEARCH_PAGE_SIZE = 5;

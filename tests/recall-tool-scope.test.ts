@@ -1,37 +1,16 @@
-import { ompBinding } from "./support/binding";
+import { callRecallTool, recallTool } from "./support/binding";
+import { sessionFileOfEntries } from "./support/session-files";
 import { describe, it, expect } from "bun:test";
-import { mkdtempSync, writeFileSync, rmSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
-import { registerRecallTool } from "../src/tools/recall";
+import { rmSync } from "fs";
 
-const makeSession = () => {
-  const dir = mkdtempSync(join(tmpdir(), "omp-vcc-recall-scope-"));
-  const file = join(dir, "session.jsonl");
-  const lines = [
-    JSON.stringify({ type: "message", id: "m1", message: { role: "user", content: `active lineage token ${"x".repeat(350)} full-content-end` } }),
-    JSON.stringify({ type: "message", id: "m2", message: { role: "user", content: "off lineage secret" } }),
-  ];
-  writeFileSync(file, lines.join("\n") + "\n", "utf8");
-  return { dir, file };
-};
+const makeSession = () => sessionFileOfEntries([
+  { type: "message", id: "m1", message: { role: "user", content: `active lineage token ${"x".repeat(350)} full-content-end` } },
+  { type: "message", id: "m2", message: { role: "user", content: "off lineage secret" } },
+]);
 
-const register = () => {
-  let tool: any;
-  registerRecallTool({ registerTool: (t: any) => { tool = t; } } as any, ompBinding);
-  return tool;
-};
-
-const invoke = async (tool: any, file: string, params: Record<string, unknown>) => {
-  const result = await tool.execute("tool-call", params, undefined, undefined, {
-    sessionManager: {
-      getSessionFile: () => file,
-      getBranch: () => [{ id: "m1" }],
-      getEntries: () => [{ id: "m1" }, { id: "m2" }],
-    },
-  });
-  return result.content[0].text as string;
-};
+const register = recallTool;
+// The path holds m1; m2 is on another branch.
+const invoke = (tool: any, file: string, params: Record<string, unknown>) => callRecallTool(tool, file, params, ["m1", "m2"], ["m1"]);
 
 describe("vcc_recall scope", () => {
   it("defaults to active lineage, falls back to other branches with a note, and opts into all explicitly", async () => {

@@ -1,44 +1,18 @@
-import { ompBinding } from "./support/binding";
+import { callRecallTool, recallTool } from "./support/binding";
+import { sessionFileOfEntries } from "./support/session-files";
 import { describe, it, expect } from "bun:test";
-import { mkdtempSync, writeFileSync, rmSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
-import { registerRecallTool } from "../src/tools/recall";
+import { rmSync } from "fs";
 
-// ── Helpers (mirrors tests/recall-tool-scope.test.ts) ──────────────────────
+const userMsg = (id: string, content: string) => ({ type: "message", id, message: { role: "user", content } });
 
-const userMsg = (id: string, content: string) => ({
-  type: "message",
-  id,
-  message: { role: "user", content },
-});
-
-let dirCount = 0;
+/** A session of N user messages, the Ith saying textOf(I). */
 const makeSession = (n: number, textOf: (i: number) => string) => {
-  const dir = mkdtempSync(join(tmpdir(), `omp-vcc-recall-quality-${dirCount++}-`));
-  const file = join(dir, "session.jsonl");
-  const ids = Array.from({ length: n }, (_, i) => `m${i}`);
-  const lines = ids.map((id, i) => JSON.stringify(userMsg(id, textOf(i))));
-  writeFileSync(file, lines.join("\n") + "\n", "utf8");
-  return { dir, file, ids };
+  const entries = Array.from({ length: n }, (_, i) => userMsg(`m${i}`, textOf(i)));
+  return { ...sessionFileOfEntries(entries), ids: entries.map((e) => e.id) };
 };
 
-const register = () => {
-  let tool: any;
-  registerRecallTool({ registerTool: (t: any) => { tool = t; } } as any, ompBinding);
-  return tool;
-};
-
-const invoke = async (tool: any, file: string, ids: string[], params: Record<string, unknown>) => {
-  const result = await tool.execute("tool-call", params, undefined, undefined, {
-    sessionManager: {
-      getSessionFile: () => file,
-      getBranch: () => ids.map((id) => ({ id })),
-      getEntries: () => ids.map((id) => ({ id })),
-    },
-  });
-  return result.content[0].text as string;
-};
+const register = recallTool;
+const invoke = (tool: any, file: string, ids: string[], params: Record<string, unknown>) => callRecallTool(tool, file, params, ids);
 
 describe("vcc_recall pagination and hard-cap truncation signaling", () => {
   it("reports a capped page count and an explicit truncation message when raw hits exceed the cap", async () => {

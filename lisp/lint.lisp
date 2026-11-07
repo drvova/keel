@@ -8,7 +8,8 @@
 ;;;; warning the compiler raises (an undefined function or variable, an unused
 ;;;; variable, a redefinition, a call with the wrong arguments, a type that
 ;;;; cannot hold), with the file it came from; then each function defined in
-;;;; lisp/src that nothing in lisp/src, lisp/test or build.lisp names. Exits 1 on any.
+;;;; lisp/src that nothing else in lisp/src or build.lisp names: one only the Lisp
+;;;; tests call is dead to omp-vcc. Exits 1 on any.
 ;;;; It needs nothing but SBCL, so it runs where the core is built.
 
 (require :asdf)
@@ -89,7 +90,7 @@
 
 (let* ((sources (lisp-files "src/"))
        ;; build.lisp names the executable's entry point.
-       (all (append sources (lisp-files "test/") (list (merge-pathnames "build.lisp" *here*))))
+       (all (append sources (list (merge-pathnames "build.lisp" *here*))))
        (texts (mapcar #'file-text all))
        (corpus (format nil "~{~a~%~}" texts)))
   (dolist (file sources)

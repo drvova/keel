@@ -4,7 +4,7 @@ import { ompBinding } from "./support/binding";
 import { describe, expect, test } from "bun:test";
 import { registerOmpVccCommand } from "../src/commands/omp-vcc";
 import { createCompactionState } from "../src/hooks/compaction";
-import { COMPACT_INSTRUCTION } from "../src/names";
+import { COMPACT_INSTRUCTION } from "./support/names";
 
 type CompactOptions = {
   suppressContinuation?: boolean;
