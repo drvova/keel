@@ -172,12 +172,6 @@ name and index. A name used twice is a syntax error."
         ((eq (first tree) :backref) (list (second tree)))
         (t (mapcan #'backref-targets (copy-list tree)))))
 
-(defun group-indices (tree)
-  "The indices of the capturing groups in TREE."
-  (cond ((not (consp tree)) '())
-        ((eq (first tree) :group) (cons (second tree) (group-indices (third tree))))
-        (t (mapcan #'group-indices (copy-list tree)))))
-
 (defun parse-regex (p)
   "The tree of the pattern units P, and its group count."
   (let ((pos 0) (len (length p)) (group-index 0) (behind-groups '()))
@@ -233,7 +227,7 @@ name and index. A name used twice is a syntax error."
                           (let ((node (disjunction)))
                             (unless (at 41) (syntax-error "unterminated group"))
                             (incf pos)
-                            (setf behind-groups (append (group-indices node) behind-groups))
+                            (setf behind-groups (append (groups-in node) behind-groups))
                             (when (tree-has node :backref) (unsupported "back-reference in a look-behind"))
                             (when (quantifier-at-p) (syntax-error "nothing to repeat"))
                             (list :look nil negate node))))

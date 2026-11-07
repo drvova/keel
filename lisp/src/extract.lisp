@@ -164,8 +164,11 @@ first; the same message hashless and hashed is one commit, kept hashed."
                (message (or heredoc (first-line-of (clean-message (or (rx-group m 1) (rx-group m 2) (rx-group m 3) ""))))))
           (if (and (null heredoc) (rx-test (rx "^\\$\\(cat\\s+<<") message)) "" message)))))
 
+(defparameter +git-commit-head+ "\\[[^\\]\\s]+(?:\\s+\\([^)]*\\))?\\s+([0-9a-f]{7,12})\\]"
+  "What git commit prints first: `[branch (root-commit) hash]`, the hash its one group.")
+
 (defun hash-subject-regex ()
-  (rx "(?:\\[[^\\]\\s]+(?:\\s+\\([^)]*\\))?\\s+([0-9a-f]{7,12})\\]|^\\s*([0-9a-f]{7,12})(?:\\s+\\([^)]*\\))?)\\s+(.*)"))
+  (rx (format nil "(?:~a|^\\s*([0-9a-f]{7,12})(?:\\s+\\([^)]*\\))?)\\s+(.*)" +git-commit-head+)))
 
 (defun result-lines (results) (mapcan (lambda (text) (split-string text #\Newline)) results))
 
@@ -176,12 +179,12 @@ first; the same message hashless and hashed is one commit, kept hashed."
 
 (defun committed-line (results message)
   (dolist (line (result-lines results))
-    (let ((m (rx-exec (rx "\\[[^\\]\\s]+(?:\\s+\\([^)]*\\))?\\s+([0-9a-f]{7,12})\\]\\s+(.*)") line)))
+    (let ((m (rx-exec (rx (format nil "~a\\s+(.*)" +git-commit-head+)) line)))
       (when (and m (string= (js-trim (rx-group m 2)) message)) (return (rx-group m 1))))))
 
 (defun hash-from-results (results message)
   (or (dolist (text results)
-        (let ((m (rx-exec (rx "\\[[^\\]\\s]+(?:\\s+\\([^)]*\\))?\\s+([0-9a-f]{7,12})\\]") text)))
+        (let ((m (rx-exec (rx +git-commit-head+) text)))
           (when m (return (rx-group m 1)))))
       (hash-for-subject results message)
       (dolist (text results)

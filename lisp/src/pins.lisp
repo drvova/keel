@@ -15,8 +15,8 @@
   (if (and (integerp n) (> (abs n) +double-exact+)) (coerce n 'double-float) n))
 
 (defun format-pin (n)
-  "A note as it is shown: [ID] TEXT (BY, #AT)."
-  (let ((at (json-get n "at")))
+  "A note as it is shown, in a listing and in [Pinned Notes]: [ID] TEXT (BY, #AT)."
+  (let ((at (let ((a (json-get n "at"))) (and (not (eq a :null)) a))))
     (format nil "[~a] ~a (~a~a)" (js-string-of (js-id (json-get n "id"))) (json-get n "text") (json-get n "by")
             (if at (format nil ", #~a" (js-string-of (js-id at))) ""))))
 
@@ -121,3 +121,13 @@ pin and unpin replayed along it, so a branch keeps the pins made on it."
                   (multiple-value-bind (done text op) (add-pin branch entries args "user")
                     (values done text op (if done "info" "warning")
                             (and done (format nil "The user ~a It stays at the top of every summary." (lower-first text)))))))))))
+
+(defun pin-call-of (args)
+  "A vcc_pin call as the tool reads it: (:note TEXT), (:unpin VALUE), :both or :list."
+  (let* ((raw (json-get args "note"))
+         (note (and (stringp raw) (not (unset-p raw)) raw))
+         (unpin (let ((u (json-get args "unpin"))) (if (unset-p u) nil u))))
+    (cond ((and note unpin) :both)
+          (note (list :note note))
+          (unpin (list :unpin unpin))
+          (t :list))))

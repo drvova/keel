@@ -127,8 +127,12 @@ vector parallel to MESSAGES, or NIL for positions), host noise left out."
 
 (defun url-path-p (path) (rx-test (rx "^[a-z][a-z0-9+.-]*:\\/\\/" "i") path))
 
+(defparameter +line-selector+ "L?\\d+(?:(?:-|\\.\\.|\\+)L?\\d*)?|-\\d+(?:[-+]\\d+)?"
+  "omp's read selector for lines: `50-100`, `L50-L60`, `50+10`, `50..60`, `-20` (the last 20).")
+
 (defun read-selector-regex ()
-  (rx ":(?:raw|img|conflicts|L?\\d+(?:(?:-|\\.\\.|\\+)L?\\d*)?|-\\d+(?:[-+]\\d+)?)(?:[,:](?:raw|img|conflicts|L?\\d+(?:(?:-|\\.\\.|\\+)L?\\d*)?|-\\d+(?:[-+]\\d+)?))*$" "i"))
+  "A read path's selector: `:raw`, `:img`, `:conflicts` or lines, several joined by `,` or `:`."
+  (rx (format nil ":(?:raw|img|conflicts|~a)(?:[,:](?:raw|img|conflicts|~a))*$" +line-selector+ +line-selector+) "i"))
 
 (defun strip-read-selector (path)
   "A read's path without omp's selector (`:50-100`, `:raw`)."
@@ -146,12 +150,3 @@ vector parallel to MESSAGES, or NIL for positions), host noise left out."
                   (if (eq kind :read) (mapcar #'strip-read-selector paths) paths))))))
   (call-files call))
 
-(defun pin-call-of (args)
-  "A vcc_pin call as the tool reads it: (:note TEXT), (:unpin VALUE), :both or :list."
-  (let* ((raw (json-get args "note"))
-         (note (and (stringp raw) (not (unset-p raw)) raw))
-         (unpin (let ((u (json-get args "unpin"))) (if (unset-p u) nil u))))
-    (cond ((and note unpin) :both)
-          (note (list :note note))
-          (unpin (list :unpin unpin))
-          (t :list))))

@@ -533,11 +533,13 @@ sections and brief that would replace it."
                          (make-growth (- (js-length text) (if previous-summary (js-length previous-summary) 0) removed)
                                       (max (budget budgets "growthMarginChars") (js-round (* removed +growth-margin-share+))))))))))
 
-(defparameter +cut-notices+
-  '((:no-live-messages . "omp-vcc: Nothing to compact (no live messages)")
-    (:too-few-live-messages . "omp-vcc: Too few messages to compact")))
+(defparameter +cut-reasons+
+  '((:no-live-messages "no_live_messages" "omp-vcc: Nothing to compact (no live messages)")
+    (:too-few-live-messages "too_few_live_messages" "omp-vcc: Too few messages to compact"))
+  "Why there is no cut: (REASON NAME NOTICE).")
 
-(defun cut-reason-name (reason) (if (eq reason :no-live-messages) "no_live_messages" "too_few_live_messages"))
+(defun cut-reason-name (reason) (second (assoc reason +cut-reasons+)))
+(defun cut-reason-notice (reason) (third (assoc reason +cut-reasons+)))
 
 (defun plan-compaction (input branch notes)
   "What the compaction does, on BRANCH as the context holds it (Pi's context
@@ -620,7 +622,7 @@ and what it was sized from (for debugging a compaction that kept too much or too
             (return-from plan-sized
               (if recovering
                   (json-object "kind" "step_aside" "cutReason" (cut-reason-name cut) "liveRoles" roles)
-                  (json-object "kind" "cancel" "why" "no_cut" "notice" (cdr (assoc cut +cut-notices+))
+                  (json-object "kind" "cancel" "why" "no_cut" "notice" (cut-reason-notice cut)
                                "cutReason" (cut-reason-name cut) "liveRoles" roles)))))
         (let* ((a (assemble-summary branch notes cut input sizing))
                (growth (assembly-growth a)) (grows (growth-grows-p growth)) (n (length (cut-items cut))))
@@ -654,6 +656,5 @@ and what it was sized from (for debugging a compaction that kept too much or too
                                                 "keptTokensEst" (tokens-from-chars (kept-chars kept) per-token)
                                                 "smartKeepAdjusted" (if adjusted :true :false)
                                                 "budgetCut" (cut-budget-cut cut))
-                           "budgetCut" (cut-budget-cut cut)
                            ;; A recovery writes a summary that grows when it keeps part of the window.
                            "growth" (growth-json growth))))))))

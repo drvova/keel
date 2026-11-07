@@ -56,7 +56,7 @@ position's #N is its element in INDICES."
 (defun on-file-p (c) (or (reads-one-p c) (changes-p c)))
 
 (defun lines-selector-p (chunk)
-  (rx-test (rx "^(?:L?\\d+(?:(?:-|\\.\\.|\\+)L?\\d*)?|-\\d+(?:[-+]\\d+)?)$" "i") chunk))
+  (rx-test (rx (format nil "^(?:~a)$" +line-selector+) "i") chunk))
 
 (defun reads-part-p (c)
   "A read of part of a file, by omp's line selector (`path:L10-20`) or Pi's offset and limit."

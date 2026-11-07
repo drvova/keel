@@ -216,3 +216,24 @@ template literal writes it."
         ((vectorp value)
          (join-strings (map 'list (lambda (v) (if (or (null v) (eq v :null)) "" (js-string-of v))) value) ","))
         (t (princ-to-string value))))
+
+(defun js-trim-end (string)
+  (let ((end (position-if-not #'js-whitespace-p string :from-end t)))
+    (if end (subseq string 0 (1+ end)) "")))
+
+(defun js-trim-start (string)
+  (let ((start (position-if-not #'js-whitespace-p string)))
+    (if start (subseq string start) "")))
+
+(defun starts-with (prefix string &key (start 0))
+  (and (<= (+ start (length prefix)) (length string))
+       (string= prefix string :start2 start :end2 (+ start (length prefix)))))
+
+(defun ends-with (suffix string)
+  (and (<= (length suffix) (length string))
+       (string= suffix string :start2 (- (length string) (length suffix)))))
+
+(defun js-round (x)
+  "Math.round of the double X: the nearest integer, halves up."
+  (let* ((x (coerce x 'double-float)) (f (ffloor x)))
+    (truncate (if (>= (- x f) 0.5d0) (+ f 1) f))))

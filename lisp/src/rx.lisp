@@ -77,22 +77,6 @@ the match. String.replace and replaceAll; no $ patterns are read."
           (push (js-slice string p) parts)
           (nreverse parts)))))
 
-(defun js-trim-end (string)
-  (let ((end (position-if-not #'js-whitespace-p string :from-end t)))
-    (if end (subseq string 0 (1+ end)) "")))
-
-(defun js-trim-start (string)
-  (let ((start (position-if-not #'js-whitespace-p string)))
-    (if start (subseq string start) "")))
-
-(defun starts-with (prefix string &key (start 0))
-  (and (<= (+ start (length prefix)) (length string))
-       (string= prefix string :start2 start :end2 (+ start (length prefix)))))
-
-(defun ends-with (suffix string)
-  (and (<= (length suffix) (length string))
-       (string= suffix string :start2 (- (length string) (length suffix)))))
-
 (defun js-index-of (needle string &optional (start 0))
   "The code unit where NEEDLE first occurs in STRING at or after unit START, or -1."
   (let* ((units (string-units string)) (n (string-units needle)) (m (length n)))
@@ -109,56 +93,3 @@ the match. String.replace and replaceAll; no $ patterns are read."
             return p
           finally (return -1))))
 
-(defun js-round (x)
-  "Math.round of the double X: the nearest integer, halves up."
-  (let* ((x (coerce x 'double-float)) (f (ffloor x)))
-    (truncate (if (>= (- x f) 0.5d0) (+ f 1) f))))
-
-(defun js-number-text (s)
-  "Number() of the trimmed string S: a decimal literal, or a 0x, 0o or 0b integer; NIL
-for NaN and for a value past a double's range (Infinity, which no caller can use).
-An integral value is an integer, as JSON.parse gives one; any other a double."
-  (let ((n (length s)) (i 0))
-    (labels ((digits (radix)
-               (let ((start i))
-                 (loop while (and (< i n) (digit-char-p (char s i) radix)) do (incf i))
-                 (and (> i start) (parse-integer s :start start :end i :radix radix))))
-             (finish (r)
-               (cond ((integerp r) (if (< (abs r) +double-exact+) r (finish-double r)))
-                     (t (finish-double r))))
-             (finish-double (r)
-               (and (< (abs r) most-positive-double-float) (coerce r 'double-float))))
-      (cond ((zerop n) 0)
-            ((and (> n 2) (char= (char s 0) #\0) (find (char s 1) "xXoObB"))
-             (setf i 2)
-             (let ((v (digits (ecase (char-downcase (char s 1)) (#\x 16) (#\o 8) (#\b 2)))))
-               (and v (= i n) (finish v))))
-            (t
-             (let ((sign 1) (int nil) (frac 0) (frac-digits 0) (exp 0))
-               (when (find (char s 0) "+-") (when (char= (char s 0) #\-) (setf sign -1)) (incf i))
-               (setf int (digits 10))
-               (when (and (< i n) (char= (char s i) #\.))
-                 (incf i)
-                 (let ((start i) (f (digits 10)))
-                   (when f (setf frac f frac-digits (- i start)))))
-               (when (and (null int) (zerop frac-digits)) (return-from js-number-text nil))
-               (when (and (< i n) (char-equal (char s i) #\e))
-                 (incf i)
-                 (let ((esign 1))
-                   (when (and (< i n) (find (char s i) "+-")) (when (char= (char s i) #\-) (setf esign -1)) (incf i))
-                   (let ((e (digits 10)))
-                     (unless e (return-from js-number-text nil))
-                     ;; Past these a double is 0 or Infinity whatever the digits.
-                     (when (> e 400)
-                       (return-from js-number-text (if (and (= esign 1) (or (and int (plusp int)) (plusp frac))) nil 0)))
-                     (setf exp (* esign e)))))
-               (and (= i n)
-                    (finish (* sign (+ (or int 0) (/ frac (expt 10 frac-digits))) (expt 10 exp))))))))))
-
-(defun js-number-of (value)
-  "Number(VALUE) for a JSON value, NIL for NaN."
-  (cond ((realp value) value)
-        ((eq value :true) 1) ((or (eq value :false) (eq value :null)) 0)
-        ((stringp value) (js-number-text (js-trim value)))
-        ((json-array-p value) (js-number-of (js-string-of value)))
-        (t nil)))

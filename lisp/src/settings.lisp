@@ -69,7 +69,7 @@
 (defun spread-object (value)
   "`{...VALUE}` for an object or an array (its indices as keys)."
   (if (hash-table-p value)
-      (copy-json-object value)
+      (copy-object value)
       (let ((object (make-hash-table :test 'equal)))
         (loop for v across value for i from 0 do (setf (gethash (format nil "~d" i) object) v))
         object)))

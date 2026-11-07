@@ -179,7 +179,7 @@ A list it lacks is empty; earlySlots it lacks is what the requests it holds leav
                   (setf tracked (append tracked (list (cons (car tr) (copy-list (cdr tr)))))))))
           (make-state :early-requests (let ((all (remove-duplicates (append (state-early-requests prev) (state-early-requests fresh))
                                                                     :test #'string= :from-end t)))
-                                        (subseq all 0 (min 3 (length all))))
+                                        (subseq all 0 (min +early-requests-kept+ (length all))))
                       :early-slots (state-early-slots fresh)
                       :modified modified :created created
                       :read (append-touched (state-read prev) (state-read fresh))
@@ -194,7 +194,7 @@ A list it lacks is empty; earlySlots it lacks is what the requests it holds leav
 (defun cap-state (s limits)
   "What a summary shows of each list, which is what it stores."
   (let ((per (limit limits "filesPerCategory")))
-    (make-state :early-requests (subseq (state-early-requests s) 0 (min 3 (length (state-early-requests s))))
+    (make-state :early-requests (subseq (state-early-requests s) 0 (min +early-requests-kept+ (length (state-early-requests s))))
                 :early-slots (state-early-slots s)
                 :modified (last-n (state-modified s) per) :created (last-n (state-created s) per) :read (last-n (state-read s) per)
                 :commits (last-n (state-commits s) (limit limits "commits"))
@@ -331,10 +331,7 @@ A list it lacks is empty; earlySlots it lacks is what the requests it holds leav
 (defun pin-lines (notes)
   (let* ((shown (last-n notes +pins-shown+)) (hidden (- (length notes) (length shown))))
     (append (and (plusp hidden) (list (format nil "(+~d older pinned notes; vcc_pin lists them all)" hidden)))
-            (mapcar (lambda (n) (format nil "[~a] ~a (~a~@[, #~a~])" (js-string-of (json-get n "id")) (json-get n "text")
-                                        (js-string-of (json-get n "by"))
-                                        (let ((at (json-get n "at"))) (and at (not (eq at :null)) (js-string-of at)))))
-                    shown))))
+            (mapcar #'format-pin shown))))
 
 ;;; --- compileSummary --------------------------------------------------------------------
 

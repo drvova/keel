@@ -22,10 +22,6 @@
 (defparameter +max-kept-chars+ 1000000
   "One message's kept text is clipped here, so a stray multi-megabyte result cannot double the session's size alone.")
 
-(defun content-parts (content)
-  "The object parts of a content array (not arrays, not null)."
-  (and (json-array-p content) (remove-if-not #'json-object-p (coerce content 'list))))
-
 (defun text-part-p (p) (and (equal (json-get p "type") "text") (stringp (json-get p "text"))))
 
 (defun may-be-rewritten-p (m)
@@ -35,12 +31,12 @@
       (cond ((equal role "toolResult")
              (plusp (if (stringp content)
                         (js-length content)
-                        (loop for p in (content-parts content) when (text-part-p p) sum (js-length (json-get p "text"))))))
+                        (loop for p in (object-parts content) when (text-part-p p) sum (js-length (json-get p "text"))))))
             ((member role '("assistant" "user" "developer") :test #'equal)
              (if (stringp content)
                  (>= (js-length content) +shakeable-text-chars+)
                  (some (lambda (p) (and (text-part-p p) (>= (js-length (json-get p "text")) +shakeable-text-chars+)))
-                       (content-parts content))))))))
+                       (object-parts content))))))))
 
 (defun kept-content (content)
   "What the store keeps of CONTENT: the text (clipped), other parts as they are, images without their data."
@@ -53,7 +49,7 @@
                      (setf budget 0))))))
       (if (stringp content)
           (clip content)
-          (coerce (loop for p in (content-parts content)
+          (coerce (loop for p in (object-parts content)
                         collect (cond ((text-part-p p)
                                        (let ((copy (copy-object p))) (setf (gethash "text" copy) (clip (json-get p "text"))) copy))
                                       ((equal (json-get p "type") "image") (copy-object p "data"))

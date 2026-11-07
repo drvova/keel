@@ -375,8 +375,6 @@ past the time budget or the stack, MESSAGE saying which."
                (kept (if (and (>= distinct 2) scored (> top 0d0))
                          (remove-if (lambda (s) (< (second s) (* top floor))) scored)
                          scored))
-               (total (length kept))
-               (hits (subseq kept 0 (min cap total))))
-          (values (mapcar (lambda (s) (cons (first s) (third s))) hits)
-                  total
-                  (< (length hits) total)))))))
+)
+          (multiple-value-bind (hits total truncated) (cap-hits kept cap)
+            (values (mapcar (lambda (s) (cons (first s) (third s))) hits) total truncated)))))))

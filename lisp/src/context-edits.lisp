@@ -17,15 +17,9 @@
 (defun context-edit-p (entry)
   (and (equal (json-get entry "type") +context-edit-type+) (stringp (json-get entry "targetId"))))
 
-(defun copy-json-object (object)
-  "A shallow copy of OBJECT, its keys in the same order (`{...object}`)."
-  (let ((copy (make-hash-table :test 'equal)))
-    (maphash (lambda (k v) (setf (gethash k copy) v)) object)
-    copy))
-
 (defun with-content (object content)
   "`{...OBJECT, content: CONTENT}`; NIL (undefined) is a key JSON leaves out."
-  (let ((copy (copy-json-object object)))
+  (let ((copy (copy-object object)))
     (if content (setf (gethash "content" copy) content) (remhash "content" copy))
     copy))
 
@@ -43,7 +37,7 @@
                  (message (json-get entry "message")))
              (cond ((and (equal (json-get entry "type") "message") (truthy-p message) (json-object-p message)
                          (member (json-get message "role") +editable-roles+ :test #'equal))
-                    (let ((copy (copy-json-object entry)))
+                    (let ((copy (copy-object entry)))
                       (setf (gethash "message" copy)
                             (with-content message (replaced-content (json-get message "role") content)))
                       copy))

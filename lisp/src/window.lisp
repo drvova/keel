@@ -139,9 +139,13 @@ would compact every turn; the trigger is then 1."
 (defparameter +rules+
   `(("omp" ,#'omp-policy-of ,#'omp-trigger ,#'omp-auto-compacts-p)
     ("pi" ,#'pi-policy-of ,#'pi-trigger ,#'pi-auto-compacts-p))
-  "Each host's rule: (NAME POLICY-OF TRIGGER AUTO-COMPACTS-P). A name it lacks is omp's.")
+  "Each host's rule: (NAME POLICY-OF TRIGGER AUTO-COMPACTS-P).")
 
-(defun rule-of (name) (rest (or (assoc name +rules+ :test #'equal) (first +rules+))))
+(defun rule-of (name)
+  "NAME's rule; no name is omp's (a test op that names no host). A name no host has is a bug."
+  (rest (cond ((null name) (first +rules+))
+              ((assoc name +rules+ :test #'equal))
+              (t (error "No trigger rule for the host ~s." name)))))
 (defun rule-policy-of (rule settings) (funcall (first (rule-of rule)) settings))
 (defun rule-trigger (rule window policy) (funcall (second (rule-of rule)) window policy))
 (defun rule-auto-compacts-p (rule policy) (funcall (third (rule-of rule)) policy))
@@ -216,7 +220,7 @@ working set (the setting off), its room goes to the kept tail."
                    "briefTokens" brief
                    "briefCeilingTokens" ceiling
                    "briefTokensPerBlock" 15
-                   "briefMaxBlocks" (js-round (* 80 grow))
+                   "briefMaxBlocks" (js-round (* +brief-max-blocks+ grow))
                    "growthMarginChars" (js-round (* 500 grow))
                    "summary" (summary-limits scale)
                    "summaryScale" (let ((r (js-round (* scale 100)))) (if (zerop (mod r 100)) (floor r 100) (/ (dbl r) 100d0)))

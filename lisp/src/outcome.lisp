@@ -26,9 +26,10 @@
         (summarized (js-string-of (json-get stats "summarized"))))
     (cond ((equal cut "final_reply") (format nil "omp-vcc: kept the final reply (~~~a tok), summarized ~a." kept summarized))
           ((equal cut "running_turn") (format nil "omp-vcc: kept the running turn's latest steps (~~~a tok), summarized ~a." kept summarized))
-          ((truthy-p cut)
+          ((member cut '("no_anchor" "oversized_tail") :test #'equal)
            (format nil "omp-vcc: kept ~~~a tok tail (mid-turn cut, ~a), summarized ~a." kept
                    (if (equal cut "no_anchor") "no user anchor" "oversized tail") summarized))
+          ((truthy-p cut) (error "No outcome line for the budget cut ~s." cut))
           (t (format nil "omp-vcc: kept ~a/~a turns, ~~~a tok (summarized ~a~a)."
                      (js-string-of (json-get stats "keptUserTurns")) (js-string-of (json-get stats "totalUserTurns")) kept summarized
                      (if (truthy-p (json-get stats "smartKeepAdjusted")) ", smart-keep" ""))))))

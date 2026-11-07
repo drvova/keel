@@ -184,7 +184,7 @@ itself as the context fills (the evict setting), and what to tell of them."
   (json-object "compaction" (json-object "reason" (json-get event "reason") "willRetry" (json-get event "willRetry"))
                "fromCommand" (bool from-command)
                "kind" (json-get plan "kind") "why" (json-get plan "why") "cutReason" (json-get plan "cutReason")
-               "liveRoles" (json-get plan "liveRoles") "budgetCut" (json-get plan "budgetCut")
+               "liveRoles" (json-get plan "liveRoles") "budgetCut" (json-get (json-get plan "stats") "budgetCut")
                "summarized" (json-get plan "summarized") "growth" (json-get plan "growth")
                "firstKeptEntryId" (json-get plan "firstKeptEntryId")
                "tokensBefore" (json-get event "tokensBefore")

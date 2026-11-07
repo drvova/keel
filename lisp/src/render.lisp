@@ -12,11 +12,11 @@
 
 (in-package #:omp-vcc)
 
-(defun json-object-p (v) (hash-table-p v))
-
-(defun string-or (v default) (if (stringp v) v default))
-
 ;;; --- content ---------------------------------------------------------------
+
+(defun part-name (part) "A toolCall part's tool name: \"unknown\" when it has none." (string-or (json-get part "name") "unknown"))
+(defun part-args (part) "A toolCall part's arguments: an empty object when they are not one."
+  (let ((a (json-get part "arguments"))) (if (json-object-p a) a (make-hash-table :test 'equal))))
 
 (defun readable-message (message)
   "MESSAGE as recall can read it: a content that is no list is empty, a null
@@ -32,9 +32,7 @@ a text part's text is a string."
                    (coerce (loop for part in (object-parts content)
                                  collect (cond ((equal (json-get part "type") "toolCall")
                                                 (let ((p (copy-object part)))
-                                                  (setf (gethash "name" p) (string-or (json-get part "name") "unknown")
-                                                        (gethash "arguments" p) (let ((a (json-get part "arguments")))
-                                                                                  (if (json-object-p a) a (make-hash-table :test 'equal))))
+                                                  (setf (gethash "name" p) (part-name part) (gethash "arguments" p) (part-args part))
                                                   p))
                                                ((and (equal (json-get part "type") "text") (not (stringp (json-get part "text"))))
                                                 (let ((p (copy-object part))) (setf (gethash "text" p) "") p))
@@ -69,8 +67,7 @@ read once."
 
 (defun part-call (part &optional pos)
   "A toolCall content part as a call: the one reading of one."
-  (make-call (string-or (json-get part "name") "unknown")
-             (let ((a (json-get part "arguments"))) (if (json-object-p a) a (make-hash-table :test 'equal)))
+  (make-call (part-name part) (part-args part)
              (let ((id (json-get part "id"))) (and (stringp id) id))
              pos))
 

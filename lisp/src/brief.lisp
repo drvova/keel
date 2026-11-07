@@ -220,11 +220,13 @@ to be the deciding edits and writes, the head exploration.")
         (when (string= stripped raw) (return raw))
         (setf raw stripped)))))
 
-(defun segment-closing-p (blocks i)
-  "The assistant block I is the last thing said before the next user turn."
-  (and (eq (block-kind (aref blocks i)) :assistant)
+(defun segment-closing-p (blocks i &key (key #'identity))
+  "The assistant block I of BLOCKS (each read through KEY) is the last thing said
+before the next user turn: only tool results come between it and one, or the end."
+  (and (eq (block-kind (funcall key (aref blocks i))) :assistant)
        (let ((next (loop for j from (1+ i) below (length blocks)
-                         unless (eq (block-kind (aref blocks j)) :tool-result) return (aref blocks j))))
+                         for b = (funcall key (aref blocks j))
+                         unless (eq (block-kind b) :tool-result) return b)))
          (or (null next) (eq (block-kind next) :user)))))
 
 (defun build-brief-sections (block-list)
@@ -243,27 +245,27 @@ to be the deciding edits and writes, the head exploration.")
                (let ((lines (split-string text #\Newline)))
                  (setf (car (last lines)) (concatenate 'string (car (last lines)) ref))
                  (dolist (line lines) (push-item header (list :text line)))))
-             (ref-of (b) (if (block-index b) (format nil " (#~d)" (block-index b)) "")))
+             (block-ref (b) (ref-of (block-index b))))
       (dotimes (i (length blocks))
         (let ((b (aref blocks i)))
           (case (block-kind b)
             (:user
              (when (plusp (length (js-trim (block-text b))))
                (let ((text (truncate-words (collapse-skill-text (block-text b)) +truncate-user+)))
-                 (when (plusp (length text)) (push-text "[user]" text (ref-of b))))
+                 (when (plusp (length text)) (push-text "[user]" text (block-ref b))))
                (setf last-header "[user]")))
             (:bash
              (let ((cmd (if (equal (block-lang b) "python") (compress-code (block-command b)) (compress-bash (block-command b)))))
                (when (plusp (length cmd))
                  (push-item "[user]" (list :text (format nil "~a ~a~a~a" (if (equal (block-lang b) "python") ">>>" "$") cmd
-                                                         (if (nonzero-exit-p (block-exit-code b)) " [failed]" "") (ref-of b))))))
+                                                         (if (nonzero-exit-p (block-exit-code b)) " [failed]" "") (block-ref b))))))
              (setf last-header "[user]"))
             (:assistant
              (let* ((raw (self-talk-stripped (block-text b)))
                     (text (if (segment-closing-p blocks i)
                               (truncate-words-head-tail raw +closing-head-words+ +closing-tail-words+)
                               (truncate-words-head-tail raw +assistant-head-words+ +assistant-tail-words+))))
-               (when (plusp (length text)) (push-text "[assistant]" text (ref-of b)))))
+               (when (plusp (length text)) (push-text "[assistant]" text (block-ref b)))))
             (:tool-call
              (let ((name (block-name b)))
                (when (and (stringp name) (plusp (length (js-trim name))))
@@ -299,7 +301,7 @@ to be the deciding edits and writes, the head exploration.")
 
 (defparameter +recent-blocks+ 16 "The newest blocks kept for local continuity, within the char budget.")
 (defparameter +brief-max-blocks+ 80
-  "The brief's block cap when the ranking names none: the budgets' briefMaxBlocks on a ~128K window (window.lisp).")
+  "The brief's block cap on a ~128K window, and when the ranking names none; window.lisp scales it with the trigger.")
 (defparameter +trivial-bash-penalty+ 16
   "Taken off a command that is only scaffolding, so spare budget never pulls it in ahead of real edits and commands.")
 
@@ -381,11 +383,8 @@ not what a turn did."
               when (member (block-kind (ranked-block (aref ranked i))) '(:assistant :bash)) do (award (aref ranked i) 5 "after-important-event") (return))))
     (dotimes (i (length ranked))
       (let ((b (ranked-block (aref ranked i))))
-        (when (and (eq (block-kind b) :assistant) (>= (js-length (js-trim (block-text b))) 120)
-                   (let ((next (loop for j from (1+ i) below (length ranked)
-                                     unless (eq (block-kind (ranked-block (aref ranked j))) :tool-result)
-                                       return (ranked-block (aref ranked j)))))
-                     (or (null next) (eq (block-kind next) :user))))
+        (when (and (>= (js-length (js-trim (block-text b))) 120)
+                   (segment-closing-p ranked i :key #'ranked-block))
           (award (aref ranked i) 14 "segment-closing-assistant"))))
     ranked))
 

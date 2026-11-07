@@ -24,8 +24,6 @@
 (defparameter +changed-shown+ 8 "Changed files named in the section; past this the count says how many more.")
 (defparameter +error-line-chars+ 200 "An error line is clipped to this many characters.")
 
-(defun ref-of (n) (if n (format nil " (#~d)" n) ""))
-
 (defun last-said-line (text)
   "The last line of TEXT that says something, clipped: errors come last."
   (let ((lines (remove "" (mapcar #'js-trim (split-string text #\Newline)) :test #'string=)))
