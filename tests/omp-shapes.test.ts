@@ -6,7 +6,7 @@ import { join } from "path";
 import { homedir } from "os";
 import { applyTailBudget, buildOwnCut, registerHook } from "./support/host";
 import { callKind, fileWriteOf, namedPaths, readsPart, stripReadSelector } from "../src/core/tools";
-import { extractFiles } from "../src/extract/files";
+import { summarize } from "./support/summary";
 import { renderMessage } from "../src/core/render-entries";
 import { touchedFiles } from "../src/core/touched";
 
@@ -102,8 +102,8 @@ describe("omp tool shapes", () => {
       { kind: "tool_call", name: "read", args: { path: "src/auth/session.ts:81-160" } },
       { kind: "tool_call", name: "edit", args: { input: hashline } },
     ];
-    const files = extractFiles(blocks);
-    expect([...files.read]).toEqual(["src/auth/session.ts"]);
+    const { files } = summarize(blocks).state;
+    expect(files.read).toEqual(["src/auth/session.ts"]);
     expect([...files.modified].sort()).toEqual(["lib/util.py", "src/auth/session.ts"]);
   });
 

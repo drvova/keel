@@ -1,16 +1,9 @@
-// What each live message becomes in a summary's input: the one mapping behind
-// both the summary and the cut's "would this prefix render" check, so the two
-// cannot disagree.
-import { summaryBlocks } from "../core/normalize";
+// What each live message becomes in a summary's input, with the host's own
+// convertToLlm: the one part of a compaction the core cannot do (src/compaction/plan.ts hostNotes).
 import { isExtensionUserMessage } from "../core/content";
 import { UNSUMMARIZED_MESSAGE_TYPES } from "../names";
 
 import type { ConvertToLlm } from "../host";
-
-export interface EntryWithMessage {
-  entry: { id: string; type: string };
-  message: { role: string; content: unknown };
-}
 
 /** The host's convertToLlm for one message, as the summarizer input path runs it:
  * a message it rejects or drops yields []. */
@@ -48,54 +41,6 @@ export const toSummaryMessage = (message: any, convert: ConvertToLlm): any | nul
   if (role === "branchSummary" || isExtensionUserMessage(message)) return { ...converted[0], injected: true };
   return converted[0];
 };
-
-/** A custom_message the user listed in skipCustomTypes; dropped before summarizing. */
-const isSkippedCustom = (m: any, skipCustomTypes: readonly string[]): boolean =>
-  m?.role === "custom" && skipCustomTypes.includes(m?.customType);
-
-/**
- * The summary's input from these messages (`ids` parallel): the custom types
- * the user listed in skipCustomTypes left out, the rest each as
- * toSummaryMessage makes it, ids kept aligned (convertToLlm works one message
- * at a time, so never by position). `summarized` counts what the summary
- * covers, before toSummaryMessage drops what adds nothing.
- */
-export const summaryInputOf = (
-  messages: readonly any[],
-  ids: readonly string[],
-  skipCustomTypes: readonly string[],
-  convert: ConvertToLlm,
-): { summarized: number; messages: any[]; ids: string[] } => {
-  const out = { summarized: 0, messages: [] as any[], ids: [] as string[] };
-  messages.forEach((m, i) => {
-    if (isSkippedCustom(m, skipCustomTypes)) return;
-    out.summarized++;
-    const message = toSummaryMessage(m, convert);
-    if (message == null) return;
-    out.messages.push(message);
-    out.ids.push(ids[i]);
-  });
-  return out;
-};
-
-/** True when the prefix would contribute at least one block to the summary.
- * Runs the same path as the summarizer (skipCustomTypes filter, toSummaryMessage,
- * summaryBlocks): custom_message and branch_summary become user content and
- * render, while role "system" renders nothing (omp's convertToLlm drops it; Pi's
- * passes it through and normalize skips it), nor does a user message that is
- * only a host's <system-reminder>. */
-export const prefixHasRenderableContent = (
-  prefix: EntryWithMessage[],
-  skipCustomTypes: readonly string[],
-  convert: ConvertToLlm,
-): boolean =>
-  // One message at a time, up to the first that renders: what renders does not
-  // depend on the others (they only mark which calls failed).
-  prefix.some(({ message }) => {
-    if (isSkippedCustom(message, skipCustomTypes)) return false;
-    const m = toSummaryMessage(message, convert);
-    return m != null && summaryBlocks([m]).length > 0;
-  });
 
 // Convert a non-message entry that carries LLM-context text (custom_message /
 // branch_summary) into its agent-message form, as omp's session context builds

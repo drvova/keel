@@ -19,8 +19,12 @@
 (deftest regex-queries-run-in-entry-order
   (is (equal (mapcar #'car (search-docs "mon.y" (docs "honey" "money" "MONEY" "monkey"))) '(1 2))))
 
-(deftest refused-constructs-are-handed-back
-  (is (eq :regex (search-docs "(?<n>a)" (docs "a")))))
+(deftest a-named-group-is-searched-as-javascript-reads-it
+  (is (equal (mapcar #'car (search-docs "(?<n>ab)c" (docs "xx" "abc"))) '(1))))
+
+(deftest a-back-reference-into-a-look-behind-is-searched-as-text
+  ;; The one construct the regex engine refuses: the query is read literally.
+  (is (equal (mapcar #'car (search-docs "(?<=(a)\\1)b" (docs "aab" "x (?<=(a)\\1)b y"))) '(1))))
 
 (deftest an-empty-regex-result-falls-back-to-terms
   ;; "zz.z fix" finds nothing as one regex, so its terms are searched instead.

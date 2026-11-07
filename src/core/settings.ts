@@ -65,7 +65,7 @@ export interface VccSettings {
    * When true (default), each compaction brings back in a [Working Set]
    * section what the next step likely needs, from the originals: the latest
    * version of the files the work is on, the latest unresolved failure, the
-   * results most relevant to the latest request (core/working-set.ts), within
+   * results most relevant to the latest request (lisp/src/working-set.lisp), within
    * a share of the window.
    */
   workingSet: boolean;

@@ -1036,17 +1036,6 @@ describe("compaction hook: growth guard", () => {
     if (existsSync(CONFIG_PATH)) unlinkSync(CONFIG_PATH);
   });
 
-  test("summaryGrowth: net growth past a fixed margin or a quarter of the prefix", async () => {
-    const { summaryGrowth } = await import("../src/compaction/assemble");
-    expect(summaryGrowth(400, 0, 10, 500)).toMatchObject({ grows: false, netChars: 390, allowedChars: 500 });
-    expect(summaryGrowth(2_000, 0, 100, 500)).toMatchObject({ grows: true, netChars: 1_900 });
-    // The previous summary is replaced, so only what the new one adds counts.
-    expect(summaryGrowth(9_000, 8_000, 100, 500)).toMatchObject({ grows: true, netChars: 900 });
-    expect(summaryGrowth(9_000, 8_500, 4_000, 500)).toMatchObject({ grows: false });
-    // A big prefix allows a quarter of itself.
-    expect(summaryGrowth(12_000, 0, 10_000, 500)).toMatchObject({ grows: false, allowedChars: 2_500 });
-  });
-
   const pinned = (n: number) => Array.from({ length: n }, (_, i) => ({
     id: `p${i}`, type: "custom", customType: "omp-vcc.pin",
     data: { v: 1, op: "add", id: i + 1, text: `Constraint ${i + 1}: ${"keep the legacy SSO flow untouched until the migration lands. ".repeat(3)}`, by: "user" },

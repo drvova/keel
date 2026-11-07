@@ -1,6 +1,5 @@
 // The line a compaction's outcome is told in, and the toast that shows it:
 // read by the hook (automatic and /compact passes) and /omp-vcc's feedback.
-import type { BudgetCutKind } from "./cut";
 import { tell, type NotifyCtx } from "../host";
 import { core } from "../core/lisp-core";
 
@@ -10,7 +9,7 @@ export interface CompactionStats {
   keptUserTurns: number;
   totalUserTurns: number;
   /** Set when the tail came from a token-budget cut instead of a user-turn cut. */
-  budgetCut?: BudgetCutKind;
+  budgetCut?: "final_reply" | "running_turn" | "no_anchor" | "oversized_tail";
   keptTokensEst: number;
   /** True when smart-keep boosted the default keep beyond 1. */
   smartKeepAdjusted?: boolean;

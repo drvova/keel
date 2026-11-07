@@ -3,20 +3,14 @@ import type { Message } from "@oh-my-pi/pi-ai";
 // A before/after report of one compile over a session's messages, for the
 // real-session tests and the benchmark scripts, at a ~128K window's limits.
 import { clip } from "../../src/core/content";
-import { filesOf } from "../../src/core/tools";
-import { normalize } from "../../src/core/normalize";
 import { renderMessage } from "../../src/core/render-entries";
-import { type CompileInput, compile } from "../../src/core/summarize";
-import { briefOf, sectionOf } from "../../src/core/legacy-summary";
-import { freshState } from "../../src/core/summary-state";
-import { SECTION } from "../../src/core/format";
+import { type CompileInput, type CompiledSummary, compileSummary } from "../../src/core/summarize";
 import { DEFAULT_SUMMARY_LIMITS } from "../../src/core/window";
-import { EARLY_REQUESTS_KEPT } from "../../src/extract/user-messages";
 import { estimateTokensFromChars } from "../../src/core/token-estimate";
+import { briefOf } from "./summary";
 
-const SECTION_HEADERS = [SECTION.early, SECTION.files, SECTION.commits, SECTION.tracked, SECTION.userMessages];
-const earlyRequestsOf = (messages: Message[]): string[] =>
-  freshState({ blocks: normalize(messages), earlySlots: EARLY_REQUESTS_KEPT }).earlyRequests;
+/** The header sections the report counts (the brief is not one). */
+const SECTION_HEADERS = ["Early Session Requests", "Files And Changes", "Commits", "Tracked Commands", "User Messages"];
 
 interface RoleCounts {
   user: number;
@@ -79,21 +73,19 @@ const countRoles = (messages: Message[]): RoleCounts => {
   return counts;
 };
 
+/** The summary's units in these messages: user messages, assistant texts, tool calls, tool results. */
 const countBlocks = (messages: Message[]): BlockCounts => {
-  const counts: BlockCounts = {
-    user: 0,
-    assistant: 0,
-    toolCalls: 0,
-    toolResults: 0,
-  };
-
-  for (const block of normalize(messages)) {
-    if (block.kind === "user") counts.user += 1;
-    else if (block.kind === "assistant") counts.assistant += 1;
-    else if (block.kind === "tool_call") counts.toolCalls += 1;
-    else if (block.kind === "tool_result") counts.toolResults += 1;
+  const counts: BlockCounts = { user: 0, assistant: 0, toolCalls: 0, toolResults: 0 };
+  for (const msg of messages as any[]) {
+    if (msg.role === "user") counts.user += 1;
+    else if (msg.role === "toolResult") counts.toolResults += 1;
+    else if (msg.role === "assistant" && Array.isArray(msg.content)) {
+      for (const part of msg.content) {
+        if (part?.type === "text" && part.text?.trim()) counts.assistant += 1;
+        else if (part?.type === "toolCall") counts.toolCalls += 1;
+      }
+    }
   }
-
   return counts;
 };
 
@@ -102,12 +94,10 @@ const inputCharsOf = (messages: Message[]): number =>
     .map((msg, index) => renderMessage(msg, index, true).summary.length)
     .reduce((sum, len) => sum + len, 0);
 
-const topFilesOf = (messages: Message[]): string[] => {
-  const files = new Set<string>();
-  for (const block of normalize(messages)) {
-    if (block.kind === "tool_call") for (const file of filesOf(block)) files.add(file);
-  }
-  return [...files].slice(0, 10);
+/** The files the summary lists: changed first, then read. */
+const filesOf = (compiled: CompiledSummary): string[] => {
+  const { modified, created, read } = compiled.state.files;
+  return [...new Set([...modified, ...created, ...read])];
 };
 
 const previewOf = (messages: Message[], edgeCount = 3): string => {
@@ -128,8 +118,8 @@ const previewOf = (messages: Message[], edgeCount = 3): string => {
   ].join("\n");
 };
 
-const sectionCountOf = (summary: string): number =>
-  SECTION_HEADERS.filter((header) => sectionOf(summary, header) !== "").length;
+const sectionCountOf = (compiled: CompiledSummary): number =>
+  SECTION_HEADERS.filter((header) => compiled.sections.includes(header)).length;
 
 const briefLineCountOf = (summary: string): number => {
   const brief = briefOf(summary);
@@ -155,15 +145,11 @@ const matchesQuery = (text: string, query: string): boolean => {
     .every((term) => hay.includes(term));
 };
 
-const probesOf = (messages: Message[], summary: string): RecallProbe[] => {
-  const blocks = normalize(messages);
-
-  // Find first file from tool calls
-  const firstFile = blocks.flatMap((b) => (b.kind === "tool_call" ? filesOf(b) : []))[0] ?? "";
-
+const probesOf = (messages: Message[], compiled: CompiledSummary): RecallProbe[] => {
+  const summary = compiled.text;
   const rawProbes = [
-    { label: "request", text: earlyRequestsOf(messages)[0] ?? "" },
-    { label: "file", text: firstFile },
+    { label: "request", text: compiled.state.earlyRequests[0] ?? "" },
+    { label: "file", text: filesOf(compiled)[0] ?? "" },
   ];
 
   const rendered = messages.map((msg, index) => renderMessage(msg, index));
@@ -185,9 +171,10 @@ const probesOf = (messages: Message[], summary: string): RecallProbe[] => {
 };
 
 export const buildCompactReport = (input: Omit<CompileInput, "limits">): CompactReport => {
-  const summary = compile({ limits: DEFAULT_SUMMARY_LIMITS, ...input });
+  const compiled = compileSummary({ limits: DEFAULT_SUMMARY_LIMITS, ...input });
+  const summary = compiled.text;
   const inputChars = inputCharsOf(input.messages);
-  const topFiles = topFilesOf(input.messages);
+  const topFiles = filesOf(compiled).slice(0, 10);
 
   return {
     summary,
@@ -203,9 +190,9 @@ export const buildCompactReport = (input: Omit<CompileInput, "limits">): Compact
     after: {
       summaryLength: summary.length,
       estimatedTokens: estimateTokensFromChars(summary.length),
-      sectionCount: sectionCountOf(summary),
+      sectionCount: sectionCountOf(compiled),
       summaryPreview: summary,
-      earlyRequestsCount: earlyRequestsOf(input.messages).length,
+      earlyRequestsCount: compiled.state.earlyRequests.length,
       briefTranscriptLines: briefLineCountOf(summary),
     },
     compression: {
@@ -215,7 +202,7 @@ export const buildCompactReport = (input: Omit<CompileInput, "limits">): Compact
       messagesBefore: input.messages.length,
     },
     recall: {
-      probes: probesOf(input.messages, summary),
+      probes: probesOf(input.messages, compiled),
     },
   };
 };

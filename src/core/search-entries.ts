@@ -431,7 +431,7 @@ const SEARCH_RESULT_CAP = 50;
  * Tuning overrides for `searchEntries`. Exists so the offline bench
  * (scripts/benchmark-recall-quality.ts) and targeted tests can exercise the
  * real scoring/capping pipeline against candidate constants, and so
- * [Working Set] can take only the top few hits (core/working-set.ts, `cap`).
+ * [Working Set] can take only the top few hits (lisp/src/working-set.lisp, `cap`).
  * Recall never passes this and always gets
  * `BM25_RELATIVE_FLOOR`/`SEARCH_RESULT_CAP`.
  */

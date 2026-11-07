@@ -3,7 +3,7 @@
 // omissions, replacements of every content shape (and malformed ones), edits of
 // roles Pi does not edit, of entries that are not messages, of ids that are
 // not there, and a target edited again. Op compact applies the same projection
-// (tests/lisp-compaction.test.ts plans branches with edits). Skips without SBCL.
+// (tests/pi-entry.test.ts compacts a branch with edits). Skips without SBCL.
 import { describe, expect, it } from "bun:test";
 import { applyContextEdits } from "../src/core/context-edits";
 import { callCore } from "../src/core/lisp-core";

@@ -1,6 +1,10 @@
 import { describe, it, expect } from "bun:test";
-import { extractFiles } from "../src/extract/files";
 import type { NormalizedBlock } from "../src/types";
+import type { FileOps } from "../src/types";
+import { summarize, UNCAPPED } from "./support/summary";
+
+/** The files the summary of these blocks lists, as it stores them for the next compaction. */
+const extractFiles = (blocks: NormalizedBlock[], fileOps?: FileOps) => summarize(blocks, { limits: UNCAPPED, ...(fileOps ? { fileOps } : {}) }).state.files;
 
 describe("extractFiles", () => {
   it("matches tool names case-insensitively", () => {

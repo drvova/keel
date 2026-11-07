@@ -1,29 +1,71 @@
-import { describe, it, expect } from "bun:test";
-import { freshState, readState, type SummaryState } from "../src/core/summary-state";
-import { sectionOf } from "../src/core/legacy-summary";
-import { compile as compileAt, compileSummary } from "../src/core/summarize";
+// The summary's stored state (lisp/src/summary.lisp): what one compaction's
+// window adds, and how the next compaction merges into what this one stored.
+import { afterAll, beforeAll, describe, it, expect } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
+import { compileSummary, type SummaryState } from "../src/core/summarize";
 import { DEFAULT_SUMMARY_LIMITS } from "../src/core/window";
+import { OMP_VCC_COMPACT_INSTRUCTION } from "../src/core/compact-args";
 import type { NormalizedBlock } from "../src/types";
+import { registerHook } from "./support/host";
+import { sectionLines, summarize } from "./support/summary";
 
-const compile = (input: Omit<Parameters<typeof compileAt>[0], "limits">) => compileAt({ limits: DEFAULT_SUMMARY_LIMITS, ...input });
+const compile = (input: Omit<Parameters<typeof compileSummary>[0], "limits">) => compileSummary({ limits: DEFAULT_SUMMARY_LIMITS, ...input }).text;
+/** What a window of these blocks adds to the state, with EARLY of the session's first requests still to take. */
+const freshState = ({ blocks, trackCommands, earlySlots }: { blocks: NormalizedBlock[]; trackCommands?: string[]; earlySlots: number }): SummaryState =>
+  summarize(blocks, {
+    trackCommands,
+    // A state that has taken all but EARLY of them, and nothing else.
+    ...(earlySlots < 3 ? { previous: { earlyRequests: [], files: { modified: [], created: [], read: [] }, commits: [], tracked: [], userMessages: [], brief: "", earlySlots } } : {}),
+  }).state;
 
-describe("readState", () => {
+describe("a stored state read back", () => {
+  let dir: string;
+  const prev = process.env.OMP_VCC_CONFIG_PATH;
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), "omp-vcc-state-"));
+    process.env.OMP_VCC_CONFIG_PATH = join(dir, "c.json");
+    writeFileSync(process.env.OMP_VCC_CONFIG_PATH, JSON.stringify({ overrideDefaultCompaction: true, smartKeepTail: false }));
+  });
+  afterAll(() => {
+    if (prev === undefined) delete process.env.OMP_VCC_CONFIG_PATH;
+    else process.env.OMP_VCC_CONFIG_PATH = prev;
+    rmSync(dir, { recursive: true, force: true });
+  });
   const stored = { earlyRequests: ["goal"], files: { modified: ["a.ts"], created: [], read: [] }, commits: [{ hash: "abc1234", message: "m" }], userMessages: [], brief: "[user]\ngoal" };
+  /** The state the next compaction stores, after one that stored SUMMARYSTATE. */
+  const next = (summaryState: unknown): SummaryState => {
+    const say = (id: string, role: string, text: string) => ({ id, type: "message", message: role === "user" ? { role, content: text } : { role, content: [{ type: "text", text }] } });
+    const branchEntries = [say("a", "user", "goal"), say("b", "assistant", "ok"),
+      { id: "k", type: "compaction", firstKeptEntryId: "", summary: "[user]\ngoal", details: { compactor: "omp-vcc", version: 2, summaryState } },
+      say("c", "user", "next request"), say("d", "assistant", "on it"), say("e", "assistant", "the work went as planned. ".repeat(100))];
+    let handler: any;
+    registerHook({ on: (name: string, fn: any) => { if (name === "session_before_compact") handler = fn; } });
+    return handler({
+      type: "session_before_compact", branchEntries, customInstructions: `${OMP_VCC_COMPACT_INSTRUCTION} keep:0`,
+      preparation: { previousSummary: "[user]\ngoal", fileOps: { read: [], written: [], edited: [] }, tokensBefore: 1000 },
+      signal: new AbortController().signal,
+    }, { ui: { notify: () => {} }, sessionManager: { getEntries: () => branchEntries } }).compaction.details.summaryState;
+  };
 
   it("loads a state stored before a section existed, with that section empty", () => {
     // No `tracked`: as a release before it would have stored it.
-    expect(readState(stored)).toEqual({ ...stored, tracked: [], earlySlots: 2 });
+    const r = next(stored);
+    expect(r.files.modified).toEqual(["a.ts"]);
+    expect(r.commits).toEqual([{ hash: "abc1234", message: "m" }]);
+    expect(r.tracked).toEqual([]);
   });
 
   it("is no state when a section has another shape (a hand-edited file)", () => {
-    expect(readState({ ...stored, tracked: "ssh" })).toBeUndefined();
-    expect(readState({ ...stored, files: { ...stored.files, read: [1] } })).toBeUndefined();
-    expect(readState("text")).toBeUndefined();
+    for (const bad of [{ ...stored, tracked: "ssh" }, { ...stored, files: { ...stored.files, read: [1] } }, "text"]) {
+      expect(next(bad).files.modified).toEqual([]);
+    }
   });
 });
 
-describe("freshState", () => {
-  it("returns all-empty for no blocks", () => {
+describe("what a window adds", () => {
+  it("is nothing for no blocks", () => {
     const r = freshState({ blocks: [], earlySlots: 3 });
     expect(r.earlyRequests).toEqual([]);
     expect(r.userMessages).toEqual([]);
@@ -70,7 +112,7 @@ describe("a clipped user message", () => {
     expect(earlyRequests[0].length).toBeLessThan(long.length);
   });
 
-  it("keeps its ref through the summary pipeline (filterNoise rebuilt user blocks without it)", () => {
+  it("keeps its ref through the summary pipeline", () => {
     const r = compile({ messages: [{ role: "user", content: long }, { role: "assistant", content: [{ type: "text", text: "ok" }] }] as any, sourceIndices: [0, 1] });
     expect(r).toContain("with the message… (#0)");
   });
@@ -105,7 +147,7 @@ describe("carried sections merge from the stored state", () => {
     const out = chain(w("1"), w("2"), w("3"));
     expect(out.state.files.modified).toEqual([comma, long]);
     expect(filesLine(out.text, "Modified")).toStartWith(`- Modified: ${comma}, src/`);
-    expect(sectionOf(out.text, "Files And Changes").match(/module\.ts/g)).toHaveLength(1);
+    expect(sectionLines(out.text, "Files And Changes").join("\n").match(/module\.ts/g)).toHaveLength(1);
   });
 
   it("the same absolute file in windows that share different directories is one file", () => {

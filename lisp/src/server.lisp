@@ -42,6 +42,16 @@
 ;;;;   convertToLlm makes of it (summary-input.ts toSummaryMessage), as it is and
 ;;;;   as its kept original, and its #N.
 ;;;;
+;;;; cut: the cut alone (compaction.lisp), for the tests of where a compaction cuts
+;;;;   {"op":"cut","action":"own"|"tail-budget"|"smart-keep"|"running-turn"|"whole-window",
+;;;;    branch, notes, keep?, skip?, cut?, maxTokens?, minTokens?, charsPerToken?, requested?, smart?}
+;;;;   -> {"ok":true,"cut":CUT}, CUT as cut.ts's OwnCutResult ({ok:false, reason} when there is none,
+;;;;   null from running-turn and whole-window), or "keep" and "adjusted" for smart-keep.
+;;;;
+;;;; working-set: [Working Set] alone (working-set.lisp), for its tests
+;;;;   {"op":"working-set","history":[MESSAGE...],"indices":[N...],"kept":[MESSAGE...],"maxChars":C}
+;;;;   -> {"ok":true,"items":[{index,title,note,text}...],"lines":[L...],"shown":[N...]}
+;;;;
 ;;;; context-edits: a branch as Pi's context holds it (src/core/context-edits.ts), for the parity test
 ;;;;   {"op":"context-edits","branch":[ENTRY...]} -> {"ok":true,"entries":[ENTRY...]}
 ;;;;   (op compact applies the same projection to its BRANCH and NOTES)
@@ -236,6 +246,65 @@ parity test compares with JavaScript's own."
   "planCompaction on the PlanInput REQUEST carries in \"input\", the host's convertToLlm already applied."
   (json-object "ok" :true "plan" (plan-compaction (json-get request "input"))))
 
+(defun cut-json (cut)
+  "A cut as cut.ts's OwnCutResult."
+  (cond ((null cut) :null)
+        ((not (cut-p cut)) (json-object "ok" :false "reason" (cut-reason-name cut)))
+        (t (let ((o (json-object "ok" :true
+                                 "messages" (map 'vector #'item-live (cut-items cut))
+                                 "selectedIds" (map 'vector #'item-id (cut-items cut))
+                                 "firstKeptEntryId" (cut-first-kept cut)
+                                 "compactAll" (if (cut-compact-all cut) :true :false)
+                                 "keptUserTurns" (cut-kept-user-turns cut)
+                                 "totalUserTurns" (cut-total-user-turns cut)
+                                 "keepFallbackToCompactAll" (if (cut-fallback cut) :true :false))))
+             (when (cut-budget-cut cut) (setf (gethash "budgetCut" o) (cut-budget-cut cut)))
+             o))))
+
+(defun json-cut (v live)
+  "The cut a test hands back (cut-json's shape) on the LIVE items it was made of."
+  (if (not (eq (json-get v "ok") :true))
+      (if (equal (json-get v "reason") "no_live_messages") :no-live-messages :too-few-live-messages)
+      (%make-cut :items (subseq live 0 (length (json-get v "messages" #())))
+                 :first-kept (json-get v "firstKeptEntryId")
+                 :compact-all (eq (json-get v "compactAll") :true)
+                 :kept-user-turns (json-get v "keptUserTurns") :total-user-turns (json-get v "totalUserTurns")
+                 :fallback (eq (json-get v "keepFallbackToCompactAll") :true)
+                 :budget-cut (json-get v "budgetCut"))))
+
+(defun handle-cut (request)
+  "One of the cut's steps on REQUEST's branch, as the context holds it."
+  (multiple-value-bind (branch notes)
+      (apply-context-edits (coerce (json-get request "branch" #()) 'vector) (coerce (json-get request "notes" #()) 'vector))
+    (let ((action (json-get request "action"))
+          (skip (strings-of (json-get request "skip" #())))
+          (max (json-get request "maxTokens"))
+          (per-token (let ((c (json-get request "charsPerToken"))) (if (realp c) c +default-chars-per-token+))))
+      (cond ((equal action "own") (json-object "ok" :true "cut" (cut-json (build-own-cut branch notes (json-get request "keep") skip))))
+            ((equal action "tail-budget")
+             (let ((cut (json-cut (json-get request "cut") (live-items branch notes))))
+               (json-object "ok" :true "cut" (cut-json (if (cut-p cut) (apply-tail-budget branch notes cut max per-token skip) cut)))))
+            ((equal action "running-turn") (json-object "ok" :true "cut" (cut-json (running-turn-cut branch notes max per-token skip))))
+            ((equal action "whole-window") (json-object "ok" :true "cut" (cut-json (whole-window-cut branch notes skip))))
+            ((equal action "smart-keep")
+             (multiple-value-bind (keep adjusted)
+                 (resolve-smart-keep branch notes (let ((r (json-get request "requested"))) (and (realp r) r))
+                                     (eq (json-get request "smart") :true) skip (json-get request "minTokens") max per-token)
+               (json-object "ok" :true "keep" keep "adjusted" (if adjusted :true :false))))
+            (t (json-object "ok" :false "error" "cut: unknown action"))))))
+
+(defun handle-working-set (request)
+  "The items [Working Set] picks of REQUEST's history, and the section's lines."
+  (let* ((max (json-get request "maxChars"))
+         (items (select-working-set (coerce (json-get request "history" #()) 'list) (coerce (json-get request "indices" #()) 'list)
+                                    (coerce (json-get request "kept" #()) 'list) max)))
+    (multiple-value-bind (lines shown) (format-working-set items max)
+      (json-object "ok" :true
+                   "items" (map 'vector (lambda (i) (json-object "index" (ws-item-index i) "title" (ws-item-title i)
+                                                                 "note" (ws-item-note i) "text" (ws-item-text i)))
+                                items)
+                   "lines" (coerce lines 'vector) "shown" (coerce shown 'vector)))))
+
 (defun handle-recall (request)
   "recall-run.ts recall() on the call REQUEST carries in \"input\"."
   (multiple-value-bind (ok text severity) (run-recall (json-get request "input"))
@@ -310,6 +379,8 @@ parity test compares with JavaScript's own."
           ((equal op "regex") (handle-regex request))
           ((equal op "summarize") (handle-summarize request))
           ((equal op "compact") (handle-compact request))
+          ((equal op "cut") (handle-cut request))
+          ((equal op "working-set") (handle-working-set request))
           ((equal op "recall") (handle-recall request))
           ((equal op "window") (handle-window request))
           ((equal op "settings") (handle-settings request))

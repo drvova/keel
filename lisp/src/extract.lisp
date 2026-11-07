@@ -5,8 +5,8 @@
 ;;;; A port of src/extract/: user-messages.ts (what the user wrote, and the
 ;;;; session's first requests), files.ts (files read, modified, created),
 ;;;; commits.ts (git commits and their hashes) and tracked-commands.ts (the
-;;;; invocations of the commands settings name). Each is held to the TS output
-;;;; by tests/lisp-summary.test.ts.
+;;;; invocations of the commands settings name). tests/extract-*.test.ts hold
+;;;; them to what they read.
 
 (in-package #:omp-vcc)
 

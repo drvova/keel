@@ -10,10 +10,10 @@ import { join } from "path";
 import { createCompactionState, registerCompactionHook, type CompactionHost } from "../src/hooks/compaction";
 import { createWindowState } from "../src/hooks/window-limits";
 import { testConfig } from "./support/binding";
-import { buildOwnCut } from "../src/compaction/cut";
+import { hostNotes } from "../src/compaction/plan";
+import { core } from "../src/core/lisp-core";
 import { toSummaryMessage } from "../src/compaction/summary-input";
-import { normalize } from "../src/core/normalize";
-import { extractFiles } from "../src/extract/files";
+import { summarize } from "./support/summary";
 import { touchedFiles } from "../src/core/touched";
 import { fileWriteOf } from "../src/core/tools";
 import { openConfig } from "../src/core/settings";
@@ -64,7 +64,7 @@ describe.skipIf(!piInstalled())("Pi shapes", () => {
 
     test("a system message in the transcript renders nothing", () => {
       const system = summaryOf({ role: "system", content: "You are Pi.", timestamp: 1 });
-      expect(normalize([system].filter(Boolean))).toEqual([]);
+      expect(summarize({ messages: [system].filter(Boolean) }).state.brief).toBe("");
     });
   });
 
@@ -74,8 +74,7 @@ describe.skipIf(!piInstalled())("Pi shapes", () => {
 
     test("is a change: listed as modified, drillable in mode:'touched'", () => {
       expect(fileWriteOf({ name: "edit", args })?.edits).toHaveLength(2);
-      const files = extractFiles([{ kind: "tool_call", name: "edit", args } as any]);
-      expect([...files.modified]).toEqual(["src/money.ts"]);
+      expect(summarize([{ kind: "tool_call", name: "edit", args } as any]).state.files.modified).toEqual(["src/money.ts"]);
       const touched = touchedFiles([{ entry: { index: 4, role: "assistant", summary: "" }, message: edit }]);
       expect(touched[0]).toMatchObject({ path: "src/money.ts", entries: [{ index: 4, toolName: "edit" }] });
     });
@@ -120,7 +119,8 @@ describe.skipIf(!piInstalled())("Pi shapes", () => {
     });
 
     test("a compact-all keeps nothing, which Pi reads from an empty firstKeptEntryId", () => {
-      const cut = buildOwnCut(host.convertToLlm, branch(), 0, []);
+      // The core's cut (op cut) at keep:0, on Pi's convertToLlm.
+      const cut = core({ op: "cut", action: "own", keep: 0, skip: [], branch: branch(), notes: hostNotes({ branchEntries: branch(), convert: host.convertToLlm, sessionFile: undefined, indexById: undefined }) }).cut;
       expect(cut.ok && cut.compactAll).toBe(true);
       if (!cut.ok) return;
       // Pi's buildContextEntries keeps nothing before a compaction whose kept id is not on the path.

@@ -1,6 +1,9 @@
 import { describe, it, expect } from "bun:test";
-import { extractCommits } from "../src/extract/commits";
 import type { NormalizedBlock } from "../src/types";
+import { summarize, UNCAPPED } from "./support/summary";
+
+/** The commits the summary of these blocks lists, as it stores them for the next compaction. */
+const extractCommits = (blocks: NormalizedBlock[]) => summarize(blocks, { limits: UNCAPPED }).state.commits;
 
 let calls = 0;
 /** A bash call and its result, paired by id as the session pairs them. */

@@ -1,6 +1,5 @@
 import type { CompactionReason } from "./types";
-import type { HistoryRange } from "./core/history-index";
-import type { SummaryState } from "./core/summary-state";
+import type { HistoryRange, SummaryState } from "./core/summarize";
 import { COMPACTOR, LEGACY_COMPACTOR } from "./names";
 import type { HostName } from "./host";
 import { core } from "./core/lisp-core";
@@ -13,15 +12,15 @@ export interface VccCompactionDetails {
   version: number;
   /** The sections the summary shows, in order. */
   sections: string[];
-  /** What the summary shows of its carried sections, which the next compaction merges into (core/summary-state.ts). */
+  /** What the summary shows of its carried sections, which the next compaction merges into (core/summarize.ts). */
   summaryState?: SummaryState;
   sourceMessageCount: number;
   previousSummaryUsed: boolean;
   reason?: CompactionReason;
   willRetry?: boolean;
-  /** The [History Index] ranges, carried to the next compaction (core/history-index.ts). */
+  /** The [History Index] ranges, carried to the next compaction . */
   historyIndex?: HistoryRange[];
-  /** The #N of the entries [Working Set] brought back (core/working-set.ts). */
+  /** The #N of the entries [Working Set] brought back . */
   workingSet?: number[];
   /** The window and trigger the budgets were sized from (core/window.ts). */
   limits?: {

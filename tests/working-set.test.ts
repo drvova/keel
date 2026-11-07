@@ -1,10 +1,10 @@
 // [Working Set]: what the next step needs, brought back at a compaction
-// (src/core/working-set.ts).
+// (lisp/src/working-set.lisp; op working-set runs it alone).
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { formatWorkingSet, selectWorkingSet } from "../src/core/working-set";
+import { core } from "../src/core/lisp-core";
 import { compactionBudgets, ompDefaultTrigger } from "../src/core/window";
 import { registerHook } from "./support/host";
 
@@ -20,6 +20,14 @@ afterAll(() => {
   else process.env.OMP_VCC_CONFIG_PATH = prev;
   rmSync(dir, { recursive: true, force: true });
 });
+
+interface Item { index: number; title: string; note: string; text: string }
+interface Pick { history: unknown[]; indices: number[]; kept: unknown[]; maxChars: number }
+const run = (p: Pick) => core({ op: "working-set", ...p });
+/** The items [Working Set] picks, best first. */
+const selectWorkingSet = (p: Pick): Item[] => run(p).items;
+/** The section's lines, of what it picks within MAXCHARS. */
+const workingSetLines = (p: Pick): string[] => run(p).lines;
 
 const text = (t: string) => [{ type: "text", text: t }];
 const user = (t: string) => ({ role: "user", content: t });
@@ -42,7 +50,7 @@ const work = () => [
   say("I changed floor to round."),
 ];
 
-describe("selectWorkingSet", () => {
+describe("what it picks", () => {
   const indices = (n: number) => Array.from({ length: n }, (_, i) => i);
 
   it("brings back the file the kept turn edits, by its latest version, and the failure nothing fixed", () => {
@@ -125,7 +133,7 @@ describe("selectWorkingSet", () => {
   });
 });
 
-describe("formatWorkingSet", () => {
+describe("the section's lines", () => {
   const all = (n: number) => Array.from({ length: n }, (_, i) => i);
   const shape = (lines: string[], max: number) => {
     expect(lines.reduce((n, l) => n + l.length + 1, 0)).toBeLessThanOrEqual(max);
@@ -134,13 +142,13 @@ describe("formatWorkingSet", () => {
   };
 
   it("fits the budget, has no blank line, and brings a file back whole or not at all", () => {
-    const tight = formatWorkingSet(selectWorkingSet({ history: work(), indices: all(8), kept: [user("go on")], maxChars: 2_000 }), 2_000).lines;
+    const tight = workingSetLines({ history: work(), indices: all(8), kept: [user("go on")], maxChars: 2_000 });
     shape(tight, 2_000);
     // The 60-line file does not fit whole in 2,000 chars: the failure has the room.
     expect(tight.some((l) => l.startsWith("- #2 "))).toBe(false);
     expect(tight[0]).toBe('- #4 bash "bun test tests/billing.test.ts" [failed], its end:');
     expect(tight.at(-1)).toBe("    expected 10.01, received 10.00");
-    const roomy = formatWorkingSet(selectWorkingSet({ history: work(), indices: all(8), kept: [user("go on")], maxChars: 20_000 }), 20_000).lines;
+    const roomy = workingSetLines({ history: work(), indices: all(8), kept: [user("go on")], maxChars: 20_000 });
     shape(roomy, 20_000);
     expect(roomy).toContain("    export const roundTotal = (x: number) => Math.floor(x * 100) / 100;");
     expect(roomy.some((l) => l.includes("vcc_recall expand:[2]"))).toBe(false);
@@ -148,7 +156,7 @@ describe("formatWorkingSet", () => {
 
   it("quotes a long failure by its end, after where the earlier lines are", () => {
     const history = [user("run the tests"), call("t1", "bash", { command: "bun test" }), result("t1", "bash", `${"log line\n".repeat(300)}expected 1, received 2`, true)];
-    const lines = formatWorkingSet(selectWorkingSet({ history, indices: all(3), kept: [user("fix it")], maxChars: 2_000 }), 2_000).lines;
+    const lines = workingSetLines({ history, indices: all(3), kept: [user("fix it")], maxChars: 2_000 });
     shape(lines, 2_000);
     expect(lines[0]).toBe('- #2 bash "bun test" [failed], its end:');
     expect(lines[1]).toMatch(/^    …\[\d+ earlier lines: vcc_recall expand:\[2\]\]$/);

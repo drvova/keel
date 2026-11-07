@@ -9,7 +9,7 @@ import {
 } from "./fixtures";
 /**
  * compile at a ~128K window's section limits unless a test sets its own. A
- * `previousSummary` is read from its text (core/legacy-summary.ts), as one an
+ * `previousSummary` is read from its text (lisp/src/summary.lisp, the legacy reader), as one an
  * older version wrote; the hook merges into the state the previous compaction
  * stored (`previous`, tests/summary-state.test.ts).
  */

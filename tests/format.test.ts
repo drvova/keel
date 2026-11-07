@@ -1,7 +1,8 @@
+// How a summary is laid out (lisp/src/summary.lisp render-summary): the
+// sections, then the brief after ---. A stored state rendered with nothing new.
 import { describe, it, expect } from "bun:test";
-import { renderSummary } from "../src/core/format";
-import type { SummaryState } from "../src/core/summary-state";
-import { DEFAULT_SUMMARY_LIMITS } from "../src/core/window";
+import type { SummaryState } from "../src/core/summarize";
+import { summarize } from "./support/summary";
 
 const empty: SummaryState = {
   earlyRequests: [],
@@ -10,11 +11,12 @@ const empty: SummaryState = {
   tracked: [],
   userMessages: [],
   brief: "",
+  earlySlots: 0,
 };
 
-const formatSummary = (state: SummaryState): string => renderSummary({ state, limits: DEFAULT_SUMMARY_LIMITS }).text;
+const formatSummary = (state: SummaryState): string => summarize({ messages: [] }, { previous: state }).text;
 
-describe("renderSummary", () => {
+describe("the summary's layout", () => {
   it("returns empty string for all-empty sections", () => {
     expect(formatSummary(empty)).toBe("");
   });
@@ -56,7 +58,7 @@ describe("renderSummary", () => {
   });
 
   it("wraps long lines so compaction TUI rendering stays bounded", () => {
-    // The brief is wrapped where it is made (freshState); the sections here.
+    // The brief is wrapped where it is made; the sections when they are written.
     const data = {
       ...empty,
       userMessages: ["word ".repeat(80).trim()],

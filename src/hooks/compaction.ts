@@ -1,6 +1,6 @@
 // The compaction hook, shared by both hosts: the event in, the compaction (or
-// a cancel) out. Where to cut is src/compaction/cut.ts, what is written
-// src/compaction/assemble.ts. It imports no host package at runtime: the
+// a cancel) out. Where to cut and what is written is the core's plan
+// (src/compaction/plan.ts, lisp/src/compaction.lisp). It imports no host package at runtime: the
 // host's own functions and rules arrive through a CompactionHost (omp:
 // src/hooks/omp-host.ts; Pi: pi.ts), so `bun build --packages external` stays
 // on node builtins.

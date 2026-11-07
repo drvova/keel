@@ -17,7 +17,6 @@ import {
   isCountedEntry,
   readEntries,
 } from "../src/core/session-file";
-import { normalize } from "../src/core/normalize";
 import { compile as compileAt, type CompileInput } from "../src/core/summarize";
 import { DEFAULT_SUMMARY_LIMITS } from "../src/core/window";
 import { OMP_VCC_COMPACT_INSTRUCTION } from "../src/core/compact-args";
@@ -120,29 +119,24 @@ describe("#N from the session file (the hook's fallback)", () => {
   });
 });
 
-// ── normalize / compile threading ───────────────────────────────────────
+// ── compile threading ───────────────────────────────────────────────────
 
-describe("normalize with explicit sourceIndices", () => {
+describe("the brief's refs from explicit sourceIndices", () => {
+  const brief = (sourceIndices?: Array<number | undefined>) =>
+    compile({ messages: [userMsg("inspect the fixture"), assistantWithToolCall("edit", { file_path: "beta.txt" })], ...(sourceIndices ? { sourceIndices } : {}) });
+
   test("uses global indices instead of window positions", () => {
-    const blocks = normalize(
-      [userMsg("inspect"), assistantWithToolCall("edit", { file_path: "beta.txt" })],
-      [3, 4],
-    );
-    expect(blocks.map((b) => b.sourceIndex)).toEqual([3, 4]);
+    expect(brief([3, 4])).toContain('* edit "beta.txt" (#4)');
   });
 
-  test("a missing entry yields no sourceIndex (fail-closed, not positional)", () => {
-    const blocks = normalize(
-      [userMsg("inspect"), assistantWithToolCall("edit", { file_path: "beta.txt" })],
-      [3, undefined],
-    );
-    expect(blocks[0].sourceIndex).toBe(3);
-    expect(blocks[1].sourceIndex).toBeUndefined();
+  test("a missing entry yields no ref (fail-closed, not positional)", () => {
+    const out = brief([3, undefined]);
+    expect(out).toContain('* edit "beta.txt"');
+    expect(out).not.toMatch(/\* edit "beta\.txt" \(#/);
   });
 
-  test("omitted indices preserve the legacy positional behavior", () => {
-    const blocks = normalize([userMsg("a"), userMsg("b")]);
-    expect(blocks.map((b) => b.sourceIndex)).toEqual([0, 1]);
+  test("omitted indices are window positions", () => {
+    expect(brief()).toContain('* edit "beta.txt" (#1)');
   });
 });
 

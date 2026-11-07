@@ -291,7 +291,7 @@ export interface CompactionBudgets {
   /** Section sizes; summaryScale of the defaults. */
   summary: SummaryLimits;
   summaryScale: number;
-  /** What [Working Set] may bring back (core/working-set.ts); 0 on a window too small for it. */
+  /** What [Working Set] may bring back (lisp/src/working-set.lisp); 0 on a window too small for it. */
   workingSetTokens: number;
 }
 
