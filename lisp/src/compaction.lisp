@@ -164,7 +164,7 @@ MESSAGES-TO-CONVERT, in that order."
                (multiple-value-bind (n found) (gethash (json-get e "id") index)
                  (when (and found (stringp (json-get e "id"))) (setf (gethash "n" note) n)))
                (when m (setf (gethash "summary" note) (summary-of m)))
-               (when o (setf (gethash "restored" note) (summary-of o)))
+               (when o (setf (gethash "restored" note) (summary-of o) (gethash "original" note) o))
                note))
            branch live originals))))
 
@@ -407,21 +407,6 @@ cut would summarize everything."
 
 ;;; --- restoring the originals omp-vcc kept ------------------------------------------------
 
-(defun restore-originals (messages ids file)
-  "MESSAGES with the original content omp-vcc kept in FILE's raw store put back
-where omp rewrote them (IDS parallel to MESSAGES)."
-  (if (not (stringp file))
-      messages
-      (let ((wanted (make-hash-table :test 'equal)))
-        (loop for m in messages for id in ids
-              when (and (stringp id) (was-rewritten-p m)) do (setf (gethash id wanted) t))
-        (if (zerop (hash-table-count wanted))
-            messages
-            (let ((kept (read-raw-store file wanted)))
-              (loop for m in messages for id in ids
-                    collect (multiple-value-bind (content found) (if (stringp id) (gethash id kept) (values nil nil))
-                              (if found (with-original-content m content) m))))))))
-
 ;;; --- the plan --------------------------------------------------------------------------------
 
 (defparameter +growth-margin-share+ 0.25d0
@@ -483,7 +468,11 @@ sections and brief that would replace it."
                                                   stored-index)
                                               window-range
                                               (json-get (budget budgets "summary") "historyRanges"))))
-           (working-lines nil) (working-shown nil))
+           (working-lines nil) (working-shown nil)
+           ;; Every message since /clear, as the original omp-vcc kept where omp rewrote it: (BRANCH-POS MESSAGE #N).
+           (since (loop for i from (1+ (last-reset-index branch)) below (length branch)
+                        for m = (live-message (aref branch i))
+                        when m collect (list i (or (json-get (aref notes i) "original") m) (json-get (aref notes i) "n")))))
       ;; [Working Set], from everything out of context once this lands since /clear
       ;; (what this compaction summarizes and what earlier ones did), so the agent
       ;; does not spend its next requests fetching it again. The budgets give it
@@ -493,21 +482,14 @@ sections and brief that would replace it."
                             (or (position (cut-first-kept cut) branch :key (lambda (e) (json-get e "id")) :test #'equal) -1)
                             -1))
                (kept (if (>= kept-at 0) (remove nil (map 'list #'live-message (subseq branch kept-at))) '()))
-               (past (loop for i from (1+ (last-reset-index branch)) below (if (>= kept-at 0) kept-at (length branch))
-                           for m = (live-message (aref branch i))
-                           when m collect (list (json-get (aref branch i) "id") m (json-get (aref notes i) "n")))))
+               (past (remove-if (lambda (s) (and (>= kept-at 0) (>= (first s) kept-at))) since)))
           (multiple-value-bind (lines shown)
-              (build-working-set (restore-originals (mapcar #'second past) (mapcar #'first past) (json-get input "sessionFile"))
-                                 (mapcar #'third past) kept
+              (build-working-set (mapcar #'second past) (mapcar #'third past) kept
                                  (* (budget budgets "workingSetTokens") per-token) removed)
             (when lines (setf working-lines lines working-shown shown)))))
       (let* ((task-lines
                ;; [Task State], from everything since /clear: what is summarized, then what stays.
-               (let ((since (loop for i from (1+ (last-reset-index branch)) below (length branch)
-                                  for m = (live-message (aref branch i))
-                                  when m collect (list (json-get (aref branch i) "id") m (json-get (aref notes i) "n")))))
-                 (build-task-state (restore-originals (mapcar #'second since) (mapcar #'first since) (json-get input "sessionFile"))
-                                   (mapcar #'third since))))
+               (build-task-state (mapcar #'second since) (mapcar #'third since)))
              (previous-summary (let ((p (json-get input "previousSummary"))) (and (stringp p) p)))
              (stored-state (and previous-summary previous-compaction (read-state (json-get details "summaryState"))))
              (summary-input

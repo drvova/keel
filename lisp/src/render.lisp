@@ -151,17 +151,20 @@ read once."
               (t :other)))))
 
 (defun call-subject (call)
-  "What CALL is about as (LABEL VALUE MORE): a shell call's command, a search's
-pattern, else its file (and how many more it names), command or query."
+  "What CALL is about as (LABEL VALUE MORE KEY): a shell call's command, a search's
+pattern, else its file (and how many more it names), command or query; KEY the
+argument it came from (NIL for the files in an omp edit's `input`)."
   (let* ((args (call-args call))
          (kind (call-kind call)))
     (flet ((one (label key)
              (let ((v (json-get args key)))
-               (and (stringp v) (plusp (length v)) (list label v 0)))))
+               (and (stringp v) (plusp (length v)) (list label v 0 key)))))
       (cond ((eq kind :shell) (one "command" "command"))
             ((and (eq kind :search) (or (one "pattern" "pattern") (one "pattern" "pat"))))
             ((named-paths args)
-             (let ((paths (named-paths args))) (list "path" (first paths) (1- (length paths)))))
+             (let ((paths (named-paths args)))
+               (list "path" (first paths) (1- (length paths))
+                     (or (path-key-of args) (and (json-array-p (json-get args "paths")) "paths")))))
             (t (or (one "command" "command") (one "query" "query")))))))
 
 (defun call-line (call)
@@ -169,7 +172,8 @@ pattern, else its file (and how many more it names), command or query."
   (let ((subject (call-subject call)))
     (format nil "~a(~a)" (call-name call)
             (if subject
-                (destructuring-bind (label value more) subject
+                (destructuring-bind (label value more &optional key) subject
+                  (declare (ignore key))
                   (format nil "~a=~a~:[~; +~d~]" label value (plusp more) more))
                 (join-strings (json-keys (call-args call)) ", ")))))
 
@@ -195,15 +199,8 @@ pattern, else its file (and how many more it names), command or query."
             when (and (stringp p) (plusp (length p))) collect p))))
 
 (defun call-subject-keys (call)
-  "The arguments CALL's subject shows (CALL-SUBJECT's keys), so the full view leaves them out."
-  (let* ((args (call-args call)) (kind (call-kind call)))
-    (flet ((key-if (key) (let ((v (json-get args key))) (and (stringp v) (plusp (length v)) (list key)))))
-      (cond ((eq kind :shell) (key-if "command"))
-            ((and (eq kind :search) (or (key-if "pattern") (key-if "pat"))))
-            ((named-paths args)
-             (let ((key (or (path-key-of args) (and (json-array-p (json-get args "paths")) "paths"))))
-               (and key (list key))))
-            (t (or (key-if "command") (key-if "query")))))))
+  "The arguments CALL's subject shows, so the full view leaves them out."
+  (let ((key (fourth (call-subject call)))) (and key (list key))))
 
 (defun file-write-of (call)
   "What a write or edit puts in its file, as (:path P :content C), (:path P :edits ((OLD . NEW)...)) or (:path P :replace (OLD . NEW)); NIL for another call."
@@ -312,13 +309,8 @@ still taken), and what omp rewrote put back from the kept originals."
   (let* ((entries (jsonl-values path))
          (indexed (remove-if-not (lambda (m) (and (json-object-p (third m))
                                                   (not (equal (json-get (third m) "role") "system"))))
-                                 (indexed-messages entries)))
-         (wanted (make-hash-table :test 'equal)))
-    (dolist (m indexed)
-      (when (and (second m) (was-rewritten-p (third m))) (setf (gethash (second m) wanted) t)))
-    (let ((kept (read-raw-store path wanted)))
-      (values (loop for (index id message) in indexed
-                    for restored = (multiple-value-bind (content found) (if id (gethash id kept) (values nil nil))
-                                     (if found (with-original-content message content) message))
-                    collect (list index id (readable-message restored)))
-              (active-branch-ids entries)))))
+                                 (indexed-messages entries))))
+    (values (loop for (index id) in indexed
+                  for restored in (restore-originals (mapcar #'third indexed) (mapcar #'second indexed) path)
+                  collect (list index id (readable-message restored)))
+            (active-branch-ids entries))))

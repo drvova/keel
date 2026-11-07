@@ -155,6 +155,15 @@ describe("search regex safety", () => {
     expect(r.hits.map((h) => h.index)).toEqual([20]);
   });
 
+  it("reads every nesting of unbounded quantifiers as text, and a bounded one as a pattern", () => {
+    const messages: any[] = ["x (?:a|b+)* y", "x (a{2,})+ y", "aaab"].map((text) => ({ role: "user", content: [{ type: "text", text }] }));
+    // Nested: searched for literally, so only the entry that holds the text is a hit.
+    expect(search(messages, "(?:a|b+)*").hits.map((h) => h.index)).toEqual([0]);
+    expect(search(messages, "(a{2,})+").hits.map((h) => h.index)).toEqual([1]);
+    // (a{2})+ cannot backtrack exponentially: a pattern, which matches "aaab".
+    expect(search(messages, "(a{2})+b").hits.map((h) => h.index)).toEqual([2]);
+  });
+
   it("still honours legitimate regex queries", () => {
     const entries: any[] = [
       { index: 0, role: "user", summary: "deploy to staging", files: [] },

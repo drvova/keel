@@ -43,6 +43,8 @@
      ;; their #N, the branch, the kept originals, and each one rendered.
      (:file "session")
      (:file "render")
+     ;; calls: tool calls and their results, read one way for every section.
+     (:file "calls")
      ;; The summary pipeline: blocks,
      ;; the section extractors, the brief and its ranking, the summary itself.
      (:file "blocks")
@@ -51,7 +53,6 @@
      (:file "history")
      (:file "summary")
      ;; The compaction: its cut, the working set, and the plan the hook acts on.
-     (:file "calls")
      (:file "working-set")
      (:file "task-state")
      ;; context-edits: Pi's context edits, applied before the cut reads the branch.

@@ -39,12 +39,15 @@
   index           ; the message's #N, or NIL
   injected
   id name args failed
+  results         ; a tool call's: the texts of the results that answer it (calls.lisp pairs them)
   call-id
   command output exit-code lang)
 
 (defun index-or (v) (if (integerp v) v nil))
 
-(defun normalize-one (message index failed-ids)
+(defun call-key (pos id) (format nil "~d:~a" pos id))
+
+(defun normalize-one (message index pairs &optional (pos 0))
   (let ((role (json-get message "role")) (content (json-get message "content")))
     (cond
       ((equal role "user")
@@ -76,9 +79,11 @@
                       append (cond ((equal (json-get part "type") "text")
                                     (list (make-block :kind :assistant :text (sanitize (json-get part "text")) :index index)))
                                    ((equal (json-get part "type") "toolCall")
-                                    (let* ((c (part-call part)) (id (call-id c)))
-                                      (list (make-block :kind :tool-call :id id :name (call-name c) :args (call-args c)
-                                                        :index index :failed (and id (gethash id failed-ids) t))))))))))
+                                    (let* ((c (part-call part)) (id (call-id c))
+                                           (answers (and id (gethash (call-key pos id) pairs))))
+                                      (list (make-block :kind :tool-call :id id :name (call-name c) :args (call-args c) :index index
+                                                        :failed (and (some #'result-error answers) t)
+                                                        :results (mapcar #'result-text answers))))))))))
       (t '()))))
 
 (defun nonzero-exit-p (code)
@@ -104,15 +109,15 @@ user message that held only that."
   "The blocks of MESSAGES (JSON objects), each with its #N from INDICES (a
 vector parallel to MESSAGES, or NIL for positions), host noise left out."
   (let* ((readable (map 'list (lambda (m) (and (json-object-p m) (readable-message m))) messages))
-         (failed (make-hash-table :test 'equal)))
-    (dolist (m readable)
-      (when (and m (equal (json-get m "role") "toolResult") (eq (json-get m "isError") :true)
-                 (stringp (json-get m "toolCallId")))
-        (setf (gethash (json-get m "toolCallId") failed) t)))
+         ;; Each call's results, paired as [Task State] and [Working Set] pair them (calls.lisp).
+         (pairs (make-hash-table :test 'equal)))
+    (dolist (r (reverse (nth-value 1 (read-calls readable))))
+      (let ((c (result-call r)))
+        (when c (push r (gethash (call-key (call-pos c) (call-id c)) pairs)))))
     (filter-noise
      (loop for m in readable
            for i from 0
-           when m append (normalize-one m (if indices (and (< i (length indices)) (index-or (aref indices i))) i) failed)))))
+           when m append (normalize-one m (if indices (and (< i (length indices)) (index-or (aref indices i))) i) pairs i)))))
 
 ;;; --- what a block runs and works on --------------------------------------------
 
@@ -126,9 +131,6 @@ vector parallel to MESSAGES, or NIL for positions), host noise left out."
                      (let ((c (json-get (block-args b) "command"))) (and (stringp c) c))))))
 
 (defun url-path-p (path) (rx-test (rx "^[a-z][a-z0-9+.-]*:\\/\\/" "i") path))
-
-(defparameter +line-selector+ "L?\\d+(?:(?:-|\\.\\.|\\+)L?\\d*)?|-\\d+(?:[-+]\\d+)?"
-  "omp's read selector for lines: `50-100`, `L50-L60`, `50+10`, `50..60`, `-20` (the last 20).")
 
 (defun read-selector-regex ()
   "A read path's selector: `:raw`, `:img`, `:conflicts` or lines, several joined by `,` or `:`."

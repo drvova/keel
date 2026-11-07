@@ -205,11 +205,7 @@ first; the same message hashless and hashed is one commit, kept hashed."
   (let ((b (nth i blocks)))
     (if (eq (block-kind b) :bash)
         (values (list (block-output b)) (nonzero-exit-p (block-exit-code b)))
-        (values (when (and (eq (block-kind b) :tool-call) (block-id b))
-                  (loop for r in (nthcdr (1+ i) blocks)
-                        until (eq (block-kind r) :user)
-                        when (and (eq (block-kind r) :tool-result) (equal (block-call-id r) (block-id b)))
-                          collect (block-text r)))
+        (values (and (eq (block-kind b) :tool-call) (block-results b))
                 (and (eq (block-kind b) :tool-call) (block-failed b))))))
 
 (defun extract-commits (blocks)

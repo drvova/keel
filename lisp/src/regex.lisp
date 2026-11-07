@@ -369,11 +369,11 @@ name and index. A name used twice is a syntax error."
         (when (intersection behind-groups (backref-targets tree)) (unsupported "back-reference to a capture in a look-behind"))
         (values tree groups))))))
 
-(defun tree-has (tree kind)
-  "True when a node of KIND is anywhere in TREE."
-  (and (consp tree)
-       (or (eq (first tree) kind)
-           (some (lambda (x) (tree-has x kind)) tree))))
+(defun tree-some (predicate tree)
+  "Whether PREDICATE holds for a node of TREE (the parsed pattern) or any node under it."
+  (and (consp tree) (or (funcall predicate tree) (some (lambda (x) (tree-some predicate x)) tree))))
+
+(defun tree-has (tree kind) "True when a node of KIND is anywhere in TREE." (tree-some (lambda (n) (eq (first n) kind)) tree))
 
 (defun node-width (node)
   "The fewest and most units NODE can match, as (values MIN MAX), MAX NIL for no bound."
@@ -546,7 +546,7 @@ recall's search compiles a query) and m; signals REGEX-SYNTAX-ERROR where that
 throws, REGEX-UNSUPPORTED where this engine would not be sure to agree."
   (let ((*ignore-case* ignore-case) (*multiline* multiline))
     (multiple-value-bind (tree groups) (parse-regex (string-units pattern))
-      (%make-regex :matcher (compile-node tree (lambda (p) p)) :groups groups))))
+      (values (%make-regex :matcher (compile-node tree (lambda (p) p)) :groups groups) tree))))
 
 (defun regex-match-at (regex units start &optional captures)
   "The end of REGEX's match starting at START, or NIL; and its captures, a
@@ -587,51 +587,18 @@ when given, is that vector to reuse, cleared here."
           do (when (find c ".*+?^${}()|[]\\") (write-char #\\ out))
              (write-char c out))))
 
-(defun quantifier-at (p i)
-  "The quantifier of the pattern units P at I, as (values LENGTH UNBOUNDED)."
-  (let ((u (and (< i (length p)) (aref p i))))
-    (cond ((member u '(43 42)) (values 1 t))
-          ((eql u 123)
-           (let* ((end (position 125 p :start i))
-                  (body (if end (subseq p (1+ i) end) (vector))))
-             ;; /^\d+(,\d*)?$/
-             (let* ((comma (position 44 body))
-                    (head (subseq body 0 (or comma (length body))))
-                    (tail (if comma (subseq body (1+ comma)) (vector))))
-               (if (and (plusp (length head)) (every (lambda (d) (<= 48 d 57)) head)
-                        (every (lambda (d) (<= 48 d 57)) tail))
-                   (values (1+ (- end i)) (and comma (zerop (length tail))))
-                   (values 0 nil)))))
-          (t (values 0 nil)))))
+(defun unbounded-repeat-p (node) (and (eq (first node) :repeat) (null (third node))))
 
-(defun nested-quantifier-p (pattern)
-  "An unbounded quantifier on a group that holds one, as `(a+)+`: a pattern that can backtrack exponentially."
-  (let ((p (string-units pattern)) (groups '()) (in-class nil) (i 0))
-    (loop while (< i (length p))
-          do (let ((u (aref p i)))
-               (cond ((= u 92) (incf i))
-                     (in-class (when (= u 93) (setf in-class nil)))
-                     ((= u 91) (setf in-class t))
-                     ((= u 40) (push nil groups))
-                     ((= u 41)
-                      (let ((inner (pop groups)))
-                        (multiple-value-bind (len unbounded) (quantifier-at p (1+ i))
-                          (when (and inner unbounded) (return-from nested-quantifier-p t))
-                          (when groups (setf (first groups) (or (first groups) inner unbounded)))
-                          (incf i len))))
-                     (t (multiple-value-bind (len unbounded) (quantifier-at p i)
-                          (when (and unbounded groups)
-                            (setf (first groups) t)
-                            (incf i (1- len)))))))
-             (incf i))
-    nil))
+(defun nested-quantifier-p (tree)
+  "An unbounded quantifier on what holds one, as `(a+)+` or `(?:a|b+)*`: a pattern that can backtrack exponentially."
+  (tree-some (lambda (node) (and (unbounded-repeat-p node) (tree-some #'unbounded-repeat-p (fifth node)))) tree))
 
 (defun safe-regex (pattern)
   "PATTERN as a search compiles it: its text literally when it nests
 quantifiers, does not compile, or holds the one construct this engine does
 not follow (a back-reference into or inside a look-behind, which JavaScript
 matches backwards)."
-  (if (nested-quantifier-p pattern)
-      (compile-regex (escape-regex pattern))
+  (multiple-value-bind (regex tree)
       (handler-case (compile-regex pattern)
-        ((or regex-syntax-error regex-unsupported) () (compile-regex (escape-regex pattern))))))
+        ((or regex-syntax-error regex-unsupported) () (values nil nil)))
+    (if (and regex (not (nested-quantifier-p tree))) regex (compile-regex (escape-regex pattern)))))

@@ -186,6 +186,22 @@ it forked, and their originals are in the parent's store."
           (when (= (hash-table-count found) (hash-table-count wanted)) (return)))))
     found))
 
+
+(defun restore-originals (messages ids file)
+  "MESSAGES with the original content omp-vcc kept in FILE's raw store put back
+where omp rewrote them (IDS parallel to MESSAGES)."
+  (if (not (stringp file))
+      messages
+      (let ((wanted (make-hash-table :test 'equal)))
+        (loop for m in messages for id in ids
+              when (and (stringp id) (was-rewritten-p m)) do (setf (gethash id wanted) t))
+        (if (zerop (hash-table-count wanted))
+            messages
+            (let ((kept (read-raw-store file wanted)))
+              (loop for m in messages for id in ids
+                    collect (multiple-value-bind (content found) (if (stringp id) (gethash id kept) (values nil nil))
+                              (if found (with-original-content m content) m))))))))
+
 (defun object-parts (content)
   "The object parts of a content array, in order."
   (and (json-array-p content) (remove-if-not #'hash-table-p (coerce content 'list))))

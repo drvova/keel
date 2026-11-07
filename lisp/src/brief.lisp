@@ -187,7 +187,8 @@ with both a note and an unpin was refused and pinned nothing."
       (let* ((call (make-call name args)) (subject (call-subject call)))
         (if (null subject)
             (format nil "* ~a" name)
-            (destructuring-bind (label value more) subject
+            (destructuring-bind (label value more &optional key) subject
+              (declare (ignore key))
               (if (eq (call-kind call) :shell)
                   (format nil "* ~a \"~a\"" name (compress-bash value))
                   (format nil "* ~a \"~a\"~:[~; +~d~]" name (if (string= label "query") (js-clip value 60) value) (plusp more) more)))))))

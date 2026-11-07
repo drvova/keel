@@ -55,6 +55,10 @@ position's #N is its element in INDICES."
 (defun reads-one-p (c) (and (eq (call-kind c) :read) (= (length (files-of c)) 1)))
 (defun on-file-p (c) (or (reads-one-p c) (changes-p c)))
 
+(defparameter +line-selector+ "L?\\d+(?:(?:-|\\.\\.|\\+)L?\\d*)?|-\\d+(?:[-+]\\d+)?"
+  "omp's read selector for lines: `50-100`, `L50-L60`, `50+10`, `50..60`, `-20` (the last 20).")
+
+
 (defun lines-selector-p (chunk)
   (rx-test (rx (format nil "^(?:~a)$" +line-selector+) "i") chunk))
 
