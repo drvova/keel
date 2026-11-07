@@ -7,11 +7,6 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "os";
 import { join } from "path";
 import {
-  appendRawStore,
-  keptContent,
-  MAX_KEPT_CHARS,
-  mayBeRewritten,
-  rawStoreIds,
   rawStorePath,
   readRawStore,
   wasRewritten,
@@ -36,21 +31,34 @@ afterAll(() => {
 const text = (t: string) => [{ type: "text", text: t }];
 
 describe("what is kept", () => {
+  /** What one capture of these messages keeps in the store, by id. */
+  const keptOf = (name: string, messages: unknown[]): Map<string, unknown> => {
+    const file = join(dir, `${name}.jsonl`);
+    const entries = messages.map((message, i) => ({ type: "message", id: `k${i}`, message }));
+    captureNewEntries(createRawCaptureState(), { getSessionFile: () => file, getEntries: () => entries });
+    return readRawStore(file, new Set(entries.map((e) => e.id)));
+  };
+
   it("tool output and long text, not short messages or what omp already rewrote", () => {
-    expect(mayBeRewritten({ role: "toolResult", content: text("ok") })).toBe(true);
-    expect(mayBeRewritten({ role: "toolResult", content: [] })).toBe(false);
-    expect(mayBeRewritten({ role: "toolResult", content: text("x"), prunedAt: 1 })).toBe(false);
-    expect(mayBeRewritten({ role: "assistant", content: text("short reply") })).toBe(false);
-    expect(mayBeRewritten({ role: "assistant", content: text("y".repeat(1_500)) })).toBe(true);
-    expect(mayBeRewritten({ role: "user", content: "z".repeat(1_500) })).toBe(true);
-    expect(mayBeRewritten({ role: "bashExecution", command: "ls", output: "a".repeat(5_000) })).toBe(false);
+    const kept = keptOf("which", [
+      { role: "toolResult", content: text("ok") },
+      { role: "toolResult", content: [] },
+      { role: "toolResult", content: text("x"), prunedAt: 1 },
+      { role: "assistant", content: text("short reply") },
+      { role: "assistant", content: text("y".repeat(1_500)) },
+      { role: "user", content: "z".repeat(1_500) },
+      { role: "bashExecution", command: "ls", output: "a".repeat(5_000) },
+    ]);
+    expect([...kept.keys()].sort()).toEqual(["k0", "k4", "k5"]);
   });
 
   it("keeps text (clipped) and drops image data", () => {
-    const kept = keptContent([{ type: "text", text: "a" }, { type: "image", mimeType: "image/png", data: "QUJD".repeat(1000) }]) as any[];
-    expect(kept).toEqual([{ type: "text", text: "a" }, { type: "image", mimeType: "image/png" }]);
-    const huge = keptContent(text("b".repeat(MAX_KEPT_CHARS + 10))) as any[];
-    expect(huge[0].text).toEndWith(`...[omp-vcc kept the first ${MAX_KEPT_CHARS} of ${MAX_KEPT_CHARS + 10} chars]`);
+    const kept = keptOf("what", [
+      { role: "toolResult", content: [{ type: "text", text: "a" }, { type: "image", mimeType: "image/png", data: "QUJD".repeat(1000) }] },
+      { role: "toolResult", content: text("b".repeat(1_000_010)) },
+    ]);
+    expect(kept.get("k0")).toEqual([{ type: "text", text: "a" }, { type: "image", mimeType: "image/png" }]);
+    expect((kept.get("k1") as any[])[0].text).toEndWith("...[omp-vcc kept the first 1000000 of 1000010 chars]");
   });
 
   it("puts back what omp rewrote: a tool result whole, another message block by block", () => {
@@ -151,11 +159,31 @@ describe("the summary is written from the originals", () => {
     expect([...readRawStore(file, new Set(["t1"])).values()]).toEqual([text("out")]);
   });
 
-  it("finds a record whatever order its fields were built in", () => {
-    const file = join(dir, "order.jsonl");
-    appendRawStore(file, [{ content: text("kept"), id: "o1" } as any]);
-    expect([...rawStoreIds(file)]).toEqual(["o1"]);
-    expect([...readRawStore(file, new Set(["o1"])).values()]).toEqual([text("kept")]);
+  it("a switch to another session and back copies nothing twice", () => {
+    const a = join(dir, "switch-a.jsonl");
+    const b = join(dir, "switch-b.jsonl");
+    const entries = (p: string) => [{ type: "message", id: `${p}1`, message: { role: "toolResult", toolCallId: "c", content: text(`${p} out`) } }];
+    const state = createRawCaptureState();
+    let file = a;
+    const sm = { getSessionFile: () => file, getEntries: () => entries(file === a ? "a" : "b") };
+    expect(captureNewEntries(state, sm)).toBe(1);
+    file = b;
+    expect(captureNewEntries(state, sm)).toBe(1);
+    file = a;
+    // Back in the first session, its store already keeps what it holds.
+    expect(captureNewEntries(state, sm)).toBe(0);
+    expect(readFileSync(rawStorePath(a), "utf8").trim().split("\n")).toHaveLength(1);
+  });
+
+  it("a fork's capture skips what its parent's store keeps already, and copies what it does not", () => {
+    const parent = join(dir, "parent.jsonl");
+    const child = join(dir, "child.jsonl");
+    writeFileSync(parent, `${JSON.stringify({ type: "session", id: "p" })}\n`);
+    writeFileSync(child, `${JSON.stringify({ type: "session", id: "c", parentSession: parent })}\n`);
+    writeFileSync(rawStorePath(parent), `${JSON.stringify({ id: "f1", content: text("the parent's copy") })}\n`);
+    const entries = ["f1", "f2"].map((id) => ({ type: "message", id, message: { role: "toolResult", toolCallId: id, content: text(`${id} out`) } }));
+    expect(captureNewEntries(createRawCaptureState(), { getSessionFile: () => child, getEntries: () => entries })).toBe(1);
+    expect(readFileSync(rawStorePath(child), "utf8")).toBe(`${JSON.stringify({ id: "f2", content: text("f2 out") })}\n`);
   });
 
   it("a commit whose git output omp blanked before omp-vcc compacted is still in [Commits]", async () => {
@@ -180,7 +208,7 @@ describe("the summary is written from the originals", () => {
     }, { ui: { notify: () => {} }, sessionManager: { getSessionFile: () => file, getEntries: () => entries, getBranch: () => entries } }).compaction.summary as string;
 
     expect(summarize()).not.toContain("4f2a9c1");
-    appendRawStore(file, [{ id: "r1", content: text("[main 4f2a9c1] fix: rounding in totals\n 1 file changed, 2 insertions(+)") }]);
+    writeFileSync(rawStorePath(file), `${JSON.stringify({ id: "r1", content: text("[main 4f2a9c1] fix: rounding in totals\n 1 file changed, 2 insertions(+)") })}\n`);
     const summary = summarize();
     expect(summary).toContain("[Commits]\n- 4f2a9c1: fix: rounding in totals");
     // The live entry is untouched: the context still holds omp's placeholder.

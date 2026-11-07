@@ -10,11 +10,9 @@
 // read a newer read supersedes is an older one), so a message is copied well
 // before omp could rewrite it.
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
-import { appendRawStore, keptContent, mayBeRewritten, rawStoreIds, type RawRecord } from "../core/raw-store";
-import { hostBranch, hostEntries, indexById, sessionLineage, type SessionManagerLike } from "../core/session-file";
+import { hostBranch, hostEntries, type SessionManagerLike } from "../core/session-file";
 import type { Config } from "../core/settings";
-import { recallExpandCall } from "../names";
-import { callCore } from "../core/lisp-core";
+import { core } from "../core/lisp-core";
 
 /** One binding's place in its session: which file, how many entries it has looked at, which are kept. */
 interface RawCaptureState {
@@ -39,37 +37,19 @@ export const captureNewEntries = (state: RawCaptureState, sessionManager: Sessio
   // The Lisp core decides what to keep and appends the store (lisp/src/raw-capture.lisp, op raw-capture).
   // The binding's place changes only once it answered: while the core is not there yet, the next event tries again from here.
   const fresh = entries.slice(seen).filter((e: any) => e?.type === "message");
-  const inCore = callCore({ op: "raw-capture", input: { file, entries: fresh, kept: fresh.flatMap((e: any) => (kept.has(e.id) ? [e.id] : [])), lineage: switched } });
+  const inCore = core({ op: "raw-capture", input: { file, entries: fresh, kept: fresh.flatMap((e: any) => (kept.has(e.id) ? [e.id] : [])), lineage: switched } });
   if (switched) {
     state.file = file;
     state.kept = kept;
   }
   state.seen = seen;
-  if (inCore) {
-    for (const id of (inCore.lineage as string[] | undefined) ?? []) state.kept.add(id);
-    if (inCore.stored !== true) return 0;
-    const written = inCore.written as string[];
-    for (const id of written) state.kept.add(id);
-    state.seen = entries.length;
-    return written.length;
-  }
-  if (switched) state.kept = new Set(sessionLineage(file).flatMap((f) => [...rawStoreIds(f)]));
-  const records: RawRecord[] = [];
-  for (let i = state.seen; i < entries.length; i++) {
-    const entry = entries[i];
-    if (entry?.type !== "message" || typeof entry.id !== "string" || state.kept.has(entry.id)) continue;
-    if (!mayBeRewritten(entry.message)) continue;
-    records.push({ id: entry.id, content: keptContent(entry.message.content) });
-  }
+  for (const id of (inCore.lineage as string[] | undefined) ?? []) state.kept.add(id);
   // Seen only once kept: a failed write (a full disk) is tried again on the next event.
-  try {
-    if (records.length > 0) appendRawStore(file, records);
-  } catch {
-    return 0;
-  }
-  for (const r of records) state.kept.add(r.id);
+  if (inCore.stored !== true) return 0;
+  const written = inCore.written as string[];
+  for (const id of written) state.kept.add(id);
   state.seen = entries.length;
-  return records.length;
+  return written.length;
 };
 
 /**
@@ -78,7 +58,7 @@ export const captureNewEntries = (state: RawCaptureState, sessionManager: Sessio
  * request's one-text-block shape, the branch's tool results by call id, of every
  * entry what #N counts, and which of the branch's results are kept.
  */
-const placeholdersInCore = (messages: unknown[], state: RawCaptureState, sessionManager: SessionManagerLike | undefined): Array<{ i: number; text: string }> | undefined => {
+const placeholdersInCore = (messages: unknown[], state: RawCaptureState, sessionManager: SessionManagerLike | undefined): Array<{ i: number; text: string }> => {
   const candidates = messages.flatMap((m: any, i) =>
     m?.role === "toolResult" && typeof m.toolCallId === "string" && Array.isArray(m.content) && m.content.length === 1
       && m.content[0]?.type === "text" && typeof m.content[0].text === "string"
@@ -88,12 +68,8 @@ const placeholdersInCore = (messages: unknown[], state: RawCaptureState, session
     e?.type === "message" && e.message?.role === "toolResult" && typeof e.message.toolCallId === "string" ? [{ id: e.id ?? null, toolCallId: e.message.toolCallId }] : []);
   const entries = (hostEntries(sessionManager) ?? []).map((e: any) => ({ type: e?.type, id: e?.id, ...(e?.message != null ? { message: 1 } : {}) }));
   const kept = branch.flatMap((r) => (typeof r.id === "string" && state.kept.has(r.id) ? [r.id] : []));
-  const reply = callCore({ op: "placeholders", input: { candidates, branch, entries, kept } });
-  return reply?.replace as Array<{ i: number; text: string }> | undefined;
+  return core({ op: "placeholders", input: { candidates, branch, entries, kept } }).replace as Array<{ i: number; text: string }>;
 };
-
-/** omp's placeholders for a tool result it blanked (pi-agent-core pruning.ts). */
-const OMP_PLACEHOLDER = /^\[(?:Output truncated - \d+ tokens|Superseded by a newer read of this file|Uneventful result elided)\]$/;
 
 /**
  * The request's messages with each placeholder omp wrote over a tool result
@@ -105,37 +81,14 @@ const OMP_PLACEHOLDER = /^\[(?:Output truncated - \d+ tokens|Superseded by a new
  * request and the provider's prompt cache keeps it.
  */
 export const pointPlaceholders = (messages: unknown[], state: RawCaptureState, sessionManager: SessionManagerLike | undefined): unknown[] | undefined => {
-  if (state.kept.size > 0) {
-    const inCore = placeholdersInCore(messages, state, sessionManager);
-    if (inCore) return inCore.length === 0 ? undefined : inCore.reduce((out, { i, text }) => {
-      out[i] = { ...(messages[i] as Record<string, unknown>), content: [{ type: "text", text }] };
-      return out;
-    }, [...messages]);
-  }
-  const hits: Array<{ i: number; text: string; callId: string }> = [];
-  messages.forEach((m: any, i) => {
-    if (m?.role !== "toolResult" || typeof m.toolCallId !== "string" || !Array.isArray(m.content) || m.content.length !== 1) return;
-    const part = m.content[0];
-    if (part?.type === "text" && typeof part.text === "string" && OMP_PLACEHOLDER.test(part.text)) hits.push({ i, text: part.text, callId: m.toolCallId });
-  });
-  if (hits.length === 0 || state.kept.size === 0) return undefined;
-  // The tool result each call id names on the active path (a reused id after an interrupted call: the latest).
-  const byCall = new Map<string, string>();
-  for (const e of hostBranch(sessionManager) ?? []) {
-    if (e?.type === "message" && e.message?.role === "toolResult" && typeof e.message.toolCallId === "string") byCall.set(e.message.toolCallId, e.id);
-  }
-  const index = indexById(hostEntries(sessionManager) ?? []);
-  let out: unknown[] | undefined;
-  for (const { i, text, callId } of hits) {
-    const id = byCall.get(callId);
-    const n = id ? index.get(id) : undefined;
-    if (!id || n === undefined || !state.kept.has(id)) continue;
-    out ??= [...messages];
-    const m = messages[i] as Record<string, unknown>;
-    out[i] = { ...m, content: [{ type: "text", text: `${text} (the original: ${recallExpandCall(n)})` }] };
-  }
+  if (state.kept.size === 0) return undefined;
+  const replace = placeholdersInCore(messages, state, sessionManager);
+  if (replace.length === 0) return undefined;
+  const out = [...messages];
+  for (const { i, text } of replace) out[i] = { ...(messages[i] as Record<string, unknown>), content: [{ type: "text", text }] };
   return out;
 };
+
 
 /** Keep originals for the session this binding serves (`keepOriginals`, default on). */
 export const registerRawCapture = (pi: ExtensionAPI, config: Config): void => {
