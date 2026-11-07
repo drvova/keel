@@ -18,6 +18,8 @@ All notable changes to `@drvova/omp-vcc` are documented in this file. Entries fr
 
 ### Added
 
+- **Evictions that pay** — the agent's `vcc_context` drop is refused when it frees less than 45% of what it makes the provider read again uncached (everything after it), which a smaller context would repay only after many requests; the answer names the run from the oldest end that would pay (`oldest:4`). The user's command and the automatic eviction are not checked.
+
 - **Turn numbers in view** — with `vcc_context` there, each request in the context starts with its turn's `#N` (`[#12]`), the same on every request, so the agent takes turns out by number without listing them first.
 
 - **One core process per session** — instead of a process per request, one core stays up for the host and answers every request (0.4 ms a request, against 5 ms for a process start), and keeps the session file it read parsed, reading only the lines it gained since (a recall over a 20 MB session: 0.9 s, from 1.6 s). It ends with the host or after 5 minutes idle; a core that dies is replaced; on Windows, or with `OMP_VCC_CORE_LIVE=off`, each request runs its own process as before.

@@ -21,7 +21,8 @@ const description = (command: string): string => [
   "- note: with drop or oldest, one line kept where the turns were (what they settled, what to look up).",
   "",
   "Drop rarely and in large runs from the oldest end: each edit makes the provider read again all that",
-  `follows it. Past ${EVICT_AT_PERCENT}% of where the host compacts, the oldest turns leave by themselves; the user evicts with /${command}-evict.`,
+  "follows it, so a drop that frees too little for that is refused, with the run that would pay;",
+  `past ${EVICT_AT_PERCENT}% of where the host compacts, the oldest turns leave by themselves; the user evicts with /${command}-evict.`,
 ].join("\n");
 
 const PARAM_DESCRIPTIONS: Record<(typeof CONTEXT_PARAMS)[number], string> = {

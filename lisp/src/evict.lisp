@@ -30,6 +30,15 @@
 
 (defparameter +evict-at-share+ (/ +evict-at-percent+ 100d0) "Past this share of the host's trigger, the oldest finished turns leave.")
 (defparameter +evict-to-share+ 0.5d0 "They leave until the context is estimated at this share of the trigger.")
+(defparameter +evict-min-return+ 0.45d0
+  "An eviction by the agent must free at least this share of what it makes the
+provider read again. Every edit makes the provider read all that follows it
+uncached, once; a provider's cache then reads each kept token at about a tenth
+of the price, so what leaves saves that tenth on every later request. At 0.45
+an eviction has paid for itself within about 20 requests (0.9 x read again /
+(0.1 x freed)); a smaller one, a turn or two from the oldest end of a long
+context, costs more than it saves. Dropping the oldest half passes, as does
+anything near the end of the context.")
 (defparameter +stub-requests-shown+ 3 "Requests a stub names of the turns it stands for.")
 (defparameter +turns-listed+ 40 "Turns a listing shows, newest last.")
 (defparameter +budget-note-from+ 5
@@ -398,19 +407,48 @@ told of, TOOL (vcc_context) is there, and something can leave: (values NOTE OP),
                 (format nil "~%Pinned (vcc_pin; a name pinned again replaces its note):~{~%  ~a~}" (mapcar #'format-pin pins))
                 ""))))
 
-(defun evict-turns (leaving turns outs chars by note count)
-  "Record LEAVING (turns, oldest first) as out: (values TEXT OPS)."
+(defun eviction-cost (leaving turns outs chars)
+  "What taking LEAVING out frees and what it makes the provider read again (the
+context after its first #N that stays), in chars: (values FREED READ-AGAIN)."
+  (let* ((from (reduce #'min (mapcar #'turn-from leaving)))
+         (freed (reduce #'+ (mapcar (lambda (tr) (turn-chars tr chars outs)) leaving)))
+         (after (loop for tr in turns
+                      sum (loop for n from (max from (turn-from tr)) to (turn-to tr)
+                                unless (or (out-of n outs) (some (lambda (l) (<= (turn-from l) n (turn-to l))) leaving))
+                                  sum (gethash n chars 0)))))
+    (values freed after)))
+
+(defun pays-p (leaving turns outs chars)
+  (multiple-value-bind (freed again) (eviction-cost leaving turns outs chars)
+    (>= freed (* +evict-min-return+ again))))
+
+(defun not-worth-it (leaving turns outs chars)
+  "Why the agent's eviction of LEAVING is refused, with the smallest run from the oldest end that would pay."
+  (multiple-value-bind (freed again) (eviction-cost leaving turns outs chars)
+    (let* ((in (turns-in turns outs))
+           (k (loop for k from 1 to (length in) when (pays-p (subseq in 0 k) turns outs chars) return k))
+           (tok (lambda (c) (js-string-of (tokens-from-chars c +default-chars-per-token+)))))
+      (format nil "Not worth it: that frees ~~~a tokens but makes the provider read the ~~~a after it again, uncached, which a smaller context repays only after many requests. ~:[Nothing taken out would pay yet; wait until more of the context is old.~;Take out more in one go, from the oldest end: oldest:~:*~d.~]"
+              (funcall tok freed) (funcall tok again) k))))
+
+(defun evict-turns (leaving turns outs chars by note count &optional check)
+  "Record LEAVING (turns, oldest first) as out: (values TEXT OPS). With CHECK
+(the agent's call), an eviction that does not pay (+EVICT-MIN-RETURN+) is refused."
   (let ((leaving (intersection leaving (turns-in turns outs))))
     (setf leaving (sort (copy-list leaving) #'< :key #'turn-from))
-    (if (null leaving)
-        (values "Nothing to take out: those turns are out already, or one is the turn running, which stays." '())
+    (cond
+      ((null leaving)
+       (values "Nothing to take out: those turns are out already, or one is the turn running, which stays." '()))
+      ((and check (not (pays-p leaving turns outs chars)))
+       (values (not-worth-it leaving turns outs chars) '()))
+      (t
         (let ((ops (mapcar (lambda (r) (evict-op "evict" (car r) (cdr r) by count note)) (ranges-in leaving outs))))
           (values (format nil "Out of context from the next request: ~{~a~^, ~} (~a, ~~~a tokens). ~a reads any entry back word for word."
                           (mapcar (lambda (op) (range-text (json-get op "from") (json-get op "to"))) ops)
                           (plural (length leaving) "turn")
                           (js-string-of (tokens-from-chars (reduce #'+ (mapcar (lambda (tr) (turn-chars tr chars outs)) leaving)) +default-chars-per-token+))
                           (recall-expand-call (json-get (first ops) "from")))
-                  ops)))))
+                  ops))))))
 
 (defun restore-turns (ranges outs by count)
   (let ((back (remove-if-not (lambda (o) (some (lambda (r) (overlaps-p (out-from o) (out-to o) (car r) (cdr r))) ranges)) outs)))
@@ -440,9 +478,9 @@ told of, TOOL (vcc_context) is there, and something can leave: (values NOTE OP),
                (oldest (let ((k (json-get params "oldest"))) (and (js-integer-p k) (> k 0) (as-integer k))))
                (note (let ((n (json-get params "note"))) (and (stringp n) (plusp (length (js-trim n))) (js-clip (js-trim n) +context-note-chars+)))))
           (cond (restore (restore-turns restore outs by count))
-                (drop (evict-turns (turns-touching drop turns) turns outs chars by note count))
+                (drop (evict-turns (turns-touching drop turns) turns outs chars by note count t))
                 (oldest (let ((in (turns-in turns outs)))
-                          (evict-turns (subseq in 0 (min oldest (length in))) turns outs chars by note count)))
+                          (evict-turns (subseq in 0 (min oldest (length in))) turns outs chars by note count t)))
                 (t (values (list-context turns outs chars by-n (read-pins branch)) '()))))
         (let* ((args (js-trim (let ((a (json-get call "args"))) (if (stringp a) a ""))))
                (words (remove "" (rx-split (rx "\\s+") args) :test #'string=)))

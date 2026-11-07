@@ -262,6 +262,22 @@ describe("a turn whose older steps left while it ran", () => {
   });
 });
 
+describe("an eviction that does not pay", () => {
+  it("is refused to the agent with the run that would pay; near the end, or by the user, it goes", () => {
+    setEvict(true);
+    const s = session(10);
+    // One turn of ten from the oldest end: the provider would read the other nine again for it.
+    expect(tool(s, { drop: [0] })).toBe("Not worth it: that frees ~67 tokens but makes the provider read the ~597 after it again, uncached, which a smaller context repays only after many requests. Take out more in one go, from the oldest end: oldest:4.");
+    expect(s.appended).toEqual([]);
+    expect(tool(s, { oldest: 3 })).toStartWith("Not worth it:");
+    expect(tool(s, { oldest: 4 })).toStartWith("Out of context from the next request: #0–#15 (4 turns");
+    // The last finished turn: only the running one follows it.
+    expect(tool(s, { drop: [32] })).toStartWith("Out of context from the next request: #32–#35");
+    // The user decides for themselves.
+    expect(call(s, { surface: "command", args: "#16" })).toStartWith("Out of context from the next request: #16–#19");
+  });
+});
+
 describe("turn numbers in view", () => {
   it("each request in the context starts with its turn's #N while vcc_context is there, the same on every request", () => {
     setEvict(true);
