@@ -126,9 +126,8 @@ describe.skipIf(!piInstalled())("Pi entry", () => {
     expect(threshold.compaction.details.limits).toMatchObject({ contextWindow: 200_000, windowSource: "pi", trigger: 183_616 });
   });
 
-  test("the summary reads the branch as Pi's context holds it: an omitted attempt and a redacted result, in TS and in the Lisp core", async () => {
-    const core = lispCore();
-    for (const on of core ? [undefined, core] : [undefined]) {
+  test("the summary reads the branch as Pi's context holds it: an omitted attempt and a redacted result", async () => {
+    for (const on of [lispCore()]) {
       const pi = await createPi();
       const attempt = assistant("A first attempt that Pi retried away");
       const call = entry({ role: "assistant", content: [{ type: "toolCall", id: "k1", name: "bash", arguments: { command: "cat .env" } }] });

@@ -33,6 +33,13 @@ export const callCore = (request: object): Record<string, unknown> | undefined =
   throw new Error(`omp-vcc's core failed: ${reply?.error ?? run.error?.message ?? (run.stderr || `exit ${run.status}`)}`);
 };
 
+/** The core's answer: callCore for code whose TypeScript copy is gone, where the core is all there is. */
+export const core = (request: object): Record<string, unknown> => {
+  const reply = callCore(request);
+  if (!reply) throw new Error("omp-vcc's core is off (OMP_VCC_CORE=off), and nothing else does this");
+  return reply;
+};
+
 /** The core cannot answer yet, or here: `message` says why, as a user is told. */
 export class CoreUnavailable extends Error {
   constructor(readonly status: Exclude<CoreStatus, { state: "ready" } | { state: "off" }>) {
