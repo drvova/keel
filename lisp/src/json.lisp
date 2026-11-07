@@ -155,6 +155,13 @@ whitespace around it."
 
 ;;; --- writing -----------------------------------------------------------------
 
+
+(defun parse-json-or-nil (text &key (start 0) end)
+  "TEXT read as JSON, or NIL when it is not JSON: for a line a host or a crash
+may have left half-written. Any other error is a bug, and is raised."
+  (handler-case (parse-json text :start start :end end)
+    (json-parse-error () nil)))
+
 (defun write-json-string (string out)
   (write-char #\" out)
   (loop for c across string

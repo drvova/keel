@@ -252,6 +252,8 @@ working set (the setting off), its room goes to the kept tail."
                  (incf chars (message-chars m))))
     nil))
 
+(defun working-set-on-p (v) "The workingSet setting: on unless set false." (not (eq v :false)))
+
 (defun size-compaction (input branch)
   "What a compaction is sized from: the policy, the trigger, the overhead, chars
 per token, the budgets. The overhead (system prompt, tool schemas) is measured
@@ -274,7 +276,7 @@ alone, so a token budget maps to the chars the messages take."
          (policy (rule-policy-of rule (json-get input "hostSettings")))
          (trigger (trigger-for (json-get input "window") (eq (json-get input "recovering") :true) tokens-before policy rule))
          ;; compactionBudgets' withWorkingSet, true when unset.
-         (with-ws (let ((v (json-get (json-get input "settings") "workingSet"))) (or (null v) (truthy-p v)))))
+         (with-ws (working-set-on-p (json-get (json-get input "settings") "workingSet"))))
     (json-object "policy" policy "trigger" trigger "overheadTokens" overhead "tokenEstimate" estimate
                  "budgets" (compaction-budgets trigger overhead with-ws))))
 
@@ -296,4 +298,4 @@ alone, so a token budget maps to the chars the messages take."
              (overhead (let ((v (json-get c "overheadTokens"))) (if (realp v) v 0))))
         (json-object "policy" policy "trigger" trigger
                      "autoCompacts" (if (rule-auto-compacts-p rule policy) :true :false)
-                     "budgets" (compaction-budgets trigger overhead (not (eq (json-get c "workingSet") :false)))))))
+                     "budgets" (compaction-budgets trigger overhead (working-set-on-p (json-get c "workingSet")))))))

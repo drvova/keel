@@ -48,7 +48,7 @@
 (defun excerpt-chars (text) (reduce #'+ (mapcar #'line-cost (nonblank-lines text))))
 (defun line-count (text) (length (nonblank-lines text)))
 
-(defstruct (ws-item (:constructor make-ws-item (index reason title note text from-end &optional whole))) index reason title note text from-end whole)
+(defstruct (ws-item (:constructor make-ws-item (index title note text from-end &optional whole))) index title note text from-end whole)
 
 (defun select-working-set (history indices kept max-chars)
   (unless (>= max-chars +min-item-chars+) (return-from select-working-set '()))
@@ -120,7 +120,7 @@
                                                                  (kept-edits (list "edited after in context"))))
                                                    ", "))
                                (text (join-strings (append (mapcar #'third shown-views) (and with-base (list base-part))) (string #\Newline))))
-                          (push (make-ws-item index :file (title-of (if with-base (first base) (first (first shown-views)))) note text nil t) items)
+                          (push (make-ws-item index (title-of (if with-base (first base) (first (first shown-views)))) note text nil t) items)
                           (setf (gethash index used) t)
                           (dolist (v shown-views) (setf (gethash (result-index (second v)) used) t))
                           (push path chosen)))))))))))
@@ -129,7 +129,7 @@
                                             (plusp (length (js-trim (result-text r))))))
                            (open-failures (nth-value 1 (read-calls (append history kept) :indices indices))))))
         (when open
-          (push (make-ws-item (result-index open) :failure
+          (push (make-ws-item (result-index open)
                               (format nil "~a [failed]" (title-of (result-call open)))
                               "its end" (result-text open) t)
                 items)
@@ -158,7 +158,7 @@
                   (let* ((index (first (nth (car hit) candidates)))
                          (r (find index results :key #'result-index :test #'eql)))
                     (when (and r (not (gethash index used)))
-                      (push (make-ws-item index :relevant (title-of (result-call r)) "matches the latest request" (result-text r) nil) items)
+                      (push (make-ws-item index (title-of (result-call r)) "matches the latest request" (result-text r) nil) items)
                       (setf (gethash index used) t)))))))))
       (nreverse items))))
 

@@ -323,6 +323,5 @@ still taken), and what omp rewrote put back from the kept originals."
       (values (loop for (index id message) in indexed
                     for restored = (multiple-value-bind (content found) (if id (gethash id kept) (values nil nil))
                                      (if found (with-original-content message content) message))
-                    for readable = (ignore-errors (readable-message restored))
-                    when readable collect (list index id readable))
+                    collect (list index id (readable-message restored)))
               (active-branch-ids entries)))))

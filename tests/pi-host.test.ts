@@ -124,8 +124,8 @@ describe.skipIf(!piInstalled())("Pi host", () => {
     for (const args of [{ expand: "#3" }, { range: "0-2" }, { range: [5] }, { mode: "all" }, { scope: "ALL" }]) {
       expect(validateToolArguments(definition, { type: "toolCall", id: "v", name: "vcc_recall", arguments: args })).toEqual(args);
     }
-    // Pi coerces where the schema allows a number.
-    expect(validateToolArguments(definition, { type: "toolCall", id: "v", name: "vcc_recall", arguments: { page: "2" } }).page).toBeDefined();
+    // Pi passes a page given as text through as it is (the schema takes either); the core reads it as a number.
+    expect(validateToolArguments(definition, { type: "toolCall", id: "v", name: "vcc_recall", arguments: { page: "2" } }).page).toBe("2");
     const tool = agentTool("vcc_recall");
     const result = await tool.execute("t", { expand: "#3" }, undefined, undefined);
     expect(result.content[0].text).toContain("Expanded #3:");

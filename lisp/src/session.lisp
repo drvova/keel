@@ -41,7 +41,7 @@ does not exist (a new session's file is written with its first entry)."
                    (handler-case (push (parse-json text :start start :end end) values)
                      (json-parse-error () nil)))
               while (< end (length text)))
-        (values (nreverse values) t)))))
+        (nreverse values)))))
 
 (defun entry-type (entry) (json-get entry "type"))
 
@@ -49,6 +49,14 @@ does not exist (a new session's file is written with its first entry)."
   "An entry `#N` counts: a persisted message."
   (and (equal (entry-type entry) "message")
        (let ((m (json-get entry "message" :null))) (not (eq m :null)))))
+
+(defun line-holds-message-p (line)
+  "COUNTED-ENTRY-P on a message entry's raw LINE, without parsing it: the first
+`\"message\":` is the entry's own key (the hosts write it after the head), and
+it holds an object, not null. Session listings count #N this way."
+  (let ((at (search "\"message\":" line)))
+    (and at (let ((next (position-if-not (lambda (c) (member c '(#\Space #\Tab))) line :start (+ at 10))))
+              (and next (char= (char line next) #\{))))))
 
 (defun indexed-messages (entries)
   "Each message entry as (INDEX ID MESSAGE), INDEX its `#N`."
@@ -109,7 +117,7 @@ hash set; empty for a file without ids (an old format)."
               (n (read-sequence bytes in))
               (lines (split-string (decode-utf-8 (subseq bytes 0 n)) #\Newline)))
          (loop for line in (subseq lines 0 (min 8 (length lines)))
-               for record = (ignore-errors (parse-json line))
+               for record = (parse-json-or-nil line)
                when (equal (json-get record "type") "session") return record))))))
 
 (defun parent-session-file (path)
@@ -152,7 +160,7 @@ are `<timestamp>_<id>.jsonl`)."
                             (#\" (return i))
                             (t (incf i))))))
         (when end
-          (ignore-errors (parse-json (subseq line (1- (length prefix)) (1+ end)))))))))
+          (parse-json-or-nil (subseq line (1- (length prefix)) (1+ end))))))))
 
 (defun read-one-store (path wanted found)
   (let ((bytes (ignore-errors (read-file-octets (raw-store-path path)))))
@@ -161,7 +169,7 @@ are `<timestamp>_<id>.jsonl`)."
         (when (= (hash-table-count found) (hash-table-count wanted)) (return))
         (let ((id (and (plusp (length line)) (line-head-id line))))
           (when (and (stringp id) (gethash id wanted) (not (nth-value 1 (gethash id found))))
-            (let ((record (ignore-errors (parse-json line))))
+            (let ((record (parse-json-or-nil line)))
               (when (hash-table-p record)
                 (setf (gethash id found) (json-get record "content"))))))))))
 

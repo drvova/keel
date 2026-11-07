@@ -84,7 +84,8 @@ FAILED the calls whose result was an error."
 
 (defun merge-history-index (previous fresh max-ranges)
   "PREVIOUS with FRESH added: a FRESH that says nothing and follows the last range
-extends it; past MAX-RANGES (at least 2) the two neighbours spanning least are merged."
+extends it; past MAX-RANGES (at least 2) the two neighbours spanning least are
+merged, never the newest range, which stays on its own as the latest work."
   (let* ((ranges (copy-list previous)) (last (car (last ranges))))
     (if (and fresh last (says-nothing-p fresh) (<= (range-from fresh) (1+ (range-to last))) (> (range-to fresh) (range-to last)))
         (let ((extended (copy-range last))) (setf (range-to extended) (range-to fresh))

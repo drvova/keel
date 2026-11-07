@@ -13,8 +13,8 @@
 (defparameter +max-listed-sessions+ 50)
 (defparameter +short-id-chars+ 8)
 
-(defstruct (session-info (:constructor make-session-info (file id short started bytes messages title first-request pins)))
-  file id short started bytes messages title first-request pins)
+(defstruct (session-info (:constructor make-session-info (file short started bytes messages title first-request pins)))
+  file short started bytes messages title first-request pins)
 
 (defun short-ids (ids)
   "The shortest prefix (dashes left out) of 8 characters or more that names each id alone."
@@ -69,15 +69,14 @@
             (multiple-value-bind (type id parent) (entry-head line)
               (when (and (in-tree-p type) id) (setf (gethash id parent-of) parent last id))
               (cond ((equal type "message")
-                     ;; What #N counts: a message entry that holds one (a null one does not).
-                     (unless (search "\"message\":null" line) (incf messages))
+                     (when (line-holds-message-p line) (incf messages))
                      (when (and (null first-request) (search "\"role\":\"user\"" line))
-                       (let ((m (json-get (ignore-errors (parse-json line)) "message")))
+                       (let ((m (json-get (parse-json-or-nil line) "message")))
                          (when (and (equal (json-get m "role") "user") (not (extension-user-p m)))
                            (let ((words (values (user-words (text-of (or (json-get m "content") ""))))))
                              (when (plusp (length words)) (setf first-request (js-clip words 100))))))))
                     ((equal type "compaction"))
-                    (t (let ((e (ignore-errors (parse-json line))))
+                    (t (let ((e (parse-json-or-nil line)))
                          (if (or (pin-entry-p e) (equal (json-get e "type") +reset-entry-type+))
                              (push e pin-entries)
                              (setf title (or (name-of e) title)))))))))
@@ -86,7 +85,7 @@
                (on-branch (if (plusp (hash-table-count branch))
                               (remove-if-not (lambda (e) (and (stringp (json-get e "id")) (gethash (json-get e "id") branch))) pins)
                               pins)))
-          (make-session-info file (json-get header "id") short
+          (make-session-info file short
                              (let ((ts (json-get header "timestamp"))) (and (stringp ts) ts))
                              (length bytes) messages
                              (and title (js-clip title 80)) first-request
