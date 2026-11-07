@@ -55,7 +55,7 @@ made after that left it out)."
 
 (defun overlaps-p (from to other-from other-to) (and (<= from other-to) (>= to other-from)))
 
-(defun range-text (from to) (format nil "#~d–#~d" from to))
+(defun range-text (from to) (if (= from to) (format nil "#~d" from) (format nil "#~d–#~d" from to)))
 
 (defun read-evictions (branch &optional as-of)
   "What is out of the context on BRANCH since its last /clear: each evict and
@@ -89,20 +89,20 @@ recorded by then (when the #N count was at most AS-OF), as a request made then s
 (defun branch-turns (branch index)
   "The whole turns of BRANCH's live window by #N, oldest first: each starts at a
 request the user made (not one another extension sent in the user's name, and
-not a steer: a user message right after a tool result arrived while the agent
-was still working, and belongs to that turn); what comes before the first
-request in the window is a turn of its own."
-  (let ((turns '()) (previous nil))
+not a steer, which omp marks `steering: true` when the user writes while the
+agent works: that is part of the running turn); what comes before the first
+request in the window is a turn of its own. Pi marks no steer, so there one
+starts a turn."
+  (let ((turns '()))
     (loop for i from (live-window-start branch) below (length branch)
           for e = (aref branch i)
           for n = (and (counted-entry-p e) (gethash (json-get e "id") index))
           when n
             do (let ((m (json-get e "message")))
                  (if (or (null turns)
-                         (and (equal (json-get m "role") "user") (not (extension-user-p m)) (not (equal previous "toolResult"))))
+                         (and (equal (json-get m "role") "user") (not (extension-user-p m)) (not (eq (json-get m "steering") :true))))
                      (push (make-turn n n) turns)
-                     (setf (turn-to (first turns)) n))
-                 (setf previous (json-get m "role"))))
+                     (setf (turn-to (first turns)) n))))
     (nreverse turns)))
 
 (defun turn-out-p (turn outs)
@@ -128,9 +128,17 @@ after it, so a call never leaves without its result."
     (nreverse steps)))
 
 (defun older-steps (turns branch index)
-  "The steps of the running turn that can leave: all but its request and its newest
-step, which the work in progress needs (nodecode evicts the same, after finished turns)."
-  (let ((running (car (last turns)))) (and running (butlast (rest (turn-steps running branch index))))))
+  "The steps of the running turn that can leave: all but its request, its newest
+step, which the work in progress needs (nodecode evicts the same, after finished
+turns), and any step holding a steer, the user's own words mid-run."
+  (let ((running (car (last turns))))
+    (when running
+      (let ((user-ns (loop for i from (live-window-start branch) below (length branch)
+                           for e = (aref branch i)
+                           for n = (and (counted-entry-p e) (gethash (json-get e "id") index))
+                           when (and n (equal (json-get (json-get e "message") "role") "user")) collect n)))
+        (remove-if (lambda (st) (some (lambda (n) (<= (turn-from st) n (turn-to st))) user-ns))
+                   (butlast (rest (turn-steps running branch index))))))))
 
 (defun units-in (turns branch index outs)
   "What can leave the context, oldest first: the finished turns still in it, then the running turn's older steps."
@@ -140,13 +148,14 @@ step, which the work in progress needs (nodecode evicts the same, after finished
   "Whether anything on BRANCH can still leave the context."
   (and (units-in (branch-turns branch index) branch index (read-evictions branch)) t))
 
-(defun runs-of (turns)
-  "TURNS (in branch order) grouped into runs of adjacent ones: each turn starting at the #N after the last one's end."
-  (let ((runs '()))
-    (dolist (tr turns (nreverse (mapcar #'reverse runs)))
-      (if (and runs (= (turn-from tr) (1+ (turn-to (first (first runs))))))
-          (push tr (first runs))
-          (push (list tr) runs)))))
+(defun ranges-in (units outs)
+  "The #N of UNITS still in the context, as (FROM . TO) ranges of consecutive #N:
+what an eviction of them records, so a range never overlaps one already out."
+  (let ((ranges '()))
+    (dolist (u units (nreverse ranges))
+      (loop for n from (turn-from u) to (turn-to u)
+            unless (out-of n outs)
+              do (if (and ranges (= n (1+ (cdr (first ranges))))) (setf (cdr (first ranges)) n) (push (cons n n) ranges))))))
 
 ;;; --- sizes and the line left in their place -------------------------------------------
 
@@ -258,10 +267,9 @@ whose kept originals the stubs read."
               (when (<= after (* +evict-to-share+ trigger)) (return))
               (push u leaving)
               (decf after (tokens-from-chars (turn-chars u chars outs) per-token)))
-            (dolist (run (runs-of (nreverse leaving)))
-              (let ((from (turn-from (first run))) (to (turn-to (car (last run)))))
-                (push (evict-op "evict" from to "auto" count) ops)
-                (push (make-out from to "auto" nil count) outs)))
+            (dolist (r (ranges-in (nreverse leaving) outs))
+              (push (evict-op "evict" (car r) (cdr r) "auto" count) ops)
+              (push (make-out (car r) (cdr r) "auto" nil count) outs))
             (setf outs (sort outs #'< :key #'out-from) after (+ overhead (tokens-from-chars (chars-kept outs) per-token)))))
         ;; Each block of messages that leave gets one line, where the block was.
         (let* ((v (dropped outs)) (drop '()) (stubs '())
@@ -307,14 +315,16 @@ INDEX)."
             (t (cons start "insert"))))))
 
 (defun budget-noted (branch)
-  "The tenth of the trigger the model was last told of since the context last shrank (an eviction), 0 for none."
+  "The tenth of the trigger the model was last told of since the context last shrank
+(a compaction, or turns the agent or the user took out; the auto eviction's own
+shrink is what the note warns of, so it starts nothing again), 0 for none."
   (let ((level 0))
-    (loop for i from (1+ (last-reset-index branch)) below (length branch)
+    (loop for i from (live-window-start branch) below (length branch)
           for e = (aref branch i)
           when (evict-entry-p e)
             do (let ((op (json-get e "data")))
                  (cond ((equal (json-get op "op") "budget") (setf level (let ((l (json-get op "level"))) (if (js-integer-p l) (as-integer l) 0))))
-                       ((equal (json-get op "op") "evict") (setf level 0)))))
+                       ((and (equal (json-get op "op") "evict") (member (json-get op "by") '("user" "agent") :test #'equal)) (setf level 0)))))
     level))
 
 (defun budget-note (branch index after trigger tool count)
@@ -373,8 +383,7 @@ told of, TOOL (vcc_context) is there, and something can leave: (values NOTE OP),
     (setf leaving (sort (copy-list leaving) #'< :key #'turn-from))
     (if (null leaving)
         (values "Nothing to take out: those turns are out already, or one is the turn running, which stays." '())
-        (let ((ops (mapcar (lambda (run) (evict-op "evict" (turn-from (first run)) (turn-to (car (last run))) by count note))
-                           (runs-of leaving))))
+        (let ((ops (mapcar (lambda (r) (evict-op "evict" (car r) (cdr r) by count note)) (ranges-in leaving outs))))
           (values (format nil "Out of context from the next request: ~{~a~^, ~} (~a, ~~~a tokens). ~a reads any entry back word for word."
                           (mapcar (lambda (op) (range-text (json-get op "from") (json-get op "to"))) ops)
                           (plural (length leaving) "turn")

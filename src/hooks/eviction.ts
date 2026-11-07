@@ -20,7 +20,7 @@ export const registerEviction = (pi: ExtensionAPI, host: Pick<Binding, "name" | 
       const { messages, note, notice } = evictRequest({ appendEntry: (type, data) => pi.appendEntry(type, data) }, host, ctx as any, event.messages as unknown[], tool.registered);
       if (notice) tell(ctx as any, notice, "info");
       // A message of its own, stored in the session, before the next model call: the provider's cache keeps it.
-      if (note) void deliver(ctx as any, "the context's size to the agent", () => pi.sendMessage({ customType: BUDGET_NOTICE_TYPE, content: note, display: false }, { deliverAs: "steer" }));
+      if (note) void deliver(ctx as any, "the context's size to the agent", () => pi.sendMessage({ customType: BUDGET_NOTICE_TYPE, content: note, display: false }, { deliverAs: "nextTurn" }));
       return messages ? { messages: messages as typeof event.messages } : undefined;
     }));
 };

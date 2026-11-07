@@ -32,7 +32,7 @@ const session = (turns: number, size = 200, prompt?: number) => {
     messages.push({ role: "user", content: `request number ${i} please read f${i}.ts` });
     messages.push({ role: "assistant", content: [{ type: "toolCall", id: `c${i}`, name: "read", arguments: { path: `f${i}.ts` } }] });
     messages.push({ role: "toolResult", toolCallId: `c${i}`, toolName: "read", content: [{ type: "text", text: `${i}:`.padEnd(size, "x") }] });
-    // A run ends with the assistant's reply; a request right after a tool result would be a steer.
+    // A run ends with the assistant's reply.
     messages.push({ role: "assistant", content: [{ type: "text", text: `Read f${i}.ts.` }] });
   }
   if (prompt !== undefined) messages.at(-3).usage = { input: prompt, output: 10, cacheRead: 0, cacheWrite: 0 };
@@ -239,8 +239,8 @@ describe("a turn whose older steps left while it ran", () => {
     for (let i = 0; i < 4; i++) {
       messages.push({ role: "assistant", content: [{ type: "toolCall", id: `r${i}`, name: "read", arguments: { path: `m${i}.ts` } }] });
       messages.push({ role: "toolResult", toolCallId: `r${i}`, toolName: "read", content: [{ type: "text", text: `${i}` }] });
-      // A steer: the user writes while the agent is still working.
-      if (i === 1) messages.push({ role: "user", content: "skip the tests folder please" });
+      // A steer: the user writes while the agent is still working (omp marks it).
+      if (i === 1) messages.push({ role: "user", content: "skip the tests folder please", steering: true });
     }
     const s = sessionOf(messages);
     expect(tool(s, null)).toContain("In context: 1 turn");
@@ -257,6 +257,8 @@ describe("a turn whose older steps left while it ran", () => {
     expect(listing).toContain("In context: 2 turns");
     expect(listing).toContain("(older steps out)");
     expect(listing).toContain("Out of context:\n  #1–#4 (older steps of the turn at #0)");
+    // Taking that turn out records only what of it is still in: no range overlaps one out already.
+    expect(tool(s, { drop: [0] })).toStartWith("Out of context from the next request: #0, #5–#10 (1 turn");
   });
 });
 
@@ -354,6 +356,16 @@ describe("as the context fills", () => {
     // Without vcc_context the note would name a tool that is not there; below half nothing is said.
     expect(sent(session(10, 20_000, 50_000), 100_000, false).note).toBeUndefined();
     expect(sent(session(10, 1_000, 20_000), 100_000, true).note).toBeUndefined();
+  });
+
+  it("tells again from half once the agent or the user shrank the context, not after omp-vcc's own eviction", () => {
+    setEvict(true);
+    const s = session(10, 20_000, 50_000);
+    expect(sent(s, 100_000, true).note).toBeDefined();
+    record(s, { op: "evict", from: 0, to: 3, by: "auto" });
+    expect(sent(s, 100_000, true).note).toBeUndefined();
+    record(s, { op: "evict", from: 4, to: 7, by: "agent" });
+    expect(sent(s, 100_000, true).note).toBeDefined();
   });
 
   it("says nothing of the context's size when nothing can leave it", () => {

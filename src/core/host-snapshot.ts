@@ -38,6 +38,7 @@ const messageSkeleton = (m: any): Record<string, unknown> => ({
   ...(m.timestamp !== undefined ? { timestamp: m.timestamp } : {}),
   ...(typeof m.attribution === "string" ? { attribution: m.attribution } : {}),
   ...(typeof m.toolCallId === "string" ? { toolCallId: m.toolCallId } : {}),
+  ...(m.steering === true ? { steering: true } : {}),
 });
 
 export const hostSnapshot = (host: Pick<HostProfile, "name" | "displayName" | "modelsFile"> & { config: Pick<Config, "path"> }, ctx: HostCtx | undefined) => {
