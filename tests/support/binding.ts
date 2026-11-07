@@ -27,7 +27,8 @@ export const executePin = (params: unknown, host: { appendEntry: (customType: st
 export const recallTool = (): any => {
   const { registerRecallTool } = require("../../src/tools/recall") as typeof import("../../src/tools/recall");
   let tool: any;
-  registerRecallTool({ registerTool: (t: any) => { tool = t; } } as any, ompBinding);
+  // The tool reads only the profile and the config of a binding.
+  registerRecallTool({ registerTool: (t: any) => { tool = t; } } as any, ompBinding as any);
   return tool;
 };
 

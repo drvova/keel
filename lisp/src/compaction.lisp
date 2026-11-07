@@ -577,6 +577,14 @@ and what it was sized from (for debugging a compaction that kept too much or too
           (when (or (not (rule-auto-compacts-p (json-get input "ruleName") (json-get sizing "policy")))
                     (and (realp used) trigger (< used trigger)))
             (return-from plan-sized (json-object "kind" "cancel" "why" "policy"))))))
+    ;; With turns leaving the context whole (the evict setting, evict.lisp), the
+    ;; host's automatic threshold and idle passes would write a summary over what
+    ;; eviction keeps whole: they are turned down, and the next request makes
+    ;; room. A recovery still gets its summary, and so does a compaction the
+    ;; user asked for.
+    (when (and (eq (json-get settings "evict") :true) (not recovering) (not (eq (json-get input "fromCommand") :true))
+               (member (json-get input "reason") '("threshold" "idle") :test #'equal))
+      (return-from plan-sized (json-object "kind" "cancel" "why" "evict")))
     (multiple-value-bind (keep adjusted)
         (resolve-smart-keep branch notes requested (eq (json-get settings "smartKeepTail") :true) skip
                             (budget budgets "minTailTokens") max-tail per-token)

@@ -66,6 +66,8 @@ export interface NeedleScore {
   turn: number;
   inSummary: boolean;
   pointed: boolean;
+  /** The fact's text is in the request the host would send next (after a summary, or with turns out of the context, in what is left). */
+  inContext: boolean;
   recallRank: number | null;
 }
 
@@ -255,6 +257,9 @@ export const runLongHorizon = async (options: LongHorizonOptions = {}): Promise<
       });
     }
 
+    // The request the host would send next, through its own context hooks (omp-vcc's eviction among them).
+    const nextRequest = flat((await hostSession.session.extensionRunner.emitContext(structuredClone(sessionManager.buildSessionContext().messages)))
+      .map((m: any) => textOf(m)).join("\n"));
     const recallTool = hostSession.tool("vcc_recall");
     const recall = async (params: Record<string, unknown>): Promise<string> =>
       (await recallTool.execute("q", params, undefined, undefined)).content.map((p: any) => p.text ?? "").join("\n");
@@ -269,6 +274,7 @@ export const runLongHorizon = async (options: LongHorizonOptions = {}): Promise<
         turn: needle.turn,
         inSummary: flat(finalSummary).includes(flat(needle.key)),
         pointed: pointsAt(finalSummary, needle),
+        inContext: nextRequest.includes(flat(needle.key)),
         recallRank: rank >= 0 ? rank + 1 : null,
       });
     }

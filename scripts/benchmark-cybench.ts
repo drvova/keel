@@ -3,14 +3,15 @@
  * (or Pi) works through Cybench's file-only CTF tasks back to back, answering
  * each task's own subtask questions, then is asked again what it found tasks ago.
  *
- *   OMP_VCC_LH_API_KEY=… bun run scripts/benchmark-cybench.ts [tasks] [contextWindow] [vcc|vcc-no-ws|own] [--host=omp|pi] [--detach] [--max-requests=15]
+ *   OMP_VCC_LH_API_KEY=… bun run scripts/benchmark-cybench.ts [tasks] [contextWindow] [vcc|vcc-no-ws|evict|own] [--host=omp|pi] [--detach] [--max-requests=15]
  *
  * The model is DeepSeek V4.1 Flash unless OMP_VCC_LH_MODEL (in the env or research/long-horizon.env) names another.
  * The host is omp unless --host=pi (or OMP_VCC_LH_HOST=pi) runs it in Pi.
  *
  * tasks: how many of the 17 (default all); contextWindow: what the host is told
  * (default 128000); the compactor: omp-vcc (default), omp-vcc without
- * [Working Set], or the host's own compaction (`own`; `omp` still means it). Expect two to three hours for all
+ * [Working Set], omp-vcc with old turns leaving the context whole (`evict`), or
+ * the host's own compaction (`own`; `omp` still means it). Expect two to three hours for all
  * tasks; --detach runs it in a process of its own, logging to research/.
  * --max-requests caps the model requests one question may take (default 15,
  * Cybench's own iteration cap per subtask); past it the question is unanswered.
@@ -51,7 +52,7 @@ if (process.argv.includes("--detach")) {
   console.log(`running in the background (pid ${child.pid}), logging to ${log}`);
   process.exit(0);
 }
-const config = mode === "own" ? { overrideDefaultCompaction: false } : mode === "vcc-no-ws" ? { workingSet: false } : {};
+const config = mode === "own" ? { overrideDefaultCompaction: false } : mode === "vcc-no-ws" ? { workingSet: false } : mode === "evict" ? { evict: true } : {};
 
 const started = Date.now();
 const r = await runCybench({ host, tasks, contextWindow, config, maxRequests, log: (l) => console.log(`  ${l}`) });

@@ -269,6 +269,18 @@ describe("compaction hook: compact-all path", () => {
     expect(result.compaction.details).toMatchObject({ reason: "threshold", willRetry: false });
   });
 
+  test("with turns leaving the context whole, threshold and idle passes are turned down; a recovery or a manual one still compacts", () => {
+    setConfig({ debug: false, overrideDefaultCompaction: true, evict: true });
+    const { pi, invokeBefore } = createMockOmp();
+    register(pi);
+    const entries = [msg("m1", "user"), msg("m2", "assistant"), msg("m3", "user"), msg("m4", "assistant")];
+    expect(invokeBefore(makeEvent(entries, undefined, { reason: "threshold", willRetry: false }))).toEqual({ cancel: true });
+    expect(invokeBefore(makeEvent(entries, undefined, { reason: "idle", willRetry: false }))).toEqual({ cancel: true });
+    expect(invokeBefore(makeEvent(entries, undefined, { reason: "overflow", willRetry: true })).compaction).toBeDefined();
+    expect(invokeBefore(makeEvent(entries)).compaction).toBeDefined();
+    setConfig({ debug: false, overrideDefaultCompaction: true });
+  });
+
   test("an automatic compaction sends no continue of its own: omp resumes the run itself", async () => {
     setConfig({ debug: false, overrideDefaultCompaction: true });
     const { pi, invokeBefore, invokeCompact, customMessages, userMessages, notifyCalls } = createMockOmp();
