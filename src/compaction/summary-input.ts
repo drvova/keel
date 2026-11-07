@@ -1,7 +1,7 @@
 // What each live message becomes in a summary's input, with the host's own
 // convertToLlm: the one part of a compaction the core cannot do (src/compaction/plan.ts hostNotes).
 import { isExtensionUserMessage } from "../core/content";
-import { UNSUMMARIZED_MESSAGE_TYPES } from "../names";
+import { PIN_NOTICE_TYPE } from "../names";
 
 import type { ConvertToLlm } from "../host";
 
@@ -33,7 +33,7 @@ const toLlmSafe = (message: unknown, convert: ConvertToLlm): any[] => {
 export const toSummaryMessage = (message: any, convert: ConvertToLlm): any | null => {
   const role = message?.role;
   if (role === "developer" || role === "fileMention") return null;
-  if (role === "custom" && UNSUMMARIZED_MESSAGE_TYPES.has(message.customType)) return null;
+  if (role === "custom" && message.customType === PIN_NOTICE_TYPE) return null;
   const converted = toLlmSafe(message, convert);
   if (converted.length === 0) return null;
   if (role === "bashExecution" || role === "pythonExecution") return message;

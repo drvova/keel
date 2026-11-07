@@ -11,10 +11,7 @@
 
 (in-package #:omp-vcc)
 
-(defparameter +search-page-size+ 5)
-(defparameter +range-page-size+ 20)
 (defparameter +recent-count+ 25)
-(defparameter +recall-output-chars+ (* 50 1024))
 (defparameter +min-recall-output-chars+ (* 8 1024))
 (defparameter +expand-detail-chars+ 4000)
 (defparameter +sessions-page-size+ 10)

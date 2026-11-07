@@ -10,7 +10,6 @@
 
 (in-package #:omp-vcc)
 
-(defparameter +session-ref-min-chars+ 4)
 (defparameter +max-listed-sessions+ 50)
 (defparameter +short-id-chars+ 8)
 
@@ -80,10 +79,10 @@
                              (when (plusp (length words)) (setf first-request (js-clip words 100))))))))
                     ((equal type "compaction"))
                     (t (let ((e (ignore-errors (parse-json line))))
-                         (if (or (and (equal (json-get e "type") "custom") (equal (json-get e "customType") "omp-vcc.pin")
+                         (if (or (and (equal (json-get e "type") "custom") (equal (json-get e "customType") +pin-entry-type+)
                                       ;; `typeof data === "object"`: an array is one too.
                                       (let ((d (json-get e "data"))) (or (json-object-p d) (json-array-p d))))
-                                 (equal (json-get e "type") "reset_boundary"))
+                                 (equal (json-get e "type") +reset-entry-type+))
                              (push e pin-entries)
                              (setf title (or (name-of e) title)))))))))
         (let* ((branch (let ((ids (make-hash-table :test 'equal)))

@@ -31,6 +31,8 @@
      (:file "json")
      ;; js: JavaScript's reading of JSON values (truthiness, arrays, empties), for every module.
      (:file "js")
+     ;; names: omp-vcc's own names, and the limits its tools state.
+     (:file "names")
      ;; regex: JavaScript's regular expressions, which search compiles a
      ;; query and its terms with.
      (:file "regex")

@@ -19,7 +19,7 @@ import {
 } from "../src/core/session-file";
 import { compile as compileAt, type CompileInput } from "../src/core/summarize";
 import { DEFAULT_SUMMARY_LIMITS } from "./support/window";
-import { OMP_VCC_COMPACT_INSTRUCTION } from "../src/core/compact-args";
+import { COMPACT_INSTRUCTION } from "../src/names";
 import { registerHook } from "./support/host";
 import { userMsg, assistantWithToolCall, toolResult } from "./fixtures";
 /** compile at a ~128K window's section limits unless a test sets its own. */
@@ -200,7 +200,7 @@ function hookHarness(allEntries: any[] | undefined) {
           tokensBefore: 1000,
           ...preparation,
         },
-        customInstructions: OMP_VCC_COMPACT_INSTRUCTION,
+        customInstructions: COMPACT_INSTRUCTION,
         signal: new AbortController().signal,
       },
       ctx,

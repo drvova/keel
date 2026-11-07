@@ -99,8 +99,8 @@
         when (and stop-at (equal ty stop-at)) return -1
         finally (return -1)))
 
-(defun last-reset-index (branch) (last-index-of-type branch "reset_boundary"))
-(defun last-compaction-index (branch) (last-index-of-type branch "compaction" "reset_boundary"))
+(defun last-reset-index (branch) (last-index-of-type branch +reset-entry-type+))
+(defun last-compaction-index (branch) (last-index-of-type branch "compaction" +reset-entry-type+))
 
 (defun live-window-start (branch)
   "cut.ts liveWindowStart: the first entry still in the model's context."
@@ -267,7 +267,7 @@
 
 (defun vcc-details-of (details)
   "details.ts vccDetailsOf: omp-vcc's (or pi-vcc's) details on a compaction, or NIL."
-  (flet ((own-p (d) (member (json-get d "compactor") '("omp-vcc" "pi-vcc") :test #'equal)))
+  (flet ((own-p (d) (member (json-get d "compactor") (list +compactor+ +legacy-compactor+) :test #'equal)))
     (let ((own (if (own-p details) details (json-get details "hookDetails"))))
       (and (own-p own) own))))
 
@@ -324,7 +324,7 @@
     (loop for i from (1+ (last-reset-index branch)) below (length branch)
           for e = (aref branch i)
           do (let ((op (json-get e "data")))
-               (when (and (equal (json-get e "type") "custom") (equal (json-get e "customType") "omp-vcc.pin") (json-object-p op)
+               (when (and (equal (json-get e "type") "custom") (equal (json-get e "customType") +pin-entry-type+) (json-object-p op)
                           (js-integer-p (json-get op "id")))
                  (let ((id (as-integer (json-get op "id"))) (text (json-get op "text")))
                    (cond ((and (equal (json-get op "op") "add") (stringp text) (plusp (length (js-trim text))))
@@ -519,7 +519,7 @@ holds it (Pi's context edits applied, context-edits.lisp), sized first
 and state, what it summarized, and what it was sized from."
   (let ((budgets (json-get sizing "budgets")) (window (json-get input "window")))
     (json-object
-     "compactor" "omp-vcc"
+     "compactor" +compactor+
      ;; version 2 = refs are session-global (recall index space); version 1
      ;; summaries carried window-relative refs (issue #28).
      "version" 2

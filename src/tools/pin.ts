@@ -4,9 +4,9 @@
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { untilCore } from "../core/core-wait";
 import type { HostProfile } from "../host";
-import { PIN_CHARS, pinInCore, type PinHost } from "../core/pins";
+import { pinInCore, type PinHost } from "../core/pins";
 import type { SessionManagerLike } from "../core/session-file";
-import { PIN_PARAMS, PIN_TOOL } from "../names";
+import { PIN_CHARS, PIN_PARAMS, PIN_TOOL } from "../names";
 
 const PIN_TOOL_LABEL = "VCC Pin";
 
@@ -23,10 +23,10 @@ const pinToolDescription = (command: string): string => [
   `Pin sparingly, what you would need if you lost the conversation; the user pins with /${command}-pin.`,
 ].join("\n");
 
-const PIN_PARAM_DESCRIPTIONS = {
-  [PIN_PARAMS.note]: "Text to pin: one self-contained line, e.g. 'Sessions live in SQLite, not Redis: the deploy host has no Redis.'",
-  [PIN_PARAMS.unpin]: "The [N] of a pinned note to remove.",
-} as const;
+const PIN_PARAM_DESCRIPTIONS: Record<(typeof PIN_PARAMS)[number], string> = {
+  note: "Text to pin: one self-contained line, e.g. 'Sessions live in SQLite, not Redis: the deploy host has no Redis.'",
+  unpin: "The [N] of a pinned note to remove.",
+};
 
 /** One vcc_pin call: note pins, unpin removes, neither lists. */
 export const executePin = (params: unknown, host: PinHost, session: SessionManagerLike): string =>
@@ -35,8 +35,8 @@ export const executePin = (params: unknown, host: PinHost, session: SessionManag
 const PIN_PARAMETERS = {
   type: "object",
   properties: {
-    [PIN_PARAMS.note]: { type: "string", description: PIN_PARAM_DESCRIPTIONS[PIN_PARAMS.note] },
-    [PIN_PARAMS.unpin]: { description: PIN_PARAM_DESCRIPTIONS[PIN_PARAMS.unpin], anyOf: [{ type: "number" }, { type: "string" }] },
+    note: { type: "string", description: PIN_PARAM_DESCRIPTIONS.note },
+    unpin: { description: PIN_PARAM_DESCRIPTIONS.unpin, anyOf: [{ type: "number" }, { type: "string" }] },
   },
 } as const;
 

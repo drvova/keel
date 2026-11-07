@@ -7,13 +7,6 @@ import { currentBranchIds, hostBranch, type SessionManagerLike } from "./session
 import { projectFiles, sessionDirOf } from "./sessions";
 import { core } from "./lisp-core";
 
-/** Hits on one page of a search (lisp/src/recall.lisp, as the tool's description says). */
-export const SEARCH_PAGE_SIZE = 5;
-/** Entries on one page of a range. */
-export const RANGE_PAGE_SIZE = 20;
-/** Ceiling for one recall result, 50 KB like a read tool's; less on a small context window (the core scales it). */
-export const RECALL_OUTPUT_CHARS = 50 * 1024;
-
 export interface RecallInput {
   sessionManager: SessionManagerLike & { getSessionDir?(): string | undefined };
   /** The model's window: it scales the output cap. */

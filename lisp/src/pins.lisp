@@ -10,7 +10,6 @@
 
 (in-package #:omp-vcc)
 
-(defparameter +pin-chars+ 300)
 (defparameter +max-safe-integer+ 9007199254740992)
 
 (defun js-id (n)
@@ -31,7 +30,7 @@
 
 (defun pin-entry-p (e)
   "pins.ts isPinEntry: an omp-vcc.pin custom entry whose data is an object (an array is one too)."
-  (and (equal (json-get e "type") "custom") (equal (json-get e "customType") "omp-vcc.pin")
+  (and (equal (json-get e "type") "custom") (equal (json-get e "customType") +pin-entry-type+)
        (let ((d (json-get e "data"))) (or (json-object-p d) (json-array-p d)))))
 
 (defun next-pin-id (branch)

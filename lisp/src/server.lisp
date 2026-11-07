@@ -57,6 +57,9 @@
 ;;;;   -> {"ok":true,"request":{scope, session?, action:{kind,...}, ignored:[PARAM...]},"note":N,
 ;;;;       "params":{...},"dropped":[D...]} (params and dropped for the tool's params)
 ;;;;
+;;;; names: omp-vcc's own names and the limits its tools state (names.lisp), which src/names.ts copies
+;;;;   {"op":"names"} -> {"ok":true,"names":{recallTool, recallParams, pinTool, ..., sessionRefMinChars}}
+;;;;
 ;;;; context-edits: a branch as Pi's context holds it (src/core/context-edits.ts), for the parity test
 ;;;;   {"op":"context-edits","branch":[ENTRY...]} -> {"ok":true,"entries":[ENTRY...]}
 ;;;;   (op compact applies the same projection to its BRANCH and NOTES)
@@ -414,6 +417,7 @@ parity test compares with JavaScript's own."
           ((equal op "summarize") (handle-summarize request))
           ((equal op "compact") (handle-compact request))
           ((equal op "cut") (handle-cut request))
+          ((equal op "names") (json-object "ok" :true "names" (names-json)))
           ((equal op "request") (handle-request-parse request))
           ((equal op "working-set") (handle-working-set request))
           ((equal op "recall") (handle-recall request))

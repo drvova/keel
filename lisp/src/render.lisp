@@ -12,8 +12,6 @@
 
 (in-package #:omp-vcc)
 
-(defparameter +recall-tool+ "vcc_recall" "omp-vcc's recall tool: src/names.ts RECALL_TOOL.")
-
 (defun json-object-p (v) (hash-table-p v))
 
 (defun string-or (v default) (if (stringp v) v default))

@@ -13,9 +13,6 @@
 import { readdirSync, realpathSync, statSync } from "fs";
 import { dirname, join } from "path";
 
-/** The shortest id prefix a session:'id' may be (lisp/src/sessions.lisp reads it so). */
-export const SESSION_REF_MIN_CHARS = 4;
-
 const sameFile = (a: string, b: string): boolean => {
   try { return realpathSync(a) === realpathSync(b); } catch { return a === b; }
 };

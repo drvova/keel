@@ -16,8 +16,6 @@ import { hostBranch, hostEntries, RESET_ENTRY_TYPE, type SessionManagerLike } fr
 import { PIN_ENTRY_TYPE } from "../names";
 import { core } from "./lisp-core";
 
-/** One note is clipped to this many characters. */
-export const PIN_CHARS = 300;
 
 type PinAuthor = "user" | "agent";
 

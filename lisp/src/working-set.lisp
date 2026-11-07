@@ -234,7 +234,7 @@
         (multiple-value-bind (body omitted) (excerpt (ws-item-text item) room (ws-item-from-end item))
           (unless (or (null body) (and (ws-item-whole item) (> omitted 0)))
             (let* ((more (if (> omitted 0)
-                             (format nil "    …[~d ~a lines: vcc_recall expand:[~a]]" omitted (if (ws-item-from-end item) "earlier" "more") (ws-item-index item))
+                             (format nil "    …[~d ~a lines: ~a]" omitted (if (ws-item-from-end item) "earlier" "more") (recall-expand-call (ws-item-index item)))
                              ""))
                    (quoted (mapcar (lambda (l) (concatenate 'string "    " l)) body))
                    (block (append (list head)

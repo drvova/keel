@@ -142,4 +142,4 @@ one of omp's placeholders and whose original is kept, its new text, as (I TEXT).
               for n = (and (stringp id) (plusp (length id)) (gethash id index))
               when (and n (gethash id kept))
                 collect (json-object "i" (json-get h "i")
-                                     "text" (format nil "~a (the original: vcc_recall expand:[~d])" (json-get h "text") n)))))))
+                                     "text" (format nil "~a (the original: ~a)" (json-get h "text") (recall-expand-call n))))))))

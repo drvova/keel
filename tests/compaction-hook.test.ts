@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach, afterEach, beforeAll, afterAll, jes
 import { existsSync, unlinkSync, writeFileSync, readFileSync, mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { OMP_VCC_COMPACT_INSTRUCTION } from "../src/core/compact-args";
+import { COMPACT_INSTRUCTION } from "../src/names";
 import { formatCompactionStats } from "../src/compaction/stats";
 import { applyTailBudget, buildOwnCut, getLastCompactionStats, registerHook, type RegisteredHook } from "./support/host";
 
@@ -118,7 +118,7 @@ describe("compaction hook: cancel paths", () => {
     register(pi);
  
     const entries = [msg("m1", "user"), msg("m2", "assistant")];
-    expect(invokeBefore(makeEvent(entries, OMP_VCC_COMPACT_INSTRUCTION))).toEqual({ cancel: true });
+    expect(invokeBefore(makeEvent(entries, COMPACT_INSTRUCTION))).toEqual({ cancel: true });
     expect(notifyCalls).toHaveLength(1);
     expect(notifyCalls[0].level).toBe("warning");
     expect(notifyCalls[0].msg).toContain("Too few messages");
@@ -130,7 +130,7 @@ describe("compaction hook: cancel paths", () => {
     register(pi);
  
     const entries = [msg("m1", "assistant"), msg("m2", "assistant"), msg("m3", "assistant")];
-    const result = invokeBefore(makeEvent(entries, OMP_VCC_COMPACT_INSTRUCTION));
+    const result = invokeBefore(makeEvent(entries, COMPACT_INSTRUCTION));
     // No longer cancels — compacts all to recover from context overflow
     expect(result.cancel).toBeUndefined();
     expect(result.compaction).toBeDefined();
@@ -193,7 +193,7 @@ describe("compaction hook: cancel paths", () => {
       msg("m1", "user", "SECRET_TOKEN_abc123"),
       msg("m2", "assistant", "sensitive response"),
     ];
-    expect(invokeBefore(makeEvent(entries, OMP_VCC_COMPACT_INSTRUCTION))).toEqual({ cancel: true });
+    expect(invokeBefore(makeEvent(entries, COMPACT_INSTRUCTION))).toEqual({ cancel: true });
  
     expect(existsSync(DEBUG_PATH)).toBe(true);
     const snapshot = JSON.parse(readFileSync(DEBUG_PATH, "utf-8"));
@@ -211,7 +211,7 @@ describe("compaction hook: cancel paths", () => {
     const { pi, invokeBefore } = createMockOmp();
     register(pi);
     const entries = [msg("m1", "user"), msg("m2", "assistant")];
-    expect(invokeBefore(makeEvent(entries, OMP_VCC_COMPACT_INSTRUCTION))).toEqual({ cancel: true });
+    expect(invokeBefore(makeEvent(entries, COMPACT_INSTRUCTION))).toEqual({ cancel: true });
     expect(existsSync(DEBUG_PATH)).toBe(false);
   });
 });
@@ -232,7 +232,7 @@ describe("compaction hook: compact-all path", () => {
       msg("m3", "toolResult", "result"),
       msg("m4", "assistant", "done"),
     ];
-    const result = invokeBefore(makeEvent(entries, OMP_VCC_COMPACT_INSTRUCTION));
+    const result = invokeBefore(makeEvent(entries, COMPACT_INSTRUCTION));
     expect(result.compaction).toBeDefined();
     expect(result.compaction.firstKeptEntryId).toBe("");
     expect(notifyCalls).toHaveLength(0); // no cancel notify on success
@@ -244,7 +244,7 @@ describe("compaction hook: compact-all path", () => {
     register(pi);
 
     const entries = [msg("m1", "user"), msg("m2", "assistant"), msg("m3", "user"), msg("m4", "assistant")];
-    const result = invokeBefore(makeEvent(entries, OMP_VCC_COMPACT_INSTRUCTION, { reason: "manual", willRetry: false }));
+    const result = invokeBefore(makeEvent(entries, COMPACT_INSTRUCTION, { reason: "manual", willRetry: false }));
 
     expect(result.compaction).toBeDefined();
     expect(result.compaction.firstKeptEntryId).toBe("m3");
@@ -421,7 +421,7 @@ describe("compaction hook: compact-all path", () => {
       msg("a3", "assistant", "reply three"),
     ];
 
-    const result = invokeBefore(makeEvent(entries, `${OMP_VCC_COMPACT_INSTRUCTION} keep:2`));
+    const result = invokeBefore(makeEvent(entries, `${COMPACT_INSTRUCTION} keep:2`));
 
     expect(result.compaction.firstKeptEntryId).toBe("u2");
     expect(result.compaction.details.sourceMessageCount).toBe(2);
@@ -445,7 +445,7 @@ describe("compaction hook: compact-all path", () => {
       msg("a3", "assistant", "reply three"),
     ];
 
-    const result = invokeBefore(makeEvent(entries, `${OMP_VCC_COMPACT_INSTRUCTION} keep:2 continue`));
+    const result = invokeBefore(makeEvent(entries, `${COMPACT_INSTRUCTION} keep:2 continue`));
     await invokeCompact({ type: "session_compact", fromExtension: true, compactionEntry: { details: { compactor: "omp-vcc", reason: "manual", willRetry: false } } });
     jest.runAllTimers();
 
@@ -462,7 +462,7 @@ describe("compaction hook: compact-all path", () => {
     register(pi);
     const entries = [msg("u1", "user", "one"), msg("a1", "assistant", "reply one"), msg("u2", "user", "two"), msg("a2", "assistant", "reply two")];
 
-    const result = invokeBefore(makeEvent(entries, `${OMP_VCC_COMPACT_INSTRUCTION} keep:999999999999999999999`));
+    const result = invokeBefore(makeEvent(entries, `${COMPACT_INSTRUCTION} keep:999999999999999999999`));
 
     expect(result.compaction.firstKeptEntryId).toBe("");
     expect(getLastCompactionStats()).toMatchObject({
@@ -608,7 +608,7 @@ describe("compaction hook: budget-cut hook integration", () => {
       msg("t1", "toolResult", "res"),
       msg("a2", "assistant", "x".repeat(200_000)),
     ];
-    const result = invokeBefore(makeEvent(entries, OMP_VCC_COMPACT_INSTRUCTION));
+    const result = invokeBefore(makeEvent(entries, COMPACT_INSTRUCTION));
     expect(result.cancel).toBeUndefined();
     expect(result.compaction.firstKeptEntryId).not.toBe("");
     expect(getLastCompactionStats()!.budgetCut).toBe("no_anchor");
@@ -624,7 +624,7 @@ describe("compaction hook: budget-cut hook integration", () => {
       msg("t1", "toolResult", "res"),
       msg("a2", "assistant", "done"),
     ];
-    const result = invokeBefore(makeEvent(entries, OMP_VCC_COMPACT_INSTRUCTION));
+    const result = invokeBefore(makeEvent(entries, COMPACT_INSTRUCTION));
     expect(result.compaction.firstKeptEntryId).toBe("");
     expect(getLastCompactionStats()!.budgetCut).toBeUndefined();
   });
@@ -641,7 +641,7 @@ describe("compaction hook: budget-cut hook integration", () => {
       msg("u3", "user", "three"),
       msg("a3", "assistant", "reply three"),
     ];
-    const result = invokeBefore(makeEvent(entries, `${OMP_VCC_COMPACT_INSTRUCTION} keep:2`));
+    const result = invokeBefore(makeEvent(entries, `${COMPACT_INSTRUCTION} keep:2`));
     expect(result.compaction.firstKeptEntryId).toBe("u2");
     expect(getLastCompactionStats()!.budgetCut).toBeUndefined();
   });
@@ -782,7 +782,7 @@ describe("compaction hook: only what the user wrote is read as user messages", (
       msg("u2", "user", "next"),
       msg("a2", "assistant", "done"),
     ];
-    const summary: string = invokeBefore(makeEvent(entries, `${OMP_VCC_COMPACT_INSTRUCTION} keep:1`)).compaction.summary;
+    const summary: string = invokeBefore(makeEvent(entries, `${COMPACT_INSTRUCTION} keep:1`)).compaction.summary;
     expect(summary).toContain("BRANCH_SUMMARY_MARKER");
     const head = summary.slice(0, summary.indexOf("\n---\n"));
     expect(head).toContain("[Early Session Requests]\n- Fix the login bug");
@@ -831,7 +831,7 @@ describe("compaction hook: skipForProviders (#27)", () => {
     const mock = createMockOmp();
     mock.ctx.model = { provider: "openai" };
     register(mock.pi);
-    expect(mock.invokeBefore(makeEvent(entries(), OMP_VCC_COMPACT_INSTRUCTION))?.compaction).toBeTruthy();
+    expect(mock.invokeBefore(makeEvent(entries(), COMPACT_INSTRUCTION))?.compaction).toBeTruthy();
   });
 
   test("undefined model never skips", () => {
@@ -954,7 +954,7 @@ describe("compaction hook: skipCustomTypes", () => {
     setConfig({ overrideDefaultCompaction: false, skipCustomTypes: ["memory-inject"] });
     const { pi, invokeBefore } = createMockOmp();
     register(pi);
-    const { summary } = invokeBefore(makeEvent(entries, OMP_VCC_COMPACT_INSTRUCTION)).compaction;
+    const { summary } = invokeBefore(makeEvent(entries, COMPACT_INSTRUCTION)).compaction;
     expect(summary).not.toContain("INJECTED_BOILERPLATE_XYZ");
     expect(summary).toContain("KEEP_ME_MARKER");
   });
@@ -989,7 +989,7 @@ describe("compaction hook: skipCustomTypes", () => {
     setConfig({ overrideDefaultCompaction: false });
     const { pi, invokeBefore } = createMockOmp();
     register(pi);
-    const { summary } = invokeBefore(makeEvent(baseEntries(), OMP_VCC_COMPACT_INSTRUCTION)).compaction;
+    const { summary } = invokeBefore(makeEvent(baseEntries(), COMPACT_INSTRUCTION)).compaction;
     expect(summary).toContain("INJECTED_BOILERPLATE_XYZ");
   });
 });
@@ -1116,7 +1116,7 @@ describe("what a compaction stores for the next one", () => {
       msg("u2", "user", "and the signup form"),
       msg("a2", "assistant", "done"),
     ];
-    const one = invokeBefore(makeEvent(first, `${OMP_VCC_COMPACT_INSTRUCTION} keep:1`));
+    const one = invokeBefore(makeEvent(first, `${COMPACT_INSTRUCTION} keep:1`));
     const { details, summary } = one.compaction;
     // The brief's [user] and [assistant] blocks are not sections.
     expect(details.sections).toEqual(["Task State", "Early Session Requests"]);
@@ -1125,7 +1125,7 @@ describe("what a compaction stores for the next one", () => {
     // The next compaction merges into that state, not the text: a summary text that
     // says something else is not read when the stored state is there.
     const compaction = { id: "c1", type: "compaction", summary, firstKeptEntryId: "u2", details };
-    const event = makeEvent([...first, compaction, msg("u3", "user", "now the password reset"), msg("a3", "assistant", "ok")], `${OMP_VCC_COMPACT_INSTRUCTION} keep:1`);
+    const event = makeEvent([...first, compaction, msg("u3", "user", "now the password reset"), msg("a3", "assistant", "ok")], `${COMPACT_INSTRUCTION} keep:1`);
     event.preparation.previousSummary = "[Early Session Requests]\n- something the text alone says" as any;
     const two = invokeBefore(event);
     expect(two.compaction.details.summaryState.earlyRequests).toEqual(["fix the login bug", "and the signup form"]);
@@ -1138,7 +1138,7 @@ describe("what the hook tells the user", () => {
     const entries = [msg("u1", "user", "hi"), msg("a1", "assistant", "hello")];
     const ui = createMockOmp();
     register(ui.pi);
-    expect(ui.invokeBefore(makeEvent(entries, OMP_VCC_COMPACT_INSTRUCTION)).cancel).toBe(true);
+    expect(ui.invokeBefore(makeEvent(entries, COMPACT_INSTRUCTION)).cancel).toBe(true);
     expect(ui.notifyCalls.map((c) => c.msg)).toEqual(["omp-vcc: Too few messages to compact"]);
 
     const written: string[] = [];
@@ -1148,7 +1148,7 @@ describe("what the hook tells the user", () => {
       const print = createMockOmp();
       register(print.pi);
       print.ctx.hasUI = false;
-      print.invokeBefore(makeEvent(entries, OMP_VCC_COMPACT_INSTRUCTION));
+      print.invokeBefore(makeEvent(entries, COMPACT_INSTRUCTION));
       expect(print.notifyCalls).toEqual([]);
     } finally {
       (process.stderr as any).write = write;

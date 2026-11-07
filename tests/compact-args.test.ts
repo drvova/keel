@@ -3,7 +3,8 @@
 // keep:N first or last, the rest a prompt to send after; the marker says the
 // pass is the command's.
 import { describe, expect, it } from "bun:test";
-import { commandArgs, OMP_VCC_COMPACT_INSTRUCTION as M, parseInstructions } from "../src/core/compact-args";
+import { commandArgs, parseInstructions } from "../src/core/compact-args";
+import { COMPACT_INSTRUCTION as M } from "../src/names";
 
 describe("the command's text", () => {
   it.each([

@@ -9,8 +9,6 @@
 
 (in-package #:omp-vcc)
 
-(defparameter +omp-vcc-instruction+ "__omp_vcc__"
-  "What /omp-vcc hands the hook for the manual pass it starts; `keep:N` may follow.")
 (defparameter +max-safe-keep+ 9007199254740991 "Number.MAX_SAFE_INTEGER.")
 
 (defun keep-of (text)
@@ -33,14 +31,14 @@
 
 (defun vcc-custom-instructions (keep)
   "compact-args.ts buildVccCustomInstructions."
-  (if keep (format nil "~a keep:~d" +omp-vcc-instruction+ keep) +omp-vcc-instruction+))
+  (if keep (format nil "~a keep:~d" +compact-instruction+ keep) +compact-instruction+))
 
 (defun parse-instructions (custom)
   "compact-args.ts parseInstructions: (values FROM-COMMAND KEEP FOLLOW-UP-PROMPT)."
   (let ((trimmed (and (stringp custom) (js-trim custom))))
-    (if (and trimmed (or (string= trimmed +omp-vcc-instruction+)
-                         (starts-with (format nil "~a " +omp-vcc-instruction+) trimmed)))
-        (values t (nth-value 1 (parse-keep-and-prompt (js-slice trimmed (js-length +omp-vcc-instruction+)))) nil)
+    (if (and trimmed (or (string= trimmed +compact-instruction+)
+                         (starts-with (format nil "~a " +compact-instruction+) trimmed)))
+        (values t (nth-value 1 (parse-keep-and-prompt (js-slice trimmed (js-length +compact-instruction+)))) nil)
         (multiple-value-bind (prompt keep) (parse-keep-and-prompt custom)
           (values nil keep (and (plusp (length prompt)) prompt))))))
 

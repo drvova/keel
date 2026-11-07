@@ -4,7 +4,7 @@ import { OMP_HOST } from "../src/host";
 import { describe, expect, test } from "bun:test";
 import { registerOmpVccCommand } from "../src/commands/omp-vcc";
 import { createCompactionState } from "../src/hooks/compaction";
-import { OMP_VCC_COMPACT_INSTRUCTION } from "../src/core/compact-args";
+import { COMPACT_INSTRUCTION } from "../src/names";
 
 type CompactOptions = {
   suppressContinuation?: boolean;
@@ -64,7 +64,7 @@ describe("/omp-vcc", () => {
     await invoke();
 
     expect(compactCalls).toHaveLength(1);
-    expect(compactCalls[0].instructions).toBe(OMP_VCC_COMPACT_INSTRUCTION);
+    expect(compactCalls[0].instructions).toBe(COMPACT_INSTRUCTION);
     expect(state.pendingManualInstructions).toBeNull();
   });
 
@@ -73,7 +73,7 @@ describe("/omp-vcc", () => {
 
     await invoke("keep:3   continue  ");
 
-    expect(compactCalls[0].instructions).toBe(`${OMP_VCC_COMPACT_INSTRUCTION} keep:3`);
+    expect(compactCalls[0].instructions).toBe(`${COMPACT_INSTRUCTION} keep:3`);
     compactCalls[0].onComplete?.();
     expect(userMessages).toEqual(["continue"]);
   });
@@ -83,7 +83,7 @@ describe("/omp-vcc", () => {
 
     await invoke("  continue   keep:2");
 
-    expect(compactCalls[0].instructions).toBe(`${OMP_VCC_COMPACT_INSTRUCTION} keep:2`);
+    expect(compactCalls[0].instructions).toBe(`${COMPACT_INSTRUCTION} keep:2`);
     compactCalls[0].onComplete?.();
     expect(userMessages).toEqual(["continue"]);
   });
@@ -93,7 +93,7 @@ describe("/omp-vcc", () => {
 
     await invoke("keep:4");
 
-    expect(compactCalls[0].instructions).toBe(`${OMP_VCC_COMPACT_INSTRUCTION} keep:4`);
+    expect(compactCalls[0].instructions).toBe(`${COMPACT_INSTRUCTION} keep:4`);
     expect(compactCalls[0].suppressContinuation).toBeUndefined();
     compactCalls[0].onComplete?.();
     expect(userMessages).toHaveLength(0);
@@ -218,6 +218,6 @@ describe("/omp-vcc", () => {
 
     await invoke("keep:999999999999999999999 continue");
 
-    expect(compactCalls[0].instructions).toBe(`${OMP_VCC_COMPACT_INSTRUCTION} keep:${Number.MAX_SAFE_INTEGER}`);
+    expect(compactCalls[0].instructions).toBe(`${COMPACT_INSTRUCTION} keep:${Number.MAX_SAFE_INTEGER}`);
   });
 });

@@ -7,7 +7,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import type { HistoryRange } from "../src/core/summarize";
-import { OMP_VCC_COMPACT_INSTRUCTION } from "../src/core/compact-args";
+import { COMPACT_INSTRUCTION } from "../src/names";
 import { registerHook } from "./support/host";
 import { sectionLines, summarize } from "./support/summary";
 
@@ -34,7 +34,7 @@ const compact = (branchEntries: any[], opts: { previousSummary?: string; keep?: 
   if (opts.keep === undefined) hook.autoCompactionStart("threshold");
   return handler({
     type: "session_before_compact", branchEntries,
-    customInstructions: opts.keep === undefined ? undefined : `${OMP_VCC_COMPACT_INSTRUCTION} keep:${opts.keep}`,
+    customInstructions: opts.keep === undefined ? undefined : `${COMPACT_INSTRUCTION} keep:${opts.keep}`,
     preparation: { previousSummary: opts.previousSummary, fileOps: { read: [], written: [], edited: [] }, tokensBefore: 1000 },
     signal: new AbortController().signal,
   }, { ui: { notify: () => {} }, sessionManager: { getEntries: () => branchEntries } }).compaction;

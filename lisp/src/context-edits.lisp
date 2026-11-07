@@ -15,7 +15,7 @@
   "The roles whose content a replacement changes (Pi's projectContextEntry).")
 
 (defun context-edit-p (entry)
-  (and (equal (json-get entry "type") "context_edit") (stringp (json-get entry "targetId"))))
+  (and (equal (json-get entry "type") +context-edit-type+) (stringp (json-get entry "targetId"))))
 
 (defun copy-json-object (object)
   "A shallow copy of OBJECT, its keys in the same order (`{...object}`)."

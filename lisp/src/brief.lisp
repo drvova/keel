@@ -143,8 +143,6 @@ and pipe tails stripped, lines joined with `; `, capped."
 
 ;;; --- one tool call in one line --------------------------------------------------
 
-(defparameter +recall-params+ '("query" "range" "expand" "page" "scope" "mode" "session") "src/names.ts RECALL_PARAMS.")
-
 (defun recall-arg (value)
   (if (json-array-p value)
       (format nil "[~a]" (join-strings (map 'list (lambda (v) (if (or (null v) (eq v :null)) "" (js-string-of v))) value) ", "))
@@ -162,7 +160,7 @@ and pipe tails stripped, lines joined with `; `, capped."
                            (and (string= key "page") (eql (js-number-of value) 1)))
                  (push (format nil "~a:~a" key (recall-arg value)) parts))))
            (if parts (format nil "* ~a ~a" name (join-strings (nreverse parts) " ")) (format nil "* ~a" name))))
-        ((own-tool-p name "vcc_pin")
+        ((own-tool-p name +pin-tool+)
          (let ((call (pin-call-of args)))
            (cond ((and (consp call) (eq (first call) :note)) (format nil "* ~a \"~a\"" name (js-clip (second call) 60)))
                  ((and (consp call) (eq (first call) :unpin)) (format nil "* ~a unpin:~a" name (recall-arg (second call))))

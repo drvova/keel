@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { OMP_VCC_COMPACT_INSTRUCTION } from "../src/core/compact-args";
+import { COMPACT_INSTRUCTION } from "../src/names";
 import { registerHook } from "./support/host";
 import { sectionLines } from "./support/summary";
 
@@ -32,7 +32,7 @@ const state = (messages: unknown[]): string[] => {
   let handler: any;
   registerHook({ on: (name: string, fn: any) => { if (name === "session_before_compact") handler = fn; } });
   const out = handler({
-    type: "session_before_compact", branchEntries, customInstructions: `${OMP_VCC_COMPACT_INSTRUCTION} keep:0`,
+    type: "session_before_compact", branchEntries, customInstructions: `${COMPACT_INSTRUCTION} keep:0`,
     preparation: { previousSummary: undefined, fileOps: { read: [], written: [], edited: [] }, tokensBefore: 1000 },
     signal: new AbortController().signal,
   }, { ui: { notify: () => {} }, sessionManager: { getEntries: () => branchEntries } });

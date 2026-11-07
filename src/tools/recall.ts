@@ -7,9 +7,8 @@
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { untilCore } from "../core/core-wait";
 import type { Binding } from "../host";
-import { RANGE_PAGE_SIZE, RECALL_OUTPUT_CHARS, recall, SEARCH_PAGE_SIZE, type RecallInput } from "../core/recall-run";
-import { SESSION_REF_MIN_CHARS } from "../core/sessions";
-import { RECALL_PARAMS, RECALL_TOOL } from "../names";
+import { recall, type RecallInput } from "../core/recall-run";
+import { RANGE_PAGE_SIZE, RECALL_OUTPUT_CHARS, RECALL_PARAMS, RECALL_TOOL, SEARCH_PAGE_SIZE, SESSION_REF_MIN_CHARS } from "../names";
 
 const RECALL_TOOL_LABEL = "VCC Recall";
 

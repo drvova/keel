@@ -120,7 +120,7 @@ are `<timestamp>_<id>.jsonl`)."
 
 ;;; --- the originals omp-vcc kept -------------------------------------------------
 
-(defun raw-store-path (path) (concatenate 'string path ".vcc-raw"))
+(defun raw-store-path (path) (concatenate 'string path +raw-store-suffix+))
 
 (defun line-head-id (line)
   "The id a raw-store line starts with (`{\"id\":\"...\"`), or NIL."

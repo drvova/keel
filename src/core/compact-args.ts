@@ -5,9 +5,6 @@
 // (lisp/src/args.lisp, op args).
 import { core } from "./lisp-core";
 
-/** What /omp-vcc hands the hook for the manual pass it starts; `keep:N` may follow. The core knows it too. */
-export const OMP_VCC_COMPACT_INSTRUCTION = "__omp_vcc__";
-
 interface ParsedCompactionArgs {
   followUpPrompt: string;
   /** keep:N as typed; null when none was. */

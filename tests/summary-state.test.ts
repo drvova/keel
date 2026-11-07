@@ -6,7 +6,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { compileSummary, type SummaryState } from "../src/core/summarize";
 import { DEFAULT_SUMMARY_LIMITS } from "./support/window";
-import { OMP_VCC_COMPACT_INSTRUCTION } from "../src/core/compact-args";
+import { COMPACT_INSTRUCTION } from "../src/names";
 import type { NormalizedBlock } from "../src/types";
 import { registerHook } from "./support/host";
 import { sectionLines, summarize } from "./support/summary";
@@ -43,7 +43,7 @@ describe("a stored state read back", () => {
     let handler: any;
     registerHook({ on: (name: string, fn: any) => { if (name === "session_before_compact") handler = fn; } });
     return handler({
-      type: "session_before_compact", branchEntries, customInstructions: `${OMP_VCC_COMPACT_INSTRUCTION} keep:0`,
+      type: "session_before_compact", branchEntries, customInstructions: `${COMPACT_INSTRUCTION} keep:0`,
       preparation: { previousSummary: "[user]\ngoal", fileOps: { read: [], written: [], edited: [] }, tokensBefore: 1000 },
       signal: new AbortController().signal,
     }, { ui: { notify: () => {} }, sessionManager: { getEntries: () => branchEntries } }).compaction.details.summaryState;

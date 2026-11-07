@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { PIN_CHARS } from "../src/core/pins";
+import { PIN_CHARS } from "../src/names";
 import { PIN_ENTRY_TYPE } from "../src/names";
 import { executePin } from "../src/tools/pin";
 import { registerPinCommands } from "../src/commands/pin";
