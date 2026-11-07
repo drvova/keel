@@ -22,15 +22,15 @@ const freshState = ({ blocks, trackCommands, earlySlots }: { blocks: NormalizedB
 
 describe("a stored state read back", () => {
   let dir: string;
-  const prev = process.env.OMP_VCC_CONFIG_PATH;
+  const prev = process.env.KEEL_CONFIG_PATH;
   beforeAll(() => {
-    dir = mkdtempSync(join(tmpdir(), "omp-vcc-state-"));
-    process.env.OMP_VCC_CONFIG_PATH = join(dir, "c.json");
-    writeFileSync(process.env.OMP_VCC_CONFIG_PATH, JSON.stringify({ overrideDefaultCompaction: true, smartKeepTail: false }));
+    dir = mkdtempSync(join(tmpdir(), "keel-state-"));
+    process.env.KEEL_CONFIG_PATH = join(dir, "c.json");
+    writeFileSync(process.env.KEEL_CONFIG_PATH, JSON.stringify({ overrideDefaultCompaction: true, smartKeepTail: false }));
   });
   afterAll(() => {
-    if (prev === undefined) delete process.env.OMP_VCC_CONFIG_PATH;
-    else process.env.OMP_VCC_CONFIG_PATH = prev;
+    if (prev === undefined) delete process.env.KEEL_CONFIG_PATH;
+    else process.env.KEEL_CONFIG_PATH = prev;
     rmSync(dir, { recursive: true, force: true });
   });
   const stored = { earlyRequests: ["goal"], files: { modified: ["a.ts"], created: [], read: [] }, commits: [{ hash: "abc1234", message: "m" }], userMessages: [], brief: "[user]\ngoal" };
@@ -38,7 +38,7 @@ describe("a stored state read back", () => {
   const next = (summaryState: unknown): SummaryState => {
     const say = (id: string, role: string, text: string) => ({ id, type: "message", message: role === "user" ? { role, content: text } : { role, content: [{ type: "text", text }] } });
     const branchEntries = [say("a", "user", "goal"), say("b", "assistant", "ok"),
-      { id: "k", type: "compaction", firstKeptEntryId: "", summary: "[user]\ngoal", details: { compactor: "omp-vcc", version: 2, summaryState } },
+      { id: "k", type: "compaction", firstKeptEntryId: "", summary: "[user]\ngoal", details: { compactor: "keel", version: 2, summaryState } },
       say("c", "user", "next request"), say("d", "assistant", "on it"), say("e", "assistant", "the work went as planned. ".repeat(100))];
     let handler: any;
     registerHook({ on: (name: string, fn: any) => { if (name === "session_before_compact") handler = fn; } });
@@ -105,7 +105,7 @@ describe("what a window adds", () => {
 describe("a clipped user message", () => {
   const long = "Set up a tiny Python project in this directory. Write src/money.py with a function round_cents(x) that rounds a Decimal to 2 places using ROUND_HALF_EVEN, and tests/test_money.py with three plain assert checks you run with python3 (no pytest). Run the tests, then commit everything with the message 'feat: round_cents'. Keep it short.";
 
-  it("ends with … and the #N that vcc_recall expands", () => {
+  it("ends with … and the #N that keel_recall expands", () => {
     const { earlyRequests } = freshState({ blocks: [{ kind: "user", text: long, sourceIndex: 0 }], earlySlots: 3 });
     expect(earlyRequests).toHaveLength(1);
     expect(earlyRequests[0]).toEndWith("with the message… (#0)");

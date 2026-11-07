@@ -1,10 +1,18 @@
 # Changelog
 
-All notable changes to `@drvova/omp-vcc` are documented in this file. Entries from 0.11.2 back are those of `@sting8k/pi-vcc`, which this is forked from, and describe it on Pi.
+All notable changes to `@drvova/keel` (formerly `@drvova/omp-vcc`) are documented in this file. Entries below that name omp-vcc's commands, tools and files were written before the rename to keel. Entries from 0.11.2 back are those of `@sting8k/pi-vcc`, which this is forked from, and describe it on Pi.
 
 ## [Unreleased]
 
 ### Breaking
+
+- **Renamed to keel** — omp-vcc is now keel (`@drvova/keel`), on both hosts. Everything written under the old name keeps working:
+  - Commands: `/keel`, `/keel-recall`, `/keel-pin`, `/keel-unpin` and `/keel-evict` on omp and on Pi alike. The old names stay as aliases of the same commands (`/omp-vcc…` on omp, `/pi-vcc…` on Pi).
+  - Tools: `keel_recall`, `keel_pin` and `keel_context` replace `vcc_recall`, `vcc_pin` and `vcc_context`. A summary written before the rename names `vcc_recall` until the next compaction rewrites it from its stored state.
+  - Files: `keel-config.json` (copied once from `omp-vcc-config.json`, else `pi-vcc-config.json`), `keel-models.json` (read from `omp-vcc-models.json` until written), `keel-debug.json`, and beside omp's sessions `<session>.jsonl.keel-raw` (a `.vcc-raw` store is still read) and `<session>.jsonl.keel-context.md`.
+  - Sessions: compactions are stored with `compactor: "keel"`, and pins and evictions as `keel.pin` and `keel.evict` entries. Those stored as `omp-vcc` (and pi-vcc's) are read as keel's.
+  - Environment: `KEEL_CONFIG_PATH`, `KEEL_CORE`, `KEEL_CORE_BUILD_DIR` and `KEEL_CORE_LIVE`. The `OMP_VCC_` names are read when the new one is unset.
+  - The core is `lisp/keel-core.asd`, built as `lisp/build/keel-core-<hash>`.
 
 - **SBCL is required** — omp-vcc's work (compaction, the summary, recall, pins, settings, raw capture) is done by a core written in Common Lisp (`lisp/`), which omp-vcc builds with the user's SBCL (`sbcl` on the `PATH`, or `SBCL`) the first time it loads: a few seconds, once for each version, into `lisp/build/` or `OMP_VCC_CORE_BUILD_DIR`. Install SBCL with the system's package manager (`apt install sbcl`, `brew install sbcl`). Until the core is built, or without SBCL, omp-vcc steps aside, says why once, and the host compacts as it would without it; `vcc_recall` and `vcc_pin` answer with the reason. `OMP_VCC_CORE` names a prebuilt core instead.
 

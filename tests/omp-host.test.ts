@@ -1,6 +1,6 @@
-// omp-vcc inside a real omp (oh-my-pi) session: loaded from this package's
+// keel inside a real omp (oh-my-pi) session: loaded from this package's
 // "omp.extensions" by omp's own loader, driven through omp's command routing,
-// compaction pipeline and tool validator. No model is called: omp-vcc's summary is
+// compaction pipeline and tool validator. No model is called: keel's summary is
 // local, and omp only needs a catalog model to build the session.
 //
 // Runs only where @oh-my-pi/pi-coding-agent is installed (it needs Bun >= 1.4.4):
@@ -43,14 +43,14 @@ describe.skipIf(!ompInstalled)("omp host", () => {
   const latestCompaction = () => [...sessionManager.getBranch()].reverse().find((e: any) => e.type === "compaction");
 
   beforeAll(async () => {
-    work = mkdtempSync(join(tmpdir(), "omp-vcc-omp-host-"));
-    for (const key of ["PI_CODING_AGENT_DIR", "OMP_VCC_CONFIG_PATH", "ANTHROPIC_API_KEY"]) savedEnv[key] = process.env[key];
+    work = mkdtempSync(join(tmpdir(), "keel-omp-host-"));
+    for (const key of ["PI_CODING_AGENT_DIR", "KEEL_CONFIG_PATH", "ANTHROPIC_API_KEY"]) savedEnv[key] = process.env[key];
     process.env.PI_CODING_AGENT_DIR = join(work, "agent");
-    process.env.OMP_VCC_CONFIG_PATH = join(work, "omp-vcc-config.json");
+    process.env.KEEL_CONFIG_PATH = join(work, "keel-config.json");
     // omp runs an automatic pass only through a method its model can use, which
     // needs a credential for the model's provider. Nothing is sent with it: the
-    // compaction is omp-vcc's. Without it, CI (no key at all) skipped the idle pass.
-    process.env.ANTHROPIC_API_KEY ??= "omp-vcc-test-not-a-key";
+    // compaction is keel's. Without it, CI (no key at all) skipped the idle pass.
+    process.env.ANTHROPIC_API_KEY ??= "keel-test-not-a-key";
 
     omp = await import("@oh-my-pi/pi-coding-agent");
     const { getBundledModels }: any = await import("@oh-my-pi/pi-catalog/models" as string);
@@ -101,34 +101,34 @@ describe.skipIf(!ompInstalled)("omp host", () => {
     rmSync(work, { recursive: true, force: true });
   });
 
-  test("omp loads the omp.extensions entry and registers vcc_recall as a top-level read tool", () => {
+  test("omp loads the omp.extensions entry and registers keel_recall as a top-level read tool", () => {
     expect(extensionsResult.errors ?? []).toEqual([]);
     expect(extensionsResult.extensions.map((e: any) => e.path)).toContain(join(REPO, "index.ts"));
-    expect(session.getActiveToolNames()).toContain("vcc_recall");
-    const tool = session.getToolByName("vcc_recall");
+    expect(session.getActiveToolNames()).toContain("keel_recall");
+    const tool = session.getToolByName("keel_recall");
     expect(tool.loadMode).toBe("essential");
     expect(tool.approval).toBe("read");
   });
 
-  test("/omp-vcc keep:1 compacts with omp-vcc through omp's command routing", async () => {
-    await session.prompt("/omp-vcc keep:1");
+  test("/keel keep:1 compacts with keel through omp's command routing", async () => {
+    await session.prompt("/keel keep:1");
     const compaction = latestCompaction();
     expect(compaction.fromExtension).toBe(true);
-    expect(compaction.details).toMatchObject({ compactor: "omp-vcc", reason: "manual", willRetry: false });
-    // omp's own trigger for this model under that setting, not omp-vcc's guess of omp's default.
+    expect(compaction.details).toMatchObject({ compactor: "keel", reason: "manual", willRetry: false });
+    // omp's own trigger for this model under that setting, not keel's guess of omp's default.
     expect(compaction.details.limits).toMatchObject({ contextWindow: model.contextWindow, trigger: Math.floor(model.contextWindow * 0.6) });
     expect(compaction.summary).toContain("- Modified: src/auth/session.ts");
     expect(compaction.summary).toContain("- Read: src/auth/session.ts\n");
     expect(compaction.summary).toMatch(/>>> print\(1\+1\) \(#\d+\)/);
     await Bun.sleep(600);
-    expect(notices.some((n) => n.startsWith("info: omp-vcc: kept 1/3 turns"))).toBe(true);
+    expect(notices.some((n) => n.startsWith("info: keel: kept 1/3 turns"))).toBe(true);
   });
 
-  test("omp's validator accepts what omp-vcc repairs, and vcc_recall resolves #N refs", async () => {
+  test("omp's validator accepts what keel repairs, and keel_recall resolves #N refs", async () => {
     const { validateToolArguments }: any = await import("@oh-my-pi/pi-ai/utils/validation" as string);
-    const tool = session.getToolByName("vcc_recall");
+    const tool = session.getToolByName("keel_recall");
     for (const args of [{ expand: "#3" }, { range: "0-2" }, { range: [5] }, { page: "2" }, { mode: "all" }, { scope: "ALL" }]) {
-      expect(validateToolArguments(tool, { type: "toolCall", id: "v", name: "vcc_recall", arguments: args })).toEqual(args);
+      expect(validateToolArguments(tool, { type: "toolCall", id: "v", name: "keel_recall", arguments: args })).toEqual(args);
     }
     const result = await tool.execute("t", { expand: "#3" }, undefined, undefined);
     expect(result.content[0].text).toContain("Expanded #3:");
@@ -148,26 +148,26 @@ describe.skipIf(!ompInstalled)("omp host", () => {
     await session.runIdleCompaction();
     const compaction = latestCompaction();
     expect(compaction.id).not.toBe(before.id);
-    expect(compaction.details).toMatchObject({ compactor: "omp-vcc", reason: "idle", willRetry: false, previousSummaryUsed: false });
+    expect(compaction.details).toMatchObject({ compactor: "keel", reason: "idle", willRetry: false, previousSummaryUsed: false });
     expect(compaction.summary).toContain("- abc1234: chore: move billing cron");
     expect(compaction.summary).not.toContain("password reset");
   });
 
-  test("a vcc_pin note is stored by omp and leads the next summary", async () => {
-    const pin = session.getToolByName("vcc_pin");
+  test("a keel_pin note is stored by omp and leads the next summary", async () => {
+    const pin = session.getToolByName("keel_pin");
     expect(pin.approval).toBe("read");
     const result = await pin.execute("p", { note: "Never edit anything under migrations/." }, undefined, undefined);
     expect(result.content[0].text).toMatch(/^Pinned \[1\] Never edit anything under migrations\/\. \(agent, #\d+\)\.$/);
-    expect(sessionManager.getBranch().some((e: any) => e.type === "custom" && e.customType === "omp-vcc.pin")).toBe(true);
+    expect(sessionManager.getBranch().some((e: any) => e.type === "custom" && e.customType === "keel.pin")).toBe(true);
     user("Then add a dry-run flag");
     assistant([{ type: "text", text: "Dry-run flag added." }]);
     user("And document it");
     assistant([{ type: "text", text: "Documented." }]);
-    await session.prompt("/omp-vcc keep:1");
+    await session.prompt("/keel keep:1");
     expect(latestCompaction().summary.startsWith("[Pinned Notes]\n- [1] Never edit anything under migrations/. (agent")).toBe(true);
   });
 
-  test("vcc_recall lists and searches the project's other omp sessions", async () => {
+  test("keel_recall lists and searches the project's other omp sessions", async () => {
     const other = omp.SessionManager.create(work, join(work, "sessions"));
     other.appendMessage({ role: "user", content: "Rotate the staging API key", timestamp: now() });
     other.appendMessage({
@@ -177,7 +177,7 @@ describe.skipIf(!ompInstalled)("omp host", () => {
     });
     await other.flush?.();
     const short = other.getSessionId().replace(/-/g, "").slice(0, 8);
-    const recall = session.getToolByName("vcc_recall");
+    const recall = session.getToolByName("keel_recall");
     const listed = (await recall.execute("s", { mode: "sessions" }, undefined, undefined)).content[0].text;
     expect(listed).toContain(`${short} · `);
     expect(listed).toContain('"Rotate the staging API key"');
@@ -186,11 +186,11 @@ describe.skipIf(!ompInstalled)("omp host", () => {
     await other.close?.();
   });
 
-  test("what omp blanks in the session file, vcc_recall still reads, with nothing set in omp", async () => {
-    // omp tells extensions of a finished turn; omp-vcc copies what omp may rewrite from omp's own entries.
+  test("what omp blanks in the session file, keel_recall still reads, with nothing set in omp", async () => {
+    // omp tells extensions of a finished turn; keel copies what omp may rewrite from omp's own entries.
     await session.extensionRunner.emit({ type: "turn_end", turnIndex: 0, message: undefined, toolResults: [] });
     const file = sessionManager.getSessionFile();
-    expect(existsSync(`${file}.vcc-raw`)).toBe(true);
+    expect(existsSync(`${file}.keel-raw`)).toBe(true);
     // As omp's prune does: blank the first read's output in place and persist the rewrite.
     const entries = sessionManager.getEntries().filter((e: any) => e.type === "message");
     const read = entries.find((e: any) => e.message.role === "toolResult" && e.message.toolCallId === "c1");
@@ -198,27 +198,27 @@ describe.skipIf(!ompInstalled)("omp host", () => {
     read.message.prunedAt = Date.now();
     await sessionManager.rewriteEntries();
     expect(readFileSync(file, "utf8")).not.toContain("export function refresh() {}");
-    const recall = session.getToolByName("vcc_recall");
+    const recall = session.getToolByName("keel_recall");
     const index = entries.indexOf(read);
     const expanded = (await recall.execute("x", { expand: [index] }, undefined, undefined)).content[0].text;
     expect(expanded).toContain("export function refresh() {}");
     expect(expanded).not.toContain("[Output truncated");
     // Before the next request omp hands extensions the messages: its placeholder now says where the original is.
     const [pointed] = await session.extensionRunner.emitContext([structuredClone(read.message)]);
-    expect(pointed.content).toEqual([{ type: "text", text: `[Output truncated - 400 tokens] (the original: vcc_recall expand:[${index}])` }]);
+    expect(pointed.content).toEqual([{ type: "text", text: `[Output truncated - 400 tokens] (the original: keel_recall expand:[${index}])` }]);
   });
 
-  test("/omp-vcc-evict takes old turns out of the next request whole, and vcc_recall still reads them", async () => {
+  test("/keel-evict takes old turns out of the next request whole, and keel_recall still reads them", async () => {
     user("Write the release notes for 2.0");
     assistant([{ type: "text", text: "Done." }]);
     user("Tag the release");
     assistant([{ type: "text", text: "Done." }]);
-    const config = process.env.OMP_VCC_CONFIG_PATH!;
+    const config = process.env.KEEL_CONFIG_PATH!;
     const saved = readFileSync(config, "utf8");
     writeFileSync(config, JSON.stringify({ ...JSON.parse(saved), evict: true }));
     try {
       notices.length = 0;
-      await session.prompt("/omp-vcc-evict 1");
+      await session.prompt("/keel-evict 1");
       expect(notices.join("\n")).toContain("Out of context from the next request: #");
       // The request the host builds next, through its own context hook.
       const messages = sessionManager.buildSessionContext().messages;
@@ -230,7 +230,7 @@ describe.skipIf(!ompInstalled)("omp host", () => {
       expect(sent.some((m: any) => text(m) === "Tag the release")).toBe(true);
       // What left the request is in the session, word for word.
       const n = Number(text(stub).match(/^\[#(\d+)/)![1]);
-      const recall = session.getToolByName("vcc_recall");
+      const recall = session.getToolByName("keel_recall");
       const expanded = (await recall.execute("x", { expand: [n] }, undefined, undefined)).content[0].text;
       expect(expanded).toContain(`Expanded #${n}:`);
     } finally {

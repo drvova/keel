@@ -9,15 +9,15 @@ import { registerHook } from "./support/host";
 import { sectionLines } from "./support/summary";
 
 let dir: string;
-const prev = process.env.OMP_VCC_CONFIG_PATH;
+const prev = process.env.KEEL_CONFIG_PATH;
 beforeAll(() => {
-  dir = mkdtempSync(join(tmpdir(), "omp-vcc-task-"));
-  process.env.OMP_VCC_CONFIG_PATH = join(dir, "c.json");
-  writeFileSync(process.env.OMP_VCC_CONFIG_PATH, JSON.stringify({ overrideDefaultCompaction: true, smartKeepTail: false }));
+  dir = mkdtempSync(join(tmpdir(), "keel-task-"));
+  process.env.KEEL_CONFIG_PATH = join(dir, "c.json");
+  writeFileSync(process.env.KEEL_CONFIG_PATH, JSON.stringify({ overrideDefaultCompaction: true, smartKeepTail: false }));
 });
 afterAll(() => {
-  if (prev === undefined) delete process.env.OMP_VCC_CONFIG_PATH;
-  else process.env.OMP_VCC_CONFIG_PATH = prev;
+  if (prev === undefined) delete process.env.KEEL_CONFIG_PATH;
+  else process.env.KEEL_CONFIG_PATH = prev;
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -26,7 +26,7 @@ const call = (id: string, name: string, args: Record<string, unknown>) => ({ rol
 const result = (id: string, text: string, isError = false) => ({ role: "toolResult", toolCallId: id, toolName: "x", content: [{ type: "text", text }], isError });
 /** A closing reply, long enough that summarizing the session shrinks it; [Task State] reads past it. */
 const reply = { role: "assistant", content: [{ type: "text", text: "the work went as planned. ".repeat(200) }] };
-/** The [Task State] lines of /omp-vcc keep:0 on a session of these messages, #N their positions. */
+/** The [Task State] lines of /keel keep:0 on a session of these messages, #N their positions. */
 const state = (messages: unknown[]): string[] => {
   const branchEntries = [...messages, reply].map((message, i) => ({ id: `e${i}`, type: "message", message }));
   let handler: any;

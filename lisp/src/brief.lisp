@@ -9,7 +9,7 @@
 ;;;; shape, failure flags, the host's file activity) and never by prose, the
 ;;;; newest kept, within a size budget.
 
-(in-package #:omp-vcc)
+(in-package #:keel)
 
 ;;; --- cutting text by significant words -----------------------------------------
 
@@ -162,7 +162,7 @@ every line is preamble, the first one stays, so the line is never empty."
       (js-clip (js-trim (js-string-of value)) 40)))
 
 (defun own-tool-line (name args)
-  "omp-vcc's own tools as what was recalled or pinned, or NIL for another tool. A
+  "keel's own tools as what was recalled or pinned, or NIL for another tool. A
 recall line shows every param the call gave (so a page-2 call is not merged with
 page 1), which says what history the agent already went back to; a pin call
 with both a note and an unpin was refused and pinned nothing."

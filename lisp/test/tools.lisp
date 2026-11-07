@@ -2,7 +2,7 @@
 ;;;;
 ;;;; SPDX-License-Identifier: MIT
 
-(in-package #:omp-vcc.test)
+(in-package #:keel.test)
 
 (defun read-of (path)
   (make-call "read" (parse-json (format nil "{\"path\":~a}" (json-string path))) "t" 0))

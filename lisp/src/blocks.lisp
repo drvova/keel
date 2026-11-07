@@ -8,7 +8,7 @@
 ;;;; section is built from; with what the summary reads of a block (its command,
 ;;;; a call's files).
 
-(in-package #:omp-vcc)
+(in-package #:keel)
 
 ;;; --- text a host or a terminal put in --------------------------------------
 

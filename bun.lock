@@ -3,7 +3,7 @@
   "configVersion": 0,
   "workspaces": {
     "": {
-      "name": "@drvova/omp-vcc",
+      "name": "@drvova/keel",
       "devDependencies": {
         "@types/node": "26.6.5",
         "typescript": "7.0.2",

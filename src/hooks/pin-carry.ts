@@ -8,6 +8,6 @@ import { tell, type Binding } from "../host";
 export const registerPinCarry = (pi: ExtensionAPI, host: Binding) => {
   pi.on("session_start", (_event, ctx) => {
     const text = whenCore(() => carryPins(pi, host, ctx as any));
-    if (text) tell(ctx, `omp-vcc: ${text}`, "info");
+    if (text) tell(ctx, `keel: ${text}`, "info");
   });
 };

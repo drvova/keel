@@ -1,5 +1,5 @@
 // Copies what omp may rewrite in the session file as it lands
-// (<session>.jsonl.vcc-raw, lisp/src/raw-capture.lisp), so vcc_recall keeps the originals. It reads omp's own
+// (<session>.jsonl.keel-raw, lisp/src/raw-capture.lisp), so keel_recall keeps the originals. It reads omp's own
 // entries (the persisted form), not the event's message: omp shows extensions a
 // de-obfuscated copy of an assistant message, and the copy keeps what the
 // session file keeps.
@@ -56,7 +56,7 @@ export const captureNewEntries = (state: RawCaptureState, sessionManager: Sessio
 
 /**
  * The request's messages with each placeholder omp wrote over a tool result
- * whose original omp-vcc kept followed by where to read it, or undefined when
+ * whose original keel kept followed by where to read it, or undefined when
  * there is none. A placeholder alone reads as content that is gone, and an
  * agent runs the tool again to get it back; a pointer to the kept original
  * avoids that (masked observations stay reachable by id, arXiv:2606.00408).

@@ -22,17 +22,17 @@ const compile = (input: Omit<CompileInput, "limits"> & { limits?: CompileInput["
 
 let tmpDir: string;
 let CONFIG_PATH: string;
-const savedConfigPath = process.env.OMP_VCC_CONFIG_PATH;
+const savedConfigPath = process.env.KEEL_CONFIG_PATH;
 
 beforeAll(() => {
-  tmpDir = mkdtempSync(join(tmpdir(), "omp-vcc-gidx-"));
-  CONFIG_PATH = join(tmpDir, "omp-vcc-config.json");
-  process.env.OMP_VCC_CONFIG_PATH = CONFIG_PATH;
+  tmpDir = mkdtempSync(join(tmpdir(), "keel-gidx-"));
+  CONFIG_PATH = join(tmpDir, "keel-config.json");
+  process.env.KEEL_CONFIG_PATH = CONFIG_PATH;
 });
 
 afterAll(() => {
-  if (savedConfigPath === undefined) delete process.env.OMP_VCC_CONFIG_PATH;
-  else process.env.OMP_VCC_CONFIG_PATH = savedConfigPath;
+  if (savedConfigPath === undefined) delete process.env.KEEL_CONFIG_PATH;
+  else process.env.KEEL_CONFIG_PATH = savedConfigPath;
   rmSync(tmpDir, { recursive: true, force: true });
 });
 

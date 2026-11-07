@@ -1,18 +1,18 @@
-// What /omp-vcc says once a compaction it asked for ends.
+// What /keel says once a compaction it asked for ends.
 import { deliver, tell, tellLater, type NotifyCtx } from "../host";
 import { core } from "../core/lisp-core";
 import { hostSnapshot, type HostCtx } from "../core/host-snapshot";
 
 /** The compaction's outcome line, then the prompt to send after it. */
 export const reportCompactDone = (ctx: NotifyCtx, statsLine: string | null, followUpPrompt: string, sendUserMessage: (content: string) => unknown): void => {
-  // Without a line of omp-vcc's own (another extension's compaction won), the compaction still happened.
+  // Without a line of keel's own (another extension's compaction won), the compaction still happened.
   if (statsLine) tellLater(ctx, statsLine);
-  else tell(ctx, "Compacted with omp-vcc");
+  else tell(ctx, "Compacted with keel");
   if (followUpPrompt) void deliver(ctx, "the follow-up prompt", () => sendUserMessage(followUpPrompt));
 };
 
 /**
- * Why a compaction /omp-vcc asked for did not happen, from the host's error.
+ * Why a compaction /keel asked for did not happen, from the host's error.
  * `cancelNotice` is the hook's own reason when it cancelled, which it told
  * already. omp's TUI shows its own "Compaction cancelled" / "Compaction
  * failed: …", so there only the hint for a session still too short is added.

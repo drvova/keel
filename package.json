@@ -1,5 +1,5 @@
 {
-  "name": "@drvova/omp-vcc",
+  "name": "@drvova/keel",
   "version": "0.11.2",
   "description": "Algorithmic conversation compactor for omp (oh-my-pi) and Pi - transcript-preserving structured summaries, pinned notes and recall across sessions, no LLM calls",
   "license": "MIT",
@@ -18,7 +18,7 @@
     "pi-package",
     "pi-extension",
     "pi",
-    "vcc",
+    "keel",
     "compact",
     "compaction",
     "recall"

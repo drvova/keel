@@ -7,7 +7,7 @@
 ;;;; a vector too, to Lisp), and a number may be an integer written as a float.
 ;;;; These read them the one way, for every module.
 
-(in-package #:omp-vcc)
+(in-package #:keel)
 
 (defun json-array-p (v)
   "A JSON array: a vector that is not a string."

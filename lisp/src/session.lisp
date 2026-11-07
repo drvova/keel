@@ -10,11 +10,11 @@
 ;;;; recall resolves, so the summary's count (INDEX-BY-ID over the host's
 ;;;; snapshot, host.lisp) and recall's (over the file) are the one count here.
 ;;;;
-;;;; omp rewrites messages in place; omp-vcc keeps their originals in
-;;;; `<session>.jsonl.vcc-raw` (raw-capture.lisp), and a message omp rewrote is read
+;;;; omp rewrites messages in place; keel keeps their originals in
+;;;; `<session>.jsonl.keel-raw` (raw-capture.lisp), and a message omp rewrote is read
 ;;;; with its original content put back, from this session's store or a parent's.
 
-(in-package #:omp-vcc)
+(in-package #:keel)
 
 (defun read-file-octets (path)
   "PATH's bytes, or NIL when there is no such file."
@@ -171,9 +171,12 @@ are `<timestamp>_<id>.jsonl`)."
           do (setf files (append files (list parent))))
     files))
 
-;;; --- the originals omp-vcc kept -------------------------------------------------
+;;; --- the originals keel kept -------------------------------------------------
 
 (defun raw-store-path (path) (concatenate 'string path +raw-store-suffix+))
+(defun raw-store-paths (path)
+  "Where PATH's originals are: its store, then the one keel kept as omp-vcc."
+  (list (raw-store-path path) (concatenate 'string path +legacy-raw-store-suffix+)))
 
 (defun line-head-id (line)
   "The id a raw-store line starts with (`{\"id\":\"...\"`), or NIL."
@@ -189,7 +192,8 @@ are `<timestamp>_<id>.jsonl`)."
           (parse-json-or-nil (subseq line (1- (length prefix)) (1+ end))))))))
 
 (defun read-one-store (path wanted found)
-  (let ((bytes (ignore-errors (read-file-octets (raw-store-path path)))))
+  (dolist (store (raw-store-paths path))
+   (let ((bytes (ignore-errors (read-file-octets store))))
     (when bytes
       (dolist (line (split-string (decode-utf-8 bytes) #\Newline))
         (when (= (hash-table-count found) (hash-table-count wanted)) (return))
@@ -197,7 +201,7 @@ are `<timestamp>_<id>.jsonl`)."
           (when (and (stringp id) (gethash id wanted) (not (nth-value 1 (gethash id found))))
             (let ((record (parse-json-or-nil line)))
               (when (hash-table-p record)
-                (setf (gethash id found) (json-get record "content"))))))))))
+                (setf (gethash id found) (json-get record "content")))))))))))
 
 (defun read-raw-store (path wanted)
   "The kept content of the WANTED ids, the first copy of each, from PATH's store
@@ -214,7 +218,7 @@ it forked, and their originals are in the parent's store."
 
 
 (defun restore-originals (messages ids file)
-  "MESSAGES with the original content omp-vcc kept in FILE's raw store put back
+  "MESSAGES with the original content keel kept in FILE's raw store put back
 where omp rewrote them (IDS parallel to MESSAGES)."
   (if (not (stringp file))
       messages

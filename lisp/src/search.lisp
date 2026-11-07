@@ -12,7 +12,7 @@
 ;;;; A query with a regex metacharacter is first one regex (regex.lisp, through
 ;;;; SAFE-REGEX); when that finds nothing it is searched as terms.
 
-(in-package #:omp-vcc)
+(in-package #:keel)
 
 (defparameter +stopwords+
   (let ((table (make-hash-table :test 'equal)))

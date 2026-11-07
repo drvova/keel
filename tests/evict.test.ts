@@ -1,7 +1,7 @@
 // Old turns out of the context whole (lisp/src/evict.lisp): taken out by the
-// agent (vcc_context), the user (/omp-vcc-evict) or omp-vcc past 85% of the
+// agent (keel_context), the user (/keel-evict) or keel past 85% of the
 // trigger, left out of every later request with one line in their place, and
-// brought back; the session file keeps them, and vcc_recall reads them back.
+// brought back; the session file keeps them, and keel_recall reads them back.
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
@@ -13,17 +13,17 @@ import { executePin, ompBinding } from "./support/binding";
 import { writeJsonl, freshDir } from "./support/session-files";
 
 let dir: string;
-const prev = process.env.OMP_VCC_CONFIG_PATH;
+const prev = process.env.KEEL_CONFIG_PATH;
 beforeAll(() => {
-  dir = mkdtempSync(join(tmpdir(), "omp-vcc-evict-"));
-  process.env.OMP_VCC_CONFIG_PATH = join(dir, "omp-vcc-config.json");
+  dir = mkdtempSync(join(tmpdir(), "keel-evict-"));
+  process.env.KEEL_CONFIG_PATH = join(dir, "keel-config.json");
 });
 afterAll(() => {
-  if (prev === undefined) delete process.env.OMP_VCC_CONFIG_PATH;
-  else process.env.OMP_VCC_CONFIG_PATH = prev;
+  if (prev === undefined) delete process.env.KEEL_CONFIG_PATH;
+  else process.env.KEEL_CONFIG_PATH = prev;
   rmSync(dir, { recursive: true, force: true });
 });
-const setEvict = (on: boolean) => writeFileSync(process.env.OMP_VCC_CONFIG_PATH!, JSON.stringify({ evict: on }));
+const setEvict = (on: boolean) => writeFileSync(process.env.KEEL_CONFIG_PATH!, JSON.stringify({ evict: on }));
 
 /** A session of TURNS turns, each a request, a read and its result of SIZE chars, and the reply that ends it; the last read reports PROMPT tokens. */
 const session = (turns: number, size = 200, prompt?: number) => {
@@ -68,11 +68,11 @@ const call = (s: ReturnType<typeof session>, c: EvictCall) => evict(s.host, ompB
 const tool = (s: ReturnType<typeof session>, params: unknown) => call(s, { surface: "tool", params });
 const sent = (s: ReturnType<typeof session>, window?: number, tool = false) => evictRequest(s.host, ompBinding, s.ctx(window) as any, s.request(), tool);
 const record = (s: ReturnType<typeof session>, op: Record<string, unknown>) => s.host.appendEntry(EVICT_ENTRY_TYPE, { v: 1, by: "agent", at: 99, ...op });
-/** The line the request starts with while vcc_context is there: where the context's file is. */
-const header = (s: { file: string }) => `[Your context is mirrored in ${s.file}.vcc-context.md, block by block as this request sends it. Edit that file to change what you hold: delete a [[CTX_TURN]] block to take its turn out, replace its text with what to keep of it, or write notes of your own between blocks. The next request sends what the file says. The session keeps every word (vcc_recall expand:[N] reads any original back); the running turn stays as it is.]`;
+/** The line the request starts with while keel_context is there: where the context's file is. */
+const header = (s: { file: string }) => `[Your context is mirrored in ${s.file}.keel-context.md, block by block as this request sends it. Edit that file to change what you hold: delete a [[CTX_TURN]] block to take its turn out, replace its text with what to keep of it, or write notes of your own between blocks. The next request sends what the file says. The session keeps every word (keel_recall expand:[N] reads any original back); the running turn stays as it is.]`;
 const texts = (messages: unknown[] | undefined) => (messages ?? []).map((m: any) => (typeof m.content === "string" ? m.content : m.content?.[0]?.text ?? m.content?.[0]?.type ?? ""));
 
-describe("vcc_context", () => {
+describe("keel_context", () => {
   it("lists the turns in context by #N, the running one last", () => {
     setEvict(true);
     const s = session(3);
@@ -96,7 +96,7 @@ describe("vcc_context", () => {
     // (the request never holds two user messages in a row), then turns 2 and 3 as they are.
     expect(shown).toHaveLength(8);
     expect((messages as any[])[0].content.map((p: any) => p.text)).toEqual([shown[0], "request number 2 please read f2.ts"]);
-    expect(shown[0]).toBe('[#0–#7 out of context: 2 turns, by the agent. Requests: "request number 0 please read f0.ts"; "request number 1 please read f1.ts". The agent\'s note: f0 and f1 were read; nothing to fix there. Each entry reads back word for word with vcc_recall expand:[0]; vcc_recall query searches them.]');
+    expect(shown[0]).toBe('[#0–#7 out of context: 2 turns, by the agent. Requests: "request number 0 please read f0.ts"; "request number 1 please read f1.ts". The agent\'s note: f0 and f1 were read; nothing to fix there. Each entry reads back word for word with keel_recall expand:[0]; keel_recall query searches them.]');
     // A call and its result leave together: what stays has every result's call.
     const calls = new Set((messages as any[]).flatMap((m) => (m.role === "assistant" ? m.content.map((p: any) => p.id) : [])));
     expect((messages as any[]).filter((m) => m.role === "toolResult").every((m) => calls.has(m.toolCallId))).toBe(true);
@@ -105,6 +105,16 @@ describe("vcc_context", () => {
     expect(roles.some((r, i) => r === "user" && roles[i + 1] === "user")).toBe(false);
     // The same line on every request, so the provider's cache keeps it.
     expect(texts(sent(s).messages)[0]).toBe(shown[0]);
+  });
+
+  it("keeps out what keel took out as omp-vcc, and brings it back", () => {
+    setEvict(true);
+    const s = session(4);
+    s.host.appendEntry("omp-vcc.evict", { v: 1, op: "evict", from: 0, to: 7, by: "agent", at: 99 });
+    expect(texts(sent(s).messages)[0]).toStartWith("[#0–#7 out of context: 2 turns, by the agent.");
+    expect(tool(s, { restore: "#0" })).toBe("Back in context from the next request: #0–#7.");
+    // Nothing is out now: the request goes as the host built it.
+    expect(sent(s).messages).toBeUndefined();
   });
 
   it("never takes out the turn running now", () => {
@@ -142,7 +152,7 @@ describe("the line in place of what is out", () => {
     setEvict(true);
     const s = work();
     tool(s, { drop: "#0" });
-    expect(texts(sent(s).messages)[0]).toBe('[#0–#5 out of context: 1 turn, by the agent. Requests: "fix the rounding in the totals". It changed billing/totals.ts; 1 failed call. Each entry reads back word for word with vcc_recall expand:[0]; vcc_recall query searches them.]');
+    expect(texts(sent(s).messages)[0]).toBe('[#0–#5 out of context: 1 turn, by the agent. Requests: "fix the rounding in the totals". It changed billing/totals.ts; 1 failed call. Each entry reads back word for word with keel_recall expand:[0]; keel_recall query searches them.]');
   });
 
   it("reads the same when omp blanks a result it stands for", () => {
@@ -176,7 +186,7 @@ describe("the running turn", () => {
     // The line ends the request it follows, so no two user messages stand in a row.
     const request = (messages as any[])[0].content.map((p: any) => p.text);
     expect(request[0]).toBe("audit every module in the repository");
-    expect(request[1]).toStartWith(`[#1–#${s.appended[0].data.to} out of context: older steps of the turn at #0, by omp-vcc as the context filled.`);
+    expect(request[1]).toStartWith(`[#1–#${s.appended[0].data.to} out of context: older steps of the turn at #0, by keel as the context filled.`);
     expect((messages as any[])[1].role).toBe("assistant");
     // The newest step stays, and every result that stays has its call.
     expect((messages as any[]).at(-1).toolCallId).toBe("r11");
@@ -284,7 +294,7 @@ describe("an eviction that does not pay", () => {
 });
 
 describe("the context's file", () => {
-  const mirror = (s: { file: string }) => `${s.file}.vcc-context.md`;
+  const mirror = (s: { file: string }) => `${s.file}.keel-context.md`;
   const edit = (s: { file: string }, f: (text: string) => string) => writeFileSync(mirror(s), f(readFileSync(mirror(s), "utf8")));
 
   it("holds the request block by block, and what the agent deletes or rewrites leaves the next request", () => {
@@ -299,9 +309,9 @@ describe("the context's file", () => {
     edit(s, (t) => t.replace(/\[\[CTX_TURN #0–#3\]\][\s\S]*?(?=\n\[\[CTX_)/, "").replace(/(\[\[CTX_TURN #4–#7\]\]\n)[\s\S]*?(?=\n\[\[CTX_)/, "$1f1.ts exports totals(); nothing else in it matters."));
     const r = sent(s, undefined, true);
     expect(s.appended.map((e) => [e.data.op, e.data.from, e.data.to, e.data.text])).toEqual([["evict", 0, 3, undefined], ["evict", 4, 7, "f1.ts exports totals(); nothing else in it matters."]]);
-    expect(r.notice).toBe("omp-vcc: the agent edited its context's file: #0–#3 out; #4–#7 rewritten.");
+    expect(r.notice).toBe("keel: the agent edited its context's file: #0–#3 out; #4–#7 rewritten.");
     const first = (r.messages as any[])[0].content.map((p: any) => p.text);
-    expect(first[1]).toBe("[#0–#7, as you rewrote them in your context's file (each original reads back word for word with vcc_recall expand:[0])]\n(#0–#3 out of context)\nf1.ts exports totals(); nothing else in it matters.");
+    expect(first[1]).toBe("[#0–#7, as you rewrote them in your context's file (each original reads back word for word with keel_recall expand:[0])]\n(#0–#3 out of context)\nf1.ts exports totals(); nothing else in it matters.");
     // The file now says so, and reading it back as it is changes nothing.
     expect(readFileSync(mirror(s), "utf8")).toContain("[[CTX_OUT #4–#7]]\nf1.ts exports totals(); nothing else in it matters.");
     s.appended.length = 0;
@@ -325,7 +335,7 @@ describe("the context's file", () => {
     edit(s, (t) => t.replace("\n[[CTX_TURN #12 running", "\n[[CTX_TURN 9 role=notes]]\nremember: totals() rounds down\n\n[[CTX_TURN #12 running").replace("(the turn running now", "something else (the turn running now"));
     const r = sent(s, undefined, true);
     expect(s.appended.map((e) => [e.data.op, e.data.after, e.data.text])).toEqual([["insert", 11, "remember: totals() rounds down"]]);
-    expect(r.notice).toBe("omp-vcc: the agent edited its context's file: 1 note; its edit of the running turn is left out.");
+    expect(r.notice).toBe("keel: the agent edited its context's file: 1 note; its edit of the running turn is left out.");
     const reply = (r.messages as any[]).find((m) => m.role === "assistant" && m.content.some((p: any) => p.text === "Read f2.ts."));
     expect(reply.content.map((p: any) => p.text)).toEqual(["Read f2.ts.", "remember: totals() rounds down"]);
     expect(readFileSync(mirror(s), "utf8")).toContain("[[CTX_NOTE after #11]]\nremember: totals() rounds down");
@@ -345,7 +355,7 @@ describe("the context's file", () => {
     expect(s.appended.map((e) => [e.data.op, e.data.from, e.data.to, e.data.text])).toEqual([["evict", 4, 7, "f1 only."]]);
   });
 
-  it("is not written without vcc_context", () => {
+  it("is not written without keel_context", () => {
     setEvict(false);
     const s = session(2);
     sent(s, undefined, false);
@@ -367,8 +377,8 @@ describe("undo", () => {
   });
 });
 
-describe("the context's size on omp-vcc's own results", () => {
-  it("ends the agent's vcc_context, vcc_recall and vcc_pin results while eviction is on, not the user's commands", () => {
+describe("the context's size on keel's own results", () => {
+  it("ends the agent's keel_context, keel_recall and keel_pin results while eviction is on, not the user's commands", () => {
     const s = session(3);
     const ctx = { ...s.ctx(100_000), getContextUsage: () => ({ tokens: 41_808 }) } as any;
     const readout = "[context: ~41808 tokens, 50% of where the host compacts (~83616); ~41808 left]";
@@ -410,7 +420,7 @@ describe("when an eviction pays, by the session's own prices", () => {
 });
 
 describe("chars per token, measured on the request", () => {
-  it("comes from two requests the provider counted, is kept for the model, and sizes vcc_context's listing", () => {
+  it("comes from two requests the provider counted, is kept for the model, and sizes keel_context's listing", () => {
     setEvict(true);
     const messages: any[] = [];
     // 10 turns of 3,000 chars; each answer's prompt grows by 1,000 tokens a turn: 3 chars a token.
@@ -420,17 +430,17 @@ describe("chars per token, measured on the request", () => {
     }
     const s = sessionOf(messages);
     sent(s, 100_000, true);
-    const limits = JSON.parse(readFileSync(join(dirname(process.env.OMP_VCC_CONFIG_PATH!), "omp-vcc-models.json"), "utf8"));
+    const limits = JSON.parse(readFileSync(join(dirname(process.env.KEEL_CONFIG_PATH!), "keel-models.json"), "utf8"));
     expect(limits["p/m"].charsPerToken).toBe(3);
     // The listing reads it: a turn of 3,000 chars is ~1,000 tokens, not the 750 of 4 chars a token.
     expect(evict(s.host, ompBinding, s.ctx(100_000) as any, { surface: "tool", params: null })).toContain("#16–#17 ~1000 tokens");
     // What this model measured stays with this test.
-    rmSync(join(dirname(process.env.OMP_VCC_CONFIG_PATH!), "omp-vcc-models.json"), { force: true });
+    rmSync(join(dirname(process.env.KEEL_CONFIG_PATH!), "keel-models.json"), { force: true });
   });
 });
 
 describe("turn numbers in view", () => {
-  it("each request in the context starts with its turn's #N while vcc_context is there, the same on every request", () => {
+  it("each request in the context starts with its turn's #N while keel_context is there, the same on every request", () => {
     setEvict(true);
     const s = session(3);
     record(s, { op: "evict", from: 0, to: 3 });
@@ -461,19 +471,19 @@ describe("pinned notes when turns leave", () => {
     const first = (sent(s, undefined, true).messages as any[])[0].content.map((p: any) => p.text);
     // Nothing out: the notes pinned in the conversation are in it, in their calls; the block holds what was carried in.
     expect(first).toEqual([
-      header(s) + "\n[Pinned notes carried from the last session (vcc_pin; a name pinned again replaces its note; any pinned since are in the conversation):\n- [9] plan: ship v2 (agent, from session aaaa1111)]",
+      header(s) + "\n[Pinned notes carried from the last session (keel_pin; a name pinned again replaces its note; any pinned since are in the conversation):\n- [9] plan: ship v2 (agent, from session aaaa1111)]",
       "[#0]", "request number 0 please read f0.ts",
     ]);
     // Turns out: the edit takes up every note as it reads then, and the block stands first, the same on every request.
     record(s, { op: "evict", from: 0, to: 7 });
     const out = (sent(s, undefined, true).messages as any[])[0].content.map((p: any) => p.text);
-    expect(out[0]).toBe(`${header(s)}\n` + "[Pinned notes, as of #15 (vcc_pin; a name pinned again replaces its note; any pinned since are in the conversation):\n- [1] sessions live in SQLite (agent, #1)\n- [3] test-cmd: bun test --isolate (agent, #13)\n- [9] plan: ship v2 (agent, from session aaaa1111)]");
+    expect(out[0]).toBe(`${header(s)}\n` + "[Pinned notes, as of #15 (keel_pin; a name pinned again replaces its note; any pinned since are in the conversation):\n- [1] sessions live in SQLite (agent, #1)\n- [3] test-cmd: bun test --isolate (agent, #13)\n- [9] plan: ship v2 (agent, from session aaaa1111)]");
     expect(out[1]).toStartWith("[#0–#7 out of context: 2 turns");
     expect((sent(s, undefined, true).messages as any[])[0].content.map((p: any) => p.text)).toEqual(out);
     // A note pinned after the edit leaves the block as it is: it is in the conversation.
     s.host.appendEntry(PIN_ENTRY_TYPE, { v: 1, op: "add", id: 4, text: "a later note", by: "agent", at: 15 });
     expect((sent(s, undefined, true).messages as any[])[0].content.map((p: any) => p.text)).toEqual(out);
-    expect(tool(s, null)).toContain("Pinned (vcc_pin; a name pinned again replaces its note):\n  [1] sessions live in SQLite (agent, #1)\n  [3] test-cmd: bun test --isolate (agent, #13)\n  [4] a later note (agent, #15)\n  [9] plan: ship v2 (agent, from session aaaa1111)");
+    expect(tool(s, null)).toContain("Pinned (keel_pin; a name pinned again replaces its note):\n  [1] sessions live in SQLite (agent, #1)\n  [3] test-cmd: bun test --isolate (agent, #13)\n  [4] a later note (agent, #15)\n  [9] plan: ship v2 (agent, from session aaaa1111)");
   });
 
   it("are not added with eviction off and nothing out: the summary carries them", () => {
@@ -484,7 +494,7 @@ describe("pinned notes when turns leave", () => {
   });
 });
 
-describe("/omp-vcc-evict", () => {
+describe("/keel-evict", () => {
   const command = (s: ReturnType<typeof session>, args: string) => call(s, { surface: "command", args });
 
   it("takes out the oldest half with no text, a number of turns, all, or a range; and restores", () => {
@@ -532,16 +542,16 @@ describe("the request hook", () => {
 
 describe("as the context fills", () => {
   // A 100K window: omp compacts at 83,616 tokens; past 85% of that the oldest turns leave, down to half.
-  it("takes out the oldest finished turns, by omp-vcc, and says so", () => {
+  it("takes out the oldest finished turns, by keel, and says so", () => {
     setEvict(true);
     const s = session(10, 30_000, 80_000);
     const { messages, notice } = sent(s, 100_000);
     expect(s.appended).toHaveLength(1);
     expect(s.appended[0].data).toMatchObject({ op: "evict", from: 0, by: "auto" });
     const to = s.appended[0].data.to;
-    expect(notice).toContain(`#0–#${to} out · by omp-vcc as the context filled`);
+    expect(notice).toContain(`#0–#${to} out · by keel as the context filled`);
     const shown = texts(messages);
-    expect(shown[0]).toContain("by omp-vcc as the context filled");
+    expect(shown[0]).toContain("by keel as the context filled");
     // What stays is at most half of the trigger, by the same estimate.
     const after = Number(notice!.match(/→ ~(\d+) tokens/)![1]);
     expect(after).toBeLessThanOrEqual(83_616 / 2);
@@ -571,16 +581,16 @@ describe("as the context fills", () => {
     const first = sent(s, 100_000, true);
     // Nothing leaves the request (its turns only gain their #N): the note is stored and sent before the next model call.
     expect((first.messages as any[]).length).toBe(s.request().length);
-    expect(first.note).toMatch(/^\[omp-vcc: the context is past \d0% of where the host compacts \(~83616 tokens\); past 85% the oldest turns leave by themselves\. vcc_context lists what is in it and takes old turns out, with a note of what to keep\.\]$/);
+    expect(first.note).toMatch(/^\[keel: the context is past \d0% of where the host compacts \(~83616 tokens\); past 85% the oldest turns leave by themselves\. keel_context lists what is in it and takes old turns out, with a note of what to keep\.\]$/);
     expect(s.appended.map((e) => e.data.op)).toEqual(["budget"]);
     // The same tenth again: nothing more is said.
     expect(sent(s, 100_000, true).note).toBeUndefined();
-    // Without vcc_context the note would name a tool that is not there; below half nothing is said.
+    // Without keel_context the note would name a tool that is not there; below half nothing is said.
     expect(sent(session(10, 20_000, 50_000), 100_000, false).note).toBeUndefined();
     expect(sent(session(10, 1_000, 20_000), 100_000, true).note).toBeUndefined();
   });
 
-  it("tells again from half once the agent or the user shrank the context, not after omp-vcc's own eviction", () => {
+  it("tells again from half once the agent or the user shrank the context, not after keel's own eviction", () => {
     setEvict(true);
     const s = session(10, 20_000, 50_000);
     expect(sent(s, 100_000, true).note).toBeDefined();
@@ -592,7 +602,7 @@ describe("as the context fills", () => {
 
   it("says nothing of the context's size when nothing can leave it", () => {
     setEvict(true);
-    // One turn: its request and its newest step stay, so vcc_context could take nothing.
+    // One turn: its request and its newest step stay, so keel_context could take nothing.
     const s = sessionOf([
       { role: "user", content: "one request" },
       { role: "assistant", content: [{ type: "toolCall", id: "r0", name: "read", arguments: { path: "a.ts" } }] },

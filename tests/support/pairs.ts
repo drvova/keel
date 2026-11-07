@@ -1,4 +1,4 @@
-// A search over these messages, or a vcc_recall call on them, as recall runs
+// A search over these messages, or a keel_recall call on them, as recall runs
 // it: written as a session file and read by the core, each entry's index its #N.
 import { join } from "path";
 import { core } from "../../src/core/lisp-core";
@@ -38,7 +38,7 @@ export const search = (messages: readonly unknown[], query: string, tuning: { re
 
 export const searchHits = (messages: readonly unknown[], query: string): SearchHit[] => search(messages, query).hits;
 
-/** vcc_recall on a session of these messages, the session manager on its one branch. */
+/** keel_recall on a session of these messages, the session manager on its one branch. */
 export const recallOn = (messages: readonly unknown[], params: Record<string, unknown>, options: { contextWindow?: number } = {}): string => {
   const file = sessionFileOf(messages);
   const branch = messages.map((message, i) => ({ type: "message", id: `m${i}`, parentId: i ? `m${i - 1}` : null, message }));

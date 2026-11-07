@@ -10,33 +10,36 @@ const DEFAULT_SETTINGS = {
   overrideDefaultCompaction: true, smartKeepTail: true, debug: false, skipForProviders: [], skipCustomTypes: [], trackCommands: [], keepOriginals: true, workingSet: true, evict: false,
 };
 
-const saved = { config: process.env.OMP_VCC_CONFIG_PATH, agentDir: process.env.PI_CODING_AGENT_DIR };
+const saved = { config: process.env.KEEL_CONFIG_PATH, oldConfig: process.env.OMP_VCC_CONFIG_PATH, agentDir: process.env.PI_CODING_AGENT_DIR };
 let dir: string;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "omp-vcc-settings-"));
+  dir = mkdtempSync(join(tmpdir(), "keel-settings-"));
+  delete process.env.KEEL_CONFIG_PATH;
   delete process.env.OMP_VCC_CONFIG_PATH;
   delete process.env.PI_CODING_AGENT_DIR;
 });
 
 afterEach(() => {
-  if (saved.config === undefined) delete process.env.OMP_VCC_CONFIG_PATH;
-  else process.env.OMP_VCC_CONFIG_PATH = saved.config;
+  if (saved.config === undefined) delete process.env.KEEL_CONFIG_PATH;
+  else process.env.KEEL_CONFIG_PATH = saved.config;
+  if (saved.oldConfig === undefined) delete process.env.OMP_VCC_CONFIG_PATH;
+  else process.env.OMP_VCC_CONFIG_PATH = saved.oldConfig;
   if (saved.agentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
   else process.env.PI_CODING_AGENT_DIR = saved.agentDir;
   rmSync(dir, { recursive: true, force: true });
 });
 
 describe("settings", () => {
-  test("the config is in the host's agent dir, or at OMP_VCC_CONFIG_PATH", () => {
-    expect(openConfig(() => dir).path()).toBe(join(dir, "omp-vcc-config.json"));
-    process.env.OMP_VCC_CONFIG_PATH = "/tmp/elsewhere.json";
+  test("the config is in the host's agent dir, or at KEEL_CONFIG_PATH", () => {
+    expect(openConfig(() => dir).path()).toBe(join(dir, "keel-config.json"));
+    process.env.KEEL_CONFIG_PATH = "/tmp/elsewhere.json";
     expect(openConfig(() => dir).path()).toBe("/tmp/elsewhere.json");
   });
 
   test("a fresh agent dir gets the defaults, with no continue setting", () => {
     openConfig(() => dir).scaffold();
-    const written = JSON.parse(readFileSync(join(dir, "omp-vcc-config.json"), "utf8"));
+    const written = JSON.parse(readFileSync(join(dir, "keel-config.json"), "utf8"));
     expect(written).toEqual(DEFAULT_SETTINGS);
     expect("continueAfterThresholdCompact" in written).toBe(false);
   });
@@ -46,32 +49,48 @@ describe("settings", () => {
     writeFileSync(join(dir, "pi-vcc-config.json"), JSON.stringify({ overrideDefaultCompaction: false, trackCommands: ["ssh"], continueAfterThresholdCompact: true }));
     config.scaffold();
     expect(existsSync(join(dir, "pi-vcc-config.json"))).toBe(true); // left in place
-    const migrated = JSON.parse(readFileSync(join(dir, "omp-vcc-config.json"), "utf8"));
+    const migrated = JSON.parse(readFileSync(join(dir, "keel-config.json"), "utf8"));
     expect(migrated).toMatchObject({ overrideDefaultCompaction: false, trackCommands: ["ssh"], smartKeepTail: true, skipForProviders: [] });
     expect(config.load()).toMatchObject({ overrideDefaultCompaction: false, trackCommands: ["ssh"] });
 
-    // Once omp-vcc's own file exists, the old one is not read again.
+    // Once keel's own file exists, the old one is not read again.
     writeFileSync(join(dir, "pi-vcc-config.json"), JSON.stringify({ overrideDefaultCompaction: true }));
     config.scaffold();
     expect(config.load().overrideDefaultCompaction).toBe(false);
   });
 
-  test("an explicit OMP_VCC_CONFIG_PATH is never filled from pi-vcc's file", () => {
+  test("omp-vcc's config is carried over, before pi-vcc's", () => {
+    const config = openConfig(() => dir);
+    writeFileSync(join(dir, "pi-vcc-config.json"), JSON.stringify({ trackCommands: ["from pi-vcc"] }));
+    writeFileSync(join(dir, "omp-vcc-config.json"), JSON.stringify({ trackCommands: ["from omp-vcc"], evict: true }));
+    config.scaffold();
+    expect(existsSync(join(dir, "omp-vcc-config.json"))).toBe(true); // left in place
+    expect(config.load()).toMatchObject({ trackCommands: ["from omp-vcc"], evict: true, smartKeepTail: true });
+  });
+
+  test("OMP_VCC_CONFIG_PATH still names the config, and KEEL_CONFIG_PATH comes first", () => {
+    process.env.OMP_VCC_CONFIG_PATH = "/tmp/old-name.json";
+    expect(openConfig(() => dir).path()).toBe("/tmp/old-name.json");
+    process.env.KEEL_CONFIG_PATH = "/tmp/new-name.json";
+    expect(openConfig(() => dir).path()).toBe("/tmp/new-name.json");
+  });
+
+  test("an explicit KEEL_CONFIG_PATH is never filled from pi-vcc's file", () => {
     const config = openConfig(() => dir);
     writeFileSync(join(dir, "pi-vcc-config.json"), JSON.stringify({ overrideDefaultCompaction: false }));
-    process.env.OMP_VCC_CONFIG_PATH = join(dir, "omp-vcc-config.json");
+    process.env.KEEL_CONFIG_PATH = join(dir, "keel-config.json");
     config.scaffold();
     expect(config.load().overrideDefaultCompaction).toBe(true);
   });
 
-  test("omp-vcc takes over the host's compaction, and tracks no commands, by default", () => {
+  test("keel takes over the host's compaction, and tracks no commands, by default", () => {
     expect(DEFAULT_SETTINGS.overrideDefaultCompaction).toBe(true);
     expect(DEFAULT_SETTINGS.trackCommands).toEqual([]);
   });
 
   test("malformed trackCommands values coerce fail-closed to string[]", () => {
     const config = openConfig(() => dir);
-    const write = (trackCommands: unknown) => writeFileSync(join(dir, "omp-vcc-config.json"), JSON.stringify({ trackCommands }));
+    const write = (trackCommands: unknown) => writeFileSync(join(dir, "keel-config.json"), JSON.stringify({ trackCommands }));
     for (const bad of ["ssh", 42, [1, " kubectl ", null, "kubectl"], null, { 0: "ssh" }]) {
       write(bad);
       const got = config.load().trackCommands;
@@ -85,7 +104,7 @@ describe("settings", () => {
   test("a switch is a boolean, or true/false in quotes; any other value leaves the default", () => {
     const config = openConfig(() => dir);
     const load = (settings: Record<string, unknown>) => {
-      writeFileSync(join(dir, "omp-vcc-config.json"), JSON.stringify(settings));
+      writeFileSync(join(dir, "keel-config.json"), JSON.stringify(settings));
       return config.load();
     };
     expect(load({ debug: "no", overrideDefaultCompaction: 0 })).toMatchObject({ debug: false, overrideDefaultCompaction: true });
@@ -94,11 +113,11 @@ describe("settings", () => {
 
   test("the file is written as JSON.stringify(value, null, 2) writes it, a newline after", () => {
     openConfig(() => dir).scaffold();
-    expect(readFileSync(join(dir, "omp-vcc-config.json"), "utf8")).toBe(`${JSON.stringify(DEFAULT_SETTINGS, null, 2)}\n`);
+    expect(readFileSync(join(dir, "keel-config.json"), "utf8")).toBe(`${JSON.stringify(DEFAULT_SETTINGS, null, 2)}\n`);
   });
 
   test("missing keys are added after the user's, which keep their order, values and number notation", () => {
-    const file = join(dir, "omp-vcc-config.json");
+    const file = join(dir, "keel-config.json");
     writeFileSync(file, '{"debug": true, "z": [1e-7, 1e21, 0.1, 12345678.5, 9007199254740993], "2": "x"}');
     openConfig(() => dir).scaffold();
     const text = readFileSync(file, "utf8");
@@ -107,7 +126,7 @@ describe("settings", () => {
   });
 
   test("a file that is not a JSON object or array is left alone, and reads as the defaults", () => {
-    const file = join(dir, "omp-vcc-config.json");
+    const file = join(dir, "keel-config.json");
     for (const text of ["{ not json", "null", "42", '"debug"', "{\"n\": 01}"]) {
       writeFileSync(file, text);
       const config = openConfig(() => dir);

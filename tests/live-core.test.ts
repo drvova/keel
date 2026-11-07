@@ -19,8 +19,8 @@ const entries = (n: number, word = "alpha") => {
 /** The same request answered by the live core and by a process of its own. */
 const both = (request: object) => {
   const live = core(request);
-  process.env.OMP_VCC_CORE_LIVE = "off";
-  try { return { live, alone: core(request) }; } finally { delete process.env.OMP_VCC_CORE_LIVE; }
+  process.env.KEEL_CORE_LIVE = "off";
+  try { return { live, alone: core(request) }; } finally { delete process.env.KEEL_CORE_LIVE; }
 };
 
 describe("the live core", () => {
@@ -60,23 +60,23 @@ describe("the live core", () => {
   });
 
   it("reports a failed request as failed, and keeps serving", () => {
-    expect(() => core({ op: "nope" })).toThrow('omp-vcc\'s core failed: unknown op "nope"');
+    expect(() => core({ op: "nope" })).toThrow('keel\'s core failed: unknown op "nope"');
     const pid = liveCorePid();
     expect(core({ op: "regex", pattern: "x", texts: ["y"] }).results).toEqual([{ test: false, search: -1, count: 0 }]);
     expect(liveCorePid()).toBe(pid);
   });
 
-  it("is not used with OMP_VCC_CORE_LIVE=off", () => {
+  it("is not used with KEEL_CORE_LIVE=off", () => {
     core({ op: "regex", pattern: "a", texts: ["a"] });
     const pid = liveCorePid()!;
     process.kill(pid, "SIGKILL");
-    process.env.OMP_VCC_CORE_LIVE = "off";
+    process.env.KEEL_CORE_LIVE = "off";
     try {
       const file = join(freshDir(), "t.jsonl");
       writeFileSync(file, "");
       expect(core({ op: "search", file, query: "q" }).hits).toEqual([]);
       // Answered by a process of its own: the dead live core was not even looked at.
       expect(liveCorePid()).toBe(pid);
-    } finally { delete process.env.OMP_VCC_CORE_LIVE; }
+    } finally { delete process.env.KEEL_CORE_LIVE; }
   });
 });

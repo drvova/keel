@@ -16,7 +16,7 @@
 ;;;; message as it is (SUMMARY) and, where omp rewrote it, as the kept original
 ;;;; (RESTORED).
 
-(in-package #:omp-vcc)
+(in-package #:keel)
 
 ;;; --- token estimates ---------------------------------------------------------------
 
@@ -110,17 +110,17 @@ the host's convertToLlm reads of it (an extension's attribution and details)."
 (defun host-converts-p (m)
   "Whether the summary reads M through the host's convertToLlm: omp's developer
 turns (host reminders) and @file mentions are host context, not conversation,
-and the notice /omp-vcc-pin sends the agent is left out ([Pinned Notes] carries
+and the notice /keel-pin sends the agent is left out ([Pinned Notes] carries
 the note itself)."
   (let ((role (json-get m "role")))
     (not (or (member role '("developer" "fileMention") :test #'equal)
-             (and (equal role "custom") (member (json-get m "customType") (list +pin-notice-type+ +budget-notice-type+) :test #'equal))))))
+             (and (equal role "custom") (notice-type-p (json-get m "customType")))))))
 
 (defun summary-message (m converted)
   "What M becomes in the summary's input, given CONVERTED, what the host's
 convertToLlm made of it (a vector, NIL where it was not asked): :NULL for
 nothing. A command the user ran (`!cmd`, a python cell) stays as it is: the
-brief shows it as one line with its output behind vcc_recall, where
+brief shows it as one line with its output behind keel_recall, where
 convertToLlm would make it user text. An extension's message, a branch's
 summary and user text an extension sent on the agent's behalf are marked
 injected, so the early requests, [User Messages] and [History Index] read only
@@ -137,7 +137,7 @@ is read back as user content."
 
 (defun host-messages (branch file)
   "Each entry's live message on BRANCH and, where omp rewrote it, the original
-omp-vcc kept: (values LIVE ORIGINALS), vectors parallel to BRANCH, NIL where none."
+keel kept: (values LIVE ORIGINALS), vectors parallel to BRANCH, NIL where none."
   (let* ((live (map 'vector #'live-message branch))
          (at (loop for m across live for i from 0 when m collect i))
          (restored (restore-originals (mapcar (lambda (i) (aref live i)) at)
@@ -399,13 +399,13 @@ cut would summarize everything."
 
 ;;; --- what an earlier compaction stored -------------------------------------------------
 
-(defun vcc-details-of (details)
-  "omp-vcc's (or pi-vcc's) details on a compaction, also under omp's rollover (hookDetails), or NIL."
-  (flet ((own-p (d) (member (json-get d "compactor") (list +compactor+ +legacy-compactor+) :test #'equal)))
+(defun keel-details-of (details)
+  "keel's (or pi-vcc's) details on a compaction, also under omp's rollover (hookDetails), or NIL."
+  (flet ((own-p (d) (member (json-get d "compactor") (cons +compactor+ +legacy-compactors+) :test #'equal)))
     (let ((own (if (own-p details) details (json-get details "hookDetails"))))
       (and (own-p own) own))))
 
-;;; --- restoring the originals omp-vcc kept ------------------------------------------------
+;;; --- restoring the originals keel kept ------------------------------------------------
 
 ;;; --- the plan --------------------------------------------------------------------------------
 
@@ -445,7 +445,7 @@ sections and brief that would replace it."
          (summarized 0) (messages '()) (indices '()))
     ;; omp may have blanked or shaken some of these in place since they landed.
     ;; The summary is all that will remain of them, so it is written from the
-    ;; originals omp-vcc kept (the hook sends what convertToLlm makes of them);
+    ;; originals keel kept (the hook sends what convertToLlm makes of them);
     ;; the cut and the budgets count what the context holds now.
     (dolist (item (cut-items cut))
       (unless (skipped-custom-p (item-live item) skip)
@@ -459,7 +459,7 @@ sections and brief that would replace it."
            (removed (reduce #'+ (mapcar (lambda (i) (message-chars (item-live i))) (cut-items cut))))
            (compaction-at (last-compaction-index branch))
            (previous-compaction (and (>= compaction-at 0) (aref branch compaction-at)))
-           (details (and previous-compaction (vcc-details-of (json-get previous-compaction "details"))))
+           (details (and previous-compaction (keel-details-of (json-get previous-compaction "details"))))
            (window-range (range-of-window messages indices))
            (stored-index (if previous-compaction (read-history-index (json-get details "historyIndex")) '()))
            (history (and window-range
@@ -469,7 +469,7 @@ sections and brief that would replace it."
                                               window-range
                                               (json-get (budget budgets "summary") "historyRanges"))))
            (working-lines nil) (working-shown nil)
-           ;; Every message since /clear, as the original omp-vcc kept where omp rewrote it: (BRANCH-POS MESSAGE #N).
+           ;; Every message since /clear, as the original keel kept where omp rewrote it: (BRANCH-POS MESSAGE #N).
            (since (loop for i from (1+ (last-reset-index branch)) below (length branch)
                         for m = (live-message (aref branch i))
                         when m collect (list i (or (json-get (aref notes i) "original") m) (json-get (aref notes i) "n")))))
@@ -516,8 +516,8 @@ sections and brief that would replace it."
                                       (max (budget budgets "growthMarginChars") (js-round (* removed +growth-margin-share+))))))))))
 
 (defparameter +cut-reasons+
-  '((:no-live-messages "no_live_messages" "omp-vcc: Nothing to compact (no live messages)")
-    (:too-few-live-messages "too_few_live_messages" "omp-vcc: Too few messages to compact"))
+  '((:no-live-messages "no_live_messages" "keel: Nothing to compact (no live messages)")
+    (:too-few-live-messages "too_few_live_messages" "keel: Too few messages to compact"))
   "Why there is no cut: (REASON NAME NOTICE).")
 
 (defun cut-reason-name (reason) (second (assoc reason +cut-reasons+)))
@@ -568,7 +568,7 @@ and what it was sized from (for debugging a compaction that kept too much or too
          (requested (let ((k (json-get input "keepUserTurns"))) (and (realp k) k)))
          (recovering (eq (json-get input "recovering") :true))
          (max-tail (budget budgets "maxTailTokens")))
-    ;; A pass omp-vcc started itself went by the policy as last recorded; this one
+    ;; A pass keel started itself went by the policy as last recorded; this one
     ;; carries the current policy, which may since say no: compaction off, or a
     ;; trigger the context (measured as the end-of-run check measured it) is under.
     (let ((self (json-get input "selfStarted")))
@@ -629,9 +629,9 @@ and what it was sized from (for debugging a compaction that kept too much or too
             (when (and grows (or (not recovering) (cut-compact-all cut)))
               (return-from plan-sized
                 (json-object "kind" "cancel" "why" "growth"
-                             "notice" (cond (recovering (format nil "omp-vcc: Not compacted: the ~d messages left are smaller than a summary of them; the context is full of what no compaction removes (the system prompt and tools)." n))
+                             "notice" (cond (recovering (format nil "keel: Not compacted: the ~d messages left are smaller than a summary of them; the context is full of what no compaction removes (the system prompt and tools)." n))
                                             ((equal (json-get input "reason") "manual")
-                                             (format nil "omp-vcc: Not compacted: the summary would be ~d chars larger than the ~d messages it replaces.~a"
+                                             (format nil "keel: Not compacted: the summary would be ~d chars larger than the ~d messages it replaces.~a"
                                                      (growth-net growth) n (if (cut-compact-all cut) "" " keep:0 summarizes everything."))))
                              "growth" (growth-json growth) "summarized" n)))
             (let ((kept (and (plusp (length (cut-first-kept cut))) (branch-from branch (cut-first-kept cut)))))

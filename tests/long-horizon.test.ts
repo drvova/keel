@@ -1,5 +1,5 @@
 // Long-horizon floor: 60- and 120-turn sessions with planted facts, worked through
-// by a real model in omp (or Pi, with OMP_VCC_LH_HOST=pi) with omp-vcc loaded,
+// by a real model in omp (or Pi, with KEEL_LH_HOST=pi) with keel loaded,
 // omp's idle pass (Pi's /compact) every 6 turns (tests/support/long-horizon.ts).
 // Numbers for the current code: bun run scripts/benchmark-long-horizon.ts
 import { searchHits } from "./support/pairs";
@@ -15,7 +15,7 @@ describe.skipIf(!realModel())(`long-horizon session, on a real model in ${sessio
   // Each run's per-fact table goes to the log: a real model's runs differ, and a failure needs the table to read.
   const report = (label: string, r: LongHorizonResult) =>
     console.log([
-      `${label}: ${r.compactions} compactions (${r.byOmpVcc} by omp-vcc), summary chars max ${Math.max(...r.summaryChars)} (sections ${Math.max(...r.sectionChars)})`,
+      `${label}: ${r.compactions} compactions (${r.byKeel} by keel), summary chars max ${Math.max(...r.summaryChars)} (sections ${Math.max(...r.sectionChars)})`,
       ...r.needles.map((n) => `  ${n.kind.padEnd(13)} turn ${String(n.turn).padStart(3)}  summary ${n.inSummary ? "yes" : "no "}  pointer ${n.pointed ? "yes" : "no "}  recall ${n.recallRank ?? "-"}`),
     ].join("\n"));
   beforeAll(async () => {
@@ -31,12 +31,12 @@ describe.skipIf(!realModel())(`long-horizon session, on a real model in ${sessio
       const r = () => runs[key];
       const by = (kind: string) => r().needles.find((n) => n.kind === kind)!;
 
-      it(`${sessionHost()} compacted at least every 6 turns, through omp-vcc each time`, () => {
+      it(`${sessionHost()} compacted at least every 6 turns, through keel each time`, () => {
         expect(r().compactions).toBeGreaterThanOrEqual(turns / 6);
-        expect(r().byOmpVcc).toBe(r().compactions);
+        expect(r().byKeel).toBe(r().compactions);
       });
 
-      it("vcc_recall finds every planted fact with a reworded query, on page 1", () => {
+      it("keel_recall finds every planted fact with a reworded query, on page 1", () => {
         expect(r().needles.filter((n) => n.recallRank == null).map((n) => n.kind)).toEqual([]);
       });
 
@@ -64,7 +64,7 @@ describe.skipIf(!realModel())(`long-horizon session, on a real model in ${sessio
   // follow omp's trigger (lisp/src/window.lisp), recall and pointers do not.
   it("a 32K window gets about half the summary's sections, and keeps every pointer and recall", () => {
     const { small, r60: typical } = runs;
-    expect(small.byOmpVcc).toBe(small.compactions);
+    expect(small.byKeel).toBe(small.compactions);
     // [Working Set] is sized from what the compaction may land with, not with the sections.
     const sections = (r: LongHorizonResult) => Math.max(...r.sectionChars);
     expect(sections(small)).toBeLessThan(sections(typical) * 0.6);

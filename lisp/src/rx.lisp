@@ -8,7 +8,7 @@
 ;;;; exec, test, replace, matchAll and split behaving as JavaScript's do.
 ;;;; Positions are code units, as there; JS-SLICE cuts a string at them.
 
-(in-package #:omp-vcc)
+(in-package #:keel)
 
 (defmacro rx (pattern &optional (flags ""))
   "PATTERN compiled once, with FLAGS from \"i\" and \"m\" (a \"g\" says which

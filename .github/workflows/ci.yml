@@ -79,7 +79,7 @@ jobs:
       - name: Install SBCL
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends sbcl
       - name: Lisp core tests
-        run: sbcl --noinform --non-interactive --eval '(require :asdf)' --eval '(push (truename "lisp/") asdf:*central-registry*)' --eval '(asdf:test-system "omp-vcc-core")'
+        run: sbcl --noinform --non-interactive --eval '(require :asdf)' --eval '(push (truename "lisp/") asdf:*central-registry*)' --eval '(asdf:test-system "keel-core")'
       # Every warning SBCL's compiler raises, and functions nothing names.
       - name: Lisp lint
         run: sbcl --noinform --non-interactive --load lisp/lint.lisp
@@ -101,7 +101,7 @@ jobs:
               const allowed = (p) => builtin.has(p.replace(/^node:/, "")) || extra.includes(p);
               const found = new Bun.Transpiler({ loader: "js" }).scanImports(await Bun.file("/tmp/bundle.js").text());
               const bad = [...new Set(found.map((i) => i.path).filter((p) => !allowed(p)))];
-              if (bad.length) { console.error("omp-vcc must not import packages at runtime:", bad.join(", ")); process.exit(1); }
+              if (bad.length) { console.error("keel must not import packages at runtime:", bad.join(", ")); process.exit(1); }
             '
           }
           check index.ts ""

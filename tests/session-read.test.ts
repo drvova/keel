@@ -12,7 +12,7 @@ const load = (file: string, allowed?: ReadonlySet<string>): Loaded[] =>
 
 describe("reading a session for recall", () => {
   it("loads all message entries when no lineage filter is provided", () => {
-    const dir = mkdtempSync(join(tmpdir(), "omp-vcc-load-all-"));
+    const dir = mkdtempSync(join(tmpdir(), "keel-load-all-"));
     const file = join(dir, "session.jsonl");
     try {
       const lines = [
@@ -32,7 +32,7 @@ describe("reading a session for recall", () => {
   });
 
   it("skips system messages but keeps their #N index slot", () => {
-    const dir = mkdtempSync(join(tmpdir(), "omp-vcc-load-system-"));
+    const dir = mkdtempSync(join(tmpdir(), "keel-load-system-"));
     const file = join(dir, "session.jsonl");
     try {
       const lines = [
@@ -51,7 +51,7 @@ describe("reading a session for recall", () => {
   });
 
   it("loads JSONL incrementally across read-chunk boundaries", () => {
-    const dir = mkdtempSync(join(tmpdir(), "omp-vcc-load-chunked-"));
+    const dir = mkdtempSync(join(tmpdir(), "keel-load-chunked-"));
     const file = join(dir, "session.jsonl");
     try {
       const largeText = `${"x".repeat(70_000)} unicode: λ`;
@@ -71,7 +71,7 @@ describe("reading a session for recall", () => {
 
   it("treats a not-yet-written session file as empty history instead of throwing ENOENT", () => {
     // Fresh session: pi has not persisted any entry, so the JSONL does not exist.
-    const dir = mkdtempSync(join(tmpdir(), "omp-vcc-load-missing-"));
+    const dir = mkdtempSync(join(tmpdir(), "keel-load-missing-"));
     try {
       const loaded = load(join(dir, "nope", "session.jsonl"));
       expect(loaded).toEqual([]);
@@ -81,7 +81,7 @@ describe("reading a session for recall", () => {
   });
 
   it("returns empty history for an existing but empty session file", () => {
-    const dir = mkdtempSync(join(tmpdir(), "omp-vcc-load-empty-"));
+    const dir = mkdtempSync(join(tmpdir(), "keel-load-empty-"));
     const file = join(dir, "session.jsonl");
     try {
       writeFileSync(file, "", "utf8");
@@ -95,7 +95,7 @@ describe("reading a session for recall", () => {
   it("still surfaces read errors that are not 'file does not exist'", () => {
     // A directory is readable-but-not-a-file (EISDIR): a real I/O problem, not
     // an empty history. It must not be swallowed.
-    const dir = mkdtempSync(join(tmpdir(), "omp-vcc-load-eisdir-"));
+    const dir = mkdtempSync(join(tmpdir(), "keel-load-eisdir-"));
     try {
       expect(() => load(dir)).toThrow();
     } finally {
@@ -104,7 +104,7 @@ describe("reading a session for recall", () => {
   });
 
   it("filters messages by allowed lineage entry IDs and preserves original message index", () => {
-    const dir = mkdtempSync(join(tmpdir(), "omp-vcc-load-filter-"));
+    const dir = mkdtempSync(join(tmpdir(), "keel-load-filter-"));
     const file = join(dir, "session.jsonl");
     try {
       const lines = [

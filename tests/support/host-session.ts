@@ -1,6 +1,6 @@
-// A session on a real model with omp-vcc loaded, in omp or in Pi, as a user runs
+// A session on a real model with keel loaded, in omp or in Pi, as a user runs
 // it: the model is a provider in the host's own models file (omp's `models.yml`,
-// Pi's `models.json`) whose key the host reads from the environment, omp-vcc is
+// Pi's `models.json`) whose key the host reads from the environment, keel is
 // loaded from this package (omp: `omp.extensions`; Pi: `pi.extensions`), and
 // every turn goes through the host's own agent loop, tools, context counting and
 // compaction. Shared by the long-horizon and Cybench sessions
@@ -13,14 +13,14 @@ const REPO = resolve(import.meta.dir, "../..");
 /** The model the sessions run on: DeepSeek V4.1 Flash, on OpenScale's OpenAI-compatible API. */
 export const LONG_HORIZON_MODEL = { baseUrl: "https://api.openscale.so/v1", model: "deepseek/deepseek-v4.1-flash", api: "openai-completions" };
 
-/** A local, git-ignored file the key may come from instead: `OMP_VCC_LH_API_KEY=…` lines, like a .env file. */
+/** A local, git-ignored file the key may come from instead: `KEEL_LH_API_KEY=…` lines, like a .env file. */
 export const KEY_FILE = resolve(REPO, "research/long-horizon.env");
 
-/** OMP_VCC_LH_* settings from KEY_FILE, for those the environment does not set (omp then reads the key from the env). */
+/** KEEL_LH_* settings from KEY_FILE, for those the environment does not set (omp then reads the key from the env). */
 const loadKeyFile = () => {
   if (!existsSync(KEY_FILE)) return;
   for (const line of readFileSync(KEY_FILE, "utf8").split("\n")) {
-    const m = line.match(/^\s*(?:export\s+)?(OMP_VCC_LH_[A-Z_]+)\s*=\s*['"]?([^'"\s]*)['"]?\s*$/);
+    const m = line.match(/^\s*(?:export\s+)?(KEEL_LH_[A-Z_]+)\s*=\s*['"]?([^'"\s]*)['"]?\s*$/);
     if (m && !process.env[m[1]]) process.env[m[1]] = m[2];
   }
 };
@@ -32,11 +32,11 @@ const loadKeyFile = () => {
  */
 export const realModel = (options: { keyFile?: boolean } = {}): { baseUrl: string; model: string; api: string } | undefined => {
   if (options.keyFile) loadKeyFile();
-  if (!process.env.OMP_VCC_LH_API_KEY) return undefined;
+  if (!process.env.KEEL_LH_API_KEY) return undefined;
   return {
-    baseUrl: process.env.OMP_VCC_LH_BASE_URL || LONG_HORIZON_MODEL.baseUrl,
-    model: process.env.OMP_VCC_LH_MODEL || LONG_HORIZON_MODEL.model,
-    api: process.env.OMP_VCC_LH_API || LONG_HORIZON_MODEL.api,
+    baseUrl: process.env.KEEL_LH_BASE_URL || LONG_HORIZON_MODEL.baseUrl,
+    model: process.env.KEEL_LH_MODEL || LONG_HORIZON_MODEL.model,
+    api: process.env.KEEL_LH_API || LONG_HORIZON_MODEL.api,
   };
 };
 
@@ -49,12 +49,12 @@ export interface ModelCost { input: number; output: number; cacheRead: number; c
  * provider serves it. Understood shapes: OpenScale's (input_modalities
  * max_context_length, per-token pricing), OpenRouter's (context_length,
  * pricing.prompt/completion/input_cache_read). Undefined when the provider
- * lists neither. This is the benchmark's own call; omp-vcc makes none.
+ * lists neither. This is the benchmark's own call; keel makes none.
  */
 export const providerModel = async (): Promise<{ contextWindow: number; cost: ModelCost } | undefined> => {
   const provider = realModel({ keyFile: true });
   if (!provider) return undefined;
-  const res = await fetch(`${provider.baseUrl}/models`, { headers: { Authorization: `Bearer ${process.env.OMP_VCC_LH_API_KEY}` } });
+  const res = await fetch(`${provider.baseUrl}/models`, { headers: { Authorization: `Bearer ${process.env.KEEL_LH_API_KEY}` } });
   if (!res.ok) return undefined;
   const m = ((await res.json()) as any)?.data?.find((x: any) => x?.id === provider.model);
   if (!m) return undefined;
@@ -72,21 +72,21 @@ export const providerModel = async (): Promise<{ contextWindow: number; cost: Mo
 
 export type Host = "omp" | "pi";
 
-/** The host a session runs in: `OMP_VCC_LH_HOST` (`omp` or `pi`), omp by default. */
-export const sessionHost = (): Host => (process.env.OMP_VCC_LH_HOST === "pi" ? "pi" : "omp");
+/** The host a session runs in: `KEEL_LH_HOST` (`omp` or `pi`), omp by default. */
+export const sessionHost = (): Host => (process.env.KEEL_LH_HOST === "pi" ? "pi" : "omp");
 
 export interface HostSessionOptions {
   /** omp or Pi; sessionHost() by default. */
   host?: Host;
-  /** A temp directory the session owns: the host's agent dir, its sessions and omp-vcc's config go here. */
+  /** A temp directory the session owns: the host's agent dir, its sessions and keel's config go here. */
   work: string;
   /** The project the agent works in (the host's cwd). */
   cwd: string;
-  /** The window the host is told (default 128K): its trigger, and so omp-vcc's budgets, follow it. */
+  /** The window the host is told (default 128K): its trigger, and so keel's budgets, follow it. */
   contextWindow?: number;
-  /** omp-vcc settings, over `overrideDefaultCompaction: true` (`{ overrideDefaultCompaction: false }`: the host's own compaction). */
+  /** keel settings, over `overrideDefaultCompaction: true` (`{ overrideDefaultCompaction: false }`: the host's own compaction). */
   config?: Record<string, unknown>;
-  /** The model's prices per million tokens (default all 0): what the host records of each request's cost, which omp-vcc's payback rule reads. */
+  /** The model's prices per million tokens (default all 0): what the host records of each request's cost, which keel's payback rule reads. */
   cost?: ModelCost;
 }
 
@@ -109,11 +109,11 @@ export interface HostSession {
 export const openHostSession = async (options: HostSessionOptions): Promise<HostSession> =>
   (options.host ?? sessionHost()) === "pi" ? openPiSession(options) : openOmpSession(options);
 
-/** The provider, the env and omp-vcc's config every session starts from; `restore` puts the env back. */
+/** The provider, the env and keel's config every session starts from; `restore` puts the env back. */
 const prepare = (options: HostSessionOptions) => {
   const provider = realModel({ keyFile: true });
-  if (!provider) throw new Error(`set OMP_VCC_LH_API_KEY, or put it in ${KEY_FILE}, to a key for DeepSeek V4.1 Flash on OpenScale`);
-  const saved = ["PI_CODING_AGENT_DIR", "OMP_VCC_CONFIG_PATH"].map((k) => [k, process.env[k]] as const);
+  if (!provider) throw new Error(`set KEEL_LH_API_KEY, or put it in ${KEY_FILE}, to a key for DeepSeek V4.1 Flash on OpenScale`);
+  const saved = ["PI_CODING_AGENT_DIR", "KEEL_CONFIG_PATH"].map((k) => [k, process.env[k]] as const);
   const restore = () => {
     for (const [k, v] of saved) {
       if (v === undefined) delete process.env[k];
@@ -123,8 +123,8 @@ const prepare = (options: HostSessionOptions) => {
   const agentDir = join(options.work, "agent");
   mkdirSync(agentDir, { recursive: true });
   process.env.PI_CODING_AGENT_DIR = agentDir;
-  process.env.OMP_VCC_CONFIG_PATH = join(options.work, "omp-vcc-config.json");
-  writeFileSync(process.env.OMP_VCC_CONFIG_PATH, JSON.stringify({ overrideDefaultCompaction: true, ...options.config }));
+  process.env.KEEL_CONFIG_PATH = join(options.work, "keel-config.json");
+  writeFileSync(process.env.KEEL_CONFIG_PATH, JSON.stringify({ overrideDefaultCompaction: true, ...options.config }));
   return { provider, agentDir, restore };
 };
 
@@ -136,7 +136,7 @@ const openOmpSession = async (options: HostSessionOptions): Promise<HostSession>
       "providers:",
       "  long-horizon:",
       `    baseUrl: ${JSON.stringify(provider.baseUrl)}`,
-      "    apiKey: OMP_VCC_LH_API_KEY",
+      "    apiKey: KEEL_LH_API_KEY",
       `    api: ${provider.api}`,
       "    models:",
       `      - id: ${JSON.stringify(provider.model)}`,
@@ -198,7 +198,7 @@ const openPiSession = async (options: HostSessionOptions): Promise<HostSession> 
       providers: {
         "long-horizon": {
           baseUrl: provider.baseUrl,
-          apiKey: "$OMP_VCC_LH_API_KEY",
+          apiKey: "$KEEL_LH_API_KEY",
           api: provider.api,
           models: [{
             id: provider.model,
@@ -277,7 +277,7 @@ export interface RunStats {
    * it again (the cost Context Language Models counts as prefix-reuse FLOPs).
    */
   uncachedTokens: number;
-  /** omp-vcc's evict entries on the branch (one per run of turns taken out, restores not counted), by who made them (the agent with vcc_context, the user, omp-vcc as the context filled). */
+  /** keel's evict entries on the branch (one per run of turns taken out, restores not counted), by who made them (the agent with keel_context, the user, keel as the context filled). */
   evictions: { agent: number; user: number; auto: number };
 }
 
@@ -287,11 +287,11 @@ export const runStats = (branch: any[]): RunStats => {
   const all = sum("input") + sum("cacheRead") + sum("cacheWrite");
   const evictions = { agent: 0, user: 0, auto: 0 };
   for (const e of branch) {
-    if (e.type === "custom" && e.customType === "omp-vcc.evict" && e.data?.op === "evict" && e.data.by in evictions) evictions[e.data.by as keyof typeof evictions]++;
+    if (e.type === "custom" && e.customType === "keel.evict" && e.data?.op === "evict" && e.data.by in evictions) evictions[e.data.by as keyof typeof evictions]++;
   }
   return { requests: usages.length, promptTokens: sum("input") + sum("cacheRead"), cacheShare: all ? sum("cacheRead") / all : 0, uncachedTokens: sum("input") + sum("cacheWrite"), evictions };
 };
 
 /** The stats as the benchmarks print them. */
 export const statsLine = (s: RunStats): string =>
-  `${s.requests} requests, ${Math.round(s.promptTokens / 1000)}K prompt tokens, ${Math.round(s.cacheShare * 100)}% read from cache (${Math.round(s.uncachedTokens / 1000)}K uncached), evictions by the agent/user/omp-vcc ${s.evictions.agent}/${s.evictions.user}/${s.evictions.auto}`;
+  `${s.requests} requests, ${Math.round(s.promptTokens / 1000)}K prompt tokens, ${Math.round(s.cacheShare * 100)}% read from cache (${Math.round(s.uncachedTokens / 1000)}K uncached), evictions by the agent/user/keel ${s.evictions.agent}/${s.evictions.user}/${s.evictions.auto}`;

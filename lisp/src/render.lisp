@@ -10,7 +10,7 @@
 ;;;; Messages are the JSON objects the session file holds (json.lisp's
 ;;;; hash tables), read in JavaScript's key order (JSON-KEYS).
 
-(in-package #:omp-vcc)
+(in-package #:keel)
 
 ;;; --- content ---------------------------------------------------------------
 

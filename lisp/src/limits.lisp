@@ -3,26 +3,29 @@
 ;;;; SPDX-License-Identifier: MIT
 ;;;;
 ;;;; With the decision src/hooks/window-limits.ts asks for once a run settles.
-;;;; omp-vcc takes the window from the host and makes no network call of its
+;;;; keel takes the window from the host and makes no network call of its
 ;;;; own; when a provider serves less, the limit its overflow error states
-;;;; ("maximum context length is 32768 tokens") is kept per model in omp-vcc-models.json next to the config, with the
+;;;; ("maximum context length is 32768 tokens") is kept per model in keel-models.json next to the config, with the
 ;;;; host's compaction policy as the latest compaction for that model carried it,
 ;;;; so a later session starts from both.
 
-(in-package #:omp-vcc)
+(in-package #:keel)
 
-(defparameter +limits-file+ "omp-vcc-models.json")
+(defparameter +limits-file+ "keel-models.json")
+(defparameter +legacy-limits-file+ "omp-vcc-models.json" "What keel learned as omp-vcc: read until keel-models.json is written.")
 
 (defun model-key (model)
   "The key the limits file names MODEL by: provider/id, or NIL without both."
   (let ((provider (json-get model "provider")) (id (json-get model "id")))
     (and (truthy-p provider) (truthy-p id) (format nil "~a/~a" (js-string-of provider) (js-string-of id)))))
 
-(defun limits-path (dir) (concatenate 'string (string-right-trim "/" dir) "/" +limits-file+))
+(defun limits-path (dir &optional (file +limits-file+)) (concatenate 'string (string-right-trim "/" dir) "/" file))
 
 (defun read-limits (dir)
   "The limits file's object (an array too, as JSON.parse gives it), or an empty one."
-  (let ((parsed (read-json-file (limits-path dir))))
+  (let ((parsed (if (probe-file (native-path (limits-path dir)))
+                    (read-json-file (limits-path dir))
+                    (read-json-file (limits-path dir +legacy-limits-file+)))))
     (if (or (hash-table-p parsed) (json-array-p parsed)) parsed (make-hash-table :test 'equal))))
 
 (defun write-limits (dir limits)
@@ -129,7 +132,7 @@ which won."
                                 (t host-name)))))
 
 (defun settled-compaction (&key model dir host display-name models-file used-tokens)
-  "Once a run settles (src/hooks/window-limits.ts): whether omp-vcc compacts in the host's
+  "Once a run settles (src/hooks/window-limits.ts): whether keel compacts in the host's
 stead (the host's window is above the real one, its last recorded policy
 compacts, the context is past the trigger), at what trigger, and the note
 that says so."
@@ -142,6 +145,6 @@ that says so."
           (let ((trigger (trigger-for effective nil nil policy host)))
             (when (and trigger (realp used-tokens) (>= used-tokens trigger))
               (json-object "trigger" trigger
-                           "notice" (format nil "omp-vcc: ~a holds ~a tokens (an overflow error said so), not the ~a ~a uses; omp-vcc compacts at ~a. Set its contextWindow in ~a to make ~a do the same."
+                           "notice" (format nil "keel: ~a holds ~a tokens (an overflow error said so), not the ~a ~a uses; keel compacts at ~a. Set its contextWindow in ~a to make ~a do the same."
                                             (js-string-of (model-key model)) (js-string-of effective) (js-string-of host-window) display-name
                                             (js-string-of trigger) models-file display-name)))))))))

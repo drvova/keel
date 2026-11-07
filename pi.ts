@@ -1,4 +1,4 @@
-// omp-vcc on Pi (package.json "pi.extensions"; omp loads index.ts from
+// keel on Pi (package.json "pi.extensions"; omp loads index.ts from
 // "omp.extensions" instead). Pi binds this factory once per session runtime.
 //
 // The code is Pi's API: Pi hands extensions its own package, so convertToLlm and
@@ -10,7 +10,7 @@
 // shared modules (typed against omp's API) take Pi's binding as they are; what
 // differs arrives through the host: Pi's trigger rule (its window less
 // reserveTokens), the trigger its session_before_compact carries, agent_settled,
-// and the /pi-vcc command names. Pi rewrites nothing in place (its context edits
+// and the /pi-vcc names kept as aliases of /keel…. Pi rewrites nothing in place (its context edits
 // are entries of their own, which the compaction plan applies), so there are no
 // originals to keep and no placeholders to point at: no raw capture.
 import type { ExtensionAPI as PiExtensionAPI } from "@earendil-works/pi-coding-agent";

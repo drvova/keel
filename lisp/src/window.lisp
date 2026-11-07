@@ -17,7 +17,7 @@
 ;;;; larger summary far above it.
 ;;;;
 ;;;; The window is the smaller of the host's and a limit an overflow error
-;;;; stated (limits.lisp); omp-vcc makes no network call. The trigger is the
+;;;; stated (limits.lisp); keel makes no network call. The trigger is the
 ;;;; host's own: its compaction policy (omp: threshold, reserve, the model's
 ;;;; entry; Pi: its reserve) arrives with every compaction (preparation.settings),
 ;;;; and the host's rule applies it to that window as the host does. Pi
@@ -28,7 +28,7 @@
 ;;;; JavaScript did this arithmetic on doubles, so it is done on doubles here, in
 ;;;; the order it was written; a division never makes a ratio.
 
-(in-package #:omp-vcc)
+(in-package #:keel)
 
 (defun dbl (x) (coerce x 'double-float))
 
@@ -177,7 +177,7 @@ real window applies. A recovery pass is bounded by the context that overflowed."
 ;;; --- the budgets ------------------------------------------------------------------------
 
 ;; omp re-compacts unless a compaction lands at or under 80% of the trigger (its
-;; recovery band); omp-vcc aims lower, so the turn after it has room before the next.
+;; recovery band); keel aims lower, so the turn after it has room before the next.
 (defparameter +landing-share+ 0.6d0)
 (defparameter +tail-share+ 0.25d0 "The kept tail is at most this share of the trigger.")
 (defparameter +sections-tokens+ 600 "A rough allowance for the summary's sections around the brief, at full size.")

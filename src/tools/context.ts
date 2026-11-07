@@ -1,6 +1,6 @@
-// vcc_context: the agent's say over what stays in its context. It takes whole
+// keel_context: the agent's say over what stays in its context. It takes whole
 // turns out (they leave the next request, and a line naming their #N stands in
-// their place) or brings them back; vcc_recall expand reads any of it word for
+// their place) or brings them back; keel_recall expand reads any of it word for
 // word meanwhile. The core decides (lisp/src/evict.lisp, op evict).
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { untilCore } from "../core/core-wait";
@@ -56,11 +56,11 @@ const PARAMETERS = {
 export const registerContextTool = (pi: ExtensionAPI, host: Binding) => {
   pi.registerTool({
     name: CONTEXT_TOOL,
-    label: "VCC Context",
+    label: "Keel Context",
     description: description(host.command),
     parameters: PARAMETERS as any,
     loadMode: "essential",
-    // It writes only omp-vcc's own session entry, not the workspace.
+    // It writes only keel's own session entry, not the workspace.
     approval: "read",
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const text = untilCore(() => evict(pi, host, ctx, { surface: "tool", params: params ?? null }));

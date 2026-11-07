@@ -5,17 +5,17 @@
 ;;;; Between compactions omp keeps the live context small by rewriting messages
 ;;;; in place and persisting the rewrite: it blanks old tool output, supersedes
 ;;;; older reads, elides results their tool flagged useless, and shakes tool
-;;;; output and large fenced blocks out into `artifact://` files. vcc_recall
+;;;; output and large fenced blocks out into `artifact://` files. keel_recall
 ;;;; reads the session file as the raw history, so each rewrite would lose what
-;;;; it replaced. omp-vcc copies every message omp may rewrite as it lands into
-;;;; `<session>.jsonl.vcc-raw` beside it (not a `.jsonl`: omp lists those as
+;;;; it replaced. keel copies every message omp may rewrite as it lands into
+;;;; `<session>.jsonl.keel-raw` beside it (not a `.jsonl`: omp lists those as
 ;;;; sessions), and points omp's placeholders at the copy; session.lisp reads
 ;;;; the store. What a binding has seen and kept is its own state, in
 ;;;; src/hooks/raw-capture.ts: the core gets the entries that arrived since,
 ;;;; appends the store itself, and on a new session file reads the ids the
 ;;;; file's lineage already keeps.
 
-(in-package #:omp-vcc)
+(in-package #:keel)
 
 (defparameter +shakeable-text-chars+ 1200
   "omp shakes fenced and XML blocks of 400+ tokens out of a message's text: about this many chars.")
@@ -45,7 +45,7 @@
              (let ((n (js-length text)))
                (if (<= n budget)
                    (progn (decf budget n) text)
-                   (prog1 (format nil "~a~%...[omp-vcc kept the first ~d of ~d chars]" (js-slice text 0 budget) budget n)
+                   (prog1 (format nil "~a~%...[keel kept the first ~d of ~d chars]" (js-slice text 0 budget) budget n)
                      (setf budget 0))))))
       (if (stringp content)
           (clip content)
@@ -58,12 +58,12 @@
 
 (defun store-ids (path ids)
   "The ids PATH's store keeps, into the set IDS: the id at each line's head (a line that does not read is passed over)."
-  (let ((bytes (ignore-errors (read-file-octets (raw-store-path path)))))
-    (when bytes
-      (dolist (line (split-string (decode-utf-8 bytes) #\Newline))
-        (let ((id (and (plusp (length line)) (line-head-id line))))
-          (when (stringp id) (setf (gethash id ids) t)))))
-    ids))
+  (dolist (store (raw-store-paths path) ids)
+    (let ((bytes (ignore-errors (read-file-octets store))))
+      (when bytes
+        (dolist (line (split-string (decode-utf-8 bytes) #\Newline))
+          (let ((id (and (plusp (length line)) (line-head-id line))))
+            (when (stringp id) (setf (gethash id ids) t))))))))
 
 (defun lineage-kept-ids (file)
   "The ids FILE's store and its parents' stores hold."

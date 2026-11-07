@@ -29,10 +29,10 @@ describe.skipIf(!piInstalled())("Pi shapes", () => {
     assertRealPi();
     pi = await import("@earendil-works/pi-coding-agent");
     host = bind({ ...PI_HOST, convertToLlm: (m: any[]) => pi.convertToLlm(m), triggerOf: () => MANUAL_TRIGGER }, testConfig);
-    dir = mkdtempSync(join(tmpdir(), "omp-vcc-pi-shapes-"));
-    for (const key of ["OMP_VCC_CONFIG_PATH", "PI_CODING_AGENT_DIR"]) saved[key] = process.env[key];
-    process.env.OMP_VCC_CONFIG_PATH = join(dir, "omp-vcc-config.json");
-    writeFileSync(process.env.OMP_VCC_CONFIG_PATH, JSON.stringify({ overrideDefaultCompaction: true, smartKeepTail: false }));
+    dir = mkdtempSync(join(tmpdir(), "keel-pi-shapes-"));
+    for (const key of ["KEEL_CONFIG_PATH", "PI_CODING_AGENT_DIR"]) saved[key] = process.env[key];
+    process.env.KEEL_CONFIG_PATH = join(dir, "keel-config.json");
+    writeFileSync(process.env.KEEL_CONFIG_PATH, JSON.stringify({ overrideDefaultCompaction: true, smartKeepTail: false }));
   });
 
   afterAll(() => {
@@ -135,7 +135,7 @@ describe.skipIf(!piInstalled())("Pi shapes", () => {
       // [Early Session Requests] reads what the user wrote, not an extension's message.
       expect(summary).toContain("- Fix the rounding in src/money.ts");
       expect(summary).not.toMatch(/\[Early Session Requests\][^[]*CI is green/);
-      expect(details).toMatchObject({ compactor: "omp-vcc", reason: "threshold" });
+      expect(details).toMatchObject({ compactor: "keel", reason: "threshold" });
       expect(details.limits).toMatchObject({ windowSource: "pi", trigger: 183_616 });
     });
 
@@ -159,11 +159,11 @@ describe.skipIf(!piInstalled())("Pi shapes", () => {
   });
 
   test("the settings follow Pi's agent dir", () => {
-    delete process.env.OMP_VCC_CONFIG_PATH;
+    delete process.env.KEEL_CONFIG_PATH;
     delete process.env.PI_CODING_AGENT_DIR;
     const config = openConfig(pi.getAgentDir);
-    expect(config.path()).toBe(join(pi.getAgentDir(), "omp-vcc-config.json"));
+    expect(config.path()).toBe(join(pi.getAgentDir(), "keel-config.json"));
     expect(config.path()).toContain(join(".pi", "agent"));
-    process.env.OMP_VCC_CONFIG_PATH = join(dir, "omp-vcc-config.json");
+    process.env.KEEL_CONFIG_PATH = join(dir, "keel-config.json");
   });
 });

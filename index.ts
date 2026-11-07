@@ -1,4 +1,4 @@
-// omp-vcc: algorithmic compaction and recall for omp (oh-my-pi) (package.json
+// keel: algorithmic compaction and recall for omp (oh-my-pi) (package.json
 // "omp.extensions"). omp binds this factory once per session, subagents
 // included.
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";

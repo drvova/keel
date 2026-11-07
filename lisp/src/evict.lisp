@@ -4,19 +4,19 @@
 ;;;;
 ;;;; The other way to make room: instead of a summary written over the oldest
 ;;;; part of the window, the oldest finished turns leave the context whole. The
-;;;; session file keeps every word (vcc_recall expand:[N] reads any of them back
+;;;; session file keeps every word (keel_recall expand:[N] reads any of them back
 ;;;; exactly, and search finds them); only the requests the host sends change. In
 ;;;; their place the request carries one line per run of turns that are out,
 ;;;; naming their #N and how to read them back. Context Language Models
 ;;;; (arXiv:2609.37725) let the model decide what leaves and found summaries "can
 ;;;; lose or hallucinate information"; nodecode drops the oldest finished turns
-;;;; whole past 85% of the window. Here the agent decides with vcc_context, the
+;;;; whole past 85% of the window. Here the agent decides with keel_context, the
 ;;;; user with the evict command, and past +EVICT-AT-SHARE+ of the host's trigger
 ;;;; the oldest finished turns leave by themselves down to +EVICT-TO-SHARE+, so
 ;;;; the host's own compaction is rarely reached; when it is, the summary is the
 ;;;; safety net it always was.
 ;;;;
-;;;; What is out is a ledger of omp-vcc custom entries (+evict-entry-type+),
+;;;; What is out is a ledger of keel custom entries (+evict-entry-type+),
 ;;;; replayed along the branch as pins are, so a branch keeps its own evictions
 ;;;; and an edited turn drops the ones made after it. A turn is the unit: it
 ;;;; starts at a request the user made and holds every call and result after it,
@@ -26,7 +26,7 @@
 ;;;; again all that follows it, so one large eviction costs less than many small
 ;;;; ones (the paper's harness tells its model the same).
 
-(in-package #:omp-vcc)
+(in-package #:keel)
 
 (defparameter +evict-at-share+ (/ +evict-at-percent+ 100d0) "Past this share of the host's trigger, the oldest finished turns leave.")
 (defparameter +evict-to-share+ 0.5d0 "They leave until the context is estimated at this share of the trigger.")
@@ -89,7 +89,7 @@ any eviction pays. Before enough requests, a cache at a tenth of the price and
 (defparameter +turns-listed+ 40 "Turns a listing shows, newest last.")
 (defparameter +budget-note-from+ 5
   "From this tenth of the host's trigger on, the model is told how full its context
-is and that vcc_context makes room, once per tenth: the paper's harness and
+is and that keel_context makes room, once per tenth: the paper's harness and
 pi-clm keep the model budget-aware, or it never edits. The note is a message of
 its own, stored in the session, so the provider's cache keeps it, unlike a line
 that would change at the end of every request.")
@@ -97,7 +97,7 @@ that would change at the end of every request.")
 ;;; --- the ledger -------------------------------------------------------------------
 
 (defun evict-entry-p (e)
-  (and (equal (json-get e "type") "custom") (equal (json-get e "customType") +evict-entry-type+)
+  (and (equal (json-get e "type") "custom") (evict-entry-type-p (json-get e "customType"))
        (json-object-p (json-get e "data"))))
 
 (defstruct (out (:constructor make-out (from to by note at &optional text)))
@@ -237,7 +237,7 @@ what an eviction of them records, so a range never overlaps one already out."
     (and (plusp (length words)) (js-clip words 60))))
 
 (defun by-words (bys)
-  (let ((names (mapcar (lambda (b) (cond ((equal b "user") "the user") ((equal b "auto") "omp-vcc as the context filled") (t "the agent")))
+  (let ((names (mapcar (lambda (b) (cond ((equal b "user") "the user") ((equal b "auto") "keel as the context filled") (t "the agent")))
                        (remove-duplicates bys :test #'equal :from-end t))))
     (join-strings names " and ")))
 
@@ -254,7 +254,7 @@ what an eviction of them records, so a range never overlaps one already out."
 (defun stub-text (from to turns outs messages-by-n originals)
   "The line the span FROM–TO of what is out leaves in the request: what it was,
 what it did (as [History Index] says it: files changed, commits, failed calls,
-read from the originals omp-vcc kept, ORIGINALS by #N), and how to read it back.
+read from the originals keel kept, ORIGINALS by #N), and how to read it back.
 It names no size, and reads only what omp leaves as it is or the originals: the
 line must read the same on every request for the provider's cache."
   (let ((covering (remove-if-not (lambda (o) (overlaps-p (out-from o) (out-to o) from to)) outs)))
@@ -279,7 +279,7 @@ context's file: its text, under a line saying what it stands for."
          (range (and ns (range-of-window (map 'vector (lambda (n) (gethash n originals)) ns) (coerce ns 'vector))))
          (work (and range (range-work range)))
          (notes (remove nil (mapcar #'out-note covering))))
-    (format nil "[~a out of context: ~a, by ~a.~@[ Requests: ~a.~]~@[ It ~a.~]~@[ The agent's note: ~a~] Each entry reads back word for word with ~a; vcc_recall query searches them.]"
+    (format nil "[~a out of context: ~a, by ~a.~@[ Requests: ~a.~]~@[ It ~a.~]~@[ The agent's note: ~a~] Each entry reads back word for word with ~a; keel_recall query searches them.]"
             (range-text from to) (span-what from to turns) (by-words (mapcar #'out-by covering))
             (and shown (format nil "~{\"~a\"~^; ~}~@[ (+~d more)~]" shown (and (> (length requests) (length shown)) (- (length requests) (length shown)))))
             (and work (join-strings work "; "))
@@ -293,7 +293,7 @@ restore on BRANCH; EDITED, one made for this request: all of BRANCH), and those
 carried in before the first message. An edit at the start of the request makes
 the provider read all of it again (Context Language Models measures 7.7 times
 an appended turn's cost), so the block changes only when the context is being
-edited anyway: a note pinned since stands in the conversation, in its vcc_pin
+edited anyway: a note pinned since stands in the conversation, in its keel_pin
 call, until its turn leaves, which is an edit, and the block takes it up then.
 (values NOTES AS-OF), AS-OF the #N of the last message before the cut, or NIL."
   (let* ((last-edit (loop for i from (1- (length branch)) downto 0
@@ -308,9 +308,9 @@ call, until its turn leaves, which is an edit, and the block takes it up then.
 
 (defun notes-block (pins as-of)
   "The pinned notes as of AS-OF, one block at the start of the request: the
-context's notes, kept by the agent and the user (vcc_pin, /…-pin), in view
+context's notes, kept by the agent and the user (keel_pin, /…-pin), in view
 whatever has left the context."
-  (format nil "[Pinned notes~:[ carried from the last session~;, as of #~:*~d~] (vcc_pin; a name pinned again replaces its note; any pinned since are in the conversation):~{~%- ~a~}]"
+  (format nil "[Pinned notes~:[ carried from the last session~;, as of #~:*~d~] (keel_pin; a name pinned again replaces its note; any pinned since are in the conversation):~{~%- ~a~}]"
           as-of (mapcar #'format-pin pins)))
 
 ;;; --- a request, with what is out left out -----------------------------------------------
@@ -320,7 +320,7 @@ whatever has left the context."
   (format nil "~a|~a|~a" (json-get m "role") (js-string-of (json-get m "timestamp")) (or (json-get m "toolCallId") "")))
 
 (defvar *chars-per-token* +default-chars-per-token+
-  "Chars per token where a request is not there to calibrate on (vcc_context, the
+  "Chars per token where a request is not there to calibrate on (keel_context, the
 evict command): the model's own, as the last request measured it (limits.lisp).")
 
 (defparameter +fit-min-tokens+ 2000 "Two requests' prompts this far apart measure the chars per token between them.")
@@ -351,10 +351,10 @@ replaced, so they are left out. NIL without two requests far enough apart."
 
 (defun evict-request (branch index messages &key trigger auto (count 0) file mark mirror)
   "What leaves REQUEST MESSAGES (a vector, the host's next request): the indices
-to drop, the stubs (index . text) to put before them, the evict ops omp-vcc
+to drop, the stubs (index . text) to put before them, the evict ops keel
 records itself (AUTO and past +EVICT-AT-SHARE+ of TRIGGER), and the estimate
 before and after: (values DROP STUBS OPS BEFORE AFTER). FILE is the session's,
-whose kept originals the stubs read. With MARK (vcc_context is there), each
+whose kept originals the stubs read. With MARK (keel_context is there), each
 request that starts a turn in the context starts with its #N, as `[#12]`, so the
 agent can name turns to drop without listing them first: a turn's first #N
 never changes, so the mark reads the same on every request. Then (or with anything
@@ -426,7 +426,7 @@ out) the pinned notes stand first, in one block (NOTES-BLOCK)."
                                                                               (mapcar (lambda (n) (gethash n id-of)) ns) file)
                                       do (setf (gethash n h) m))
                                 h)))
-          ;; The pinned notes first, in view whatever has left (with vcc_context there, or anything out).
+          ;; The pinned notes first, in view whatever has left (with keel_context there, or anything out).
           ;; First in the request: where the context's file is (MIRROR, its path), and the pinned notes.
           (when (or mark outs)
             (multiple-value-bind (shown as-of) (notes-as-of branch index ops)
@@ -506,17 +506,17 @@ shrink is what the note warns of, so it starts nothing again), 0 for none."
 (defun budget-note (branch index after trigger tool count)
   "The note telling the model how full its context is and the op that records it,
 when AFTER has reached a tenth of TRIGGER past +BUDGET-NOTE-FROM+ it was not yet
-told of, TOOL (vcc_context) is there, and something can leave: (values NOTE OP), or NIL."
+told of, TOOL (keel_context) is there, and something can leave: (values NOTE OP), or NIL."
   (when (and tool (realp trigger) (> trigger 0))
     (let ((level (min 9 (floor (* 10 after) trigger))))
       (when (and (>= level +budget-note-from+) (> level (budget-noted branch)) (room-to-evict-p branch index))
-        (values (format nil "[omp-vcc: the context is past ~d0% of where the host compacts (~~~a tokens); past ~d% the oldest turns leave by themselves. vcc_context lists what is in it and takes old turns out, with a note of what to keep.]"
+        (values (format nil "[keel: the context is past ~d0% of where the host compacts (~~~a tokens); past ~d% the oldest turns leave by themselves. keel_context lists what is in it and takes old turns out, with a note of what to keep.]"
                         level (js-string-of trigger) +evict-at-percent+)
                 (json-object "v" 1 "op" "budget" "level" level "at" count))))))
 
 (defun auto-notice (ops before after)
-  "What the user is told when omp-vcc took turns out as the context filled."
-  (format nil "omp-vcc: Context ~~~a → ~~~a tokens · ~{~a~^, ~} out · by omp-vcc as the context filled; vcc_recall expand reads any of it back."
+  "What the user is told when keel took turns out as the context filled."
+  (format nil "keel: Context ~~~a → ~~~a tokens · ~{~a~^, ~} out · by keel as the context filled; keel_recall expand reads any of it back."
           (js-string-of before) (js-string-of after)
           (mapcar (lambda (op) (range-text (json-get op "from") (json-get op "to"))) ops)))
 
@@ -553,7 +553,7 @@ told of, TOOL (vcc_context) is there, and something can leave: (values NOTE OP),
                         (mapcar (lambda (o) (format nil "~a (~a)" (range-text (out-from o) (out-to o)) (span-what (out-from o) (out-to o) turns))) outs))
                 "Nothing is out of context.")
             (if pins
-                (format nil "~%Pinned (vcc_pin; a name pinned again replaces its note):~{~%  ~a~}" (mapcar #'format-pin pins))
+                (format nil "~%Pinned (keel_pin; a name pinned again replaces its note):~{~%  ~a~}" (mapcar #'format-pin pins))
                 ""))))
 
 (defun eviction-cost (leaving turns outs chars)
@@ -676,7 +676,7 @@ OPS). An undo is an edit too, so a second one does the first again."
   (eviction-payback (mapcar #'cdr (sort (loop for n being the hash-keys of by-n using (hash-value m) collect (cons n m)) #'< :key #'car))))
 
 (defun run-evict (call branch index chars by-n count)
-  "One vcc_context call or evict command on BRANCH: (values TEXT OPS). The agent's
+  "One keel_context call or evict command on BRANCH: (values TEXT OPS). The agent's
 evictions must pay, by the session's own prices (EVICTION-PAYBACK over BY-N)."
   (let* ((turns (branch-turns branch index)) (outs (read-evictions branch))
          (by (if (equal (json-get call "surface") "tool") "agent" "user")))

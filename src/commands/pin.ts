@@ -1,8 +1,8 @@
-// /omp-vcc-pin and /omp-vcc-unpin (/pi-vcc-pin and /pi-vcc-unpin on Pi).
+// /keel-pin and /keel-unpin (also under their old names, /omp-vcc-… on omp and /pi-vcc-… on Pi).
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { PIN_NOTICE_TYPE } from "../names";
 import { pin, type PinAnswer } from "../core/pins";
-import { deliver, tell, type Binding } from "../host";
+import { deliver, registerCommand, tell, type Binding } from "../host";
 import { whenCore } from "../core/core-wait";
 
 /** The core's answer to a pin command, told; the agent hears it too, without a turn: on its next request it sees what was pinned. */
@@ -18,12 +18,12 @@ export const registerPinCommands = (pi: ExtensionAPI, host: Binding) => {
     const result = whenCore(() => pin(pi, host, ctx, { surface: "command", name, args }), (why) => tell(ctx, why, "warning"));
     if (result) answer(pi, ctx, result);
   };
-  pi.registerCommand(`${host.command}-pin`, {
-    description: "Pin a note that stays at the top of every omp-vcc summary; name:NAME first names it, and a name pinned again is replaced. No text lists the pinned notes.",
+  registerCommand(pi, host, "pin", {
+    description: "Pin a note that stays at the top of every keel summary; name:NAME first names it, and a name pinned again is replaced. No text lists the pinned notes.",
     handler: run("pin"),
   });
-  pi.registerCommand(`${host.command}-unpin`, {
-    description: "Unpin an omp-vcc note by its [N] or its name.",
+  registerCommand(pi, host, "unpin", {
+    description: "Unpin a keel note by its [N] or its name.",
     handler: run("unpin"),
   });
 };

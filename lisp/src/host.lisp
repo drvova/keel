@@ -3,7 +3,7 @@
 ;;;; SPDX-License-Identifier: MIT
 ;;;;
 ;;;; Each op the TypeScript side sends for a host event carries one snapshot
-;;;; (src/core/host-snapshot.ts): which host, omp-vcc's config file, the
+;;;; (src/core/host-snapshot.ts): which host, keel's config file, the
 ;;;; session file, the working directory, the model and the context the host
 ;;;; counted, the session's entry tree as a skeleton, and the branch the session
 ;;;; manager is on. From it the core counts #N, finds the branch, loads the
@@ -13,14 +13,14 @@
 ;;;; The skeleton is every entry in file order with the bulky parts left out
 ;;;; (src/core/host-snapshot.ts skeleton): a message is its role, timestamp,
 ;;;; attribution and a tool result's call id; a compaction keeps where its kept
-;;;; tail starts (firstKeptEntryId, providerReplayThroughEntryId); omp-vcc's own
+;;;; tail starts (firstKeptEntryId, providerReplayThroughEntryId); keel's own
 ;;;; pin and evict entries keep their data. That is what #N, the branch, the
 ;;;; turns, the pins and the evictions need: eviction ties a request's messages
 ;;;; to #N by role, timestamp and call id, and tells the user's requests by
 ;;;; attribution. Content comes from the session file (recall) or from the event
 ;;;; itself (a compaction's branch).
 
-(in-package #:omp-vcc)
+(in-package #:keel)
 
 (defstruct (snapshot (:constructor %make-snapshot))
   name display-name models-file config-path session-file cwd model context-tokens tree branch-ids)
@@ -43,7 +43,7 @@
     (cond ((null at) ".") ((zerop at) "/") (t (subseq path 0 at)))))
 
 (defun snapshot-config-dir (s)
-  "Where omp-vcc keeps what it learns, beside its config file."
+  "Where keel keeps what it learns, beside its config file."
   (path-directory (snapshot-config-path s)))
 
 (defun snapshot-settings (s) (load-settings (snapshot-config-path s)))
@@ -73,7 +73,7 @@
             when (and (stringp id) (plusp (length id))) collect id)))
 
 (defun snapshot-handles-p (s settings)
-  "Whether omp-vcc answers the host's own compactions for this model's provider."
+  "Whether keel answers the host's own compactions for this model's provider."
   (handles-host-compactions-p settings (json-get (snapshot-model s) "provider")))
 
 ;;; --- what each op makes of it -----------------------------------------------------
@@ -95,7 +95,7 @@ accepted."
          (record-learned-window (snapshot-config-dir s) (model-key model) limit))))
 
 (defun settled-check (s)
-  "Once a run settles, whether omp-vcc compacts in the host's stead, and the note that says so."
+  "Once a run settles, whether keel compacts in the host's stead, and the note that says so."
   (when (snapshot-handles-p s (snapshot-settings s))
     (settled-compaction :model (snapshot-model s) :dir (snapshot-config-dir s) :host (snapshot-name s)
                         :display-name (snapshot-display-name s) :models-file (snapshot-models-file s)
@@ -131,7 +131,7 @@ accepted."
     (json-object "candidates" candidates "branch" (coerce branch 'vector) "entries" (snapshot-tree s) "kept" kept)))
 
 (defun compact-error-input (s error)
-  "What /omp-vcc tells when the host's compaction it asked for did not happen."
+  "What /keel tells when the host's compaction it asked for did not happen."
   (let ((input (copy-object error)))
     (setf (gethash "displayName" input) (snapshot-display-name s)
           (gethash "branch" input) (snapshot-branch s))
@@ -140,7 +140,7 @@ accepted."
 ;;; --- turns out of the context (evict.lisp) -----------------------------------------
 
 (defun context-readout (s)
-  "How full the context is, for the end of an omp-vcc tool's result while eviction
+  "How full the context is, for the end of a keel tool's result while eviction
 is on: models judge their own context's length poorly past a few thousand tokens
 (Context Language Models, appendix G), so each result says it, as that paper's
 tools do. Written once into the result, it reads the same on every later
@@ -169,13 +169,13 @@ request. NIL when the host has not counted the context, or the trigger is unknow
 (defun context-for-host (s messages tool)
   "The host's next request MESSAGES with what is out of the context left out: the
 indices to drop, the lines to put in their place (where, and as what), the
-evictions omp-vcc records itself as the context fills (the evict setting), the
-note telling the model how full its context is (TOOL: vcc_context is
+evictions keel records itself as the context fills (the evict setting), the
+note telling the model how full its context is (TOOL: keel_context is
 registered), and what to tell the user."
   (let* ((auto (eq (json-get (snapshot-settings s) "evict") :true))
          (trigger (and auto (snapshot-trigger s))) (count (snapshot-count s)) (branch (snapshot-branch s))
          (file (snapshot-session-file s))
-         ;; The context's file (mirror.lisp): with vcc_context there and a session file to put it beside.
+         ;; The context's file (mirror.lisp): with keel_context there and a session file to put it beside.
          (mirror (and tool (stringp file) (mirror-path file)))
          (edit-ops '()) (ignored nil))
     ;; The agent's edit of the file since the last request: ops of the ledger, seen by this request already.
@@ -189,7 +189,7 @@ registered), and what to tell the user."
         (let ((*chars-per-token* (model-chars-per-token s)))
           (evict-request branch (snapshot-index s) (coerce messages 'vector) :file file
                          :trigger trigger :auto auto :count count :mark tool :mirror mirror))
-      ;; What this request measured of the model's tokens, kept for the next session and for vcc_context.
+      ;; What this request measured of the model's tokens, kept for the next session and for keel_context.
       (when fit (record-evidence (snapshot-config-dir s) (model-key (snapshot-model s)) :chars-per-token fit))
       (stamp-call ops branch)
       (when mirror
@@ -213,7 +213,7 @@ registered), and what to tell the user."
                                 (and lines (join-strings lines (string #\Newline)))))))))
 
 (defun evict-for-host (s call)
-  "One vcc_context call or evict command: what to tell, and the entries to append. Turn sizes come from the session file."
+  "One keel_context call or evict command: what to tell, and the entries to append. Turn sizes come from the session file."
   (let ((chars (make-hash-table)) (by-n (make-hash-table)) (file (snapshot-session-file s))
         (*chars-per-token* (model-chars-per-token s)))
     (when (and file (probe-file (native-path file)))
@@ -243,7 +243,7 @@ registered), and what to tell the user."
                           "followUpPrompt" follow-up)))))
 
 (defun debug-record (plan event from-command)
-  "What omp-vcc-debug.json holds of the last pass when the debug setting is on."
+  "What keel-debug.json holds of the last pass when the debug setting is on."
   (json-object "compaction" (json-object "reason" (json-get event "reason") "willRetry" (json-get event "willRetry"))
                "fromCommand" (bool from-command)
                "kind" (json-get plan "kind") "why" (json-get plan "why") "cutReason" (json-get plan "cutReason")
@@ -259,7 +259,7 @@ registered), and what to tell the user."
 (defun compact-for-host (s event converted)
   "A session_before_compact for the host in snapshot S. Without CONVERTED, the
 messages the host's convertToLlm must convert first (kind convert), unless the
-pass is not omp-vcc's to answer; with it, what the hook returns."
+pass is not keel's to answer; with it, what the hook returns."
   (let ((settings (snapshot-settings s)))
     (multiple-value-bind (from-command keep follow-up) (parse-instructions (json-get event "customInstructions"))
       (when (and (not from-command) (not (snapshot-handles-p s settings)))
@@ -292,7 +292,7 @@ pass is not omp-vcc's to answer; with it, what the hook returns."
                                        "previousSummary" (json-get event "previousSummary")
                                        "fileOps" (json-get event "fileOps")))
                    (plan (plan-compaction input branch (host-notes branch live originals (or converted #()) (snapshot-index s)))))
-              ;; Kept beside a learned window, for the compaction omp-vcc starts in the host's stead.
+              ;; Kept beside a learned window, for the compaction keel starts in the host's stead.
               (record-host-policy (snapshot-config-dir s) (model-key (snapshot-model s)) (json-get (json-get plan "sizing") "policy"))
               (let ((reply (compaction-reply plan from-command follow-up (json-get event "tokensBefore"))))
                 (when (eq (json-get settings "debug") :true)

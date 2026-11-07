@@ -1,4 +1,4 @@
-;;;; omp-vcc-core.asd --- the Lisp core of omp-vcc.
+;;;; keel-core.asd --- the Lisp core of keel.
 ;;;;
 ;;;; SPDX-License-Identifier: MIT
 ;;;;
@@ -14,8 +14,8 @@
 ;;;; Components are listed in load order and named one by one, so a file left
 ;;;; out fails the load instead of being skipped.
 
-(defsystem "omp-vcc-core"
-  :description "omp-vcc's core: everything omp-vcc decides (compaction, the summary, recall, pins, settings), run as one JSON request and response per process."
+(defsystem "keel-core"
+  :description "keel's core: everything keel decides (compaction, the summary, recall, pins, settings), run as one JSON request and response per process."
   :license "MIT"
   :version "0.1.0"
   :serial t
@@ -31,7 +31,7 @@
      (:file "json")
      ;; js: JavaScript's reading of JSON values (truthiness, arrays, empties), for every module.
      (:file "js")
-     ;; names: omp-vcc's own names, and the limits its tools state.
+     ;; names: keel's own names, and the limits its tools state.
      (:file "names")
      ;; regex: JavaScript's regular expressions, which search compiles a
      ;; query and its terms with.
@@ -65,7 +65,7 @@
      (:file "pins")
      ;; raw-capture: the originals of what omp rewrites, kept as they land.
      (:file "raw-capture")
-     ;; args: what /omp-vcc hands the hook, and the hook reads back.
+     ;; args: what /keel hands the hook, and the hook reads back.
      (:file "args")
      ;; limits and outcome: a model's learned window, and what a compaction's outcome is told as.
      (:file "limits")
@@ -83,10 +83,10 @@
      (:file "server")
      ;; live: the same requests one after another in one long-lived process.
      (:file "live"))))
-  :in-order-to ((test-op (test-op "omp-vcc-core/test"))))
+  :in-order-to ((test-op (test-op "keel-core/test"))))
 
-(defsystem "omp-vcc-core/test"
-  :depends-on ("omp-vcc-core")
+(defsystem "keel-core/test"
+  :depends-on ("keel-core")
   :serial t
   :components
   ((:module "test"
@@ -102,5 +102,5 @@
      (:file "numbers"))))
   :perform (test-op (op c)
              (declare (ignore op c))
-             (unless (uiop:symbol-call '#:omp-vcc.test '#:run-all)
-               (error "omp-vcc-core tests failed"))))
+             (unless (uiop:symbol-call '#:keel.test '#:run-all)
+               (error "keel-core tests failed"))))

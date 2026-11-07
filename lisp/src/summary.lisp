@@ -6,18 +6,18 @@
 ;;;; merged item by item into the state the previous compaction stored in its
 ;;;; details, never re-written from its text; RENDER-SUMMARY, the only place
 ;;;; summary text is written; the legacy reader of a previous summary that has
-;;;; no stored state (pi-vcc's, omp-vcc's before it stored one, another
+;;;; no stored state (pi-vcc's, keel's before it stored one, another
 ;;;; compactor's), read from its text once, in a frozen copy of the format it
 ;;;; was written in, since renaming a section in the renderer must not stop
 ;;;; older summaries being read; and the [Pinned Notes] and [History Index]
 ;;;; lines. [Pinned Notes], [History Index], [Working Set] and [Task State] are
 ;;;; not carried in the state: each compaction builds them again.
 
-(in-package #:omp-vcc)
+(in-package #:keel)
 
 (defparameter +separator+ (format nil "~%~%---~%~%") "Between the header, the brief and the recall note.")
 (defparameter +recall-note+
-  "Use `vcc_recall` to search for prior work, decisions, and context from before this summary. Do not redo work already completed.")
+  "Use `keel_recall` to search for prior work, decisions, and context from before this summary. Do not redo work already completed.")
 (defparameter +command-separator+ " | ")
 (defparameter +tracked-entry-chars+ 80)
 (defparameter +tui-line-chars+ 120 "Lines are wrapped at this for the hosts' TUI, which shows a summary as written.")
@@ -330,7 +330,7 @@ A list it lacks is empty; earlySlots it lacks is what the requests it holds leav
 
 (defun pin-lines (notes)
   (let* ((shown (last-n notes +pins-shown+)) (hidden (- (length notes) (length shown))))
-    (append (and (plusp hidden) (list (format nil "(+~d older pinned notes; vcc_pin lists them all)" hidden)))
+    (append (and (plusp hidden) (list (format nil "(+~d older pinned notes; keel_pin lists them all)" hidden)))
             (mapcar #'format-pin shown))))
 
 ;;; --- compileSummary --------------------------------------------------------------------

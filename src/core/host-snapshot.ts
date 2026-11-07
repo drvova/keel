@@ -5,9 +5,9 @@
 import type { HostProfile } from "../host";
 import type { Config } from "./settings";
 import { hostBranch, hostEntries, type SessionManagerLike } from "./session-file";
-import { EVICT_ENTRY_TYPE, PIN_ENTRY_TYPE } from "../names";
+import { isEvictEntryType, isPinEntryType } from "../names";
 
-/** What a host's ctx offers omp-vcc at an event. */
+/** What a host's ctx offers keel at an event. */
 export interface HostCtx {
   sessionManager?: SessionManagerLike;
   model?: { provider?: string; id?: string; contextWindow?: number | null } | null;
@@ -20,7 +20,7 @@ export interface HostCtx {
  * One entry as the snapshot carries it: its place in the tree and what it is,
  * without its body. A message is its role, time, attribution and a tool
  * result's call id, so #N, the branch, the turns and a request's messages read
- * from it; a compaction keeps where its kept tail starts; omp-vcc's own pin and
+ * from it; a compaction keeps where its kept tail starts; keel's own pin and
  * evict entries keep their data, which the pins and the evictions are read from.
  */
 const skeleton = (e: any): Record<string, unknown> => ({
@@ -28,7 +28,7 @@ const skeleton = (e: any): Record<string, unknown> => ({
   id: e?.id,
   parentId: e?.parentId,
   ...(typeof e?.customType === "string" ? { customType: e.customType } : {}),
-  ...(e?.customType === PIN_ENTRY_TYPE || e?.customType === EVICT_ENTRY_TYPE ? { data: e.data } : {}),
+  ...(isPinEntryType(e?.customType) || isEvictEntryType(e?.customType) ? { data: e.data } : {}),
   ...(e?.type === "compaction" ? { firstKeptEntryId: e.firstKeptEntryId, providerReplayThroughEntryId: e.providerReplayThroughEntryId } : {}),
   ...(e && "message" in e ? { message: e.message == null ? null : messageSkeleton(e.message) } : {}),
 });

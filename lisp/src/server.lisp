@@ -26,7 +26,7 @@
 ;;;;
 ;;;; compact: a session_before_compact, in two calls (src/hooks/compaction.ts; host.lisp compact-for-host)
 ;;;;   {"op":"compact","host":SNAPSHOT,"event":EVENT,"converted":[MESSAGE...]?}
-;;;;   -> {"ok":true,"kind":"pass"} when the pass is not omp-vcc's; without
+;;;;   -> {"ok":true,"kind":"pass"} when the pass is not keel's; without
 ;;;;   CONVERTED, {"ok":true,"kind":"convert","messages":[M...]}, what the host's
 ;;;;   convertToLlm must convert, asked again with its answers in that order; with
 ;;;;   them, the cancel or the compaction in the host's own result shape.
@@ -47,28 +47,28 @@
 ;;;;   -> {"ok":true,"request":{scope, session?, action:{kind,...}, ignored:[PARAM...]},"note":N,
 ;;;;       "params":{...},"dropped":[D...]} (params and dropped for the tool's params)
 ;;;;
-;;;; names: omp-vcc's own names and the limits its tools state (names.lisp), which src/names.ts copies
+;;;; names: keel's own names and the limits its tools state (names.lisp), which src/names.ts copies
 ;;;;   {"op":"names"} -> {"ok":true,"names":{recallTool, recallParams, pinTool, ..., sessionRefMinChars}}
 ;;;;
 ;;;; context-edits: a branch as Pi's context holds it (context-edits.lisp), for the parity test
 ;;;;   {"op":"context-edits","branch":[ENTRY...]} -> {"ok":true,"entries":[ENTRY...]}
 ;;;;   (op compact applies the same projection to its BRANCH and NOTES)
 ;;;;
-;;;; settings: omp-vcc's config file (src/core/settings.ts), which the core reads and scaffolds itself
+;;;; settings: keel's config file (src/core/settings.ts), which the core reads and scaffolds itself
 ;;;;   {"op":"settings","path":P,"legacy":L|null,"scaffold":B}
 ;;;;   -> {"ok":true,"settings":SETTINGS}; with scaffold, the file is made whole
 ;;;;   first (from LEGACY, pi-vcc's file, when given and there is none at P).
 ;;;;
-;;;; pin: one vcc_pin call or /…-pin, /…-unpin command (src/core/pins.ts)
+;;;; pin: one keel_pin call or /…-pin, /…-unpin command (src/core/pins.ts)
 ;;;;   {"op":"pin","host":SNAPSHOT,"call":{surface:"tool",params}|{surface:"command",name:"pin"|"unpin",args}}
 ;;;;   -> {"ok":true,"pin":{done, text, op?, severity?, agentNote?}}; OP is the
-;;;;   omp-vcc.pin entry's data for the host to append.
+;;;;   keel.pin entry's data for the host to append.
 ;;;;
 ;;;; raw-capture: copy what omp may rewrite (src/hooks/raw-capture.ts)
 ;;;;   {"op":"raw-capture","input":{file, entries:[the message entries since the last call],
 ;;;;    kept:[ids of them the binding keeps], lineage:B}}
 ;;;;   -> {"ok":true,"written":[ID...],"stored":B,"lineage":[ID...]?}; the core appends
-;;;;   <file>.vcc-raw itself (STORED false: the write failed), and with LINEAGE
+;;;;   <file>.keel-raw itself (STORED false: the write failed), and with LINEAGE
 ;;;;   reads the ids the file's and its parents' stores hold.
 ;;;;
 ;;;; placeholders: pointers on omp's placeholders (src/hooks/raw-capture.ts)
@@ -103,17 +103,17 @@
 ;;;;   -> {"ok":true,"results":[{"limit":N?} | {policy?, trigger?, autoCompacts, budgets}...]}
 ;;;;
 ;;;; context: the host's next request with what is out of the context left out (src/hooks/eviction.ts)
-;;;;   {"op":"context","host":SNAPSHOT,"messages":[M...],"tool":B (vcc_context is registered)}
+;;;;   {"op":"context","host":SNAPSHOT,"messages":[M...],"tool":B (keel_context is registered)}
 ;;;;   -> {"ok":true,"drop":[I...],"stubs":[{at,how,text,message?}...],"ops":[OP...],"note":T?,"notice":T?}:
 ;;;;   drop the messages at I; put each stub's text on message AT as HOW says (prepend, append, or
-;;;;   insert MESSAGE before it); append each OP (one omp-vcc.evict entry); send NOTE to the model
-;;;;   as a message of its own (omp-vcc-budget); tell the user NOTICE.
+;;;;   insert MESSAGE before it); append each OP (one keel.evict entry); send NOTE to the model
+;;;;   as a message of its own (keel-budget); tell the user NOTICE.
 ;;;;
-;;;; evict: one vcc_context call or evict command (src/core/evict.ts)
+;;;; evict: one keel_context call or evict command (src/core/evict.ts)
 ;;;;   {"op":"evict","host":SNAPSHOT,"call":{surface:"tool",params}|{surface:"command",args}}
 ;;;;   -> {"ok":true,"text":T,"ops":[OP...]}
 ;;;;
-;;;; recall: one vcc_recall call or /…-recall command (src/core/recall-run.ts)
+;;;; recall: one keel_recall call or /…-recall command (src/core/recall-run.ts)
 ;;;;   {"op":"recall","host":SNAPSHOT,"call":{surface:"tool",params}|{surface:"command",name,args},
 ;;;;    "projectFiles":[F...] (newest first)}
 ;;;;   -> {"ok":true,"recall":{"ok":B,"text":T,"severity":S?}}
@@ -121,7 +121,7 @@
 ;;;; Any error is answered {"ok":false,"error":MESSAGE}, never thrown past MAIN:
 ;;;; src/core/lisp-core.ts throws it as the core's failure, with the message.
 
-(in-package #:omp-vcc)
+(in-package #:keel)
 
 (defun source-entries (source)
   "The entries a source names, as (INDEX ROLE SUMMARY FILES TEXT): its file's
@@ -144,7 +144,7 @@ less the indices it skips."
                   collect (list* index (append (render-entry message) (list (search-text message) id message)))))))))
 
 (defun handle-search (request)
-  "Recall's search, as a vcc_recall query runs it, over one session file's entries."
+  "Recall's search, as a keel_recall query runs it, over one session file's entries."
   (let ((floor (json-get request "floor")) (cap (json-get request "cap"))
         (loaded (view-load (open-view (json-get request "file") "all" nil) nil)))
     (multiple-value-bind (hits total truncated)
@@ -353,7 +353,7 @@ compact, it first asks for what the host's convertToLlm makes of the messages."
                                                        (let ((p (json-get request "promptTokens"))) (and (realp p) (> p 0) p))))))
 
 (defun handle-settled (request)
-  "A run that settled: whether omp-vcc compacts in the host's stead, and the note that says so."
+  "A run that settled: whether keel compacts in the host's stead, and the note that says so."
   (json-object "ok" :true "settled" (settled-check (read-snapshot (json-get request "host")))))
 
 (defun handle-outcome (request)
@@ -362,7 +362,7 @@ compact, it first asks for what the host's convertToLlm makes of the messages."
          (multiple-value-bind (text severity)
              (compact-error-feedback (compact-error-input (read-snapshot (json-get request "host")) (json-get request "error")))
            (json-object "ok" :true "text" text "severity" severity)))
-        ((nth-value 1 (gethash "details" request)) (json-object "ok" :true "own" (vcc-details-of (json-get request "details"))))
+        ((nth-value 1 (gethash "details" request)) (json-object "ok" :true "own" (keel-details-of (json-get request "details"))))
         (t (json-object "ok" :true "handles" (bool (handles-host-compactions-p (json-get request "settings") (json-get request "provider")))))))
 
 (defun handle-window (request)

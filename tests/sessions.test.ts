@@ -38,7 +38,7 @@ const sm = (branch: any[]) => ({ getSessionFile: () => current, getSessionDir: (
 let currentBranch: any[];
 
 beforeAll(() => {
-  dir = mkdtempSync(join(tmpdir(), "omp-vcc-sessions-"));
+  dir = mkdtempSync(join(tmpdir(), "keel-sessions-"));
   // An earlier session: a fact and a pinned note.
   const a = chain([["user", "Ship the release and tag it"], ["assistant", "Deploy tag v2.14.7 was rolled back after the smoke test failed."]]);
   write(join(dir, "2026-10-01T10-00-00-000Z_aaaa1111-0000-7000-8000-000000000001.jsonl"), [
@@ -74,7 +74,7 @@ afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
 describe("mode:'sessions'", () => {
   it("lists a session by the first request the user wrote, read as the summary reads one", () => {
-    const skillDir = mkdtempSync(join(tmpdir(), "omp-vcc-first-request-"));
+    const skillDir = mkdtempSync(join(tmpdir(), "keel-first-request-"));
     try {
       const c = chain([["user", '<skill name="tdd">Write the test first.</skill>'], ["user", "ok"], ["user", "Add refunds to the ledger"], ["assistant", "Done."]]);
       write(join(skillDir, "s.jsonl"), [header("eeee5555-0000-7000-8000-000000000005", "2026-10-05T10:00:00.000Z"), ...c], 5_000);
@@ -86,7 +86,7 @@ describe("mode:'sessions'", () => {
 
   it("gives sessions started within a minute short ids that tell them apart, and each names its session", () => {
     // omp's ids are UUIDv7: the first 8 characters are the start time's top bits.
-    const twinDir = mkdtempSync(join(tmpdir(), "omp-vcc-twins-"));
+    const twinDir = mkdtempSync(join(tmpdir(), "keel-twins-"));
     try {
       const ids = ["01a1af12-0000-7000-8000-00000000000a", "01a1af12-0001-7000-8000-00000000000b"];
       ids.forEach((id, i) => write(join(twinDir, `${i}.jsonl`), [header(id, "2026-10-06T10:00:00.000Z"), ...chain([["user", `twin request ${i}`]])], 6_000 + i));
@@ -103,7 +103,7 @@ describe("mode:'sessions'", () => {
   });
 
   it("names a Pi session by its /name, the latest one", () => {
-    const piDir = mkdtempSync(join(tmpdir(), "omp-vcc-pi-names-"));
+    const piDir = mkdtempSync(join(tmpdir(), "keel-pi-names-"));
     try {
       const c = chain([["user", "Refactor the auth module"], ["assistant", "Done."]]);
       write(join(piDir, "pi.jsonl"), [
@@ -131,7 +131,7 @@ describe("mode:'sessions'", () => {
 
 describe("an earlier session's pins", () => {
   it("are the ones on its active branch: a pin made on an abandoned branch is not", () => {
-    const d = mkdtempSync(join(tmpdir(), "omp-vcc-sessions-pins-"));
+    const d = mkdtempSync(join(tmpdir(), "keel-sessions-pins-"));
     try {
       const root = msg("user", "Plan the migration", null);
       const pin = (id: string, parentId: string, noteId: number, text: string) =>
@@ -161,7 +161,7 @@ describe("session:'id'", () => {
   });
 });
 
-describe("vcc_recall across sessions", () => {
+describe("keel_recall across sessions", () => {
   it("mode:'sessions' lists them with their pins and how to read one", () => {
     const out = executeRecall({ mode: "sessions" }, sm(currentBranch));
     expect(out).toContain("2 earlier sessions in this project, newest first:");
@@ -189,7 +189,7 @@ describe("vcc_recall across sessions", () => {
   });
 
   it("the next page of a search or a listing keeps its scope and session", () => {
-    const d = mkdtempSync(join(tmpdir(), "omp-vcc-sessions-pages-"));
+    const d = mkdtempSync(join(tmpdir(), "keel-sessions-pages-"));
     try {
       // Seven hits on one branch, and seven files written: more than a page of each.
       const many = chain(Array.from({ length: 7 }, (_, i) => ["assistant", `the deploy note number ${i}`] as ["assistant", string]));
@@ -209,7 +209,7 @@ describe("vcc_recall across sessions", () => {
 
   it("the command, which has no read-around hint, gives none for a hit in an earlier session either", () => {
     const args = "rolled back release tag scope:project";
-    const result = recall(ompBinding, { sessionManager: sm(currentBranch) }, { surface: "command", name: "omp-vcc-recall", args });
+    const result = recall(ompBinding, { sessionManager: sm(currentBranch) }, { surface: "command", name: "keel-recall", args });
     expect(result.ok && result.text).toMatch(/\[session aaaa1111\] #1 \[assistant\]/);
     expect(result.ok && result.text).not.toContain("Read around a hit");
   });
@@ -240,7 +240,7 @@ describe("vcc_recall across sessions", () => {
     );
     // scope:'project' (already searched them) or no earlier session: no note.
     expect(executeRecall({ query: "zzzz qqqq", scope: "project" }, sm(currentBranch))).not.toContain("scope:'project' searches");
-    const alone = mkdtempSync(join(tmpdir(), "omp-vcc-alone-"));
+    const alone = mkdtempSync(join(tmpdir(), "keel-alone-"));
     try {
       const file = join(alone, "s.jsonl");
       write(file, [header("dddd4444-0000-7000-8000-000000000004", "2026-10-04T10:00:00.000Z"), ...currentBranch], 4_000);
@@ -258,7 +258,7 @@ describe("vcc_recall across sessions", () => {
 
 describe("reading an earlier session", () => {
   it("names it in the follow-up calls it suggests, and finds one older than the listed ones", () => {
-    const d = mkdtempSync(join(tmpdir(), "omp-vcc-sessions-older-"));
+    const d = mkdtempSync(join(tmpdir(), "keel-sessions-older-"));
     try {
       const write1 = { type: "message", id: "w1", parentId: null, timestamp: "2026-10-01T00:00:00.000Z", message: { role: "assistant", content: [{ type: "toolCall", id: "c1", name: "write", arguments: { path: "src/a.ts", content: "export const a = 1;\n" } }] } };
       const id = (n: number) => `${String(n).padStart(8, "0")}-0000-7000-8000-000000000000`;

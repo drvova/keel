@@ -6,16 +6,16 @@
 ;;;; RUN-ALL runs every test and answers whether all passed. The TypeScript
 ;;;; suite drives the core through its ops; these tests hold its parts.
 
-(defpackage #:omp-vcc.test
-  (:use #:cl #:omp-vcc)
+(defpackage #:keel.test
+  (:use #:cl #:keel)
   ;; Internals a test holds to their numbers.
-  (:import-from #:omp-vcc #:recall-output-chars #:tokens-from-chars #:calibrate-chars-per-token #:clamp-chars-per-token #:cjk-share
+  (:import-from #:keel #:recall-output-chars #:tokens-from-chars #:calibrate-chars-per-token #:clamp-chars-per-token #:cjk-share
                 #:content-chars #:message-chars #:make-call #:reads-part-p #:strip-read-selector
                 #:js-canonical #:open-failures #:read-calls #:result-text #:result-index
                 #:js-number-of #:was-rewritten-p #:with-original-content #:index-by-id #:counted-entry-p)
   (:export #:run-all))
 
-(in-package #:omp-vcc.test)
+(in-package #:keel.test)
 
 (defvar *tests* '() "Registered tests, newest first.")
 (defvar *failures* '() "Failures of the test running now.")

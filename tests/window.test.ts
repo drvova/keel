@@ -17,14 +17,14 @@ import {
   triggerFor as triggerForRule,
 } from "./support/window";
 import type { TriggerRule } from "./support/window-shapes";
-// omp's own function, which omp-vcc ports since omp does not export it to extensions.
+// omp's own function, which keel ports since omp does not export it to extensions.
 import { resolveThresholdTokens } from "@oh-my-pi/pi-agent-core/compaction";
 import { learnedWindow, recordLearnedWindow, windowOf as windowOfHost } from "./support/window";
 import type { CompactionReason } from "../src/host";
 import type { HostName } from "../src/host";
 
 /** The learned limits sit next to the test's config. */
-const configDir = () => dirname(process.env.OMP_VCC_CONFIG_PATH!);
+const configDir = () => dirname(process.env.KEEL_CONFIG_PATH!);
 /** omp's unless a test names Pi's. */
 const windowOf = (model: Parameters<typeof windowOfHost>[0], host: HostName = "omp") => windowOfHost(model, host, configDir());
 /** As the hook calls it, for a pass the host does not retry: omp's rule unless a test names another. */
@@ -33,18 +33,18 @@ const triggerFor = (w: ReturnType<typeof windowOfHost>, reason: CompactionReason
   triggerForRule(w.effective, reason === "overflow" || reason === "incomplete", before, policy, rule);
 
 let dir: string;
-const prev = process.env.OMP_VCC_CONFIG_PATH;
+const prev = process.env.KEEL_CONFIG_PATH;
 beforeAll(() => {
-  dir = mkdtempSync(join(tmpdir(), "omp-vcc-window-"));
-  process.env.OMP_VCC_CONFIG_PATH = join(dir, "omp-vcc-config.json");
+  dir = mkdtempSync(join(tmpdir(), "keel-window-"));
+  process.env.KEEL_CONFIG_PATH = join(dir, "keel-config.json");
 });
 afterAll(() => {
-  if (prev === undefined) delete process.env.OMP_VCC_CONFIG_PATH;
-  else process.env.OMP_VCC_CONFIG_PATH = prev;
+  if (prev === undefined) delete process.env.KEEL_CONFIG_PATH;
+  else process.env.KEEL_CONFIG_PATH = prev;
   rmSync(dir, { recursive: true, force: true });
 });
 afterEach(() => {
-  rmSync(join(dir, "omp-vcc-models.json"), { force: true });
+  rmSync(join(dir, "keel-models.json"), { force: true });
 });
 
 describe("limitFromOverflowError", () => {
@@ -180,7 +180,7 @@ describe("learned limits", () => {
     expect(recordLearnedWindow(configDir(), "eh/m", 32_768)).toBe(true);
     expect(learnedWindow(configDir(), "eh/m")).toBe(32_768);
     expect(learnedWindow(configDir(), "eh/other")).toBeUndefined();
-    expect(JSON.parse(readFileSync(join(dir, "omp-vcc-models.json"), "utf8"))["eh/m"]).toMatchObject({ contextWindow: 32_768, source: "overflow-error" });
+    expect(JSON.parse(readFileSync(join(dir, "keel-models.json"), "utf8"))["eh/m"]).toMatchObject({ contextWindow: 32_768, source: "overflow-error" });
   });
 });
 
@@ -199,7 +199,7 @@ describe("triggerFor", () => {
     expect(triggerFor(w, "overflow", 30_000, { thresholdTokens: 90_000 })).toBe(30_000);
   });
 
-  it("when a smaller real window is known, omp's trigger is above it and omp-vcc's own applies", () => {
+  it("when a smaller real window is known, omp's trigger is above it and keel's own applies", () => {
     recordLearnedWindow(configDir(), "p/m", 32_768);
     const w = windowOf(model);
     expect(w).toMatchObject({ host: 128_000, learned: 32_768, effective: 32_768, source: "overflow-error" });

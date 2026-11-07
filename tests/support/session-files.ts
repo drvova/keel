@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const root = mkdtempSync(join(tmpdir(), "omp-vcc-sessions-"));
+const root = mkdtempSync(join(tmpdir(), "keel-sessions-"));
 process.on("exit", () => rmSync(root, { recursive: true, force: true }));
 
 /** LINES written to FILE, one JSON value each; MTIME (seconds) set when given, for tests that list files newest first. */

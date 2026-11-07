@@ -2,7 +2,7 @@
 ;;;;
 ;;;; SPDX-License-Identifier: MIT
 
-(in-package #:omp-vcc.test)
+(in-package #:keel.test)
 
 (deftest false-null-and-empty-array-stay-apart
   (let ((v (parse-json "{\"f\":false,\"n\":null,\"a\":[],\"t\":true}")))

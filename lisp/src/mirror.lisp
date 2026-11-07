@@ -5,12 +5,12 @@
 ;;;; Context Language Models (arXiv 2609.37725) mirrors the model's live context
 ;;;; as a file whose path the model is given; the model edits it with the tools
 ;;;; it has, and what the file says is what the next request sends. This is that
-;;;; design on omp-vcc's ledger: with eviction on, every request is written to
-;;;; `<session>.jsonl.vcc-context.md`, one block per turn under a marker line
+;;;; design on keel's ledger: with eviction on, every request is written to
+;;;; `<session>.jsonl.keel-context.md`, one block per turn under a marker line
 ;;;; (`[[CTX_TURN #12–#19]]`), the turns out of context as theirs
 ;;;; (`[[CTX_OUT …]]`), the agent's own notes as theirs (`[[CTX_NOTE after #N]]`).
 ;;;; Before the next request the file is read back and compared with what was
-;;;; written (kept beside it, `.vcc-context.last`):
+;;;; written (kept beside it, `.keel-context.last`):
 ;;;;
 ;;;; - a turn's block deleted: the turn leaves the context (an evict op);
 ;;;; - a turn's text changed: what the agent wrote stands in its place (an evict
@@ -21,20 +21,20 @@
 ;;;; - the running turn's block is as it is: a call never leaves without its result.
 ;;;;
 ;;;; Nothing is lost by an edit: the ops go in the ledger, the session file keeps
-;;;; every word, and vcc_recall expand reads any original back; /…-evict undo and
-;;;; vcc_context undo reverse the last one.
+;;;; every word, and keel_recall expand reads any original back; /…-evict undo and
+;;;; keel_context undo reverse the last one.
 
-(in-package #:omp-vcc)
+(in-package #:keel)
 
-(defparameter +mirror-suffix+ ".vcc-context.md")
-(defparameter +mirror-last-suffix+ ".vcc-context.last")
+(defparameter +mirror-suffix+ ".keel-context.md")
+(defparameter +mirror-last-suffix+ ".keel-context.last")
 
 (defun mirror-path (session-file) (concatenate 'string session-file +mirror-suffix+))
 
 (defun mirror-header (path)
   "The line that tells the agent where its context's file is: the first in every
 request (with the pinned notes), the same on each."
-  (format nil "[Your context is mirrored in ~a, block by block as this request sends it. Edit that file to change what you hold: delete a [[CTX_TURN]] block to take its turn out, replace its text with what to keep of it, or write notes of your own between blocks. The next request sends what the file says. The session keeps every word (vcc_recall expand:[N] reads any original back); the running turn stays as it is.]"
+  (format nil "[Your context is mirrored in ~a, block by block as this request sends it. Edit that file to change what you hold: delete a [[CTX_TURN]] block to take its turn out, replace its text with what to keep of it, or write notes of your own between blocks. The next request sends what the file says. The session keeps every word (keel_recall expand:[N] reads any original back); the running turn stays as it is.]"
           path))
 
 (defun mirror-marker (kind from to &optional running)
@@ -115,7 +115,7 @@ the agent's own, is kind NIL), its body the lines up to the next, trimmed."
 
 (defun mirror-ops (written edited branch index count)
   "What the agent's edit of its context's file did, as ledger ops, from WRITTEN
-(the file as omp-vcc wrote it) and EDITED (as it is now): (values OPS IGNORED),
+(the file as keel wrote it) and EDITED (as it is now): (values OPS IGNORED),
 IGNORED the running turn's block when the agent changed it."
   (let* ((before (parse-mirror written)) (after (parse-mirror edited))
          (outs (read-evictions branch)) (turns (branch-turns branch index))
@@ -212,7 +212,7 @@ running turn: (values OPS IGNORED). Nothing when the file is as it was written."
   (let ((out (remove-if-not (lambda (op) (and (equal (json-get op "op") "evict") (not (stringp (json-get op "text"))))) ops))
         (rewritten (remove-if-not (lambda (op) (and (equal (json-get op "op") "evict") (stringp (json-get op "text")))) ops))
         (notes (remove-if-not (lambda (op) (equal (json-get op "op") "insert")) ops)))
-    (format nil "omp-vcc: the agent edited its context's file:~@[ ~{~a~^, ~} out~]~@[;~*~]~@[ ~{~a~^, ~} rewritten~]~@[;~*~]~@[ ~d note~:p~]~:[~;; its edit of the running turn is left out~]."
+    (format nil "keel: the agent edited its context's file:~@[ ~{~a~^, ~} out~]~@[;~*~]~@[ ~{~a~^, ~} rewritten~]~@[;~*~]~@[ ~d note~:p~]~:[~;; its edit of the running turn is left out~]."
             (and out (mapcar (lambda (op) (range-text (json-get op "from") (json-get op "to"))) out))
             (and out (or rewritten notes))
             (and rewritten (mapcar (lambda (op) (range-text (json-get op "from") (json-get op "to"))) rewritten))

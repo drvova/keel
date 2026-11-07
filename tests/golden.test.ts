@@ -1,6 +1,6 @@
 // A recorded session on each real host (tests/support/golden-session.ts):
 // every summary, its details and recall outputs, compared byte for byte with
-// tests/fixtures/golden-<host>.json. A change to what omp-vcc writes or recall
+// tests/fixtures/golden-<host>.json. A change to what keel writes or recall
 // says shows here; record it again on purpose:
 //   bun run tests/support/golden-session.ts omp > tests/fixtures/golden-omp.json
 //   bun run tests/support/golden-session.ts pi > tests/fixtures/golden-pi.json

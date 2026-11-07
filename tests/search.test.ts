@@ -269,13 +269,13 @@ describe("search toolCall arguments", () => {
   });
 
   it("excludes the recall tool's own arguments from search (no self-hit)", () => {
-    // A vcc_recall invocation is persisted as an ordinary assistant toolCall.
+    // A keel_recall invocation is persisted as an ordinary assistant toolCall.
     // Its own { query } argument must not echo the search term back as a
     // guaranteed self-hit — that would pollute every search's result count.
     const e: RenderedEntry[] = [{ index: 0, role: "assistant", summary: "Searching" }];
     const m: Message[] = [{
       role: "assistant",
-      content: [{ type: "toolCall", name: "vcc_recall", arguments: { query: "SELF_HIT_MARKER" } }],
+      content: [{ type: "toolCall", name: "keel_recall", arguments: { query: "SELF_HIT_MARKER" } }],
     } as any];
     expect(searchHits(m, "SELF_HIT_MARKER")).toHaveLength(0);
   });
@@ -285,7 +285,7 @@ describe("search toolCall arguments", () => {
     const m: Message[] = [{
       role: "assistant",
       content: [
-        { type: "toolCall", name: "vcc_recall", arguments: { query: "SELF_HIT_MARKER" } },
+        { type: "toolCall", name: "keel_recall", arguments: { query: "SELF_HIT_MARKER" } },
         { type: "toolCall", name: "bash", arguments: { command: "echo SIBLING_MARKER" } },
       ],
     } as any];
@@ -299,21 +299,21 @@ describe("search toolCall arguments", () => {
     const e: RenderedEntry[] = [{ index: 0, role: "assistant", summary: "Searching" }];
     const m: Message[] = [{
       role: "assistant",
-      content: [{ type: "toolCall", name: "VCC_Recall", arguments: { query: "SELF_HIT_MARKER_2" } }],
+      content: [{ type: "toolCall", name: "Keel_Recall", arguments: { query: "SELF_HIT_MARKER_2" } }],
     } as any];
     expect(searchHits(m, "SELF_HIT_MARKER_2")).toHaveLength(0);
   });
 });
 
 describe("search recall toolResult exclusion", () => {
-  // A vcc_recall call is [toolCall args (assistant)] -> [toolResult text].
+  // A keel_recall call is [toolCall args (assistant)] -> [toolResult text].
   // The toolCall-args side is covered above; these cover the toolResult side
   // — its "N matches for \"<query>\">" text must not self-match a repeat query.
 
   it("excludes the recall tool's own toolResult from search (no growth on repeat query)", () => {
-    const e: RenderedEntry[] = [{ index: 0, role: "tool_result", summary: '[vcc_recall] 1 matches for "MARKER"' }];
+    const e: RenderedEntry[] = [{ index: 0, role: "tool_result", summary: '[keel_recall] 1 matches for "MARKER"' }];
     const m: Message[] = [{
-      role: "toolResult", toolName: "vcc_recall",
+      role: "toolResult", toolName: "keel_recall",
       content: [{ type: "text", text: '1 matches for "MARKER" (page 1/1)' }],
     } as any];
     expect(searchHits(m, "MARKER")).toHaveLength(0);
@@ -331,9 +331,9 @@ describe("search recall toolResult exclusion", () => {
   });
 
   it("excludes the recall toolResult case-insensitively", () => {
-    const e: RenderedEntry[] = [{ index: 0, role: "tool_result", summary: '[VCC_Recall] 1 matches for "MARKER2"' }];
+    const e: RenderedEntry[] = [{ index: 0, role: "tool_result", summary: '[Keel_Recall] 1 matches for "MARKER2"' }];
     const m: Message[] = [{
-      role: "toolResult", toolName: "VCC_Recall",
+      role: "toolResult", toolName: "Keel_Recall",
       content: [{ type: "text", text: '1 matches for "MARKER2"' }],
     } as any];
     expect(searchHits(m, "MARKER2")).toHaveLength(0);

@@ -14,10 +14,10 @@ import { fileURLToPath } from "node:url";
  * runs its own process with spawnSync (a start costs ~5 ms). Either way the
  * callers stay synchronous.
  *
- * Which executable: OMP_VCC_CORE when it names one, else the build of this
- * copy's lisp/ sources, lisp/build/omp-vcc-core-<hash of the sources> (or in
- * OMP_VCC_CORE_BUILD_DIR), which
- * omp-vcc builds itself with the user's SBCL the first time it is needed (in
+ * Which executable: KEEL_CORE when it names one, else the build of this
+ * copy's lisp/ sources, lisp/build/keel-core-<hash of the sources> (or in
+ * KEEL_CORE_BUILD_DIR), which
+ * keel builds itself with the user's SBCL the first time it is needed (in
  * the background, a few seconds; an update of the sources builds again).
  *
  * While it is not there (being built, no SBCL, a failed build) a call throws
@@ -34,13 +34,13 @@ export const core = (request: object): Record<string, unknown> => {
     let reply: any;
     try { reply = JSON.parse(answered); } catch {}
     if (reply?.ok === true) return reply;
-    throw new Error(`omp-vcc's core failed: ${reply?.error ?? answered.slice(0, 500)}`);
+    throw new Error(`keel's core failed: ${reply?.error ?? answered.slice(0, 500)}`);
   }
   const run = spawnSync(status.path, [], { input, encoding: "utf8", maxBuffer: 1 << 30 });
   let reply: any;
   try { reply = run.error || run.status !== 0 ? undefined : JSON.parse(run.stdout); } catch {}
   if (reply?.ok === true) return reply;
-  throw new Error(`omp-vcc's core failed: ${reply?.error ?? run.error?.message ?? (run.stderr || `exit ${run.status}`)}`);
+  throw new Error(`keel's core failed: ${reply?.error ?? run.error?.message ?? (run.stderr || `exit ${run.status}`)}`);
 };
 
 // --- the live core ----------------------------------------------------------------
@@ -58,8 +58,11 @@ const LIVE_ANSWER_MS = 120_000;
 const sleep = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 const code = (e: unknown) => (e as NodeJS.ErrnoException)?.code;
 
-/** Whether this host process runs one core for every request: not on Windows (no named pipes there), not with OMP_VCC_CORE_LIVE=off. */
-const liveWanted = () => process.platform !== "win32" && process.env.OMP_VCC_CORE_LIVE !== "off";
+/** KEEL_<NAME>, or OMP_VCC_<NAME> as keel read it under its earlier name. */
+const env = (name: string): string | undefined => process.env[`KEEL_${name}`] ?? process.env[`OMP_VCC_${name}`];
+
+/** Whether this host process runs one core for every request: not on Windows (no named pipes there), not with KEEL_CORE_LIVE=off. */
+const liveWanted = () => process.platform !== "win32" && env("CORE_LIVE") !== "off";
 
 const stopLive = () => {
   if (!live) return;
@@ -118,7 +121,7 @@ const liveCore = (path: string): Live | undefined => {
   if (live && live.path === path && live.child.exitCode === null && live.child.signalCode === null) return live;
   stopLive();
   if (liveRefused && liveRefused.path === path && Date.now() - liveRefused.at < LIVE_RETRY_MS) return undefined;
-  const dir = mkdtempSync(join(tmpdir(), "omp-vcc-core-"));
+  const dir = mkdtempSync(join(tmpdir(), "keel-core-"));
   const child = spawn(path, ["--serve", dir], { stdio: "ignore" });
   child.unref();
   child.on("error", () => {});
@@ -162,9 +165,9 @@ export class CoreUnavailable extends Error {
 
 const coreUnavailableText = (status: CoreUnavailable["status"]): string => {
   switch (status.state) {
-    case "building": return "omp-vcc is building its core, once for this version (a few seconds); until then it steps aside.";
-    case "no-sbcl": return `omp-vcc needs SBCL to build its core and found none (${status.sbcl}): install SBCL (apt install sbcl, brew install sbcl, or sbcl.org) and omp-vcc tries again within a minute, or set SBCL to its path and start a new session; until then it steps aside.`;
-    case "failed": return `omp-vcc could not build its core with SBCL (it tries again within a minute): ${status.why}`;
+    case "building": return "keel is building its core, once for this version (a few seconds); until then it steps aside.";
+    case "no-sbcl": return `keel needs SBCL to build its core and found none (${status.sbcl}): install SBCL (apt install sbcl, brew install sbcl, or sbcl.org) and keel tries again within a minute, or set SBCL to its path and start a new session; until then it steps aside.`;
+    case "failed": return `keel could not build its core with SBCL (it tries again within a minute): ${status.why}`;
   }
 };
 
@@ -176,8 +179,8 @@ export type CoreStatus =
   | { state: "failed"; why: string };
 
 const LISP_DIR = fileURLToPath(new URL("../../lisp/", import.meta.url));
-/** Where builds go: lisp/build, or OMP_VCC_CORE_BUILD_DIR (an install whose own directory is read-only). */
-const buildDir = (): string => process.env.OMP_VCC_CORE_BUILD_DIR || join(LISP_DIR, "build");
+/** Where builds go: lisp/build, or KEEL_CORE_BUILD_DIR (an install whose own directory is read-only). */
+const buildDir = (): string => env("CORE_BUILD_DIR") || join(LISP_DIR, "build");
 /** A lock older than this is a build that died with its process: built again. */
 const STALE_LOCK_MS = 15 * 60_000;
 
@@ -192,7 +195,7 @@ const sourceFiles = (dir: string): string[] =>
 let sourcesHash: string | undefined;
 /** The build of these sources: its path is named by their hash, so an update builds again. */
 const buildOfSources = (): { hash: string; path: string } => {
-  if (sourcesHash) return { hash: sourcesHash, path: join(buildDir(), `omp-vcc-core-${sourcesHash}`) };
+  if (sourcesHash) return { hash: sourcesHash, path: join(buildDir(), `keel-core-${sourcesHash}`) };
   const h = createHash("sha256");
   for (const f of sourceFiles(LISP_DIR)) h.update(relative(LISP_DIR, f)).update("\0").update(readFileSync(f)).update("\0");
   sourcesHash = h.digest("hex").slice(0, 16);
@@ -208,7 +211,7 @@ let lastFailure: { status: Exclude<CoreStatus, { state: "ready" | "building" }>;
 
 /** The core's state now; starts the build when it is neither there nor being built. */
 export const coreStatus = (): CoreStatus => {
-  const named = process.env.OMP_VCC_CORE;
+  const named = env("CORE");
   if (named) return { state: "ready", path: named };
   const { path } = buildOfSources();
   if (existsSync(path)) return { state: "ready", path };
@@ -223,7 +226,7 @@ const failed = (status: Exclude<CoreStatus, { state: "ready" | "building" }>): C
   return status;
 };
 
-/** What builds the core: build.lisp, writing the executable where OMP_VCC_CORE_OUT says. */
+/** What builds the core: build.lisp, writing the executable where KEEL_CORE_OUT says. */
 const BUILD_ARGS = ["--noinform", "--non-interactive", "--load", join(LISP_DIR, "build.lisp")];
 const hasSbcl = (sbcl: string): boolean => spawnSync(sbcl, ["--version"], { stdio: "ignore" }).status === 0;
 
@@ -231,7 +234,7 @@ const hasSbcl = (sbcl: string): boolean => spawnSync(sbcl, ["--version"], { stdi
 const install = (out: string, path: string): void => {
   renameSync(out, path);
   const dir = buildDir();
-  for (const f of readdirSync(dir)) if (/^omp-vcc-core-[0-9a-f]+$/.test(f) && join(dir, f) !== path) rmSync(join(dir, f), { force: true });
+  for (const f of readdirSync(dir)) if (/^keel-core-[0-9a-f]+$/.test(f) && join(dir, f) !== path) rmSync(join(dir, f), { force: true });
 };
 
 /**
@@ -246,10 +249,10 @@ export const buildCoreNow = (): string | undefined => {
   if (!hasSbcl(sbcl)) return undefined;
   mkdirSync(buildDir(), { recursive: true });
   const out = `${path}.tmp-${process.pid}`;
-  const run = spawnSync(sbcl, BUILD_ARGS, { env: { ...process.env, OMP_VCC_CORE_OUT: out }, encoding: "utf8" });
+  const run = spawnSync(sbcl, BUILD_ARGS, { env: { ...process.env, KEEL_CORE_OUT: out }, encoding: "utf8" });
   if (run.status !== 0 || !existsSync(out)) {
     rmSync(out, { force: true });
-    throw new Error(`omp-vcc's core did not build:\n${run.stdout}\n${run.stderr}`);
+    throw new Error(`keel's core did not build:\n${run.stdout}\n${run.stderr}`);
   }
   install(out, path);
   return path;
@@ -272,7 +275,7 @@ const startBuild = (path: string): CoreStatus => {
   const out = `${path}.tmp-${process.pid}`;
   let stderr = "";
   const child = spawn(sbcl, BUILD_ARGS, {
-    env: { ...process.env, OMP_VCC_CORE_OUT: out },
+    env: { ...process.env, KEEL_CORE_OUT: out },
     stdio: ["ignore", "ignore", "pipe"],
     detached: true,
   });

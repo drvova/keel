@@ -1,4 +1,4 @@
-// omp-vcc's names and the limits its tools state are the core's
+// keel's names and the limits its tools state are the core's
 // (lisp/src/names.lisp); src/names.ts copies them for the tool descriptions,
 // which are written before a core may exist. The copy must say what the core does.
 import { describe, expect, it } from "bun:test";
@@ -16,6 +16,8 @@ describe("src/names.ts", () => {
       contextTool: names.CONTEXT_TOOL,
       contextParams: [...names.CONTEXT_PARAMS],
       evictEntryType: names.EVICT_ENTRY_TYPE,
+      legacyPinEntryType: names.LEGACY_PIN_ENTRY_TYPE,
+      legacyEvictEntryType: names.LEGACY_EVICT_ENTRY_TYPE,
       pinNoticeType: names.PIN_NOTICE_TYPE,
       budgetNoticeType: names.BUDGET_NOTICE_TYPE,
       recallCommandMessageType: names.RECALL_COMMAND_MESSAGE_TYPE,

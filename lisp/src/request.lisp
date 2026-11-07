@@ -10,7 +10,7 @@
 ;;;; A request is a plist: :scope, :action (a list headed by its kind),
 ;;;; :session, :ignored ((PARAM . WHY) ...), :dropped (strings).
 
-(in-package #:omp-vcc)
+(in-package #:keel)
 
 (defparameter +scopes+ '("lineage" "all" "project"))
 (defparameter +modes+ '("hybrid" "touched" "sessions"))
@@ -56,7 +56,7 @@
                  (push (format nil "~a ~a (~a)" key (json-string (gethash key p)) why) dropped)
                  (remhash key p)))
           (dolist (key (json-keys p)) (when (unset-p (gethash key p)) (remhash key p)))
-          (dolist (key (json-keys p)) (unless (member key +recall-params+ :test #'string=) (drop key "not a vcc_recall param")))
+          (dolist (key (json-keys p)) (unless (member key +recall-params+ :test #'string=) (drop key "not a keel_recall param")))
           (multiple-value-bind (v present) (gethash "page" p)
             (when present (let ((n (to-index v))) (if (and n (>= n 1)) (setf (gethash "page" p) n) (drop "page" "not a page number")))))
           (multiple-value-bind (v present) (gethash "expand" p)
@@ -146,7 +146,7 @@
                   :scope (getf params :scope) :mode (getf params :mode) :session (getf params :session) :dropped dropped))))
 
 (defun parse-command-request (args)
-  "/omp-vcc-recall's text: a query, scope:all|project, session:<id> and page:N; \"sessions\" alone lists them."
+  "/keel-recall's text: a query, scope:all|project, session:<id> and page:N; \"sessions\" alone lists them."
   (let ((text (js-trim args)))
     (flet ((take (regex)
              (let ((m (rx-exec regex text)))

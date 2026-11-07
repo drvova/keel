@@ -2,7 +2,7 @@
 ;;;;
 ;;;; SPDX-License-Identifier: MIT
 ;;;;
-;;;; `omp-vcc-core --serve DIR` answers requests one after another instead of
+;;;; `keel-core --serve DIR` answers requests one after another instead of
 ;;;; one per process: the host process keeps one (src/core/lisp-core.ts), so
 ;;;; what a request reads stays in memory for the next (a session file parsed
 ;;;; once, its new lines only after that: JSONL-VALUES in session.lisp), and a
@@ -22,7 +22,7 @@
 ;;;; starts another when it next needs one. On Windows, which has no such
 ;;;; pipes, the host runs one process per request as before.
 
-(in-package #:omp-vcc)
+(in-package #:keel)
 
 (defparameter +live-request-seconds+ 55
   "A request running longer is answered as failed, so the host is never left waiting.")
@@ -38,7 +38,7 @@
                                  path #o600)))
 
 (defun open-fd (path flags)
-  (or (sb-unix:unix-open path flags 0) (error "omp-vcc's core could not open ~a" path)))
+  (or (sb-unix:unix-open path flags 0) (error "keel's core could not open ~a" path)))
 
 (defun write-all (fd bytes)
   (let ((at 0))
@@ -61,7 +61,7 @@
   "Answer requests from DIR/req on DIR/resp until the host is gone or idle too long."
   (let* ((req (concatenate 'string dir "/req")) (resp (concatenate 'string dir "/resp"))
          (parent (getppid)))
-    (unless (and (mkfifo req) (mkfifo resp)) (error "omp-vcc's core could not make its pipes in ~a" dir))
+    (unless (and (mkfifo req) (mkfifo resp)) (error "keel's core could not make its pipes in ~a" dir))
     (let* ((in (open-fd req sb-unix:o_rdwr))
            (out (open-fd resp sb-unix:o_wronly))
            (buffer (make-array 1048576 :element-type '(unsigned-byte 8)))

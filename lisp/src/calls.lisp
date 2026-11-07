@@ -8,7 +8,7 @@
 ;;;; them here, one way, so the two sections never disagree on what failed or
 ;;;; what the request was.
 
-(in-package #:omp-vcc)
+(in-package #:keel)
 
 (defun extension-user-p (m)
   "A user message another extension sent in the user's name (omp's `attribution: \"agent\"`), not the user's own."

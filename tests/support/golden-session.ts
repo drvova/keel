@@ -1,5 +1,5 @@
 // A recorded session on a real host: one session built in a real omp or a
-// real Pi with omp-vcc loaded from this repository, compacted by command and
+// real Pi with keel loaded from this repository, compacted by command and
 // automatically, then recalled. Prints every summary, its details and the
 // recall outputs as JSON, which tests/golden.test.ts compares with
 // tests/fixtures/golden-<host>.json:
@@ -14,9 +14,9 @@ const REPO = resolve(import.meta.dir, "../..");
 const HOST = process.argv[2];
 const work = mkdtempSync(join(tmpdir(), `golden-${HOST}-`));
 process.env.PI_CODING_AGENT_DIR = join(work, "agent");
-process.env.OMP_VCC_CONFIG_PATH = join(work, "omp-vcc-config.json");
+process.env.KEEL_CONFIG_PATH = join(work, "keel-config.json");
 process.env.ANTHROPIC_API_KEY ??= "golden-not-a-key";
-await Bun.write(process.env.OMP_VCC_CONFIG_PATH, JSON.stringify({ overrideDefaultCompaction: true, trackCommands: ["docker", "ssh"] }));
+await Bun.write(process.env.KEEL_CONFIG_PATH, JSON.stringify({ overrideDefaultCompaction: true, trackCommands: ["docker", "ssh"] }));
 
 /** The model's window in each host's recorded session, set rather than read from the host's catalog, which changes between releases. */
 const GOLDEN_WINDOW = HOST === "omp" ? 1_000_000 : 200_000;
@@ -38,7 +38,7 @@ if (HOST === "omp") {
   await initializeExtensions(session, { reportSendError: () => {}, reportRuntimeError: () => {}, mode: "rpc", uiContext });
   tool = (n) => session.getToolByName(n);
   auto = async () => { await session.runIdleCompaction(); };
-  command = "omp-vcc";
+  command = "keel";
 } else {
   const pi: any = await import(join(REPO, "node_modules/@earendil-works/pi-coding-agent/dist/index.js"));
   const modelRuntime = await pi.ModelRuntime.create({ authPath: join(work, "auth.json"), modelsPath: join(work, "models.json") });
@@ -52,7 +52,7 @@ if (HOST === "omp") {
   await session.bindExtensions({ mode: "rpc", uiContext: { notify: (m: string, t?: string) => notices.push(`${t}: ${m}`) } });
   tool = (n) => session.agent.state.tools.find((t: any) => t.name === n);
   auto = async (reason) => { await session._runAutoCompaction(reason, reason === "overflow"); };
-  command = "pi-vcc";
+  command = "keel";
 }
 
 let ts = 1_700_000_000_000;
@@ -106,7 +106,7 @@ const record = (label: string) => {
 
 for (let t = 0; t < 12; t++) turn(t);
 await session.prompt(`/${command} keep:2`); await Bun.sleep(700); record("command keep:2");
-await tool("vcc_pin").execute("p", { note: "Sessions live in SQLite, not Redis." }, undefined, undefined);
+await tool("keel_pin").execute("p", { note: "Sessions live in SQLite, not Redis." }, undefined, undefined);
 for (let t = 12; t < 24; t++) turn(t);
 await auto("threshold"); record("auto 1");
 for (let t = 24; t < 34; t++) turn(t);
@@ -115,7 +115,7 @@ for (let t = 34; t < 40; t++) turn(t);
 await auto(HOST === "pi" ? "overflow" : "threshold"); record("auto 2");
 
 const recall = async (label: string, params: any) => {
-  const r = await tool("vcc_recall").execute("r", params, undefined, undefined);
+  const r = await tool("keel_recall").execute("r", params, undefined, undefined);
   out.recall[label] = r.content.map((p: any) => p.text ?? "").join("\n");
 };
 await recall("query", { query: "password reset login" });

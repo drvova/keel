@@ -1,9 +1,9 @@
-// What a surface does while omp-vcc's core is not there yet (being built, or
+// What a surface does while keel's core is not there yet (being built, or
 // no SBCL to build it): src/core/lisp-core.ts throws CoreUnavailable, whose
 // message says why; a tool answers with it, a command tells it.
 import { CoreUnavailable } from "./lisp-core";
 
-/** `run`'s text, or why omp-vcc cannot answer yet. */
+/** `run`'s text, or why keel cannot answer yet. */
 export const untilCore = (run: () => string): string => {
   try {
     return run();

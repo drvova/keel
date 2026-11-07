@@ -1,26 +1,26 @@
 // A long coding session with planted facts at known depths, run by omp (or Pi,
-// with OMP_VCC_LH_HOST=pi or `host: "pi"`) with a real model, then scored: which facts the final summary still carries, whether
+// with KEEL_LH_HOST=pi or `host: "pi"`) with a real model, then scored: which facts the final summary still carries, whether
 // it points at where each one lives (an exact `(#N)` ref, or a [History Index]
-// range that names it), and whether vcc_recall finds each one with a reworded
+// range that names it), and whether keel_recall finds each one with a reworded
 // query.
 //
 // Nothing here stands in for omp or for a model. The model is a real provider,
 // set up as a user sets one up in omp (a `models.yml` provider whose key omp reads
 // from the environment): DeepSeek V4.1 Flash on OpenScale, run when
-// OMP_VCC_LH_API_KEY holds a key for it. OMP_VCC_LH_BASE_URL, OMP_VCC_LH_MODEL
-// and OMP_VCC_LH_API (`openai-completions`) point it elsewhere. Each turn is a
+// KEEL_LH_API_KEY holds a key for it. KEEL_LH_BASE_URL, KEEL_LH_MODEL
+// and KEEL_LH_API (`openai-completions`) point it elsewhere. Each turn is a
 // request telling the agent what to do; omp's agent loop runs it with the agent's
 // own calls to omp's real tools, on a real project in a real git repository with
 // real tests (`bun test`: each turn's pass once its edit is made, and turn 25's
 // fails on rounding until the agent fixes it) and a dev-server script that prints
 // its port. omp counts the context from the
 // provider's usage, runs its threshold checks and its idle maintenance (every
-// `compactEvery` turns), prepares each compaction and commits it; omp-vcc is
+// `compactEvery` turns), prepares each compaction and commits it; keel is
 // loaded from this package as omp loads it for a user. On Pi the same turns go
 // through Pi's agent loop, tools and threshold check (a `models.json` provider),
 // and since Pi has no idle maintenance, Pi's own /compact runs every
 // `compactEvery` turns instead (tests/support/host-session.ts). Recall runs
-// through the session's own vcc_recall tool. Used by tests/long-horizon.test.ts and
+// through the session's own keel_recall tool. Used by tests/long-horizon.test.ts and
 // scripts/benchmark-long-horizon.ts.
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
@@ -46,16 +46,16 @@ export interface Needle {
 }
 
 export interface LongHorizonOptions {
-  /** The host the session runs in: OMP_VCC_LH_HOST, omp by default. */
+  /** The host the session runs in: KEEL_LH_HOST, omp by default. */
   host?: Host;
   turns?: number;
   /** omp's idle maintenance (Pi's /compact) runs after every this many turns. */
   compactEvery?: number;
-  /** Pin a note with the vcc_pin tool at the end of these turns. */
+  /** Pin a note with the keel_pin tool at the end of these turns. */
   pins?: Record<number, string>;
   /** The model's context window (default 128K): omp's trigger, and so the budgets, follow it. */
   contextWindow?: number;
-  /** omp-vcc settings for the run, over `overrideDefaultCompaction: true` (e.g. `{ workingSet: false }`). */
+  /** keel settings for the run, over `overrideDefaultCompaction: true` (e.g. `{ workingSet: false }`). */
   config?: Record<string, unknown>;
   /** Runs before the temp session is removed: extra queries for debugging. */
   inspect?: (recall: (params: Record<string, unknown>) => Promise<string>, needles: Needle[]) => Promise<void> | void;
@@ -78,8 +78,8 @@ export interface LongHorizonResult {
   compactions: number;
   /** Requests, prompt tokens, the cache's share and who evicted what. */
   stats: RunStats;
-  /** Of those, the ones omp-vcc wrote (all of them, when it works). */
-  byOmpVcc: number;
+  /** Of those, the ones keel wrote (all of them, when it works). */
+  byKeel: number;
   summaryChars: number[];
   /** The same without [Working Set], which is sized from the landing room, not the sections. */
   sectionChars: number[];
@@ -195,8 +195,8 @@ const createProject = (proj: string, plans: TurnPlan[]) => {
   write("package.json", '{ "name": "billing-suite", "private": true, "type": "module" }\n');
   write("migrations/001_init.sql", "-- generated\n");
   run(proj, "git", "init", "-q", "-b", "main");
-  run(proj, "git", "config", "user.name", "omp-vcc test");
-  run(proj, "git", "config", "user.email", "test@omp-vcc.invalid");
+  run(proj, "git", "config", "user.name", "keel test");
+  run(proj, "git", "config", "user.email", "test@keel.invalid");
   run(proj, "git", "config", "commit.gpgsign", "false");
   run(proj, "git", "add", "-A");
   run(proj, "git", "commit", "-q", "-m", "init");
@@ -205,8 +205,8 @@ const createProject = (proj: string, plans: TurnPlan[]) => {
 export const runLongHorizon = async (options: LongHorizonOptions = {}): Promise<LongHorizonResult> => {
   const turns = options.turns ?? 60;
   const compactEvery = options.compactEvery ?? 6;
-  if (!realModel({ keyFile: true })) throw new Error("long-horizon: set OMP_VCC_LH_API_KEY to a key for DeepSeek V4.1 Flash on OpenScale (tests/support/host-session.ts)");
-  const work = mkdtempSync(join(tmpdir(), "omp-vcc-long-horizon-"));
+  if (!realModel({ keyFile: true })) throw new Error("long-horizon: set KEEL_LH_API_KEY to a key for DeepSeek V4.1 Flash on OpenScale (tests/support/host-session.ts)");
+  const work = mkdtempSync(join(tmpdir(), "keel-long-horizon-"));
   let hostSession: HostSession | undefined;
   try {
     const needles = NEEDLES(turns).map((n) => ({ ...n }));
@@ -222,9 +222,9 @@ export const runLongHorizon = async (options: LongHorizonOptions = {}): Promise<
       for (const [path, content] of Object.entries(plan.files)) writeFileSync(join(proj, path), content);
       await session.prompt(plan.user);
       const pin = options.pins?.[t];
-      if (pin) await hostSession.tool("vcc_pin").execute("pin", { note: pin }, undefined, undefined);
+      if (pin) await hostSession.tool("keel_pin").execute("pin", { note: pin }, undefined, undefined);
       // omp's idle pass; on Pi, which has none, Pi's /compact. With turns leaving
-      // the context whole, omp-vcc turns omp's idle pass down while there is a
+      // the context whole, keel turns omp's idle pass down while there is a
       // turn to take out; Pi's /compact is a compaction the user asks for, which
       // it never turns down, so as a stand-in for an idle pass it is left out.
       const standIn = hostSession.host === "pi" && options.config?.evict === true;
@@ -243,7 +243,7 @@ export const runLongHorizon = async (options: LongHorizonOptions = {}): Promise<
     });
     const finalSummary: string = compactionEntries.at(-1)?.summary ?? "";
 
-    // Where each fact landed, by omp-vcc's own #N, in the originals of what omp rewrote in place.
+    // Where each fact landed, by keel's own #N, in the originals of what omp rewrote in place.
     const messages = sessionMessages(sessionManager.getSessionFile());
     const at = (pred: (m: any) => boolean): number | undefined => messages.find((x) => pred(x.message))?.index;
     for (const needle of needles) {
@@ -263,10 +263,10 @@ export const runLongHorizon = async (options: LongHorizonOptions = {}): Promise<
       });
     }
 
-    // The request the host would send next, through its own context hooks (omp-vcc's eviction among them).
+    // The request the host would send next, through its own context hooks (keel's eviction among them).
     const nextRequest = flat((await hostSession.session.extensionRunner.emitContext(structuredClone(sessionManager.buildSessionContext().messages)))
       .map((m: any) => textOf(m)).join("\n"));
-    const recallTool = hostSession.tool("vcc_recall");
+    const recallTool = hostSession.tool("keel_recall");
     const recall = async (params: Record<string, unknown>): Promise<string> =>
       (await recallTool.execute("q", params, undefined, undefined)).content.map((p: any) => p.text ?? "").join("\n");
     const scores: NeedleScore[] = [];
@@ -290,7 +290,7 @@ export const runLongHorizon = async (options: LongHorizonOptions = {}): Promise<
       turns,
       compactions: compactionEntries.length,
       stats: runStats(sessionManager.getBranch()),
-      byOmpVcc: compactionEntries.filter((e: any) => e.details?.compactor === "omp-vcc").length,
+      byKeel: compactionEntries.filter((e: any) => e.details?.compactor === "keel").length,
       summaryChars,
       sectionChars,
       needles: scores,

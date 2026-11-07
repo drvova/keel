@@ -2,8 +2,8 @@
 ;;;;
 ;;;; SPDX-License-Identifier: MIT
 
-(defpackage #:omp-vcc
-  (:documentation "omp-vcc's core: what a request asks, computed; the hosts' glue stays TypeScript.")
+(defpackage #:keel
+  (:documentation "keel's core: what a request asks, computed; the hosts' glue stays TypeScript.")
   (:use #:cl)
   (:export
    ;; --- js-string ---
