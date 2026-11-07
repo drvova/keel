@@ -78,7 +78,9 @@
      (:file "evict")
      ;; host: the snapshot of what the host knows, which every op for a host event reads.
      (:file "host")
-     (:file "server"))))
+     (:file "server")
+     ;; live: the same requests one after another in one long-lived process.
+     (:file "live"))))
   :in-order-to ((test-op (test-op "omp-vcc-core/test"))))
 
 (defsystem "omp-vcc-core/test"

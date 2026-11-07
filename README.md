@@ -39,7 +39,7 @@ sudo apt install sbcl   # Debian, Ubuntu
 brew install sbcl       # macOS
 ```
 
-omp-vcc's work is done by a core written in Common Lisp, which omp-vcc builds with that SBCL the first time it loads (a few seconds, once for each version, into `lisp/build/`, or `OMP_VCC_CORE_BUILD_DIR` when the install directory is read-only). Until it is built, or without SBCL, omp-vcc steps aside, says why once, and the host compacts as it would without it. `package.json` points each host at its entry: `omp.extensions` at `index.ts`, `pi.extensions` at `pi.ts` (omp reads its own key first).
+omp-vcc's work is done by a core written in Common Lisp, one process kept up beside the host (one per request on Windows), which omp-vcc builds with that SBCL the first time it loads (a few seconds, once for each version, into `lisp/build/`, or `OMP_VCC_CORE_BUILD_DIR` when the install directory is read-only). Until it is built, or without SBCL, omp-vcc steps aside, says why once, and the host compacts as it would without it. `package.json` points each host at its entry: `omp.extensions` at `index.ts`, `pi.extensions` at `pi.ts` (omp reads its own key first).
 
 ## Usage
 
