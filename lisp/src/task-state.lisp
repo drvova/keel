@@ -5,8 +5,8 @@
 ;;;; A port of src/core/task-state.ts: the latest request, the tool calls after
 ;;;; it (how many, how many failed, what they changed), the last result and the
 ;;;; failure no later run of the same call fixed, from the originals of
-;;;; everything since /clear. Shown only when the request is summarized away;
-;;;; built again at every compaction, never carried. Why, the TS says.
+;;;; everything since /clear. There at every compaction, in the same shape;
+;;;; built again each time, never carried. Why, the TS says.
 
 (in-package #:omp-vcc)
 
@@ -20,8 +20,8 @@
   (let ((lines (remove "" (mapcar #'js-trim (split-string text #\Newline)) :test #'string=)))
     (js-clip (or (car (last lines)) "") +error-line-chars+)))
 
-(defun build-task-state (messages indices kept-from)
-  "task-state.ts buildTaskState: the section's lines, NIL when no request is summarized away."
+(defun build-task-state (messages indices)
+  "task-state.ts buildTaskState: the section's lines, NIL when there is no request since /clear."
   (let* ((messages (coerce messages 'vector))
          (indices (coerce indices 'vector))
          (n (length messages))
@@ -32,7 +32,7 @@
             when (and (json-object-p m) (equal (json-get m "role") "user") (not (extension-user-p m)))
               do (let ((line (user-line (rx-replace (host-block-regex) (text-of (json-get m "content")) "" :all t) (index i))))
                    (when line (setf at i request line) (return))))
-      (when (or (< at 0) (>= at kept-from)) (return-from build-task-state nil))
+      (when (< at 0) (return-from build-task-state nil))
       (let ((lines (list (format nil "Request~a: ~a" (ref-of (index at)) request)))
             (calls (make-hash-table :test 'equal)) (order '()) (results '()) (call-count 0))
         (loop for pos from (1+ at) below n

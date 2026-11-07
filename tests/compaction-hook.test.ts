@@ -1130,7 +1130,7 @@ describe("what a compaction stores for the next one", () => {
     const one = invokeBefore(makeEvent(first, `${OMP_VCC_COMPACT_INSTRUCTION} keep:1`));
     const { details, summary } = one.compaction;
     // The brief's [user] and [assistant] blocks are not sections.
-    expect(details.sections).toEqual(["Early Session Requests"]);
+    expect(details.sections).toEqual(["Task State", "Early Session Requests"]);
     expect(details.summaryState.earlyRequests).toEqual(["fix the login bug"]);
 
     // The next compaction merges into that state, not the text: a summary text that

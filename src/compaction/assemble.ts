@@ -131,16 +131,13 @@ export const assembleSummary = (input: AssembleInput): Assembled => {
 
   // [Task State]: where the work stands, from everything since /clear, the
   // originals of what is summarized and what stays (core/task-state.ts).
-  const clearedAt = lastResetIndex(branchEntries);
-  const keptEntryAt = cut.firstKeptEntryId ? branchEntries.findIndex((e: any) => e.id === cut.firstKeptEntryId) : -1;
   const sinceClear = branchEntries
-    .map((e: any, at: number) => ({ id: e.id as string, m: toLiveMessage(e), kept: keptEntryAt >= 0 && at >= keptEntryAt }))
-    .filter((x, at) => at > clearedAt && x.m);
-  const keptFrom = sinceClear.findIndex((x) => x.kept);
+    .slice(lastResetIndex(branchEntries) + 1)
+    .map((e: any) => ({ id: e.id as string, m: toLiveMessage(e) }))
+    .filter((x) => x.m);
   const taskState = buildTaskState({
     messages: restoreOriginals(sinceClear.map((x) => x.m), sinceClear.map((x) => x.id), input.sessionFile),
     indices: sinceClear.map((x) => input.indexById?.get(x.id)),
-    keptFrom: keptFrom >= 0 ? keptFrom : sinceClear.length,
   });
 
   // The previous summary's sections: the state its compaction stored, or its

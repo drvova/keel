@@ -16,7 +16,7 @@ All notable changes to `@drvova/omp-vcc` are documented in this file. Entries fr
 
 ### Added
 
-- **`[Task State]`** — when a compaction cuts into a turn (a long autonomous turn whose request is summarized away), the summary says where the work stands, after `[Pinned Notes]`: the request, how many tool calls followed and how many failed, the files they changed, the last result, and the failure no later run of the same call fixed, each with its `#N`. It is read off the transcript by rule and built again at every compaction, never carried; while the request is still in context it is absent, since everything after it is there too. The idea is the papers' separate task state (HyMem, arXiv:2608.15703; Context as a Tool, arXiv:2512.22087), whose models write it.
+- **`[Task State]`** — every summary says where the work stands, after `[Pinned Notes]` and in the same shape at every compaction: the latest request, how many tool calls followed and how many failed, the files they changed, the last result, and the failure no later run of the same call fixed, each with its `#N`, so the agent reads where it is instead of spending requests re-reading files or re-running checks to find out. It is read off the transcript by rule and built again at every compaction, never carried; it costs about 70 tokens. The idea is the papers' separate task state (HyMem, arXiv:2608.15703; Context as a Tool, arXiv:2512.22087), whose models write it.
 
 ### Changes
 

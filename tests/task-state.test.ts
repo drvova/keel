@@ -6,7 +6,7 @@ import { buildTaskState } from "../src/core/task-state";
 const user = (text: string, extra: Record<string, unknown> = {}) => ({ role: "user", content: text, ...extra });
 const call = (id: string, name: string, args: Record<string, unknown>) => ({ role: "assistant", content: [{ type: "toolCall", id, name, arguments: args }] });
 const result = (id: string, text: string, isError = false) => ({ role: "toolResult", toolCallId: id, toolName: "x", content: [{ type: "text", text }], isError });
-const state = (messages: unknown[], keptFrom = messages.length) => buildTaskState({ messages, indices: messages.map((_, i) => i), keptFrom });
+const state = (messages: unknown[]) => buildTaskState({ messages, indices: messages.map((_, i) => i) });
 
 describe("[Task State]", () => {
   it("says what the latest request is, what changed since, and the failure nothing fixed", () => {
@@ -34,10 +34,9 @@ describe("[Task State]", () => {
     ]);
   });
 
-  it("is empty while the request is still in context, and with no request", () => {
-    const messages = [user("fix the rounding please"), call("a", "bash", { command: "ls" }), result("a", "x")];
-    expect(state(messages, 0)).toEqual([]);
-    expect(state(messages, 1)).toEqual(["Request (#0): fix the rounding please", "Since then: 1 tool call; no file changed.", 'Last result (#2): bash "ls" succeeded.']);
+  it("is empty only with no request since /clear", () => {
+    expect(state([user("fix the rounding please"), call("a", "bash", { command: "ls" }), result("a", "x")]))
+      .toEqual(["Request (#0): fix the rounding please", "Since then: 1 tool call; no file changed.", 'Last result (#2): bash "ls" succeeded.']);
     expect(state([call("a", "bash", { command: "ls" }), result("a", "x")])).toEqual([]);
   });
 

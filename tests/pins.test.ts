@@ -124,7 +124,8 @@ describe("pinned notes in summaries", () => {
       preparation: { previousSummary: undefined, fileOps: { read: [], written: [], edited: [] }, tokensBefore: 100 },
       signal: new AbortController().signal,
     }, { ui: { notify: () => {} }, sessionManager: s.sm });
-    expect(out.compaction.summary.startsWith("[Pinned Notes]\n- [1] never edit migrations/ (user, #3)\n\n[Early Session Requests]")).toBe(true);
+    // Pinned notes first, then where the work stands.
+    expect(out.compaction.summary.startsWith("[Pinned Notes]\n- [1] never edit migrations/ (user, #3)\n\n[Task State]\n")).toBe(true);
   });
 
   it("the notice /omp-vcc-pin sends the agent is not repeated in the transcript", () => {

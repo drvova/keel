@@ -10,9 +10,11 @@
 // is read off the transcript by rule: the latest request and the tool calls
 // after it, their results' failure flags and what they changed, from the
 // originals of everything since /clear (what is summarized and what is kept).
-// Nothing depends on wording. It is shown only when the request is summarized
-// away (one still in context has all that followed it in context too), and like
-// [Working Set] it is built again at every compaction and never carried.
+// Nothing depends on wording. It is there at every compaction, in the same
+// shape whether the request is summarized or still in context, so the agent
+// reads where it stands in one place instead of spending requests finding out;
+// each line names the #N that holds the rest. Like [Working Set], it is built
+// again at every compaction and never carried.
 import { textOf, clip, isExtensionUserMessage } from "./content";
 import { userLine } from "../extract/user-messages";
 import { callsOf, edits, runOf, titleOf, writes, type Call } from "./working-set";
@@ -29,8 +31,6 @@ interface TaskStateInput {
   messages: readonly unknown[];
   /** The session-wide #N of each, where known. */
   indices: ReadonlyArray<number | undefined>;
-  /** Where the kept tail starts in `messages` (its length when nothing is kept). */
-  keptFrom: number;
 }
 
 const asRecord = (v: unknown): Record<string, any> => (v && typeof v === "object" ? (v as Record<string, any>) : {});
@@ -56,8 +56,7 @@ export const buildTaskState = (input: TaskStateInput): string[] => {
       request = line;
     }
   }
-  // A request still in context has everything since it in context too: the section would only repeat it.
-  if (at < 0 || at >= input.keptFrom) return [];
+  if (at < 0) return [];
   const lines = [`Request${ref(indices[at])}: ${request}`];
 
   const calls = new Map<string, Call>();
