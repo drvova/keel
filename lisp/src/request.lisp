@@ -2,11 +2,10 @@
 ;;;;
 ;;;; SPDX-License-Identifier: MIT
 ;;;;
-;;;; A port of src/core/recall-request.ts (the tool's params, repaired where
-;;;; their meaning is certain, and the command's text, read into one request;
-;;;; the Ignored: note), drill-down.ts parseDrillDown, format-recall.ts, and the
-;;;; two surfaces' follow-up hints (tools/recall.ts toolHints, commands/
-;;;; vcc-recall.ts commandHints). Agents act on this text: it is an interface.
+;;;; The tool's params, repaired where their meaning is certain, and the
+;;;; command's text, read into one request, with the Ignored: note; #N:path
+;;;; parsed; and the wording of recall's output. Agents act on this text: it is
+;;;; an interface.
 ;;;;
 ;;;; A request is a plist: :scope, :action (a list headed by its kind),
 ;;;; :session, :ignored ((PARAM . WHY) ...), :dropped (strings).
@@ -19,7 +18,7 @@
 ;;; --- #N:path ------------------------------------------------------------------
 
 (defun parse-drill-down (query)
-  "drill-down.ts parseDrillDown: (:drill INDEX PATH FULL OFFSET LIMIT), or NIL."
+  "QUERY as #N:path: (:drill INDEX PATH FULL OFFSET LIMIT), or NIL."
   (let ((m (rx-exec (rx "^#(\\d+):(.+?)(?::(full|\\d+(?::\\d+)?))?$") query)))
     (when m
       (let ((index (parse-integer (rx-group m 1))) (path (rx-group m 2)) (suffix (rx-group m 3)))
@@ -172,7 +171,7 @@
     (let ((body (join-strings (mapcar (lambda (r) (format nil "Ignored: ~a~:[~; (~a)~].~%" (join-strings (cdr r) ", ") (plusp (length (car r))) (car r))) reasons) "")))
       (if (or (plusp (length head)) (plusp (length body))) (format nil "~a~a~%" head body) ""))))
 
-;;; --- wording (format-recall.ts) ------------------------------------------------------------
+;;; --- wording ---------------------------------------------------------------------------------
 
 (defun with-params (&rest params)
   (let ((set (remove nil params))) (if set (format nil " with ~a" (join-strings set " and ")) "")))

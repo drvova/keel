@@ -2,16 +2,15 @@
 ;;;;
 ;;;; SPDX-License-Identifier: MIT
 ;;;;
-;;;; Ported from the TypeScript search it replaced, number for number: BM25 in
-;;;; double floats, stems, stopwords, a relative floor and a cap, snippets cut
-;;;; at JavaScript's code units. tests/search.test.ts drives it through recall.
+;;;; BM25 in double floats, stems, stopwords, a relative floor and a cap,
+;;;; snippets cut at JavaScript's code units. tests/search.test.ts drives it
+;;;; through recall.
 ;;;;
 ;;;; What reaches it is each entry's role, text and files, the text as recall
 ;;;; reads it (render.lisp); deciding what an entry's text is stays there.
 ;;;;
-;;;; Term queries only, for now. A query with a regex metacharacter is
-;;;; answered :REGEX, and the caller runs it as before: JavaScript's regex
-;;;; dialect is not ported yet.
+;;;; A query with a regex metacharacter is first one regex (regex.lisp, through
+;;;; SAFE-REGEX); when that finds nothing it is searched as terms.
 
 (in-package #:omp-vcc)
 
@@ -79,7 +78,7 @@
                 (setf stem (subseq stem 0 (1- (length stem)))))
               (return (and (>= (length stem) +min-stem+) stem)))))))))
 
-;;; --- one term, matched as search-entries.ts's `term|(?<![a-z])stem`/i --------
+;;; --- one term, matched as `term|(?<![a-z])stem`/i -------------------------------
 
 ;;; Matching runs on folded text (FOLD): each character replaced by the one
 ;;; /i compares it as, so a case-insensitive match is a plain comparison of
@@ -185,7 +184,7 @@ its stem, as the alternation `term|(?<![a-z])stem` tries them."
 
 (defun first-match (terms line)
   "The first code unit in the hay LINE where any of TERMS matches, or NIL: where
-the terms joined by | match first, as search-entries.ts's snippet regex does."
+the terms joined by | would match first, as one regex."
   (let ((best nil))
     (dolist (term terms best)
       (let ((at (term-position term line)))
@@ -240,7 +239,7 @@ the terms joined by | match first, as search-entries.ts's snippet regex does."
                      (write-string text out :start at)))))))
 
 (defun word-count (text)
-  "TEXT's word count as search-entries.ts counts it: split(/\\s+/).length."
+  "TEXT's word count as BM25's document length: split(/\\s+/).length."
   (declare (text text) (optimize speed))
   (let ((count 1) (in-space nil))
     (declare (fixnum count))
@@ -292,7 +291,7 @@ list of terms, or a regex (the regex path's one pattern)."
       raw))
 
 (defparameter +search-budget-ms+ 3000
-  "A search's time budget: search-entries.ts SEARCH_BUDGET_MS.")
+  "A search's time budget, in milliseconds.")
 
 (defparameter +search-aborted+
   (format nil "Search aborted: query exceeded ~dms. Use fewer or more specific words; for a regex, avoid nested quantifiers such as (a+)+."
@@ -304,8 +303,7 @@ list of terms, or a regex (the regex path's one pattern)."
   "What a search that ran out of stack says: a regex that recurses that deep is one too costly to search.")
 
 (defun search-docs (query docs &key (floor +relative-floor+) (cap +result-cap+))
-  "Rank DOCS, a vector of (ROLE TEXT FILES), for QUERY, as search-entries.ts
-search does. Returns the hits as a list of (INDEX . SNIPPET) best first, the
+  "Rank DOCS, a vector of (ROLE TEXT FILES), for QUERY. Returns the hits as a list of (INDEX . SNIPPET) best first, the
 count before the cap, and whether the cap cut it; or (values :ABORTED MESSAGE)
 past the time budget or the stack, MESSAGE saying which."
   (let ((*regex-deadline* (+ (get-internal-real-time)
@@ -346,8 +344,8 @@ past the time budget or the stack, MESSAGE saying which."
            (df (make-hash-table :test 'equal))
            (matched (make-array n))
            (total-length 0))
-      ;; Document frequency counts each term object, as the TS map does: a
-      ;; repeated term counts twice.
+      ;; Document frequency counts each term, not each distinct one: a repeated
+      ;; term counts twice.
       (dotimes (i n)
         (incf total-length (aref lens i))
         (setf (aref matched i)

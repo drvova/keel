@@ -2,23 +2,24 @@
 ;;;;
 ;;;; SPDX-License-Identifier: MIT
 ;;;;
-;;;; search-entries.ts compiles a query with `new RegExp(pattern, "i")`: the
-;;;; non-unicode dialect with Annex B's leniencies, case-insensitive. This is
-;;;; that dialect, held to it on three things a search's answer depends on:
+;;;; Recall's search reads a query as JavaScript's `new RegExp(pattern, "i")`
+;;;; would: the non-unicode dialect with Annex B's leniencies, case-insensitive.
+;;;; This is that dialect, held to it on three things a search's answer depends
+;;;; on:
 ;;;;
-;;;;   * what is a syntax error, since safeRegex then searches for the
+;;;;   * what is a syntax error, since SAFE-REGEX then searches for the
 ;;;;     pattern's text literally instead;
 ;;;;   * matching on UTF-16 code units, as a non-unicode regex does (`.`
 ;;;;     matches half of an emoji), with positions in code units;
 ;;;;   * case folding by the spec's Canonicalize: a character's uppercase when
 ;;;;     that is one code unit and does not take a non-ASCII character to ASCII.
 ;;;;
-;;;; A construct whose meaning here is not certain to be JavaScript's (named
-;;;; groups, legacy octal escapes, a back-reference past the group count, a
-;;;; capture inside a look-behind) is refused with REGEX-UNSUPPORTED, and the
-;;;; caller leaves the query to the TS search: an answer from the core is the
-;;;; TS answer or none. tests/lisp-regex.test.ts compares test, search and
-;;;; global match counts with JavaScript's own over generated patterns.
+;;;; Named groups (by the spec's ID_Start and ID_Continue, as V8 reads them) and
+;;;; Annex B's legacy escapes are JavaScript's. The one construct refused, with
+;;;; REGEX-UNSUPPORTED, is a back-reference into or inside a look-behind, which
+;;;; JavaScript matches backwards; SAFE-REGEX searches such a query as text.
+;;;; tests/lisp-regex.test.ts compares compile errors, test, search and global
+;;;; match counts with JavaScript's own over generated and hand-picked patterns.
 ;;;;
 ;;;; The matcher backtracks, as JavaScript's does; a single-unit atom repeated
 ;;;; with no captures is matched in a loop rather than by recursion, and a
@@ -583,10 +584,10 @@ when given, is that vector to reuse, cleared here."
              (setf i (if (= e s) (1+ e) e)))
         finally (return count)))
 
-;;; --- safeRegex ------------------------------------------------------------------
+;;; --- safe-regex -----------------------------------------------------------------
 
 (defun escape-regex (string)
-  "STRING with every regex metacharacter escaped: search-entries.ts escapeRegex."
+  "STRING with every regex metacharacter escaped, to match as text."
   (with-output-to-string (out)
     (loop for c across string
           do (when (find c ".*+?^${}()|[]\\") (write-char #\\ out))
@@ -610,7 +611,7 @@ when given, is that vector to reuse, cleared here."
           (t (values 0 nil)))))
 
 (defun nested-quantifier-p (pattern)
-  "An unbounded quantifier on a group that holds one, as `(a+)+`: search-entries.ts hasNestedQuantifier."
+  "An unbounded quantifier on a group that holds one, as `(a+)+`: a pattern that can backtrack exponentially."
   (let ((p (string-units pattern)) (groups '()) (in-class nil) (i 0))
     (loop while (< i (length p))
           do (let ((u (aref p i)))

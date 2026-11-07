@@ -3,8 +3,8 @@
 ;;;; SPDX-License-Identifier: MIT
 ;;;;
 ;;;; The summary pipeline's own regular expressions (commit messages, heredocs,
-;;;; shell commands, the legacy reader) are ported as the TS writes them: the
-;;;; same pattern text in RX, run on the same engine recall's search uses, with
+;;;; shell commands, the legacy reader) are JavaScript regexes: the pattern
+;;;; text in RX, run on the same engine recall's search uses, with
 ;;;; exec, test, replace, matchAll and split behaving as JavaScript's do.
 ;;;; Positions are code units, as there; JS-SLICE cuts a string at them.
 

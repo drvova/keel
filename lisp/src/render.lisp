@@ -89,7 +89,7 @@ read once."
   '(("read" . :read) ("write" . :write) ("edit" . :edit) ("apply_patch" . :edit) ("ast_edit" . :edit)
     ("grep" . :search) ("glob" . :search) ("find" . :search) ("ast_grep" . :search) ("ls" . :search)
     ("bash" . :shell) ("powershell" . :shell))
-  "The kind of the hosts' own tools by name: tools.ts KIND_BY_NAME.")
+  "The kind of the hosts' own tools by name.")
 
 (defparameter +path-keys+ '("path" "file_path" "filePath" "file"))
 
@@ -198,7 +198,7 @@ pattern, else its file (and how many more it names), command or query."
             when (and (stringp p) (plusp (length p))) collect p))))
 
 (defun call-subject-keys (call)
-  "The arguments CALL's subject shows (tools.ts callSubject keys), so the full view leaves them out."
+  "The arguments CALL's subject shows (CALL-SUBJECT's keys), so the full view leaves them out."
   (let* ((args (call-args call)) (kind (call-kind call)))
     (flet ((key-if (key) (let ((v (json-get args key))) (and (stringp v) (plusp (length v)) (list key)))))
       (cond ((eq kind :shell) (key-if "command"))
@@ -209,7 +209,7 @@ pattern, else its file (and how many more it names), command or query."
             (t (or (key-if "command") (key-if "query")))))))
 
 (defun file-write-of (call)
-  "tools.ts fileWriteOf: what a write or edit puts in its file, as (:path P :content C), (:path P :edits ((OLD . NEW)...)) or (:path P :replace (OLD . NEW)); NIL for another call."
+  "What a write or edit puts in its file, as (:path P :content C), (:path P :edits ((OLD . NEW)...)) or (:path P :replace (OLD . NEW)); NIL for another call."
   (let ((kind (call-kind call)) (args (call-args call)))
     (when (member kind '(:write :edit))
       (let ((key (path-key-of args)))
@@ -230,7 +230,7 @@ pattern, else its file (and how many more it names), command or query."
   (rx-replace (rx "^(?=.)" "m") text pad :all t))
 
 (defun full-tool-args (calls index chars via)
-  "render-entries.ts fullToolArgs: the arguments the one-line summary leaves out, clipped at CHARS."
+  "The arguments the one-line summary leaves out, clipped at CHARS."
   (let* ((blocks (remove nil
                          (mapcar (lambda (c)
                                    (let* ((shown (call-subject-keys c))
@@ -285,10 +285,10 @@ FULL expand's view, a tool call's other arguments clipped at DETAIL-CHARS."
                      files)))))))
 
 (defparameter +tool-args-budget+ 2000
-  "Characters of a message's tool-call arguments search indexes: search-entries.ts TOOL_ARGS_BUDGET.")
+  "Characters of a message's tool-call arguments search indexes.")
 
 (defun search-text (message)
-  "MESSAGE's text as search reads it: search-entries.ts fullText."
+  "MESSAGE's text as search reads it."
   (let ((role (json-get message "role")))
     (cond ((equal role "bashExecution")
            (format nil "~a ~a" (or-empty (json-get message "command")) (or-empty (json-get message "output"))))

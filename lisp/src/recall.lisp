@@ -2,9 +2,10 @@
 ;;;;
 ;;;; SPDX-License-Identifier: MIT
 ;;;;
-;;;; A port of src/core/recall-run.ts recall(), with drill-down.ts (#N:path),
-;;;; touched.ts (mode:'touched') and the views they read through. The host's
-;;;; part comes in with the call: the session file and its directory, the
+;;;; Every action (a range, expand, search, #N:path, mode:'touched', the
+;;;; project's sessions) and the views they read through, for the tool and the
+;;;; command alike (src/core/recall-run.ts asks). The host's part comes in with
+;;;; the call: the session file and its directory, the
 ;;;; project's other session files newest first, the working directory, and the
 ;;;; session manager's current branch (its ids, and its entries' types and roles
 ;;;; for the turn in progress). Agents act on the output: it is an interface.
@@ -108,7 +109,7 @@
                 do (return-from turn (if (< i (1- (length on-path))) (map 'list #'first (subseq on-path i)) '())))
         '()))))
 
-;;; --- #N:path (drill-down.ts) ------------------------------------------------------------------
+;;; --- #N:path --------------------------------------------------------------------------------
 
 (defun file-writes-of (message)
   (loop for c in (tool-calls-of message)
@@ -170,7 +171,7 @@
                                index (length matched) pattern (listing matched) index via))
                       (t (file-write-content (first matched) index full offset limit max-chars via)))))))))
 
-;;; --- mode:'touched' (touched.ts) --------------------------------------------------------------
+;;; --- mode:'touched' ----------------------------------------------------------------------------
 
 (defun touched-files (loaded)
   "Every file the entries' writes and edits change, first changed first: (PATH . TOUCHES), a touch (INDEX TOOL DRILLABLE)."
@@ -216,7 +217,7 @@
 ;;; --- search through a view ------------------------------------------------------------------
 
 (defun search-loaded (loaded query)
-  "search-entries.ts searchEntries over LOADED: (values HITS TOTAL TRUNCATED) with HITS entry plists with :snippet, or (values :aborted MESSAGE)."
+  "Search the entries LOADED for QUERY: (values HITS TOTAL TRUNCATED) with HITS entry plists with :snippet, or (values :aborted MESSAGE)."
   (let ((v (coerce loaded 'vector)))
     (multiple-value-bind (hits total truncated)
         (search-docs query (map 'vector (lambda (e) (list (getf e :role) (search-text (getf e :message)) (getf e :files))) v))
@@ -405,7 +406,7 @@
                             (format-recall-output (last-n (view-load v nil) +recent-count+)))))))
 
 (defun run-recall (input)
-  "recall-run.ts recall(): (values OK TEXT SEVERITY). INPUT carries the call (the tool's params or the command's text) and the host's part."
+  "One recall: (values OK TEXT SEVERITY). INPUT carries the call (the tool's params or the command's text) and the host's part."
   (let* ((call (json-get input "call"))
          (surface (if (equal (json-get call "surface") "command") (list :command (json-get call "name")) (list :tool)))
          (request (if (eq (first surface) :tool) (parse-tool-request (json-get call "params")) (parse-command-request (string-or (json-get call "args") ""))))
