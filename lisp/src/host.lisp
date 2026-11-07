@@ -142,16 +142,20 @@ host's window (or the host knows none); T when it was recorded."
 
 (defun context-for-host (s messages)
   "The host's next request MESSAGES with what is out of the context left out: the
-indices to drop, the lines to put in their place, the evictions omp-vcc records
-itself as the context fills (the evict setting), and what to tell of them."
-  (let ((auto (eq (json-get (snapshot-settings s) "evict") :true)))
+indices to drop, the lines to put in their place (and where), the evictions
+omp-vcc records itself as the context fills (the evict setting), the budget line
+the request ends with past half the trigger, and what to tell of them."
+  (let* ((auto (eq (json-get (snapshot-settings s) "evict") :true))
+         (trigger (and auto (snapshot-trigger s))))
     (multiple-value-bind (drop stubs ops before after)
-        (evict-request (snapshot-branch s) (snapshot-index s) (coerce messages 'vector)
-                       :trigger (and auto (snapshot-trigger s)) :auto auto :count (snapshot-count s))
-      (json-object "drop" (coerce drop 'vector)
-                   "stubs" (map 'vector (lambda (st) (json-object "at" (car st) "text" (cdr st))) stubs)
-                   "ops" (coerce ops 'vector)
-                   "notice" (and ops (auto-notice ops before after))))))
+        (evict-request (snapshot-branch s) (snapshot-index s) (coerce messages 'vector) :file (snapshot-session-file s)
+                       :trigger trigger :auto auto :count (snapshot-count s))
+      (let ((budget (and auto (plusp (length messages)) (budget-line after trigger))))
+        (json-object "drop" (coerce drop 'vector)
+                     "stubs" (map 'vector (lambda (st) (json-object "at" (car (car st)) "how" (cdr (car st)) "text" (cdr st))) stubs)
+                     "budget" (and budget (json-object "at" (1- (length messages)) "text" budget))
+                     "ops" (coerce ops 'vector)
+                     "notice" (and ops (auto-notice ops before after)))))))
 
 (defun evict-for-host (s call)
   "One vcc_context call or evict command: what to tell, and the entries to append. Turn sizes come from the session file."

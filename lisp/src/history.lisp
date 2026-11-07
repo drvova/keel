@@ -119,15 +119,10 @@ merged, never the newest range, which stays on its own as the latest work."
         (format nil "changed ~a files in ~a~a" (if (>= (length files) +range-files+) (format nil "~d+" (length files)) (length files))
                 (join-strings (first-n dirs 6) ", ") (if (> (length dirs) 6) ", …" "")))))
 
-(defun history-line (r)
-  "One [History Index] line: `#FROM–#TO: what happened in it`."
-  (let ((parts '()) (requests (range-requests r)) (files (remove-if-not #'stringp (range-files r)))
+(defun range-work (r)
+  "What a range did, as phrases: the files it changed, its commits, its failed calls."
+  (let ((parts '()) (files (remove-if-not #'stringp (range-files r)))
         (commits (range-commits r)) (count (range-commit-count r)) (failed (range-failed r)))
-    (cond ((null requests) (push "earlier, not indexed; search it with vcc_recall" parts))
-          ((> requests 0)
-           (push (format nil "~a: ~a" (plural requests "request")
-                         (join-strings (mapcar (lambda (a) (format nil "\"~a\"" a)) (first-n (range-asks r) 1)) ", "))
-                 parts)))
     (when files (push (history-files files) parts))
     (when (> count 0)
       ;; A range read from an older index may count commits it does not list.
@@ -136,4 +131,15 @@ merged, never the newest range, which stays on its own as the latest work."
                     (t (format nil "~d commits~@[, last ~a~]" count last)))
               parts)))
     (when (> failed 0) (push (plural failed "failed call") parts))
-    (format nil "#~d–#~d~:[~;: ~a~]" (range-from r) (range-to r) parts (join-strings (nreverse parts) " · "))))
+    (nreverse parts)))
+
+(defun history-line (r)
+  "One [History Index] line: `#FROM–#TO: what happened in it`."
+  (let ((parts '()) (requests (range-requests r)))
+    (cond ((null requests) (push "earlier, not indexed; search it with vcc_recall" parts))
+          ((> requests 0)
+           (push (format nil "~a: ~a" (plural requests "request")
+                         (join-strings (mapcar (lambda (a) (format nil "\"~a\"" a)) (first-n (range-asks r) 1)) ", "))
+                 parts)))
+    (setf parts (append (nreverse parts) (range-work r)))
+    (format nil "#~d–#~d~:[~;: ~a~]" (range-from r) (range-to r) parts (join-strings parts " · "))))

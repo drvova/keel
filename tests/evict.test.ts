@@ -27,18 +27,24 @@ const setEvict = (on: boolean) => writeFileSync(process.env.OMP_VCC_CONFIG_PATH!
 
 /** A session of TURNS turns, each a request, a read and its result of SIZE chars; the last assistant reports PROMPT tokens. */
 const session = (turns: number, size = 200, prompt?: number) => {
+  const messages: any[] = [];
+  for (let i = 0; i < turns; i++) {
+    messages.push({ role: "user", content: `request number ${i} please read f${i}.ts` });
+    messages.push({ role: "assistant", content: [{ type: "toolCall", id: `c${i}`, name: "read", arguments: { path: `f${i}.ts` } }] });
+    messages.push({ role: "toolResult", toolCallId: `c${i}`, toolName: "read", content: [{ type: "text", text: `${i}:`.padEnd(size, "x") }] });
+  }
+  if (prompt !== undefined) messages.at(-2).usage = { input: prompt, output: 10, cacheRead: 0, cacheWrite: 0 };
+  return sessionOf(messages);
+};
+
+/** A session of these MESSAGES, one entry each on one branch, with its file, ledger and a request to send. */
+const sessionOf = (messages: any[]) => {
   const entries: any[] = [];
   let t = 1_700_000_000_000;
-  const add = (message: any) => {
+  for (const message of messages) {
     const id = `e${entries.length}`;
     entries.push({ type: "message", id, parentId: entries.at(-1)?.id ?? null, message: { ...message, timestamp: t++ } });
-  };
-  for (let i = 0; i < turns; i++) {
-    add({ role: "user", content: `request number ${i} please read f${i}.ts` });
-    add({ role: "assistant", content: [{ type: "toolCall", id: `c${i}`, name: "read", arguments: { path: `f${i}.ts` } }] });
-    add({ role: "toolResult", toolCallId: `c${i}`, toolName: "read", content: [{ type: "text", text: `${i}:`.padEnd(size, "x") }] });
   }
-  if (prompt !== undefined) entries.at(-2).message.usage = { input: prompt, output: 10, cacheRead: 0, cacheWrite: 0 };
   const file = join(freshDir(), "session.jsonl");
   writeJsonl(file, entries);
   const appended: any[] = [];
@@ -81,13 +87,17 @@ describe("vcc_context", () => {
     expect(s.appended.map((e) => [e.customType, e.data.op, e.data.from, e.data.to, e.data.by])).toEqual([[EVICT_ENTRY_TYPE, "evict", 0, 5, "agent"]]);
     const { messages } = sent(s);
     const shown = texts(messages);
-    // The two turns' six messages are gone; one line stands where they were, then turns 2 and 3 as they are.
-    expect(shown).toHaveLength(1 + 6);
-    expect(shown[0]).toBe('[#0–#5 out of context: 2 turns, by the agent. Requests: "request number 0 please read f0.ts"; "request number 1 please read f1.ts". Note: f0 and f1 were read; nothing to fix there. Each entry reads back word for word with vcc_recall expand:[0]; vcc_recall query searches them.]');
-    expect(shown[1]).toBe("request number 2 please read f2.ts");
+    // The two turns' six messages are gone; one line stands where they were, at the head of turn 2's request
+    // (the request never holds two user messages in a row), then turns 2 and 3 as they are.
+    expect(shown).toHaveLength(6);
+    expect((messages as any[])[0].content.map((p: any) => p.text)).toEqual([shown[0], "request number 2 please read f2.ts"]);
+    expect(shown[0]).toBe('[#0–#5 out of context: 2 turns, by the agent. Requests: "request number 0 please read f0.ts"; "request number 1 please read f1.ts". The agent\'s note: f0 and f1 were read; nothing to fix there. Each entry reads back word for word with vcc_recall expand:[0]; vcc_recall query searches them.]');
     // A call and its result leave together: what stays has every result's call.
     const calls = new Set((messages as any[]).flatMap((m) => (m.role === "assistant" ? m.content.map((p: any) => p.id) : [])));
     expect((messages as any[]).filter((m) => m.role === "toolResult").every((m) => calls.has(m.toolCallId))).toBe(true);
+    // Never two user messages in a row.
+    const roles = (messages as any[]).map((m) => m.role);
+    expect(roles.some((r, i) => r === "user" && roles[i + 1] === "user")).toBe(false);
     // The same line on every request, so the provider's cache keeps it.
     expect(texts(sent(s).messages)[0]).toBe(shown[0]);
   });
@@ -108,6 +118,75 @@ describe("vcc_context", () => {
     expect(tool(s, { restore: "#0" })).toBe("Back in context from the next request: #0–#5.");
     expect(texts(sent(s).messages)[0]).toBe("request number 0 please read f0.ts");
     expect(texts(sent(s).messages)).toContain(texts(sent(s).messages).find((t) => t.startsWith("[#6–#8 out of context: 1 turn")));
+  });
+});
+
+describe("the line in place of what is out", () => {
+  const work = () => sessionOf([
+    { role: "user", content: "fix the rounding in the totals" },
+    { role: "assistant", content: [{ type: "toolCall", id: "e1", name: "edit", arguments: { path: "src/billing/totals.ts", oldText: "Math.floor(x)", newText: "Math.round(x)" } }] },
+    { role: "toolResult", toolCallId: "e1", toolName: "edit", content: [{ type: "text", text: "ok" }] },
+    { role: "assistant", content: [{ type: "toolCall", id: "b1", name: "bash", arguments: { command: "bun test" } }] },
+    { role: "toolResult", toolCallId: "b1", toolName: "bash", isError: true, content: [{ type: "text", text: "1 fail: expected 3, got 2" }] },
+    { role: "user", content: "now run the full suite" },
+    { role: "assistant", content: [{ type: "text", text: "Running it." }] },
+  ]);
+
+  it("says what the turns did: the files they changed and the calls that failed", () => {
+    setEvict(true);
+    const s = work();
+    tool(s, { drop: "#0" });
+    expect(texts(sent(s).messages)[0]).toBe('[#0–#4 out of context: 1 turn, by the agent. Requests: "fix the rounding in the totals". It changed billing/totals.ts; 1 failed call. Each entry reads back word for word with vcc_recall expand:[0]; vcc_recall query searches them.]');
+  });
+
+  it("reads the same when omp blanks a result it stands for", () => {
+    setEvict(true);
+    const s = work();
+    tool(s, { drop: "#0" });
+    const first = texts(sent(s).messages)[0];
+    // As omp's prune does: the old result blanked in place.
+    const blanked = s.request().map((m: any) => (m.toolCallId === "b1" ? { ...m, content: [{ type: "text", text: "[Output truncated - 9 tokens]" }] } : m));
+    expect(texts(evictRequest(s.host, ompBinding, s.ctx() as any, blanked).messages)[0]).toBe(first);
+  });
+});
+
+describe("the running turn", () => {
+  // One long request: twelve reads of 30,000 chars, the last reporting 80,000 tokens.
+  const long = () => {
+    const messages: any[] = [{ role: "user", content: "audit every module in the repository" }];
+    for (let i = 0; i < 12; i++) {
+      messages.push({ role: "assistant", content: [{ type: "toolCall", id: `r${i}`, name: "read", arguments: { path: `m${i}.ts` } }] });
+      messages.push({ role: "toolResult", toolCallId: `r${i}`, toolName: "read", content: [{ type: "text", text: `${i}:`.padEnd(30_000, "x") }] });
+    }
+    messages.at(-2).usage = { input: 80_000, output: 10, cacheRead: 0, cacheWrite: 0 };
+    return sessionOf(messages);
+  };
+
+  it("lets its older steps leave as the context fills, keeping its request and its newest step", () => {
+    setEvict(true);
+    const s = long();
+    const { messages } = sent(s, 100_000);
+    expect(s.appended.map((e) => e.data)).toEqual([expect.objectContaining({ op: "evict", from: 1, by: "auto" })]);
+    // The line ends the request it follows, so no two user messages stand in a row.
+    const request = (messages as any[])[0].content.map((p: any) => p.text);
+    expect(request[0]).toBe("audit every module in the repository");
+    expect(request[1]).toStartWith(`[#1–#${s.appended[0].data.to} out of context: older steps of the turn at #0, by omp-vcc as the context filled.`);
+    expect((messages as any[])[1].role).toBe("assistant");
+    // The newest step stays, and every result that stays has its call.
+    expect((messages as any[]).at(-1).toolCallId).toBe("r11");
+    const calls = new Set((messages as any[]).flatMap((m) => (m.role === "assistant" ? m.content.map((p: any) => p.id) : [])));
+    expect((messages as any[]).filter((m) => m.role === "toolResult").every((m) => calls.has(m.toolCallId))).toBe(true);
+  });
+
+  it("gives the compaction no room once only its request and newest step are left", () => {
+    setEvict(true);
+    const s = sessionOf([
+      { role: "user", content: "one request" },
+      { role: "assistant", content: [{ type: "toolCall", id: "r0", name: "read", arguments: { path: "a.ts" } }] },
+      { role: "toolResult", toolCallId: "r0", toolName: "read", content: [{ type: "text", text: "a" }] },
+    ]);
+    expect(tool(s, null)).toContain("In context: 1 turn");
+    expect(sent(s, 100_000).messages).toBeUndefined();
   });
 });
 
@@ -189,6 +268,19 @@ describe("as the context fills", () => {
     const plain = Number(sent(session(10, 30_000, 80_000), 100_000).notice!.match(/Context ~(\d+)/)![1]);
     // Turn 0 (about 7,500 tokens) was not in the 80,000, so the context now holds that much more.
     expect(restored - plain).toBeGreaterThan(7_000);
+  });
+
+  it("tells the model how full the context is past half the trigger, at the end of the request", () => {
+    setEvict(true);
+    // 10 turns of 20,000 chars, 50,000 tokens counted: past half of 83,616, short of 85%.
+    const s = session(10, 20_000, 50_000);
+    const { messages } = sent(s, 100_000);
+    expect(s.appended).toEqual([]);
+    const last = (messages as any[]).at(-1);
+    expect(last.toolCallId).toBe("c9");
+    expect(last.content.at(-1).text).toMatch(/^\[omp-vcc: the context holds ~\d+ tokens of the ~83616 where the host compacts; past 85% the oldest turns leave by themselves\. vcc_context lists what is in it and takes old turns out, with a note of what to keep\.\]$/);
+    // Below half: nothing is said.
+    expect(sent(session(10, 1_000, 20_000), 100_000).messages).toBeUndefined();
   });
 
   it("does nothing below 85% of the trigger, or with the setting off", () => {

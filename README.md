@@ -188,15 +188,17 @@ The same search as a slash command (`/pi-vcc-recall` on Pi), with results shown 
 
 ## Turns out of the context, whole
 
-The other way to make room: instead of a summary written over the oldest part of the window, old turns leave the context whole. Nothing is summarized or rewritten. The session file keeps every word, `vcc_recall expand:[N]` reads any entry back exactly and a search finds it; only the requests the host sends change. A turn is a request the user made and every call and result after it, so a call never leaves without its result, and the turn running now always stays.
+The other way to make room: instead of a summary written over the oldest part of the window, old turns leave the context whole. Nothing is summarized or rewritten. The session file keeps every word, `vcc_recall expand:[N]` reads any entry back exactly and a search finds it; only the requests the host sends change. A turn is a request the user made and every call and result after it, so a call never leaves without its result. Past the finished turns, the running turn's older steps (a call and its result each) can leave too; its request and newest step always stay.
 
 - **`/omp-vcc-evict`** (`/pi-vcc-evict` on Pi), at any time: no text takes out the oldest half of the turns in context; `3` the three oldest; `all` every finished turn; `#12-#40` the turns that range touches; `restore #12` (or `restore all`) brings them back; `list` shows what is in and what is out, by `#N` and size.
 - **With `"evict": true`** in the config, the agent decides too, with the `vcc_context` tool (no params lists; `drop`, `oldest`, `restore`, and a `note` kept in their place), and past 85% of the host's trigger the oldest finished turns leave by themselves, down to half of it, so the host's own compaction is rarely reached; its automatic threshold and idle passes are turned down while a finished turn is left to take out, since a summary would be written over what eviction keeps whole (with none left, the summary runs). An overflow recovery still gets its summary, as do `/compact` and `/omp-vcc` when you ask for one.
-- In place of each run of turns that are out, the request carries one line, the same on every request so the provider's prompt cache keeps it (it names no size, since what omp rewrites in place would change it):
+- In place of each run of turns that are out, the request carries one line saying what they were and did, as `[History Index]` would, and how to read them back. It reads the originals omp-vcc kept and names no size, so it is the same on every request and the provider's prompt cache keeps it; it rides on the user message beside it, so the request never holds two in a row:
 
 ```text
-[#0–#20 out of context: 7 turns, by omp-vcc as the context filled. Requests: "fix the auth bug"; "add the refresh test"; "run the suite" (+4 more). Each entry reads back word for word with vcc_recall expand:[0]; vcc_recall query searches them.]
+[#0–#20 out of context: 7 turns, by omp-vcc as the context filled. Requests: "fix the auth bug"; "add the refresh test"; "run the suite" (+4 more). It changed 5 files in auth, billing; 2 commits, last 3f2a1c9 fix refresh; 1 failed call. Each entry reads back word for word with vcc_recall expand:[0]; vcc_recall query searches them.]
 ```
+
+- Past half the host's trigger, the request ends with one line telling the model how full its context is and that `vcc_context` makes room (models that are not told do not edit their context).
 
 What is out is a ledger of `omp-vcc.evict` custom entries, replayed along the branch as pinned notes are, so a branch keeps its own and `/tree` back past one undoes it. Turns leave in large runs from the oldest end: every edit makes the provider read again all that follows it, so one large eviction costs less than many small ones. The idea is [Context Language Models](https://arxiv.org/abs/2609.37725) (the model decides what stays) and [nodecode](https://nodecode.ai/docs/context) (the oldest finished turns leave whole past 85%, and read back by their number).
 

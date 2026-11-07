@@ -32,6 +32,10 @@
 (defparameter +evict-to-share+ 0.5d0 "They leave until the context is estimated at this share of the trigger.")
 (defparameter +stub-requests-shown+ 3 "Requests a stub names of the turns it stands for.")
 (defparameter +turns-listed+ 40 "Turns a listing shows, newest last.")
+(defparameter +budget-line-share+ 0.5d0
+  "Past this share of the host's trigger, the request tells the model how full its
+context is and that vcc_context makes room: the paper's harness and pi-clm both
+keep the model budget-aware, or it never edits.")
 
 ;;; --- the ledger -------------------------------------------------------------------
 
@@ -101,9 +105,32 @@ comes before the first request in the window is a turn of its own."
 
 (defun turns-in (turns outs) "The finished TURNS still in the context: what can leave." (remove-if (lambda (tr) (turn-out-p tr outs)) (finished-turns turns)))
 
-(defun room-to-evict-p (branch index) "Whether a finished turn on BRANCH is still in the context." (and (turns-in (branch-turns branch index) (read-evictions branch)) t))
+(defun turn-steps (turn branch index)
+  "TURN's steps by #N, as turns: its request (what comes before its first
+assistant message), then each assistant message with the results and messages
+after it, so a call never leaves without its result."
+  (let ((steps '()))
+    (loop for i from (live-window-start branch) below (length branch)
+          for e = (aref branch i)
+          for n = (and (counted-entry-p e) (gethash (json-get e "id") index))
+          when (and n (<= (turn-from turn) n (turn-to turn)))
+            do (if (or (null steps) (equal (json-get (json-get e "message") "role") "assistant"))
+                   (push (make-turn n n) steps)
+                   (setf (turn-to (first steps)) n)))
+    (nreverse steps)))
 
-(defun turn-of-n (n turns) (find-if (lambda (tr) (<= (turn-from tr) n (turn-to tr))) turns))
+(defun older-steps (turns branch index)
+  "The steps of the running turn that can leave: all but its request and its newest
+step, which the work in progress needs (nodecode evicts the same, after finished turns)."
+  (let ((running (car (last turns)))) (and running (butlast (rest (turn-steps running branch index))))))
+
+(defun units-in (turns branch index outs)
+  "What can leave the context, oldest first: the finished turns still in it, then the running turn's older steps."
+  (append (turns-in turns outs) (remove-if (lambda (st) (out-of (turn-from st) outs)) (older-steps turns branch index))))
+
+(defun room-to-evict-p (branch index)
+  "Whether anything on BRANCH can still leave the context."
+  (and (units-in (branch-turns branch index) branch index (read-evictions branch)) t))
 
 (defun runs-of (turns)
   "TURNS (in branch order) grouped into runs of adjacent ones: each turn starting at the #N after the last one's end."
@@ -126,21 +153,36 @@ comes before the first request in the window is a turn of its own."
                        (remove-duplicates bys :test #'equal :from-end t))))
     (join-strings names " and ")))
 
-(defun stub-text (run outs messages-by-n)
-  "The line a run of turns that are out leaves in the request: what it was and
-how to read it back. It names no size: the turns' messages are what omp rewrites
-in place, and the line must read the same on every request for the cache."
-  (let* ((from (turn-from (first run))) (to (turn-to (car (last run))))
-         (covering (remove-if-not (lambda (o) (overlaps-p (out-from o) (out-to o) from to)) outs))
-         (requests (loop for tr in run
-                         for m = (gethash (turn-from tr) messages-by-n)
-                         for w = (and m (equal (json-get m "role") "user") (request-words m))
+(defun span-what (from to turns)
+  "What the span FROM–TO holds, in words: its whole turns, and the older steps of a turn it cuts into."
+  (let* ((whole (count-if (lambda (tr) (and (<= from (turn-from tr)) (<= (turn-to tr) to))) turns))
+         (cut (find-if (lambda (tr) (and (overlaps-p from to (turn-from tr) (turn-to tr))
+                                         (not (and (<= from (turn-from tr)) (<= (turn-to tr) to)))))
+                       turns)))
+    (join-strings (remove nil (list (and (plusp whole) (plural whole "turn"))
+                                    (and cut (format nil "older steps of the turn at #~d" (turn-from cut)))))
+                  " and ")))
+
+(defun stub-text (from to turns outs messages-by-n originals)
+  "The line the span FROM–TO of what is out leaves in the request: what it was,
+what it did (as [History Index] says it: files changed, commits, failed calls,
+read from the originals omp-vcc kept, ORIGINALS by #N), and how to read it back.
+It names no size, and reads only what omp leaves as it is or the originals: the
+line must read the same on every request for the provider's cache."
+  (let* ((covering (remove-if-not (lambda (o) (overlaps-p (out-from o) (out-to o) from to)) outs))
+         (requests (loop for n from from to to
+                         for m = (gethash n messages-by-n)
+                         for w = (and m (equal (json-get m "role") "user") (not (extension-user-p m)) (request-words m))
                          when w collect w))
          (shown (subseq requests 0 (min +stub-requests-shown+ (length requests))))
+         (ns (loop for n from from to to when (gethash n originals) collect n))
+         (range (and ns (range-of-window (map 'vector (lambda (n) (gethash n originals)) ns) (coerce ns 'vector))))
+         (work (and range (range-work range)))
          (notes (remove nil (mapcar #'out-note covering))))
-    (format nil "[~a out of context: ~a, by ~a.~@[ Requests: ~a.~]~@[ Note: ~a~] Each entry reads back word for word with ~a; vcc_recall query searches them.]"
-            (range-text from to) (plural (length run) "turn") (by-words (mapcar #'out-by covering))
+    (format nil "[~a out of context: ~a, by ~a.~@[ Requests: ~a.~]~@[ It ~a.~]~@[ The agent's note: ~a~] Each entry reads back word for word with ~a; vcc_recall query searches them.]"
+            (range-text from to) (span-what from to turns) (by-words (mapcar #'out-by covering))
             (and shown (format nil "~{\"~a\"~^; ~}~@[ (+~d more)~]" shown (and (> (length requests) (length shown)) (- (length requests) (length shown)))))
+            (and work (join-strings work "; "))
             (and notes (join-strings (mapcar (lambda (n) (if (find (char n (1- (length n))) ".!?") n (concatenate 'string n "."))) notes) " "))
             (recall-expand-call from))))
 
@@ -150,34 +192,45 @@ in place, and the line must read the same on every request for the cache."
   "What ties a request's message to its session entry: role, time and call id."
   (format nil "~a|~a|~a" (json-get m "role") (js-string-of (json-get m "timestamp")) (or (json-get m "toolCallId") "")))
 
-(defun evict-request (branch index messages &key trigger auto (count 0))
+(defun evict-request (branch index messages &key trigger auto (count 0) file)
   "What leaves REQUEST MESSAGES (a vector, the host's next request): the indices
 to drop, the stubs (index . text) to put before them, the evict ops omp-vcc
 records itself (AUTO and past +EVICT-AT-SHARE+ of TRIGGER), and the estimate
-before and after: (values DROP STUBS OPS BEFORE AFTER)."
+before and after: (values DROP STUBS OPS BEFORE AFTER). FILE is the session's,
+whose kept originals the stubs read."
   (let* ((turns (branch-turns branch index))
-         (key-n (make-hash-table :test 'equal))
+         (running (car (last turns)))
+         (protected (let ((steps (and running (turn-steps running branch index))))
+                      ;; The running turn's request and its newest step never leave.
+                      (remove nil (list (first steps) (and (rest steps) (car (last steps)))))))
+         (key-n (make-hash-table :test 'equal)) (id-of (make-hash-table))
          (outs (read-evictions branch))
          (n-of (make-array (length messages) :initial-element nil))
-         (turn-at (make-array (length messages) :initial-element nil))
          (chars (make-hash-table)) (by-n (make-hash-table))
          (per-token +default-chars-per-token+) (ops '()))
     (loop for i from (live-window-start branch) below (length branch)
           for e = (aref branch i)
           when (counted-entry-p e)
-            do (let ((n (gethash (json-get e "id") index))) (when n (setf (gethash (message-key (json-get e "message")) key-n) n))))
-    ;; Each request message's #N, and the turn it is in (an unindexed one, a custom message, is in the turn before it).
-    (let ((current nil))
-      (loop for m across messages for i from 0
-            for n = (and (json-object-p m) (gethash (message-key m) key-n))
-            do (when n
-                 (setf (aref n-of i) n current (turn-of-n n turns))
-                 (incf (gethash n chars 0) (message-chars m))
-                 (setf (gethash n by-n) m))
-               (setf (aref turn-at i) current)))
-    (labels ((kept-p (i outs) (let ((tr (aref turn-at i))) (not (and tr (not (eq tr (car (last turns)))) (turn-out-p tr outs)))))
+            do (let ((n (gethash (json-get e "id") index)))
+                 (when n (setf (gethash (message-key (json-get e "message")) key-n) n (gethash n id-of) (json-get e "id")))))
+    (loop for m across messages for i from 0
+          for n = (and (json-object-p m) (gethash (message-key m) key-n))
+          when n do (setf (aref n-of i) n (gethash n by-n) m) (incf (gethash n chars 0) (message-chars m)))
+    (labels ((out-p (n outs) (and (out-of n outs) (notany (lambda (st) (<= (turn-from st) n (turn-to st))) protected)))
+             ;; A message not tied to an entry (a custom one) goes with the entries around it: out when both are.
+             (dropped (outs)
+               (let ((v (make-array (length messages) :initial-element nil)))
+                 (loop for i from 0 below (length messages)
+                       for n = (aref n-of i)
+                       do (setf (aref v i)
+                                (if n
+                                    (out-p n outs)
+                                    (let ((before (loop for j from (1- i) downto 0 when (aref n-of j) return (aref n-of j)))
+                                          (after (loop for j from (1+ i) below (length messages) when (aref n-of j) return (aref n-of j))))
+                                      (and before (out-p before outs) (or (null after) (out-p after outs)))))))
+                 v))
              (chars-kept (outs &optional (below (length messages)))
-               (loop for i from 0 below below when (kept-p i outs) sum (message-chars (aref messages i)))))
+               (let ((v (dropped outs))) (loop for i from 0 below below unless (aref v i) sum (message-chars (aref messages i))))))
       ;; The context now, estimated: what the provider counted for the latest
       ;; request, less what was sent then, is what the request holds besides the
       ;; messages (the system prompt, the tools); plus the messages kept now.
@@ -191,24 +244,53 @@ before and after: (values DROP STUBS OPS BEFORE AFTER)."
              (after before))
         (when (and auto (realp trigger) (> trigger 0) (> before (* +evict-at-share+ trigger)))
           (let ((leaving '()))
-            (dolist (tr (turns-in turns outs))
+            (dolist (u (units-in turns branch index outs))
               (when (<= after (* +evict-to-share+ trigger)) (return))
-              (push tr leaving)
-              (decf after (tokens-from-chars (turn-chars tr chars) per-token)))
+              (push u leaving)
+              (decf after (tokens-from-chars (turn-chars u chars) per-token)))
             (dolist (run (runs-of (nreverse leaving)))
-              (let ((op (evict-op "evict" (turn-from (first run)) (turn-to (car (last run))) "auto" count)))
-                (push op ops)
-                (push (make-out (turn-from (first run)) (turn-to (car (last run))) "auto" nil count) outs)))
+              (let ((from (turn-from (first run))) (to (turn-to (car (last run)))))
+                (push (evict-op "evict" from to "auto" count) ops)
+                (push (make-out from to "auto" nil count) outs)))
             (setf outs (sort outs #'< :key #'out-from) after (+ overhead (tokens-from-chars (chars-kept outs) per-token)))))
-        (let ((drop '()) (stubs '()))
-          (dolist (run (runs-of (remove-if-not (lambda (tr) (turn-out-p tr outs)) (finished-turns turns))))
-            (let ((first-at (position-if (lambda (tr) (member tr run)) turn-at)))
-              (when first-at
-                (push (cons first-at (stub-text run outs by-n)) stubs)
-                (loop for i from first-at below (length messages)
-                      while (or (null (aref turn-at i)) (member (aref turn-at i) run))
-                      when (member (aref turn-at i) run) do (push i drop)))))
+        ;; Each block of messages that leave gets one line, where the block was.
+        (let* ((v (dropped outs)) (drop '()) (stubs '())
+               (originals (let ((h (make-hash-table)) (ns '()))
+                                (maphash (lambda (n m) (declare (ignore m)) (push n ns)) by-n)
+                                (setf ns (sort ns #'<))
+                                (loop for n in ns for m in (restore-originals (mapcar (lambda (n) (gethash n by-n)) ns)
+                                                                              (mapcar (lambda (n) (gethash n id-of)) ns) file)
+                                      do (setf (gethash n h) m))
+                                h)))
+          (loop with i = 0
+                while (< i (length messages))
+                do (if (not (aref v i))
+                       (incf i)
+                       (let ((start i) (lo nil) (hi nil))
+                         (loop while (and (< i (length messages)) (aref v i))
+                               do (let ((n (aref n-of i))) (when n (setf lo (min (or lo n) n) hi (max (or hi n) n))))
+                                  (push i drop) (incf i))
+                         (when lo (push (cons (stub-place messages v start (1- i)) (stub-text lo hi turns outs by-n originals)) stubs)))))
           (values (nreverse drop) (nreverse stubs) (nreverse ops) before after))))))
+
+(defun stub-place (messages dropped start end)
+  "Where the line for the messages START to END that leave goes, as (INDEX . HOW):
+on the user message after them (prepended) or before them (appended), so the
+request never holds two user messages in a row; between a result and a step, as
+a message of its own (inserted before INDEX)."
+  (flet ((kept (from step) (loop for i = from then (+ i step) while (and (>= i 0) (< i (length messages)))
+                                 unless (aref dropped i) return i))
+         (user-p (i) (and i (equal (json-get (aref messages i) "role") "user"))))
+    (let ((after (kept (1+ end) 1)) (before (kept (1- start) -1)))
+      (cond ((user-p after) (cons after "prepend"))
+            ((user-p before) (cons before "append"))
+            (t (cons start "insert"))))))
+
+(defun budget-line (after trigger)
+  "The line telling the model how full the context is, past +BUDGET-LINE-SHARE+ of TRIGGER, or NIL."
+  (when (and (realp trigger) (> trigger 0) (>= after (* +budget-line-share+ trigger)))
+    (format nil "[omp-vcc: the context holds ~~~a tokens of the ~~~a where the host compacts; past ~d% the oldest turns leave by themselves. vcc_context lists what is in it and takes old turns out, with a note of what to keep.]"
+            (js-string-of after) (js-string-of trigger) +evict-at-percent+)))
 
 (defun auto-notice (ops before after)
   "What the user is told when omp-vcc took turns out as the context filled."
