@@ -32,9 +32,8 @@
 
 (defun dbl (x) (coerce x 'double-float))
 
-(defun positive-floor (v)
-  "window.ts positive: Math.floor of a finite number over 0, else NIL."
-  (and (realp v) (> v 0) (floor v)))
+(defun positive (v) "V when it is a number over 0, else NIL." (and (realp v) (> v 0) v))
+(defun positive-floor (v) "V floored when it is a number over 0, else NIL." (let ((p (positive v))) (and p (floor p))))
 
 (defun clamp-tokens (value floor ceiling)
   (js-round (max floor (min ceiling value))))
@@ -89,8 +88,6 @@
 (defun omp-auto-compacts-p (policy)
   (and (not (eq (json-get policy "enabled") :false)) (not (equal (json-get policy "strategy") "off"))))
 
-(defun finite-positive (v) (and (realp v) (> v 0) v))
-
 (defun omp-reserve (window policy)
   (let* ((proportional (max 1 (floor (* (dbl window) 0.15d0))))
          (set (json-get policy "reserveTokens"))
@@ -107,17 +104,15 @@ it is at or past the window (then the window less its reserve); otherwise a
 percentage of the window (or of a model entry's base), or by default the window
 less a reserve of 15% or 16,384 tokens, whichever is larger (15% alone when that
 would not fit). tests/window.test.ts holds it to omp's own."
-  (let ((fixed (finite-positive (json-get policy "thresholdTokens"))))
+  (let ((fixed (positive (json-get policy "thresholdTokens"))))
     (if fixed
         (if (>= fixed window) (omp-prompt-budget window policy) (min (- window 1) (max 1 fixed)))
-        (let* ((base (finite-positive (json-get policy "baseWindowTokens")))
+        (let* ((base (positive (json-get policy "baseWindowTokens")))
                (scaled (if base (min window base) window))
-               (percent (finite-positive (json-get policy "thresholdPercent"))))
+               (percent (positive (json-get policy "thresholdPercent"))))
           (if percent
               (floor (* (dbl scaled) (/ (dbl (min 99 (max 1 percent))) 100d0)))
               (omp-prompt-budget scaled policy))))))
-
-(defun omp-default-trigger (window) (max 1 (omp-trigger window)))
 
 ;;; --- Pi's policy and trigger (its shouldCompact) -------------------------------------
 
@@ -141,9 +136,15 @@ would compact every turn; the trigger is then 1."
 
 ;;; --- the host's rule, by name (TriggerRule.name) -------------------------------------
 
-(defun rule-policy-of (rule settings) (if (equal rule "pi") (pi-policy-of settings) (omp-policy-of settings)))
-(defun rule-trigger (rule window policy) (if (equal rule "pi") (pi-trigger window policy) (omp-trigger window policy)))
-(defun rule-auto-compacts-p (rule policy) (if (equal rule "pi") (pi-auto-compacts-p policy) (omp-auto-compacts-p policy)))
+(defparameter +rules+
+  `(("omp" ,#'omp-policy-of ,#'omp-trigger ,#'omp-auto-compacts-p)
+    ("pi" ,#'pi-policy-of ,#'pi-trigger ,#'pi-auto-compacts-p))
+  "Each host's rule: (NAME POLICY-OF TRIGGER AUTO-COMPACTS-P). A name it lacks is omp's.")
+
+(defun rule-of (name) (rest (or (assoc name +rules+ :test #'equal) (first +rules+))))
+(defun rule-policy-of (rule settings) (funcall (first (rule-of rule)) settings))
+(defun rule-trigger (rule window policy) (funcall (second (rule-of rule)) window policy))
+(defun rule-auto-compacts-p (rule policy) (funcall (third (rule-of rule)) policy))
 
 (defun trigger-for (window recovering tokens-before policy rule)
   "window.ts triggerFor: where this compaction's budgets assume the next one happens."
@@ -154,8 +155,9 @@ would compact every turn; the trigger is then 1."
 
 ;;; --- the budgets ------------------------------------------------------------------------
 
-(defparameter +recovery-band+ 0.8d0 "omp re-compacts unless the result lands at or under this share of the trigger.")
-(defparameter +landing-share+ 0.6d0 "omp-vcc aims lower, so the turn after a compaction has room before the next one.")
+;; omp re-compacts unless a compaction lands at or under 80% of the trigger (its
+;; recovery band); omp-vcc aims lower, so the turn after it has room before the next.
+(defparameter +landing-share+ 0.6d0)
 (defparameter +tail-share+ 0.25d0 "The kept tail is at most this share of the trigger.")
 (defparameter +sections-tokens+ 600 "A rough allowance for the summary's sections around the brief, at full size.")
 ;; [Working Set] takes at most this share of the trigger, and nothing when that is
@@ -165,7 +167,7 @@ would compact every turn; the trigger is then 1."
 (defparameter +working-set-share+ 0.14d0)
 (defparameter +min-working-set-tokens+ 400)
 (defparameter +min-tail-tokens+ 1000 "The kept tail's floor: the working set takes only the landing room above it.")
-(defparameter +reference-trigger+ (omp-default-trigger 128000) "omp's trigger on a 128K window: where the fixed numbers were tuned.")
+(defparameter +reference-trigger+ (omp-trigger 128000) "omp's trigger on a 128K window: where the numbers below were tuned, and what an unknown trigger is taken to be.")
 
 ;; (KEY DEFAULT FLOOR), in DEFAULT_SUMMARY_LIMITS' order.
 (defparameter +summary-limits+
@@ -175,7 +177,7 @@ would compact every turn; the trigger is then 1."
 (defun summary-limits (scale)
   (let ((limits (json-object)))
     (loop for (key default floor) in +summary-limits+
-          do (setf (gethash key limits) (if (null scale) default (max floor (js-round (* default scale))))))
+          do (setf (gethash key limits) (max floor (js-round (* default scale)))))
     limits))
 
 (defun summary-scale (trigger brief-ceiling)
@@ -191,33 +193,30 @@ grows (a trigger past 500K), then the lists grow with it."
 (defun compaction-budgets (trigger overhead with-working-set)
   "Budgets for a compaction that runs at TRIGGER tokens, with OVERHEAD of context
 it cannot remove (system prompt, tool schemas): what is kept plus the summary lands
-at or under +landing-share+ of the trigger. An unknown trigger gets the fixed
-numbers from before the window was known, still a ~128K window's. Without a
+at or under +landing-share+ of the trigger. An unknown trigger is taken as a
+~128K window's, with nothing it cannot remove. Without a
 working set (the setting off), its room goes to the kept tail."
-  (let ((tt (positive-floor trigger)))
-    (if (null tt)
-        (json-object "maxTailTokens" 25000 "minTailTokens" 5000 "briefTokens" 1100 "briefCeilingTokens" 2000
-                     "briefTokensPerBlock" 15 "briefMaxBlocks" 80 "growthMarginChars" 500
-                     "summary" (summary-limits nil) "summaryScale" 1
-                     "workingSetTokens" (if with-working-set 3800 0))
-        (let* ((ceiling (js-round (min (* 0.1d0 tt) (clamp-tokens (* 0.004d0 tt) 2000 6000))))
-               (brief (js-round (min 1100 (* 0.06d0 tt) ceiling)))
-               (scale (summary-scale tt ceiling))
-               (grow (max 1 scale))
-               (landing (- (- (- (* +landing-share+ tt) (max 0 overhead)) ceiling) (* +sections-tokens+ scale)))
-               (wanted (js-round (min (* 3800 grow) (* +working-set-share+ tt) (- landing +min-tail-tokens+))))
-               (working-set (if (and with-working-set (>= wanted +min-working-set-tokens+)) wanted 0))
-               (max-tail (clamp-tokens (min (* +tail-share+ tt) (- landing working-set)) +min-tail-tokens+ 25000)))
-          (json-object "maxTailTokens" max-tail
-                       "minTailTokens" (js-round (/ (dbl max-tail) 5d0))
-                       "briefTokens" brief
-                       "briefCeilingTokens" ceiling
-                       "briefTokensPerBlock" 15
-                       "briefMaxBlocks" (js-round (* 80 grow))
-                       "growthMarginChars" (js-round (* 500 grow))
-                       "summary" (summary-limits scale)
-                       "summaryScale" (let ((r (js-round (* scale 100)))) (if (zerop (mod r 100)) (floor r 100) (/ (dbl r) 100d0)))
-                       "workingSetTokens" working-set)))))
+  (let* ((known (positive-floor trigger))
+         (tt (or known +reference-trigger+))
+         (overhead (if known overhead 0)))
+    (let* ((ceiling (js-round (min (* 0.1d0 tt) (clamp-tokens (* 0.004d0 tt) 2000 6000))))
+           (brief (js-round (min 1100 (* 0.06d0 tt) ceiling)))
+           (scale (summary-scale tt ceiling))
+           (grow (max 1 scale))
+           (landing (- (- (- (* +landing-share+ tt) (max 0 overhead)) ceiling) (* +sections-tokens+ scale)))
+           (wanted (js-round (min (* 3800 grow) (* +working-set-share+ tt) (- landing +min-tail-tokens+))))
+           (working-set (if (and with-working-set (>= wanted +min-working-set-tokens+)) wanted 0))
+           (max-tail (clamp-tokens (min (* +tail-share+ tt) (- landing working-set)) +min-tail-tokens+ 25000)))
+      (json-object "maxTailTokens" max-tail
+                   "minTailTokens" (js-round (/ (dbl max-tail) 5d0))
+                   "briefTokens" brief
+                   "briefCeilingTokens" ceiling
+                   "briefTokensPerBlock" 15
+                   "briefMaxBlocks" (js-round (* 80 grow))
+                   "growthMarginChars" (js-round (* 500 grow))
+                   "summary" (summary-limits scale)
+                   "summaryScale" (let ((r (js-round (* scale 100)))) (if (zerop (mod r 100)) (floor r 100) (/ (dbl r) 100d0)))
+                   "workingSetTokens" working-set))))
 
 ;;; --- the context, measured (plan.ts sizeCompaction) ---------------------------------
 
