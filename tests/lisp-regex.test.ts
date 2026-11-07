@@ -1,8 +1,9 @@
 // The Lisp core's regular expressions against JavaScript's own: generated and
 // hand-picked patterns compiled as `new RegExp(p, "i")`, each run on generated
 // texts; whether it compiles, test, search and the global match count are
-// compared. A pattern the core leaves to TypeScript ("unsupported") is
-// counted, and must stay rare. Skips without SBCL.
+// compared. The core supports the whole non-unicode dialect but a
+// back-reference into or inside a look-behind (matched backwards in
+// JavaScript), which it refuses; those must stay rare. Skips without SBCL.
 import { describe, expect, it } from "bun:test";
 import { callCore } from "../src/core/lisp-core";
 import { lispCore, withCore } from "./support/lisp-core";
@@ -19,7 +20,8 @@ const pick = <T>(r: () => number, xs: readonly T[]): T => xs[Math.floor(r() * xs
 const ATOMS = [
   "a", "b", "A", "B", "x", "ß", "ſ", "s", "S", "K", "k", "K", "é", "É", "ǅ", "ı", "i", "İ", "Σ", "ς", "σ", "1", "_", "-", " ", "🎉", ".", ".",
   "\\d", "\\w", "\\s", "\\D", "\\W", "\\S", "\\b", "\\B", "\\t", "\\n", "\\x41", "\\x4", "\\u0041", "\\u004", "\\u{41}", "\\cA", "\\cj", "\\c1", "\\c",
-  "\\0", "\\1", "\\2", "\\k", "\\q", "\\.", "\\-", "\\/", "\\]", "\\", "\\ud83c",
+  "\\0", "\\1", "\\2", "\\k", "\\q", "\\01", "\\07", "\\12", "\\37", "\\377", "\\400", "\\8", "\\9", "\\18", "[\\12]", "[\\8]", "[\\01]",
+  "(?<n>a)", "(?<x1>b)", "\\k<n>", "\\k<x1>", "\\k", "\\.", "\\-", "\\/", "\\]", "\\", "\\ud83c",
   "[abc]", "[a-z]", "[^a-z]", "[\\d-x]", "[z-a]", "[a-]", "[]", "[^]", "[\\b]", "[\\c1]", "[-a]", "[A-z]", "[\\w\\s]", "[^\\S]", "[.]", "[ſ]", "[\\u017F]", "[k-k]", "[\\0]", "[\\-]", "[a",
   "^", "$", "|", "(", ")", "{", "}", "]", "{2}", "{a}", "{1,", "{,2}",
 ];
@@ -36,7 +38,7 @@ const pattern = (r: () => number): string => {
   return Array.from({ length: 1 + Math.floor(r() * 4) }, () => piece(0)).join(r() < 0.15 ? "|" : "");
 };
 
-const ALPHABET = ["a", "b", "A", "B", "x", "X", "ß", "SS", "ſ", "s", "S", "K", "k", "K", "é", "É", "ǅ", "Ǆ", "ǆ", "ı", "i", "I", "İ", "Σ", "ς", "σ", "1", "2", "_", "-", " ", "\t", "\n", "\r", " ", " ", "🎉", "\ud83c", "\u0001", "\u000a", "[", "]", ".", "\\", "c", "/", "u", "0", "4", "{", "}", ","];
+const ALPHABET = ["a", "b", "A", "B", "x", "X", "ß", "SS", "ſ", "s", "S", "K", "k", "K", "é", "É", "ǅ", "Ǆ", "ǆ", "ı", "i", "I", "İ", "Σ", "ς", "σ", "1", "2", "_", "-", " ", "\t", "\n", "\r", " ", " ", "🎉", "\ud83c", "\u0001", "\u000a", "[", "]", ".", "\\", "c", "/", "u", "0", "4", "8", "9", "A", "\u0001", "\u0008", "{", "}", ","];
 const text = (r: () => number): string => Array.from({ length: Math.floor(r() * 14) }, () => pick(r, ALPHABET)).join("");
 
 const HAND_PICKED = [
@@ -45,7 +47,15 @@ const HAND_PICKED = [
   "^*", "$+", "\\b*", "(?=a)*", "(?=a){2}", "(?<=a)?", "a**", "(?", "(?x)", "a)", "[", "\\", "[\\", "a{2,1}", "[b-a]", "[\\w-a]",
   "ſ", "[a-z]+", "K", "\\w+", "[^\\W]", "ς", "ǅ", ".+", "^$", "", "|", "a|", "()", "(|a)*", "(a?)*?b", "(?:)+", "\\B", "\\bk",
   "\\x", "\\xg1", "\\u12", "\\c", "\\c*", "[\\c]", "[\\c_]", "\\0", "\\00", "[\\0]",
+  // Named groups and their references; Annex B's octal escapes; a look-behind that captures.
+  "(?<a>x)\\k<a>", "\\k<a>(?<a>x)", "(?<a>x)\\k<b>", "(?<a>x)\\k", "(?<a>x)[\\k]", "\\k<a>", "[\\k]", "(?<a>x)(?<a>y)", "(?<1a>x)", "(?<>x)", "(?<a",
+  "(?<$_a1>x)\\1", "(?<é>x)\\k<é>", "(?<\\u0061>x)\\k<a>", "(?<\\u{62}>x)\\k<b>", "(?<\\u0031>x)", "(?<a\\u200d>x)", "(?<𝒜>x)\\k<𝒜>", "(?<a>x)|(?<b>y)\\k<a>", "(?<·a>x)",
+  "\\01", "\\012", "\\0123", "\\08", "\\1", "\\12", "\\377", "\\400", "\\777", "\\8", "\\9", "\\81", "(a)\\12", "(a)\\2", "[\\1]", "[\\18]", "[\\9]", "[\\0-\\7]", "[\\101]",
+  "(?<=(a))b", "(?<=(a)(b))c", "(?<!(a))b", "(?<=(?<n>a))b", "(a)(?<=\\1)b",
 ];
+
+/** Back-references into or inside a look-behind, which JavaScript matches backwards: the only patterns left unsupported. */
+const BACKWARDS = ["(?<=(a)\\1)b", "(?<=(a))\\1b", "(?<=\\1(a))b", "(?<=(?<n>a))\\k<n>"];
 
 // Pairs whose texts are chosen to reach what random texts rarely do: captures reset on each
 // repetition, back-references after a repeat, lazy and greedy match lengths in a global count.
@@ -96,6 +106,12 @@ maybe("Lisp core regex", () => {
       expect({ p, ...got }).toEqual({ p, ...jsSide(p, texts) });
     }
     expect(compared).toBeGreaterThan(1200);
-    expect(unsupported / patterns.length).toBeLessThan(0.2);
+    expect(unsupported / patterns.length).toBeLessThan(0.01);
+    // Group names by the spec's ID_Start and ID_Continue, as V8 (Node, where Pi runs) reads them;
+    // JavaScriptCore (Bun, where these tests run) refuses letter numbers and the Other_ID_* code points.
+    for (const [p, ok] of [["(?<Ⅻ>x)\\k<Ⅻ>", true], ["(?<aⅫ>x)", true], ["(?<a·>x)", true], ["(?<℘>x)", true], ["(?<·a>x)", false], ["(?<a-b>x)", false]] as const) {
+      expect({ p, status: (withCore(core, () => callCore({ op: "regex", pattern: p, texts: ["x"] })) as any).status }).toEqual({ p, status: ok ? "ok" : "syntax" });
+    }
+    for (const p of BACKWARDS) expect({ p, status: (withCore(core, () => callCore({ op: "regex", pattern: p, texts: ["ab"] })) as any).status }).toEqual({ p, status: "unsupported" });
   }, 120_000);
 });

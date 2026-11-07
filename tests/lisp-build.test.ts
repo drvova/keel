@@ -22,15 +22,6 @@ describe("the core's source", () => {
     expect(coreStatus()).toEqual({ state: "off" });
   });
 
-  it("says SBCL is missing when it cannot build one", () => {
-    delete process.env.OMP_VCC_CORE;
-    process.env.SBCL = "/nonexistent/sbcl";
-    const s = coreStatus();
-    // A build of these sources may exist from an earlier run; else there is no SBCL to make one.
-    if (s.state === "ready") expect(existsSync(s.path)).toBe(true);
-    else expect(s).toEqual({ state: "no-sbcl", sbcl: "/nonexistent/sbcl" });
-  });
-
   it.skipIf(!lispCore())("builds this copy's sources with SBCL, under a name their hash gives", async () => {
     delete process.env.OMP_VCC_CORE;
     let s = coreStatus();
@@ -41,4 +32,14 @@ describe("the core's source", () => {
     expect(s.state).toBe("ready");
     if (s.state === "ready") expect(s.path).toMatch(/lisp\/build\/omp-vcc-core-[0-9a-f]{16}$/);
   }, 180_000);
+
+  // Last: the state "no SBCL" is kept for the process, which would keep the build above from starting.
+  it("says SBCL is missing when it cannot build one", () => {
+    delete process.env.OMP_VCC_CORE;
+    process.env.SBCL = "/nonexistent/sbcl";
+    const s = coreStatus();
+    // A build of these sources may exist from an earlier run; else there is no SBCL to make one.
+    if (s.state === "ready") expect(existsSync(s.path)).toBe(true);
+    else expect(s).toEqual({ state: "no-sbcl", sbcl: "/nonexistent/sbcl" });
+  });
 });

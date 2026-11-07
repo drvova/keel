@@ -87,10 +87,68 @@
           (setf (sbit bits u) (if (eq (not in) (not negate)) 0 1))))
       bits)))
 
+(defun id-start-unit-p (code)
+  "A code point that may start a group name: ID_Start (letters, letter numbers,
+Other_ID_Start), $ or _. The spec's rule, as V8 (Node) follows it; JavaScriptCore
+(Bun) refuses letter numbers and Other_ID_Start in a group name."
+  (let ((c (code-char code)))
+    (or (= code 36) (= code 95)
+        (member (sb-unicode:general-category c) '(:lu :ll :lt :lm :lo :nl))
+        (sb-unicode:proplist-p c :other-id-start))))
+
+(defun id-part-unit-p (code)
+  "A code point that may continue a group name: ID_Continue (with Other_ID_Continue), $, ZWNJ or ZWJ."
+  (let ((c (code-char code)))
+    (or (id-start-unit-p code) (= code #x200c) (= code #x200d)
+        (member (sb-unicode:general-category c) '(:mn :mc :nd :pc))
+        (sb-unicode:proplist-p c :other-id-continue))))
+
+(defun group-name-at (p i)
+  "The group name in the units P from I, just past its <, read up to its >:
+(values NAME END), END just past the >. A malformed name is a syntax error."
+  (let ((len (length p)) (name (make-string-output-stream)) (first t))
+    (labels ((hex-at (k n) (and (<= (+ k n) len)
+                                (loop with v = 0 for j from k below (+ k n)
+                                      for d = (digit-char-p (code-char (aref p j)) 16)
+                                      always d do (setf v (+ (* v 16) d)) finally (return v))))
+             (code-at (k)
+               ;; The code point at K and the index past it: a pair is one, \uXXXX and \u{...} are escapes.
+               (let ((u (aref p k)))
+                 (cond ((= u 92)
+                        (unless (and (< (1+ k) len) (= (aref p (1+ k)) 117)) (syntax-error "invalid group name"))
+                        (if (and (< (+ k 2) len) (= (aref p (+ k 2)) 123))
+                            (let ((close (position 125 p :start (+ k 3))))
+                              (unless (and close (> close (+ k 3))) (syntax-error "invalid group name"))
+                              (let ((v (hex-at (+ k 3) (- close k 3))))
+                                (unless (and v (<= v #x10ffff)) (syntax-error "invalid group name"))
+                                (values v (1+ close))))
+                            (let ((v (hex-at (+ k 2) 4)))
+                              (unless v (syntax-error "invalid group name"))
+                              ;; An escaped lead surrogate takes an escaped trail one with it.
+                              (if (and (<= #xd800 v #xdbff) (< (+ k 11) len) (= (aref p (+ k 6)) 92) (= (aref p (+ k 7)) 117))
+                                  (let ((lo (hex-at (+ k 8) 4)))
+                                    (if (and lo (<= #xdc00 lo #xdfff))
+                                        (values (+ #x10000 (ash (- v #xd800) 10) (- lo #xdc00)) (+ k 12))
+                                        (values v (+ k 6))))
+                                  (values v (+ k 6))))))
+                       ((and (<= #xd800 u #xdbff) (< (1+ k) len) (<= #xdc00 (aref p (1+ k)) #xdfff))
+                        (values (+ #x10000 (ash (- u #xd800) 10) (- (aref p (1+ k)) #xdc00)) (+ k 2)))
+                       (t (values u (1+ k)))))))
+      (loop
+        (when (>= i len) (syntax-error "invalid group name"))
+        (when (= (aref p i) 62)
+          (when first (syntax-error "invalid group name"))
+          (return (values (get-output-stream-string name) (1+ i))))
+        (multiple-value-bind (code next) (code-at i)
+          (unless (if first (id-start-unit-p code) (id-part-unit-p code)) (syntax-error "invalid group name"))
+          (write-char (code-char code) name)
+          (setf i next first nil))))))
+
 (defun count-groups (p)
   "The capturing groups of the pattern units P, for telling a back-reference
-from an escape; a named group is refused."
-  (let ((n 0) (i 0) (len (length p)) (in-class nil))
+from an escape: (values COUNT NAMES), NAMES an alist of each named group's
+name and index. A name used twice is a syntax error."
+  (let ((n 0) (i 0) (len (length p)) (in-class nil) (names '()))
     (loop while (< i len)
           do (let ((u (aref p i)))
                (cond ((= u 92) (incf i))           ; \
@@ -100,14 +158,29 @@ from an escape; a named group is refused."
                       (if (and (< (1+ i) len) (= (aref p (1+ i)) 63)) ; (?
                           (when (and (< (+ i 2) len) (= (aref p (+ i 2)) 60) ; (?<
                                      (< (+ i 3) len) (not (member (aref p (+ i 3)) '(61 33))))
-                            (unsupported "named group"))
+                            (let ((name (group-name-at p (+ i 3))))
+                              (when (assoc name names :test #'string=) (syntax-error "duplicate group name"))
+                              (push (cons name (incf n)) names)))
                           (incf n)))))
              (incf i))
-    n))
+    (values n (nreverse names))))
+
+(defun backref-targets (tree)
+  "The group indices the back-references in TREE refer to."
+  (cond ((not (consp tree)) '())
+        ((eq (first tree) :backref) (list (second tree)))
+        (t (mapcan #'backref-targets (copy-list tree)))))
+
+(defun group-indices (tree)
+  "The indices of the capturing groups in TREE."
+  (cond ((not (consp tree)) '())
+        ((eq (first tree) :group) (cons (second tree) (group-indices (third tree))))
+        (t (mapcan #'group-indices (copy-list tree)))))
 
 (defun parse-regex (p)
   "The tree of the pattern units P, and its group count."
-  (let ((pos 0) (len (length p)) (groups (count-groups p)) (group-index 0))
+  (let ((pos 0) (len (length p)) (group-index 0) (behind-groups '()))
+    (multiple-value-bind (groups names) (count-groups p)
     (labels ((peek (&optional (k 0)) (and (< (+ pos k) len) (aref p (+ pos k))))
              (at (u &optional (k 0)) (eql (peek k) u))
              (digit-at (k) (let ((u (peek k))) (and u (<= 48 u 57))))
@@ -151,14 +224,15 @@ from an escape; a named group is refused."
                           (incf pos 2)
                           (assertion (list :boundary negate))))
                        ((and (= u 40) (at 63 1) (at 60 2) (member (peek 3) '(61 33)))
-                        ;; A look-behind is not quantifiable; one with a capture is matched
-                        ;; backwards in JavaScript, which changes what it captures.
-                        (let ((negate (= (peek 3) 33)) (before group-index))
+                        ;; A look-behind is not quantifiable. JavaScript matches it backwards,
+                        ;; which changes what it captures, not whether it matches: a capture in
+                        ;; one is followed here unless a back-reference reads it (checked below).
+                        (let ((negate (= (peek 3) 33)))
                           (incf pos 4)
                           (let ((node (disjunction)))
                             (unless (at 41) (syntax-error "unterminated group"))
                             (incf pos)
-                            (when (/= before group-index) (unsupported "capture in a look-behind"))
+                            (setf behind-groups (append (group-indices node) behind-groups))
                             (when (tree-has node :backref) (unsupported "back-reference in a look-behind"))
                             (when (quantifier-at-p) (syntax-error "nothing to repeat"))
                             (list :look nil negate node))))
@@ -189,6 +263,13 @@ from an escape; a named group is refused."
                              ((and (at 63) (at 58 1))
                               (incf pos 2)
                               (prog1 (disjunction) (close-group)))
+                             ((and (at 63) (at 60 1))
+                              ;; A named group: its name was read (and checked) by count-groups.
+                              (multiple-value-bind (name end) (group-name-at p (+ pos 2))
+                                (declare (ignore name))
+                                (setf pos end)
+                                (let ((index (incf group-index)))
+                                  (prog1 (list :group index (disjunction)) (close-group)))))
                              ((at 63) (syntax-error "invalid group"))
                              (t (let ((index (incf group-index)))
                                   (prog1 (list :group index (disjunction)) (close-group))))))
@@ -216,18 +297,36 @@ from an escape; a named group is refused."
                           (if (and l (or (<= 65 l 90) (<= 97 l 122)))
                               (progn (incf pos 2) (list :char (mod l 32)))
                               (list :char 92))))  ; a lone backslash; the c is read next
-                       ((= u 48)
-                        (when (digit-at 1) (unsupported "octal escape"))
-                        (incf pos) (list :char 0))
+                       ((= u 48) (list :char (legacy-octal)))
                        ((<= 49 u 57)
+                        ;; A back-reference when there is a group of that number; else (Annex B)
+                        ;; an octal escape from its leading octal digits, and \8 or \9 itself.
                         (let ((n 0) (start pos))
-                          (loop while (digit-at 0) do (setf n (+ (* n 10) (- (peek) 48))) (incf pos))
-                          (if (<= n groups)
-                              (list :backref n)
-                              (progn (setf pos start) (unsupported "octal or identity escape")))))
+                          (loop while (digit-at 0) do (setf n (min (+ (* n 10) (- (peek) 48)) most-positive-fixnum)) (incf pos))
+                          (cond ((<= n groups) (list :backref n))
+                                ((>= u 56) (setf pos (1+ start)) (list :char u))
+                                (t (setf pos start) (list :char (legacy-octal))))))
+                       ((and (= u 107) names)     ; \k<name>, when the pattern names a group
+                        (unless (at 60 1) (syntax-error "invalid named reference"))
+                        (multiple-value-bind (name end) (group-name-at p (+ pos 2))
+                          (let ((index (cdr (assoc name names :test #'string=))))
+                            (unless index (syntax-error "invalid named reference"))
+                            (setf pos end)
+                            (list :backref index))))
                        ((= u 120) (incf pos) (list :char (or (hex-escape 2) 120)))
                        ((= u 117) (incf pos) (list :char (or (hex-escape 4) 117)))
                        (t (incf pos) (list :char u)))))
+             (legacy-octal ()
+               ;; Annex B's LegacyOctalEscapeSequence at POS, or \0 alone: up to three
+               ;; octal digits from 0-3, two from 4-7, no more than \377.
+               (let* ((d (- (peek) 48)) (n 1) (most (if (<= d 3) 3 2)))
+                 (incf pos)
+                 (if (> d 7)
+                     d
+                     (progn
+                       (loop while (and (< n most) (peek) (<= 48 (peek) 55))
+                             do (setf d (+ (* d 8) (- (peek) 48))) (incf pos) (incf n))
+                       d))))
              (class-escape-set (u)
                (ecase u (100 :digit) (68 :not-digit) (119 :word) (87 :not-word) (115 :space) (83 :not-space)))
              (class-atom ()
@@ -247,7 +346,9 @@ from an escape; a named group is refused."
                                 (if (and l (or (<= 65 l 90) (<= 97 l 122) (<= 48 l 57) (= l 95)))
                                     (progn (incf pos 2) (list :range (mod l 32) (mod l 32)))
                                     (list :range 92 92))))
-                             ((<= 48 e 57) (unsupported "octal escape in a class"))
+                             ((<= 48 e 55) (let ((v (legacy-octal))) (list :range v v)))
+                             ((<= 56 e 57) (incf pos) (list :range e e))
+                             ((and (= e 107) names) (syntax-error "invalid escape"))
                              ((= e 120) (incf pos) (let ((v (or (hex-escape 2) 120))) (list :range v v)))
                              ((= e 117) (incf pos) (let ((v (or (hex-escape 4) 117))) (list :range v v)))
                              (t (incf pos) (list :range e e)))))))
@@ -269,7 +370,9 @@ from an escape; a named group is refused."
                  (list :class (class-bits items negate)))))
       (let ((tree (disjunction)))
         (when (< pos len) (syntax-error "unmatched )"))
-        (values tree groups)))))
+        ;; What a look-behind captured is captured backwards in JavaScript.
+        (when (intersection behind-groups (backref-targets tree)) (unsupported "back-reference to a capture in a look-behind"))
+        (values tree groups))))))
 
 (defun tree-has (tree kind)
   "True when a node of KIND is anywhere in TREE."
