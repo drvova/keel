@@ -35,7 +35,7 @@ describe("the command's text", () => {
     // More digits than a safe integer keep as many turns as any session has.
     [`keep:${"9".repeat(30)}`, "", 9007199254740991],
   ])("%j is the prompt %j and keep %j", (text, prompt, keep) => {
-    expect(commandArgs(text)).toEqual({ followUpPrompt: prompt, keepUserTurns: keep, instructions: keep === null ? M : `${M} keep:${keep}` });
+    expect(commandArgs(text)).toEqual({ followUpPrompt: prompt, instructions: keep === null ? M : `${M} keep:${keep}` });
   });
 });
 

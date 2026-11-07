@@ -10,11 +10,15 @@
 ;;;; settings, works out the window and records the host's policy itself, so no
 ;;;; caller reduces the session its own way.
 ;;;;
-;;;; The skeleton is every entry in file order with the bulky parts left out: a
-;;;; message entry's message is only its role (and a tool result's call id), and
-;;;; only omp-vcc's own pin entries keep their data. That is what #N, the branch,
-;;;; the turn in progress and the pins need; content comes from the session file
-;;;; (recall) or from the event itself (a compaction's branch).
+;;;; The skeleton is every entry in file order with the bulky parts left out
+;;;; (src/core/host-snapshot.ts skeleton): a message is its role, timestamp,
+;;;; attribution and a tool result's call id; a compaction keeps where its kept
+;;;; tail starts (firstKeptEntryId, providerReplayThroughEntryId); omp-vcc's own
+;;;; pin and evict entries keep their data. That is what #N, the branch, the
+;;;; turns, the pins and the evictions need: eviction ties a request's messages
+;;;; to #N by role, timestamp and call id, and tells the user's requests by
+;;;; attribution. Content comes from the session file (recall) or from the event
+;;;; itself (a compaction's branch).
 
 (in-package #:omp-vcc)
 

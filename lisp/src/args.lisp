@@ -44,11 +44,10 @@ FOLLOW-UP-PROMPT): the command's marker and its keep:N, or `/compact` text."
 
 (defun handle-args (request)
   "Op args: the hook's reading of customInstructions (\"instructions\"), or the
-command's of its text (\"command\": the prompt, keep:N and the instructions it hands the host)."
+command's of its text (\"command\": the prompt, and the instructions it hands the host, keep:N in them)."
   (if (nth-value 1 (gethash "command" request))
       (multiple-value-bind (prompt keep) (parse-keep-and-prompt (json-get request "command"))
-        (json-object "ok" :true "followUpPrompt" prompt "keepUserTurns" (or keep :null)
-                     "instructions" (vcc-custom-instructions keep)))
+        (json-object "ok" :true "followUpPrompt" prompt "instructions" (vcc-custom-instructions keep)))
       (multiple-value-bind (from-command keep prompt) (parse-instructions (json-get request "instructions"))
         (json-object "ok" :true "fromCommand" (if from-command :true :false)
                      "keepUserTurns" (or keep :null) "followUpPrompt" (or prompt :null)))))

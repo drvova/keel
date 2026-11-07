@@ -6,7 +6,7 @@ import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { untilCore } from "../core/core-wait";
 import type { Binding } from "../host";
 import { evict } from "../core/evict";
-import { CONTEXT_PARAMS, CONTEXT_TOOL, EVICT_AT_PERCENT, RECALL_TOOL } from "../names";
+import { CONTEXT_NOTE_CHARS, CONTEXT_PARAMS, CONTEXT_TOOL, EVICT_AT_PERCENT, RECALL_TOOL } from "../names";
 
 const description = (command: string): string => [
   "Decide what stays in your context. Old turns can leave it whole: nothing is summarized or rewritten,",
@@ -27,7 +27,7 @@ const PARAM_DESCRIPTIONS: Record<(typeof CONTEXT_PARAMS)[number], string> = {
   drop: "#N refs or ranges of turns to take out, e.g. ['#12-#40'] or [12].",
   oldest: "How many of the oldest turns in context to take out.",
   restore: "#N refs or ranges of turns to bring back into context.",
-  note: "One line kept in place of the turns taken out.",
+  note: `One line kept in place of the turns taken out (clipped at ${CONTEXT_NOTE_CHARS} chars).`,
 };
 
 const refs = { anyOf: [{ type: "array", items: { anyOf: [{ type: "number" }, { type: "string" }] } }, { type: "number" }, { type: "string" }] };

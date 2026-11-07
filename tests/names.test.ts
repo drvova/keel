@@ -23,6 +23,7 @@ describe("src/names.ts", () => {
       recallOutputChars: names.RECALL_OUTPUT_CHARS,
       pinChars: names.PIN_CHARS,
       evictAtPercent: names.EVICT_AT_PERCENT,
+      contextNoteChars: names.CONTEXT_NOTE_CHARS,
       sessionRefMinChars: names.SESSION_REF_MIN_CHARS,
     });
   });

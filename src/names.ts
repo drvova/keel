@@ -27,6 +27,8 @@ export const SEARCH_PAGE_SIZE = 5;
 export const RANGE_PAGE_SIZE = 20;
 /** One recall result's ceiling, 50 KB; less on a small context window. */
 export const RECALL_OUTPUT_CHARS = 50 * 1024;
+/** A vcc_context note is clipped to this many characters. */
+export const CONTEXT_NOTE_CHARS = 300;
 /** Past this percent of where the host compacts, the oldest finished turns leave the context. */
 export const EVICT_AT_PERCENT = 85;
 /** A pinned note is clipped to this many characters. */

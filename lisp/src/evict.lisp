@@ -291,7 +291,7 @@ before and after: (values DROP STUBS OPS BEFORE AFTER)."
         (let* ((params (json-get call "params")) (drop (refs-of (json-get params "drop")))
                (restore (refs-of (json-get params "restore")))
                (oldest (let ((k (json-get params "oldest"))) (and (js-integer-p k) (> k 0) (as-integer k))))
-               (note (let ((n (json-get params "note"))) (and (stringp n) (plusp (length (js-trim n))) (js-clip (js-trim n) +pin-chars+)))))
+               (note (let ((n (json-get params "note"))) (and (stringp n) (plusp (length (js-trim n))) (js-clip (js-trim n) +context-note-chars+)))))
           (cond (restore (restore-turns restore outs by count))
                 (drop (evict-turns (turns-touching drop turns) turns outs chars by note count))
                 (oldest (let ((in (turns-in turns outs)))

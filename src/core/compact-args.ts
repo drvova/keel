@@ -7,11 +7,10 @@ import { core } from "./lisp-core";
 interface ParsedCompactionArgs {
   followUpPrompt: string;
   /** keep:N as typed; null when none was. */
-  keepUserTurns: number | null;
 }
 
 /** /omp-vcc's text: the prompt to send after, keep:N, and the customInstructions it hands the host. */
 export const commandArgs = (args?: string): ParsedCompactionArgs & { instructions: string } => {
   const reply = core({ op: "args", command: args ?? null });
-  return { followUpPrompt: reply.followUpPrompt as string, keepUserTurns: reply.keepUserTurns as number | null, instructions: reply.instructions as string };
+  return { followUpPrompt: reply.followUpPrompt as string, instructions: reply.instructions as string };
 };
