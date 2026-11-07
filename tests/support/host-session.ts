@@ -40,6 +40,36 @@ export const realModel = (options: { keyFile?: boolean } = {}): { baseUrl: strin
   };
 };
 
+/** What a host's models file holds of a model's price, per million tokens. */
+export interface ModelCost { input: number; output: number; cacheRead: number; cacheWrite: number }
+
+/**
+ * The model as its provider lists it (its `/models`): the window and prices a
+ * user's catalog would hold, read once for a benchmark that runs as the
+ * provider serves it. Understood shapes: OpenScale's (input_modalities
+ * max_context_length, per-token pricing), OpenRouter's (context_length,
+ * pricing.prompt/completion/input_cache_read). Undefined when the provider
+ * lists neither. This is the benchmark's own call; omp-vcc makes none.
+ */
+export const providerModel = async (): Promise<{ contextWindow: number; cost: ModelCost } | undefined> => {
+  const provider = realModel({ keyFile: true });
+  if (!provider) return undefined;
+  const res = await fetch(`${provider.baseUrl}/models`, { headers: { Authorization: `Bearer ${process.env.OMP_VCC_LH_API_KEY}` } });
+  if (!res.ok) return undefined;
+  const m = ((await res.json()) as any)?.data?.find((x: any) => x?.id === provider.model);
+  if (!m) return undefined;
+  const perMillion = (v: unknown) => (Number.isFinite(Number(v)) ? Math.round(Number(v) * 1e6 * 1e6) / 1e6 : 0);
+  const text = (m.input_modalities ?? []).find((x: any) => x?.type === "text");
+  const price = (list: any[] | undefined, type: string) => perMillion(list?.find((p: any) => p?.type === type)?.cost_usd);
+  const contextWindow = Number(text?.supported_inputs?.max_context_length?.value ?? m.context_length ?? m.top_provider?.context_length);
+  if (!(contextWindow > 0)) return undefined;
+  const out = (m.output_modalities ?? []).find((x: any) => x?.type === "text");
+  const cost: ModelCost = text?.pricing
+    ? { input: price(text.pricing, "prompt"), cacheRead: price(text.pricing, "cached_prompt"), cacheWrite: 0, output: price(out?.pricing, "completion") }
+    : { input: perMillion(m.pricing?.prompt), cacheRead: perMillion(m.pricing?.input_cache_read), cacheWrite: perMillion(m.pricing?.input_cache_write), output: perMillion(m.pricing?.completion) };
+  return { contextWindow, cost };
+};
+
 export type Host = "omp" | "pi";
 
 /** The host a session runs in: `OMP_VCC_LH_HOST` (`omp` or `pi`), omp by default. */
@@ -56,6 +86,8 @@ export interface HostSessionOptions {
   contextWindow?: number;
   /** omp-vcc settings, over `overrideDefaultCompaction: true` (`{ overrideDefaultCompaction: false }`: the host's own compaction). */
   config?: Record<string, unknown>;
+  /** The model's prices per million tokens (default all 0): what the host records of each request's cost, which omp-vcc's payback rule reads. */
+  cost?: ModelCost;
 }
 
 export interface HostSession {
@@ -114,7 +146,7 @@ const openOmpSession = async (options: HostSessionOptions): Promise<HostSession>
       "        input: [text]",
       `        contextWindow: ${options.contextWindow ?? 128_000}`,
       "        maxTokens: 8192",
-      "        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }",
+      `        cost: { input: ${options.cost?.input ?? 0}, output: ${options.cost?.output ?? 0}, cacheRead: ${options.cost?.cacheRead ?? 0}, cacheWrite: ${options.cost?.cacheWrite ?? 0} }`,
       "",
     ].join("\n"));
 
@@ -176,7 +208,7 @@ const openPiSession = async (options: HostSessionOptions): Promise<HostSession> 
             input: ["text"],
             contextWindow: options.contextWindow ?? 128_000,
             maxTokens: 8192,
-            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            cost: options.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
           }],
         },
       },

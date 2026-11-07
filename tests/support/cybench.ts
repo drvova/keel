@@ -16,7 +16,7 @@
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { basename, join, resolve } from "path";
-import { openHostSession, runStats, textOf, type Host, type HostSession, type RunStats } from "./host-session";
+import { openHostSession, runStats, textOf, type Host, type HostSession, type ModelCost, type RunStats } from "./host-session";
 
 export const CYBENCH_REPO = "https://github.com/andyzorigin/cybench.git";
 export const CYBENCH_COMMIT = "ca483c6443f17a20ba7d6bac3d274859a1721e51";
@@ -66,6 +66,8 @@ export interface CybenchOptions {
   contextWindow?: number;
   /** omp-vcc settings: `{ workingSet: false }`, or `{ overrideDefaultCompaction: false }` for the host's own compaction. */
   config?: Record<string, unknown>;
+  /** The model's prices per million tokens, as its provider lists them (`providerModel`); 0 by default. */
+  cost?: ModelCost;
   /**
    * Model requests one question may take before its turn is stopped and the question
    * counts as unanswered (default 15, Cybench's own iteration cap per subtask, `--max_iterations`).
@@ -101,11 +103,41 @@ export interface CybenchResult {
   compactions: number;
   byOmpVcc: number;
   stats: RunStats;
+  /** What omp-vcc learned of the model over the session (its omp-vcc-models.json entry): the largest prompt accepted, chars per token. */
+  learned: { maxPromptTokens?: number; charsPerToken?: number; contextWindow?: number } | undefined;
+  /** Chars per token as the session itself shows them: what the messages added between two requests over the prompt tokens they added. */
+  measuredCharsPerToken: number | undefined;
 }
 
 const git = (cwd: string, ...args: string[]) => {
   const r = Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
   if (r.exitCode !== 0) throw new Error(`git ${args.join(" ")}: ${r.stderr.toString()}`);
+};
+
+/** A message's chars as a request carries them: its text and its tool calls' arguments. */
+const messageChars = (m: any): number =>
+  typeof m?.content === "string" ? m.content.length
+    : (m?.content ?? []).reduce((n: number, p: any) => n + (p?.type === "text" ? (p.text ?? "").length : p?.type === "toolCall" ? JSON.stringify(p.arguments ?? {}).length + (p.name ?? "").length : p?.type === "thinking" ? (p.thinking ?? "").length : 0), 0);
+
+/**
+ * Chars per token from the session's own record: between the first and the last
+ * answered request after the last compaction, the chars of the messages added
+ * over the prompt tokens they added (the system prompt and tools are in both).
+ */
+const measuredCharsPerToken = (branch: any[]): number | undefined => {
+  const start = branch.map((e) => e.type).lastIndexOf("compaction") + 1;
+  let chars = 0;
+  const points: Array<[number, number]> = [];
+  for (const e of branch.slice(start)) {
+    if (e.type !== "message") continue;
+    const u = e.message?.usage;
+    const prompt = u ? (u.input ?? 0) + (u.cacheRead ?? 0) + (u.cacheWrite ?? 0) : 0;
+    if (e.message.role === "assistant" && prompt > 0) points.push([chars, prompt]);
+    chars += messageChars(e.message);
+  }
+  if (points.length < 2) return undefined;
+  const [a, b] = [points[0], points[points.length - 1]];
+  return b[1] > a[1] ? Math.round(((b[0] - a[0]) / (b[1] - a[1])) * 100) / 100 : undefined;
 };
 
 /** Cybench's repository at the pinned commit, only the tasks' directories (research/cybench). */
@@ -184,7 +216,7 @@ export const runCybench = async (options: CybenchOptions = {}): Promise<CybenchR
   try {
     const proj = join(work, "ctf");
     for (const task of tasks) setUpTask(root, task, join(proj, task.dir), work);
-    omp = await openHostSession({ host: options.host, work, cwd: proj, contextWindow: options.contextWindow, config: options.config });
+    omp = await openHostSession({ host: options.host, work, cwd: proj, contextWindow: options.contextWindow, config: options.config, cost: options.cost });
     const { session, sessionManager } = omp;
     const maxRequests = options.maxRequests ?? 15;
     const ask = async (task: Task, text: string, subtask: Subtask, distance?: number): Promise<AnswerScore> => {
@@ -258,6 +290,13 @@ export const runCybench = async (options: CybenchOptions = {}): Promise<CybenchR
       compactions: compactions.length,
       byOmpVcc: compactions.filter((e: any) => e.details?.compactor === "omp-vcc").length,
       stats: runStats(branch),
+      learned: (() => {
+        const file = join(work, "omp-vcc-models.json");
+        if (!existsSync(file)) return undefined;
+        const all = JSON.parse(readFileSync(file, "utf8"));
+        return Object.values(all)[0] as CybenchResult["learned"];
+      })(),
+      measuredCharsPerToken: measuredCharsPerToken(branch),
     };
   } finally {
     await omp?.close();

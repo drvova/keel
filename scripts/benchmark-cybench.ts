@@ -8,7 +8,8 @@
  * The model is DeepSeek V4.1 Flash unless OMP_VCC_LH_MODEL (in the env or research/long-horizon.env) names another.
  * The host is omp unless --host=pi (or OMP_VCC_LH_HOST=pi) runs it in Pi.
  *
- * tasks: how many of the 17 (default all); contextWindow: what the host is told
+ * tasks: how many of the 17 (default all); contextWindow: what the host is told, or
+ * `provider` for the window the provider lists (the prices are the provider's either way)
  * (default 128000); the compactor: omp-vcc (default), omp-vcc without
  * [Working Set], omp-vcc with old turns leaving the context whole (`evict`), or
  * the host's own compaction (`own`; `omp` still means it). Expect two to three hours for all
@@ -24,7 +25,7 @@ import { spawn } from "child_process";
 import { openSync } from "fs";
 import { resolve } from "path";
 import { CYBENCH_TASKS, runCybench } from "../tests/support/cybench";
-import { LONG_HORIZON_MODEL, realModel, sessionHost, statsLine } from "../tests/support/host-session";
+import { LONG_HORIZON_MODEL, providerModel, realModel, sessionHost, statsLine } from "../tests/support/host-session";
 
 const args = process.argv.slice(2).filter((a) => a !== "--detach" && !a.startsWith("--max-requests=") && !a.startsWith("--host="));
 const capArg = process.argv.find((a) => a.startsWith("--max-requests="));
@@ -32,7 +33,12 @@ const hostArg = process.argv.find((a) => a.startsWith("--host="));
 if (hostArg) process.env.OMP_VCC_LH_HOST = hostArg.split("=")[1];
 const maxRequests = capArg ? Number(capArg.split("=")[1]) : undefined;
 const tasks = args[0] && args[0] !== "all" ? Number(args[0]) : CYBENCH_TASKS.length;
-const contextWindow = Number(args[1] ?? 128_000);
+// `provider`: the window and prices the provider lists for the model, as a user's catalog would hold them.
+// A number is the window the host is told; the prices are the provider's either way, so what omp-vcc
+// reads of a request's cost is real.
+const listed = await providerModel().catch(() => undefined);
+if (args[1] === "provider" && !listed) throw new Error("the provider lists no window for the model: give one");
+const contextWindow = args[1] === "provider" ? listed!.contextWindow : Number(args[1] ?? 128_000);
 const mode = args[2] === "omp" ? "own" : args[2] ?? "vcc";
 const model = realModel({ keyFile: true })?.model ?? LONG_HORIZON_MODEL.model;
 // The key file may set OMP_VCC_LH_HOST too; read after it.
@@ -55,7 +61,7 @@ if (process.argv.includes("--detach")) {
 const config = mode === "own" ? { overrideDefaultCompaction: false } : mode === "vcc-no-ws" ? { workingSet: false } : mode === "evict" ? { evict: true } : {};
 
 const started = Date.now();
-const r = await runCybench({ host, tasks, contextWindow, config, maxRequests, log: (l) => console.log(`  ${l}`) });
+const r = await runCybench({ host, tasks, contextWindow, config, maxRequests, cost: listed?.cost, log: (l) => console.log(`  ${l}`) });
 const minutes = Math.round((Date.now() - started) / 60_000);
 
 const byTask = new Map<string, { right: number; total: number; again: number; asked: number; calls: number }>();
@@ -72,6 +78,8 @@ for (const a of r.recall) {
   t.calls += a.toolCalls;
 }
 console.log(`\n${tasks} tasks, ${Math.round(contextWindow / 1000)}K window, ${host}, ${model}, ${mode}: ${r.compactions} compactions (${r.byOmpVcc} by omp-vcc), ${statsLine(r.stats)}, ${minutes} min`);
+console.log(`window ${contextWindow}${args[1] === "provider" ? " (the provider's)" : ""}; prices per M ${JSON.stringify(listed?.cost ?? null)}`);
+console.log(`omp-vcc learned: ${JSON.stringify(r.learned ?? null)}; chars per token in the session's own record: ${r.measuredCharsPerToken ?? "-"}`);
 console.log("task                                  answered  again  calls to answer again");
 for (const [name, t] of byTask) console.log(`${name.slice(0, 36).padEnd(37)} ${`${t.right}/${t.total}`.padStart(8)}  ${t.asked ? `${t.again}/${t.asked}`.padStart(5) : "    -"}  ${t.asked ? t.calls : "-"}`);
 const right = r.answers.filter((a) => a.correct).length;
