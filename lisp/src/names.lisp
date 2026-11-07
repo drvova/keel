@@ -15,9 +15,9 @@
 (defparameter +recall-tool+ "vcc_recall")
 (defparameter +recall-params+ '("query" "range" "expand" "page" "scope" "mode" "session"))
 (defparameter +pin-tool+ "vcc_pin")
-(defparameter +pin-params+ '("note" "unpin"))
+(defparameter +pin-params+ '("note" "name" "unpin"))
 (defparameter +context-tool+ "vcc_context")
-(defparameter +context-params+ '("drop" "oldest" "restore" "note"))
+(defparameter +context-params+ '("drop" "oldest" "restore" "note" "undo"))
 
 ;;; What omp-vcc writes into a session.
 (defparameter +pin-entry-type+ "omp-vcc.pin" "Custom entries that hold a pin or unpin: in the session file, never in the context.")
@@ -44,6 +44,7 @@
 (defparameter +range-page-size+ 20 "Entries on one page of a range.")
 (defparameter +recall-output-chars+ (* 50 1024) "One recall result's ceiling, 50 KB like a read tool's; less on a small window (recall-output-chars).")
 (defparameter +pin-chars+ 300 "A pinned note is clipped to this many characters.")
+(defparameter +pin-name-chars+ 40 "A pinned note's name is at most this many characters.")
 (defparameter +context-note-chars+ 300 "A vcc_context note is clipped to this many characters.")
 (defparameter +evict-at-percent+ 85 "Past this percent of where the host compacts, the oldest finished turns leave the context (evict.lisp).")
 (defparameter +session-ref-min-chars+ 4 "The shortest id prefix session:'id' takes.")
@@ -58,5 +59,5 @@
                "compactor" +compactor+ "legacyCompactor" +legacy-compactor+
                "compactInstruction" +compact-instruction+
                "searchPageSize" +search-page-size+ "rangePageSize" +range-page-size+
-               "recallOutputChars" +recall-output-chars+ "pinChars" +pin-chars+ "evictAtPercent" +evict-at-percent+ "contextNoteChars" +context-note-chars+
+               "recallOutputChars" +recall-output-chars+ "pinChars" +pin-chars+ "pinNameChars" +pin-name-chars+ "evictAtPercent" +evict-at-percent+ "contextNoteChars" +context-note-chars+
                "sessionRefMinChars" +session-ref-min-chars+))

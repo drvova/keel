@@ -322,9 +322,12 @@ past the time budget or the stack, MESSAGE saying which."
     (when (zerop (length raw-query))
       (return-from search-docs-within (values '() 0 nil)))
     (let* ((n (length docs))
-           (texts (map 'vector (lambda (d) (searchable-text (second d))) docs))
+           ;; A document's text (search-text's, kept with its message) is worked
+           ;; out once: its encoded runs cut, and folded with its role and files.
+           (texts (map 'vector (lambda (d) (derived (second d) :searchable (lambda () (searchable-text (second d))))) docs))
            (hays (map 'vector (lambda (d text)
-                                (make-hay (concatenate 'text (first d) " " text " " (join-strings (third d) " "))))
+                                (derived (second d) (list :hay (first d) (third d))
+                                         (lambda () (make-hay (concatenate 'text (first d) " " text " " (join-strings (third d) " "))))))
                       docs texts)))
       ;; A query with a metacharacter is first one regex, its hits in entry order
       ;; and unranked; when it finds nothing, the query is searched as terms.
@@ -340,7 +343,7 @@ past the time budget or the stack, MESSAGE saying which."
   "The term search: BM25 over HAYS for RAW-QUERY's meaningful words."
   (let* ((terms (mapcar #'make-term (meaningful-terms (js-split-whitespace raw-query))))
          (n (length hays)))
-    (let* ((lens (map 'vector (lambda (h) (word-count (hay-folded h))) hays))
+    (let* ((lens (map 'vector (lambda (h) (derived h :words (lambda () (word-count (hay-folded h))))) hays))
            (df (make-hash-table :test 'equal))
            (matched (make-array n))
            (total-length 0))

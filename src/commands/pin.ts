@@ -19,11 +19,11 @@ export const registerPinCommands = (pi: ExtensionAPI, host: Binding) => {
     if (result) answer(pi, ctx, result);
   };
   pi.registerCommand(`${host.command}-pin`, {
-    description: "Pin a note that stays at the top of every omp-vcc summary. No text lists the pinned notes.",
+    description: "Pin a note that stays at the top of every omp-vcc summary; name:NAME first names it, and a name pinned again is replaced. No text lists the pinned notes.",
     handler: run("pin"),
   });
   pi.registerCommand(`${host.command}-unpin`, {
-    description: "Unpin an omp-vcc note by its [N].",
+    description: "Unpin an omp-vcc note by its [N] or its name.",
     handler: run("unpin"),
   });
 };

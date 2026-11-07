@@ -1,13 +1,18 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync } from "node:fs";
+import { closeSync, constants, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmSync, statSync, writeSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /**
- * The Lisp core (lisp/): one JSON request on its stdin, one response on its
- * stdout, then it exits (lisp/src/server.lisp). spawnSync keeps the callers
- * synchronous; a start costs ~5 ms.
+ * The Lisp core (lisp/): one JSON request in, one response out
+ * (lisp/src/server.lisp). Where the system has named pipes, one core process
+ * stays up for this host process and answers every request (`--serve`,
+ * lisp/src/live.lisp), so a session file it read is kept parsed for the next
+ * request; elsewhere, or when that process cannot start or dies, each request
+ * runs its own process with spawnSync (a start costs ~5 ms). Either way the
+ * callers stay synchronous.
  *
  * Which executable: OMP_VCC_CORE when it names one, else the build of this
  * copy's lisp/ sources, lisp/build/omp-vcc-core-<hash of the sources> (or in
@@ -23,12 +28,130 @@ import { fileURLToPath } from "node:url";
 export const core = (request: object): Record<string, unknown> => {
   const status = coreStatus();
   if (status.state !== "ready") throw new CoreUnavailable(status);
-  const run = spawnSync(status.path, [], { input: JSON.stringify(request), encoding: "utf8", maxBuffer: 1 << 30 });
+  const input = JSON.stringify(request);
+  const answered = liveAnswer(status.path, input);
+  if (answered !== undefined) {
+    let reply: any;
+    try { reply = JSON.parse(answered); } catch {}
+    if (reply?.ok === true) return reply;
+    throw new Error(`omp-vcc's core failed: ${reply?.error ?? answered.slice(0, 500)}`);
+  }
+  const run = spawnSync(status.path, [], { input, encoding: "utf8", maxBuffer: 1 << 30 });
   let reply: any;
   try { reply = run.error || run.status !== 0 ? undefined : JSON.parse(run.stdout); } catch {}
   if (reply?.ok === true) return reply;
   throw new Error(`omp-vcc's core failed: ${reply?.error ?? run.error?.message ?? (run.stderr || `exit ${run.status}`)}`);
 };
+
+// --- the live core ----------------------------------------------------------------
+
+/** The core process this host process keeps, and its pipes (lisp/src/live.lisp). */
+interface Live { path: string; child: ReturnType<typeof spawn>; dir: string; req: number; resp: number; pending: Buffer }
+let live: Live | undefined;
+/** A live core that would not start is not tried again before this, for this executable. */
+let liveRefused: { path: string; at: number } | undefined;
+const LIVE_RETRY_MS = 60_000;
+/** How long a live core may take to start, and to answer (it answers a request past 55 s as failed itself). */
+const LIVE_START_MS = 5_000;
+const LIVE_ANSWER_MS = 120_000;
+
+const sleep = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+const code = (e: unknown) => (e as NodeJS.ErrnoException)?.code;
+
+/** Whether this host process runs one core for every request: not on Windows (no named pipes there), not with OMP_VCC_CORE_LIVE=off. */
+const liveWanted = () => process.platform !== "win32" && process.env.OMP_VCC_CORE_LIVE !== "off";
+
+const stopLive = () => {
+  if (!live) return;
+  const l = live;
+  live = undefined;
+  for (const fd of [l.req, l.resp]) try { if (fd >= 0) closeSync(fd); } catch {}
+  try { l.child.kill(); } catch {}
+  rmSync(l.dir, { recursive: true, force: true });
+};
+process.once("exit", stopLive);
+
+/**
+ * One line from the core's response pipe, or undefined when it ended or the
+ * deadline passed. While STARTING, the core may not have opened the pipe for
+ * writing yet, which reads as its end too: waited out.
+ */
+const readLine = (l: Live, deadline: number, starting = false): string | undefined => {
+  const chunk = Buffer.allocUnsafe(1 << 20);
+  for (let idle = 0; ; ) {
+    const nl = l.pending.indexOf(10);
+    if (nl >= 0) {
+      const line = l.pending.subarray(0, nl).toString("utf8");
+      l.pending = l.pending.subarray(nl + 1);
+      return line;
+    }
+    let n: number;
+    try { n = readSync(l.resp, chunk, 0, chunk.length, null); } catch (e) {
+      if (code(e) !== "EAGAIN") return undefined;
+      if (Date.now() > deadline) return undefined;
+      // Most answers take a millisecond or two: spin briefly before sleeping.
+      if (++idle > 50) sleep(1);
+      continue;
+    }
+    if (n === 0) {
+      if (!starting || Date.now() > deadline || l.child.exitCode !== null) return undefined; // the core is gone
+      sleep(2);
+      continue;
+    }
+    idle = 0;
+    l.pending = Buffer.concat([l.pending, chunk.subarray(0, n)]);
+  }
+};
+
+const writeAll = (fd: number, bytes: Buffer, deadline: number): boolean => {
+  for (let at = 0; at < bytes.length; ) {
+    try { at += writeSync(fd, bytes, at, bytes.length - at); } catch (e) {
+      if (code(e) !== "EAGAIN" || Date.now() > deadline) return false;
+      sleep(1);
+    }
+  }
+  return true;
+};
+
+/** The live core for PATH, started when there is none (or it is another build's): undefined when it cannot run here. */
+const liveCore = (path: string): Live | undefined => {
+  if (live && live.path === path && live.child.exitCode === null && live.child.signalCode === null) return live;
+  stopLive();
+  if (liveRefused && liveRefused.path === path && Date.now() - liveRefused.at < LIVE_RETRY_MS) return undefined;
+  const dir = mkdtempSync(join(tmpdir(), "omp-vcc-core-"));
+  const child = spawn(path, ["--serve", dir], { stdio: "ignore" });
+  child.unref();
+  child.on("error", () => {});
+  const l: Live = { path, child, dir, req: -1, resp: -1, pending: Buffer.alloc(0) };
+  live = l;
+  const deadline = Date.now() + LIVE_START_MS;
+  // The core makes the pipes; the response pipe is opened without waiting, so the core's open of it returns.
+  while (l.resp < 0 && Date.now() < deadline && child.exitCode === null) {
+    try { l.resp = openSync(join(dir, "resp"), constants.O_RDONLY | constants.O_NONBLOCK); } catch { sleep(2); }
+  }
+  const ready = l.resp >= 0 ? readLine(l, deadline, true) : undefined;
+  if (ready === "ready") try { l.req = openSync(join(dir, "req"), constants.O_WRONLY | constants.O_NONBLOCK); } catch {}
+  if (l.req < 0) {
+    stopLive();
+    liveRefused = { path, at: Date.now() };
+    return undefined;
+  }
+  return l;
+};
+
+/** INPUT answered by the live core (its response line), or undefined when there is none here or it failed to answer: the caller runs the request on its own. */
+const liveAnswer = (path: string, input: string): string | undefined => {
+  if (!liveWanted()) return undefined;
+  const l = liveCore(path);
+  if (!l) return undefined;
+  const deadline = Date.now() + LIVE_ANSWER_MS;
+  const line = writeAll(l.req, Buffer.from(`${input}\n`, "utf8"), deadline) ? readLine(l, deadline) : undefined;
+  if (line === undefined) stopLive();
+  return line;
+};
+
+/** The live core's process id, for the tests. */
+export const liveCorePid = (): number | undefined => live?.child.pid;
 
 /** The core cannot answer yet, or here: `message` says why, as a user is told. */
 export class CoreUnavailable extends Error {

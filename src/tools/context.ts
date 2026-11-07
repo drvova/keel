@@ -11,16 +11,22 @@ import { CONTEXT_NOTE_CHARS, CONTEXT_PARAMS, CONTEXT_TOOL, EVICT_AT_PERCENT, REC
 const description = (command: string): string => [
   "Decide what stays in your context. Old turns can leave it whole: nothing is summarized or rewritten,",
   `the session keeps every word, and ${RECALL_TOOL} expand:[N] reads any entry back exactly. A turn starts at`,
-  "a user request and holds every call and result after it; the turn running now always stays.",
+  "a user request and holds every call and result after it; the turn running now always stays. Each",
+  "request in your context starts with its turn's #N, as [#12], so you can drop by it without listing first.",
+  "Your context is also mirrored in a file (its path is the first line of your context): edit it with your",
+  "tools, deleting a turn's block, rewriting its text as what to keep, or writing notes between blocks, and the",
+  "next request sends what it says. This tool is the short way to the same edits.",
   "",
   "- no params: list the turns in context, by #N range and size, and what is out.",
   "- drop: #N refs or ranges ('#12-#40'); every turn they touch leaves from the next request.",
   "- oldest: how many of the oldest turns in context leave.",
   "- restore: #N refs or ranges of turns to bring back.",
   "- note: with drop or oldest, one line kept where the turns were (what they settled, what to look up).",
+  "- undo: true reverses the last edit (what it took out comes back, or what it brought back leaves).",
   "",
   "Drop rarely and in large runs from the oldest end: each edit makes the provider read again all that",
-  `follows it. Past ${EVICT_AT_PERCENT}% of where the host compacts, the oldest turns leave by themselves; the user evicts with /${command}-evict.`,
+  "follows it, so a drop that frees too little for that is refused, with the run that would pay;",
+  `past ${EVICT_AT_PERCENT}% of where the host compacts, the oldest turns leave by themselves; the user evicts with /${command}-evict.`,
 ].join("\n");
 
 const PARAM_DESCRIPTIONS: Record<(typeof CONTEXT_PARAMS)[number], string> = {
@@ -28,6 +34,7 @@ const PARAM_DESCRIPTIONS: Record<(typeof CONTEXT_PARAMS)[number], string> = {
   oldest: "How many of the oldest turns in context to take out.",
   restore: "#N refs or ranges of turns to bring back into context.",
   note: `One line kept in place of the turns taken out (clipped at ${CONTEXT_NOTE_CHARS} chars).`,
+  undo: "true: reverse the last edit of the context.",
 };
 
 const refs = { anyOf: [{ type: "array", items: { anyOf: [{ type: "number" }, { type: "string" }] } }, { type: "number" }, { type: "string" }] };
@@ -39,6 +46,7 @@ const PARAMETERS = {
     oldest: { type: "number", description: PARAM_DESCRIPTIONS.oldest },
     restore: { description: PARAM_DESCRIPTIONS.restore, ...refs },
     note: { type: "string", description: PARAM_DESCRIPTIONS.note },
+    undo: { type: "boolean", description: PARAM_DESCRIPTIONS.undo },
   },
 } as const;
 

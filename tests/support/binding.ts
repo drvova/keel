@@ -18,9 +18,9 @@ export const executeRecall = (params: unknown, sessionManager: any, options: { c
 };
 
 /** One vcc_pin call on omp's binding, appended through `host`. */
-export const executePin = (params: unknown, host: { appendEntry: (customType: string, data?: unknown) => void }, sessionManager: any): string => {
+export const executePin = (params: unknown, host: { appendEntry: (customType: string, data?: unknown) => void }, sessionManager: any, ctx: any = { sessionManager }): string => {
   const { pin } = require("../../src/core/pins") as typeof import("../../src/core/pins");
-  return pin(host, ompBinding, { sessionManager }, { surface: "tool", params: params ?? null }).text;
+  return pin(host, ompBinding, ctx, { surface: "tool", params: params ?? null }).text;
 };
 
 /** omp's vcc_recall tool as the extension registers it, for tests of the tool's own surface. */

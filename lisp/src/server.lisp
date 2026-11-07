@@ -3,9 +3,10 @@
 ;;;; SPDX-License-Identifier: MIT
 ;;;;
 ;;;; The executable reads one JSON object from stdin and writes one to stdout,
-;;;; then exits: src/core/lisp-core.ts runs it with spawnSync, so the recall
-;;;; code that calls it stays synchronous, and nothing outlives a request. A
-;;;; start costs ~5 ms (the dumped image is mapped, not loaded).
+;;;; then exits; with --serve it answers the same requests one after another
+;;;; in one long-lived process (live.lisp), which is how src/core/lisp-core.ts
+;;;; runs it where the system has named pipes. Either way the callers stay
+;;;; synchronous. A start costs ~5 ms (the dumped image is mapped, not loaded).
 ;;;;
 ;;;; search: recall's search over one session file, for the search tests (tests/support/pairs.ts)
 ;;;;   {"op":"search","file":F,"query":Q,"floor":X?,"cap":N?}
@@ -296,9 +297,10 @@ compact, it first asks for what the host's convertToLlm makes of the messages."
 
 (defun handle-recall (request)
   "One recall call (recall.lisp run-recall) in the session REQUEST's snapshot names."
-  (multiple-value-bind (ok text severity)
-      (run-recall (recall-input (read-snapshot (json-get request "host")) (json-get request "call") (json-get request "projectFiles" #())))
-    (json-object "ok" :true "recall" (json-object "ok" (bool ok) "text" text "severity" severity))))
+  (let ((s (read-snapshot (json-get request "host"))) (call (json-get request "call")))
+    (multiple-value-bind (ok text severity) (run-recall (recall-input s call (json-get request "projectFiles" #())))
+      (json-object "ok" :true "recall" (json-object "ok" (bool ok) "text" (if (equal (json-get call "surface") "tool") (with-readout s text) text)
+                                                    "severity" severity)))))
 
 (defun handle-context-edits (request)
   "The branch REQUEST carries, Pi's context edits applied (context-edits.lisp)."
@@ -315,8 +317,10 @@ compact, it first asks for what the host's convertToLlm makes of the messages."
 
 (defun handle-pin (request)
   "A pin call (pins.lisp run-pin): what to tell, and the op the host appends."
-  (multiple-value-bind (done text op severity note) (run-pin (pin-input (read-snapshot (json-get request "host")) (json-get request "call")))
-    (json-object "ok" :true "pin" (json-object "done" (bool done) "text" text "op" op "severity" severity "agentNote" note))))
+  (let* ((s (read-snapshot (json-get request "host"))) (call (json-get request "call")))
+    (multiple-value-bind (done text op severity note) (run-pin (pin-input s call))
+      (json-object "ok" :true "pin" (json-object "done" (bool done) "text" (if (equal (json-get call "surface") "tool") (with-readout s text) text)
+                                                 "op" op "severity" severity "agentNote" note)))))
 
 (defun handle-raw-capture (request)
   "Copy the entries REQUEST carries that omp may rewrite into the store (raw-capture.lisp)."
@@ -409,7 +413,12 @@ large request."
       (sb-ext:octets-to-string bytes :external-format :utf-8))))
 
 (defun main ()
-  "Entry point of the dumped executable."
+  "Entry point of the dumped executable: one request on stdin, or with --serve DIR
+requests one after another (live.lisp)."
+  (let ((args (rest sb-ext:*posix-argv*)))
+    (when (equal (first args) "--serve")
+      (handler-case (serve (second args)) (serious-condition () nil))
+      (sb-ext:exit :code 0 :abort t)))
   (let ((response (handler-case
                       (handle-request (parse-json (read-stdin)))
                     ;; The heap or the stack running out too: the caller says the core failed.

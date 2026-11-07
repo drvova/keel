@@ -28,20 +28,46 @@
   "BYTES as text; a malformed sequence reads as U+FFFD, as Buffer.toString does."
   (sb-ext:octets-to-string bytes :external-format '(:utf-8 :replacement #\REPLACEMENT_CHARACTER)))
 
+(defun parse-jsonl (text)
+  "The JSON value of each line of TEXT that parses, in order."
+  ;; Each line is parsed where it lies in the decoded text, not copied out first.
+  (let ((values '()))
+    (loop for start = 0 then (1+ end)
+          for end = (or (position #\Newline text :start start) (length text))
+          do (when (< start end)
+               (handler-case (push (parse-json text :start start :end end) values)
+                 (json-parse-error () nil)))
+          while (< end (length text)))
+    (nreverse values)))
+
+(defparameter +jsonl-cached-files+ 8 "How many files' parsed lines a live core keeps.")
+(defvar *jsonl-cache* '()
+  "The files read last, newest first, as (PATH BYTES VALUES): a live core (live.lisp)
+reads a session file again on every request, and parses only what changed.")
+
+(defun same-octets-p (a b end)
+  "A and B agree on their first END bytes."
+  (declare (type (simple-array (unsigned-byte 8) (*)) a b) (type fixnum end) (optimize speed))
+  (loop for i of-type fixnum from 0 below end always (= (aref a i) (aref b i))))
+
 (defun jsonl-values (path)
   "The JSON value of each line of PATH that parses, in order; NIL when the file
-does not exist (a new session's file is written with its first entry)."
-  (let ((bytes (read-file-octets path)))
+does not exist (a new session's file is written with its first entry). The
+values are shared with the next read of an unchanged file, so no caller
+changes them (they copy, as COPY-OBJECT does); a file that only grew is parsed
+from where it ended, at a line's end."
+  (let* ((bytes (read-file-octets path))
+         (cached (find path *jsonl-cache* :key #'first :test #'equal))
+         (old (second cached)) (n (length old)))
+    (setf *jsonl-cache* (remove cached *jsonl-cache*))
     (when bytes
-      ;; Each line is parsed where it lies in the decoded file, not copied out first.
-      (let ((text (decode-utf-8 bytes)) (values '()))
-        (loop for start = 0 then (1+ end)
-              for end = (or (position #\Newline text :start start) (length text))
-              do (when (< start end)
-                   (handler-case (push (parse-json text :start start :end end) values)
-                     (json-parse-error () nil)))
-              while (< end (length text)))
-        (nreverse values)))))
+      (let ((values (cond ((and cached (= n (length bytes)) (same-octets-p old bytes n)) (third cached))
+                          ((and cached (plusp n) (> (length bytes) n) (= (aref old (1- n)) 10) (same-octets-p old bytes n))
+                           (append (third cached) (parse-jsonl (decode-utf-8 (subseq bytes n)))))
+                          (t (parse-jsonl (decode-utf-8 bytes))))))
+        (push (list path bytes values) *jsonl-cache*)
+        (when (> (length *jsonl-cache*) +jsonl-cached-files+) (setf *jsonl-cache* (subseq *jsonl-cache* 0 +jsonl-cached-files+)))
+        (copy-list values)))))
 
 (defun entry-type (entry) (json-get entry "type"))
 

@@ -103,3 +103,21 @@ An integral value is an integer, as JSON.parse gives one; any other a double."
         (t nil)))
 
 (defun ref-of (n) "` (#N)` after a line that came from entry N, nothing without one." (if n (format nil " (#~d)" n) ""))
+
+;;; --- what is worked out of a value once, kept with it ---------------------------
+
+(defvar *derived* (make-hash-table :test 'eq :weakness :key)
+  "What was worked out of a value read from a session file (its rendering, the
+text search reads, its folded form), by the value: a live core (live.lisp)
+keeps the file's values from one request to the next (JSONL-VALUES), and so
+what was worked out of them. Gone with the value. Nothing worked out is
+changed in place, as nothing read is.")
+
+(defun derived (object key thunk)
+  "THUNK's value for OBJECT under KEY (compared with EQUAL), worked out once."
+  (let ((cell (assoc key (gethash object *derived*) :test #'equal)))
+    (if cell
+        (cdr cell)
+        (let ((value (funcall thunk)))
+          (push (cons key value) (gethash object *derived*))
+          value))))
