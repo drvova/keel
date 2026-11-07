@@ -19,6 +19,8 @@ export const CONTEXT_PARAMS = ["drop", "oldest", "restore", "note"] as const;
 export const EVICT_ENTRY_TYPE = "omp-vcc.evict";
 /** The custom message telling the agent of a pin the user made; a summary leaves it out. */
 export const PIN_NOTICE_TYPE = "omp-vcc-pin";
+/** The custom message telling the agent how full its context is; a summary leaves it out. */
+export const BUDGET_NOTICE_TYPE = "omp-vcc-budget";
 /** The custom message carrying /…-recall output to the agent. */
 export const RECALL_COMMAND_MESSAGE_TYPE = "vcc-recall";
 

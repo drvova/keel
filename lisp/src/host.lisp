@@ -140,21 +140,31 @@ host's window (or the host knows none); T when it was recorded."
     (and (realp effective) (> effective 0)
          (trigger-for effective nil nil (learned-host-policy (snapshot-config-dir s) (model-key (snapshot-model s))) (snapshot-name s)))))
 
-(defun context-for-host (s messages)
+(defun context-for-host (s messages tool)
   "The host's next request MESSAGES with what is out of the context left out: the
-indices to drop, the lines to put in their place (and where), the evictions
-omp-vcc records itself as the context fills (the evict setting), the budget line
-the request ends with past half the trigger, and what to tell of them."
+indices to drop, the lines to put in their place (where, and as what), the
+evictions omp-vcc records itself as the context fills (the evict setting), the
+note telling the model how full its context is (TOOL: vcc_context is
+registered), and what to tell the user."
   (let* ((auto (eq (json-get (snapshot-settings s) "evict") :true))
-         (trigger (and auto (snapshot-trigger s))))
+         (trigger (and auto (snapshot-trigger s))) (count (snapshot-count s)) (branch (snapshot-branch s)))
     (multiple-value-bind (drop stubs ops before after)
-        (evict-request (snapshot-branch s) (snapshot-index s) (coerce messages 'vector) :file (snapshot-session-file s)
-                       :trigger trigger :auto auto :count (snapshot-count s))
-      (let ((budget (and auto (plusp (length messages)) (budget-line after trigger))))
+        (evict-request branch (snapshot-index s) (coerce messages 'vector) :file (snapshot-session-file s)
+                       :trigger trigger :auto auto :count count)
+      (multiple-value-bind (note note-op)
+          ;; After an eviction this request, the context just shrank: no note.
+          (and auto (null ops) (budget-note branch (snapshot-index s) after trigger tool count))
         (json-object "drop" (coerce drop 'vector)
-                     "stubs" (map 'vector (lambda (st) (json-object "at" (car (car st)) "how" (cdr (car st)) "text" (cdr st))) stubs)
-                     "budget" (and budget (json-object "at" (1- (length messages)) "text" budget))
-                     "ops" (coerce ops 'vector)
+                     "stubs" (map 'vector (lambda (st)
+                                            (destructuring-bind ((at . how) . text) st
+                                              (json-object "at" at "how" how "text" text
+                                                           ;; A line of its own stands where the turns were, as the user's.
+                                                           "message" (and (equal how "insert")
+                                                                          (json-object "role" "user" "content" (vector (json-object "type" "text" "text" text))
+                                                                                       "timestamp" (json-get (aref (coerce messages 'vector) at) "timestamp"))))))
+                                  stubs)
+                     "ops" (coerce (append ops (and note-op (list note-op))) 'vector)
+                     "note" note
                      "notice" (and ops (auto-notice ops before after)))))))
 
 (defun evict-for-host (s call)

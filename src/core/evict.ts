@@ -21,38 +21,42 @@ export const evict = (host: EvictHost, binding: Parameters<typeof hostSnapshot>[
   return reply.text as string;
 };
 
-/** What the core makes of the host's next request: which messages leave, what stands in their place, what it recorded. */
+/** What the core makes of the host's next request: the request to send (undefined: as it is), the note for the model, what to tell the user. */
 export interface RequestEvictions {
   messages: unknown[] | undefined;
+  /** How full the context is, for the model, as a message of its own (BUDGET_NOTICE_TYPE). */
+  note: string | undefined;
   notice: string | undefined;
 }
 
 /**
  * The host's next request with what is out of the context left out. The
  * evictions omp-vcc decides as the context fills are appended before the
- * request goes, so the next request finds them in the ledger.
+ * request goes, so the next request finds them in the ledger. `tool` says
+ * whether vcc_context is registered, which the note names.
  */
-export const evictRequest = (host: EvictHost, binding: Parameters<typeof hostSnapshot>[0], ctx: HostCtx, messages: unknown[]): RequestEvictions => {
-  const reply = core({ op: "context", host: hostSnapshot(binding, ctx), messages });
+export const evictRequest = (host: EvictHost, binding: Parameters<typeof hostSnapshot>[0], ctx: HostCtx, messages: unknown[], tool = false): RequestEvictions => {
+  const reply = core({ op: "context", host: hostSnapshot(binding, ctx), messages, tool });
   for (const op of reply.ops as unknown[]) host.appendEntry(EVICT_ENTRY_TYPE, op);
+  const note = reply.note as string | undefined;
+  const notice = reply.notice as string | undefined;
   const drop = new Set(reply.drop as number[]);
-  // Where each line goes is the core's: prepended to a user message, appended to one, or a message of its own.
-  const lines = [...(reply.stubs as Placed[]), ...(reply.budget ? [{ ...(reply.budget as Placed), how: "append" as const }] : [])];
-  if (drop.size === 0 && lines.length === 0) return { messages: undefined, notice: reply.notice as string | undefined };
+  const lines = reply.stubs as Placed[];
+  if (drop.size === 0 && lines.length === 0) return { messages: undefined, note, notice };
+  // Where each line goes, and the message a line of its own is, are the core's.
   const out: unknown[] = [];
   messages.forEach((m, i) => {
     const here = lines.filter((l) => l.at === i);
-    // A line of its own stands where the turns were, as the user's: the timestamp of the first one it replaces.
-    for (const l of here.filter((l) => l.how === "insert")) out.push({ role: "user", content: [{ type: "text", text: l.text }], timestamp: (m as { timestamp?: unknown })?.timestamp });
+    for (const l of here) if (l.how === "insert" && l.message) out.push(l.message);
     if (drop.has(i)) return;
     const before = here.filter((l) => l.how === "prepend").map((l) => l.text);
     const after = here.filter((l) => l.how === "append").map((l) => l.text);
     out.push(before.length || after.length ? withText(m, before, after) : m);
   });
-  return { messages: out, notice: reply.notice as string | undefined };
+  return { messages: out, note, notice };
 };
 
-interface Placed { at: number; how: "prepend" | "append" | "insert"; text: string }
+interface Placed { at: number; how: "prepend" | "append" | "insert"; text: string; message?: unknown }
 
 /** MESSAGE with text parts put before and after its content. */
 const withText = (message: unknown, before: string[], after: string[]): unknown => {

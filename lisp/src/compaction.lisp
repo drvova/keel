@@ -114,7 +114,7 @@ and the notice /omp-vcc-pin sends the agent is left out ([Pinned Notes] carries
 the note itself)."
   (let ((role (json-get m "role")))
     (not (or (member role '("developer" "fileMention") :test #'equal)
-             (and (equal role "custom") (equal (json-get m "customType") +pin-notice-type+))))))
+             (and (equal role "custom") (member (json-get m "customType") (list +pin-notice-type+ +budget-notice-type+) :test #'equal))))))
 
 (defun summary-message (m converted)
   "What M becomes in the summary's input, given CONVERTED, what the host's

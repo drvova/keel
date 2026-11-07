@@ -22,6 +22,7 @@
 ;;; What omp-vcc writes into a session.
 (defparameter +pin-entry-type+ "omp-vcc.pin" "Custom entries that hold a pin or unpin: in the session file, never in the context.")
 (defparameter +evict-entry-type+ "omp-vcc.evict" "Custom entries that take turns out of the context or bring them back: in the session file, never in the context.")
+(defparameter +budget-notice-type+ "omp-vcc-budget" "The custom message telling the agent how full its context is; a summary leaves it out.")
 (defparameter +pin-notice-type+ "omp-vcc-pin" "The custom message telling the agent of a pin the user made; [Pinned Notes] carries the note, so a summary leaves it out.")
 (defparameter +recall-command-message-type+ "vcc-recall" "The custom message carrying /…-recall output to the agent.")
 (defparameter +compactor+ "omp-vcc" "The compactor id in a compaction's details.")
@@ -52,7 +53,7 @@
   (json-object "recallTool" +recall-tool+ "recallParams" (coerce +recall-params+ 'vector)
                "pinTool" +pin-tool+ "pinParams" (coerce +pin-params+ 'vector)
                "contextTool" +context-tool+ "contextParams" (coerce +context-params+ 'vector)
-               "pinEntryType" +pin-entry-type+ "evictEntryType" +evict-entry-type+ "pinNoticeType" +pin-notice-type+
+               "pinEntryType" +pin-entry-type+ "evictEntryType" +evict-entry-type+ "pinNoticeType" +pin-notice-type+ "budgetNoticeType" +budget-notice-type+
                "recallCommandMessageType" +recall-command-message-type+
                "compactor" +compactor+ "legacyCompactor" +legacy-compactor+
                "compactInstruction" +compact-instruction+

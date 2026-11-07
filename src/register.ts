@@ -34,8 +34,9 @@ export const register = (pi: ExtensionAPI, host: Host): void => {
   registerPinTool(pi, binding);
   registerPinCommands(pi, binding);
   // Old turns out of the context whole, instead of a summary: what the evict command or vcc_context took, and with the evict setting on, what omp-vcc takes as the context fills.
-  registerEviction(pi, binding);
   // The setting is read through the core, which may not be built yet: then the tool comes with the next session.
-  if (whenCore(() => binding.config.load().evict)) registerContextTool(pi, binding);
+  const contextTool = { registered: whenCore(() => binding.config.load().evict) === true };
+  if (contextTool.registered) registerContextTool(pi, binding);
+  registerEviction(pi, binding, contextTool);
   registerEvictCommand(pi, binding);
 };

@@ -234,12 +234,12 @@ export const textOf = (m: any): string =>
 
 /** What a benchmark session cost and how it made room, read off its branch. */
 export interface RunStats {
-  /** Model requests, and their prompt tokens (input and cache reads, as the benchmarks have always counted them). */
+  /** Model requests, and their prompt tokens (input and cache reads, as the benchmarks have always counted them; cache writes are not in it). */
   requests: number;
   promptTokens: number;
   /** The share of all prompt tokens (input, cache reads, cache writes) the provider read from its cache. */
   cacheShare: number;
-  /** omp-vcc's evictions on the branch, by who made them (the agent with vcc_context, the user, omp-vcc as the context filled). */
+  /** omp-vcc's evict entries on the branch (one per run of turns taken out, restores not counted), by who made them (the agent with vcc_context, the user, omp-vcc as the context filled). */
   evictions: { agent: number; user: number; auto: number };
 }
 

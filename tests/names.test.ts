@@ -17,6 +17,7 @@ describe("src/names.ts", () => {
       contextParams: [...names.CONTEXT_PARAMS],
       evictEntryType: names.EVICT_ENTRY_TYPE,
       pinNoticeType: names.PIN_NOTICE_TYPE,
+      budgetNoticeType: names.BUDGET_NOTICE_TYPE,
       recallCommandMessageType: names.RECALL_COMMAND_MESSAGE_TYPE,
       searchPageSize: names.SEARCH_PAGE_SIZE,
       rangePageSize: names.RANGE_PAGE_SIZE,

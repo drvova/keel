@@ -6,19 +6,21 @@
 // word. The core decides all of it; the hook only spares a request the call
 // when there is nothing it could do: the setting off and no eviction recorded.
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
-import { tell, type Binding } from "../host";
+import { deliver, tell, type Binding } from "../host";
 import { whenCore } from "../core/core-wait";
 import { evictRequest } from "../core/evict";
-import { EVICT_ENTRY_TYPE } from "../names";
+import { BUDGET_NOTICE_TYPE, EVICT_ENTRY_TYPE } from "../names";
 import { hostBranch } from "../core/session-file";
 
-export const registerEviction = (pi: ExtensionAPI, host: Pick<Binding, "name" | "displayName" | "modelsFile" | "config">): void => {
+export const registerEviction = (pi: ExtensionAPI, host: Pick<Binding, "name" | "displayName" | "modelsFile" | "config">, tool: { registered: boolean }): void => {
   pi.on("context", (event, ctx) =>
     whenCore(() => {
       const recorded = hostBranch((ctx as any)?.sessionManager)?.some((e: any) => e?.type === "custom" && e.customType === EVICT_ENTRY_TYPE);
       if (!recorded && !host.config.load().evict) return undefined;
-      const { messages, notice } = evictRequest({ appendEntry: (type, data) => pi.appendEntry(type, data) }, host, ctx as any, event.messages as unknown[]);
+      const { messages, note, notice } = evictRequest({ appendEntry: (type, data) => pi.appendEntry(type, data) }, host, ctx as any, event.messages as unknown[], tool.registered);
       if (notice) tell(ctx as any, notice, "info");
+      // A message of its own, stored in the session, before the next model call: the provider's cache keeps it.
+      if (note) void deliver(ctx as any, "the context's size to the agent", () => pi.sendMessage({ customType: BUDGET_NOTICE_TYPE, content: note, display: false }, { deliverAs: "steer" }));
       return messages ? { messages: messages as typeof event.messages } : undefined;
     }));
 };
