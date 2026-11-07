@@ -54,7 +54,21 @@
         (rx "available context size \\((\\d[\\d,]*) tokens\\)" "i")
         (rx "\\bn_ctx[^\\d]{0,12}(\\d[\\d,]*)" "i")
         (rx "context (?:window|length|size) (?:is|of) (\\d[\\d,]*)" "i")
-        (rx "greater than the context length of (\\d[\\d,]*)" "i")))
+        (rx "greater than the context length of (\\d[\\d,]*)" "i")
+        ;; LiteLLM and OpenAI-compatible servers: "Input length (265330) exceeds model's maximum context length (262144)".
+        (rx "exceeds model's maximum context length \\((\\d[\\d,]*)\\)" "i")
+        ;; Together: "The input (X tokens) is longer than the model's context length (Y tokens)".
+        (rx "longer than the model's context length \\((\\d[\\d,]*) tokens\\)" "i")
+        ;; Mistral: "... too large for model with Y maximum context length".
+        (rx "too large for model with (\\d[\\d,]*) maximum context length" "i")
+        ;; OpenRouter, Poolside: "exceeds the maximum allowed input length of Y tokens".
+        (rx "maximum allowed input length of (\\d[\\d,]*)" "i")
+        ;; Kimi: "exceeded model token limit: Y".
+        (rx "exceeded model token limit: (\\d[\\d,]*)" "i")
+        ;; DashScope / Qwen: "Range of input length should be [1, Y]".
+        (rx "range of input length should be \\[1, ?(\\d[\\d,]*)\\]" "i")
+        ;; A DS4 server: "prompt has X tokens, but the configured context size is Y tokens".
+        (rx "configured context size is (\\d[\\d,]*) tokens" "i")))
 
 (defun limit-from-overflow-error (text)
   "The context limit an overflow error states, or NIL."
@@ -228,14 +242,42 @@ working set (the setting off), its room goes to the kept tail."
 
 ;;; --- the context, measured ---------------------------------------------------------
 
-(defun calibrate-chars-per-token (chars tokens)
-  "Chars per token from CHARS of messages the host counted as TOKENS, clamped to
-2..6; the 4-char heuristic when the host counted none."
+(defparameter +chars-per-token-range+ '(0.8d0 . 6)
+  "What a calibration can come to. Code and agent text run 3.5-4 chars per token,
+English prose about 5.4, shell listings about 2, and Chinese and Japanese 1-2
+(measured on cl100k, o200k, Llama 3, Qwen 3 and DeepSeek V3 tokenizers).")
+
+(defun cjk-char-p (c)
+  (let ((code (char-code c)))
+    (or (<= #x3040 code #x30FF) (<= #x3400 code #x4DBF) (<= #x4E00 code #x9FFF) (<= #xAC00 code #xD7AF) (<= #xF900 code #xFAFF))))
+
+(defun cjk-share (texts)
+  "The share of TEXTS' characters in Chinese, Japanese or Korean script."
+  (let ((all 0) (cjk 0))
+    (dolist (text texts)
+      (when (stringp text)
+        (incf all (length text))
+        (incf cjk (count-if #'cjk-char-p text))))
+    (if (zerop all) 0 (/ cjk all))))
+
+(defun clamp-chars-per-token (raw &optional (cjk 0))
+  "RAW within +CHARS-PER-TOKEN-RANGE+, its floor 2 for text in no CJK script and
+lower as the share CJK of it grows: below 2 chars a token only CJK text goes,
+and elsewhere it is a measurement gone wrong (a prompt counted with what the
+messages do not hold)."
+  (let* ((floor (max (car +chars-per-token-range+) (- 2 (* 1.2d0 cjk))))
+         (c (min (cdr +chars-per-token-range+) (max floor raw))))
+    (if (= c (ftruncate c)) (truncate c) c)))
+
+(defun calibrate-chars-per-token (chars tokens &optional (cjk 0))
+  "Chars per token from CHARS of messages the host counted as TOKENS, clamped
+(CLAMP-CHARS-PER-TOKEN, CJK the share of them in CJK script); the 4-char
+heuristic when the host counted none."
   (if (or (not (realp tokens)) (<= tokens 0) (<= chars 0))
       (json-object "mode" "heuristic" "charsPerToken" +default-chars-per-token+)
       (let ((raw (/ (dbl chars) (dbl tokens))))
         (json-object "mode" "calibrated"
-                     "charsPerToken" (let ((c (min 6 (max 2 raw)))) (if (= c (ftruncate c)) (truncate c) c))
+                     "charsPerToken" (clamp-chars-per-token raw cjk)
                      "sourceChars" chars "sourceTokens" tokens
                      "rawCharsPerToken" (if (= raw (ftruncate raw)) (truncate raw) raw)))))
 
@@ -277,7 +319,10 @@ alone, so a token budget maps to the chars the messages take."
                      (if previous (js-length previous) 0)))
          (measured (measured-overhead-tokens branch))
          (estimate (calibrate-chars-per-token
-                    content (if (and measured tokens-before (> tokens-before measured)) (- tokens-before measured) tokens-before)))
+                    content (if (and measured tokens-before (> tokens-before measured)) (- tokens-before measured) tokens-before)
+                    (cjk-share (loop for i from (live-window-start branch) below (length branch)
+                                     for m = (live-message (aref branch i))
+                                     when m collect (text-of (json-get m "content"))))))
          (overhead (or measured
                        (if (and tokens-before (> tokens-before 0)) (max 0 (- tokens-before (tokens-from-chars content))) 0)))
          (rule (json-get input "ruleName"))

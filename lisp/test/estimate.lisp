@@ -29,6 +29,15 @@
     (is (equal (json-get c "mode") "heuristic") "no usable token count")
     (is (eql (json-get c "charsPerToken") 4))))
 
+(deftest the-floor-follows-the-script
+  ;; Below 2 chars a token only CJK text goes: elsewhere it is a measurement gone wrong.
+  (is (eql (clamp-chars-per-token 1.1d0) 2) "text in no CJK script")
+  (is (= (clamp-chars-per-token 1.1d0 1) 1.1d0) "Chinese or Japanese text, 1-2 chars a token")
+  (is (= (clamp-chars-per-token 0.5d0 1) 0.8d0) "and never below 0.8")
+  (is (= (clamp-chars-per-token 1.1d0 1/2) 1.4d0) "half of it CJK")
+  (is (= (cjk-share (list "abc" (map 'string #'code-char '(#x65E5 #x672C #x8A9E)))) 1/2) "日本語, written by code point")
+  (is (= (cjk-share (list "")) 0)))
+
 (deftest content-counts-every-part-that-carries-tokens
   (is (= (content-of "\"hello\"") 5))
   (is (= (content-of "[{\"type\":\"text\",\"text\":\"hello\"},{\"type\":\"toolCall\",\"name\":\"read\",\"input\":{\"path\":\"a.ts\"}},{\"type\":\"toolResult\",\"content\":\"done\"},{\"type\":\"image\",\"mimeType\":\"image/png\"}]")

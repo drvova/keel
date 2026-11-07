@@ -349,7 +349,8 @@ compact, it first asks for what the host's convertToLlm makes of the messages."
 
 (defun handle-learn-limit (request)
   "An assistant message that ended in an error: the limit it states, kept for the model when below the host's window."
-  (json-object "ok" :true "recorded" (bool (learn-limit (read-snapshot (json-get request "host")) (strings-of (json-get request "errors"))))))
+  (json-object "ok" :true "recorded" (bool (learn-limit (read-snapshot (json-get request "host")) (strings-of (json-get request "errors"))
+                                                       (let ((p (json-get request "promptTokens"))) (and (realp p) (> p 0) p))))))
 
 (defun handle-settled (request)
   "A run that settled: whether omp-vcc compacts in the host's stead, and the note that says so."

@@ -5,7 +5,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
-import { join } from "path";
+import { dirname, join } from "path";
 import { evict, evictRequest, type EvictCall } from "../src/core/evict";
 import { registerEviction } from "../src/hooks/eviction";
 import { EVICT_ENTRY_TYPE, PIN_ENTRY_TYPE } from "../src/names";
@@ -371,7 +371,7 @@ describe("the context's size on omp-vcc's own results", () => {
   it("ends the agent's vcc_context, vcc_recall and vcc_pin results while eviction is on, not the user's commands", () => {
     const s = session(3);
     const ctx = { ...s.ctx(100_000), getContextUsage: () => ({ tokens: 41_808 }) } as any;
-    const readout = "[context: ~41808 tokens, 50% of where the host compacts (~83616)]";
+    const readout = "[context: ~41808 tokens, 50% of where the host compacts (~83616); ~41808 left]";
     setEvict(true);
     expect(evict(s.host, ompBinding, ctx, { surface: "tool", params: null })).toEndWith(`\n${readout}`);
     expect(evict(s.host, ompBinding, ctx, { surface: "command", args: "list" })).not.toContain("[context:");
@@ -406,6 +406,26 @@ describe("when an eviction pays, by the session's own prices", () => {
     setEvict(true);
     const s = priced({ input: 6000, cacheRead: 0, cacheWrite: 0, output: 10, cost: { input: 0.006, cacheRead: 0, cacheWrite: 0, output: 0 } });
     expect(tool(s, { drop: [0] })).toStartWith("Out of context from the next request: #0–#3");
+  });
+});
+
+describe("chars per token, measured on the request", () => {
+  it("comes from two requests the provider counted, is kept for the model, and sizes vcc_context's listing", () => {
+    setEvict(true);
+    const messages: any[] = [];
+    // 10 turns of 3,000 chars; each answer's prompt grows by 1,000 tokens a turn: 3 chars a token.
+    for (let i = 0; i < 10; i++) {
+      messages.push({ role: "user", content: `request ${i} `.padEnd(1000, "x") });
+      messages.push({ role: "assistant", content: [{ type: "text", text: "".padEnd(2000, "y") }], usage: { input: 5000 + 1000 * i, cacheRead: 0, cacheWrite: 0, output: 1 } });
+    }
+    const s = sessionOf(messages);
+    sent(s, 100_000, true);
+    const limits = JSON.parse(readFileSync(join(dirname(process.env.OMP_VCC_CONFIG_PATH!), "omp-vcc-models.json"), "utf8"));
+    expect(limits["p/m"].charsPerToken).toBe(3);
+    // The listing reads it: a turn of 3,000 chars is ~1,000 tokens, not the 750 of 4 chars a token.
+    expect(evict(s.host, ompBinding, s.ctx(100_000) as any, { surface: "tool", params: null })).toContain("#16–#17 ~1000 tokens");
+    // What this model measured stays with this test.
+    rmSync(join(dirname(process.env.OMP_VCC_CONFIG_PATH!), "omp-vcc-models.json"), { force: true });
   });
 });
 

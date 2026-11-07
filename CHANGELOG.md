@@ -18,6 +18,13 @@ All notable changes to `@drvova/omp-vcc` are documented in this file. Entries fr
 
 ### Added
 
+- **The window and the tokens, learned from the provider** — catalogs disagree (one DeepSeek model is listed at 131K to 1.05M across providers, and one Claude model moved from 1M to 200K between two Pi releases), so omp-vcc keeps, per model in `omp-vcc-models.json`, what the provider proved:
+  - the largest prompt it accepted, which overrules a stated limit it has since outgrown;
+  - the limit an overflow error stated, now also in the shapes LiteLLM, Together, Mistral, Kimi, DashScope, OpenRouter's Poolside and DS4 servers send;
+  - chars per token, measured on each request from two of the provider's counts (the messages between them over the tokens they added, free of the system prompt and tools).
+
+  Every size the eviction reads (listing, cost check, size note, the context's file) uses that measure instead of 4 chars a token, and the next session starts from it. The calibration's floor follows the script: 2 chars a token for text in no CJK script, down to 0.8 as Chinese, Japanese or Korean take over (they run 1-2). The size readout says what is left (`~41808 left`), as budget-aware agents are told it.
+
 - **Your context as a file you edit** — the design of Context Language Models (arXiv 2609.37725): with eviction on, every request is mirrored beside the session (`<session>.jsonl.vcc-context.md`), one block per turn under a `[[CTX_TURN #12–#19]]` line, and its path is the first line of the context. The agent edits it with its own tools: a deleted block's turn leaves, a rewritten one is replaced by what it wrote (`[#4–#7, as you rewrote it …]`), text between blocks becomes a note after the turn before (the paper's `role=notes` turn); the next request sends what the file says. The running turn stays as it is; every edit is an op in the evict ledger (`undo` reverses a whole edit, whatever it took out, rewrote or noted), the session keeps every word, and `vcc_recall expand` reads any original back. The user is told what the edit did.
 
 - **The context's size on omp-vcc's own results, and notes that cost no cache** — with eviction on, each `vcc_context`, `vcc_recall` and `vcc_pin` result ends with the context's size and its share of where the host compacts, as Context Language Models' tools report it (models misjudge their own context's length). The pinned-notes block at the start of the request is brought up to date only when turns leave or come back, which edits the request anyway, instead of at every pin: an edit at the start makes the provider read the whole request again.

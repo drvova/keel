@@ -1,5 +1,5 @@
 // The model's context window as omp-vcc learns it from the provider's overflow
-// errors, and the cases where omp-vcc compacts on its own because the host's
+// errors and the prompts it accepts, and the cases where omp-vcc compacts on its own because the host's
 // trigger is above the real limit. The core decides (lisp/src/host.lisp, ops
 // learn-limit and settled; lisp/src/limits.lisp); this binds it to the host's events.
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
@@ -31,9 +31,16 @@ export const registerWindowTracking = (pi: ExtensionAPI, state: WindowState, hos
   let scheduled = false;
 
   pi.on("message_end", (event, ctx) => {
-    const message = event.message as { role?: string; stopReason?: string; errorMessage?: string; errorClassificationMessage?: string };
-    if (message?.role !== "assistant" || message.stopReason !== "error") return;
-    whenCore(() => core({ op: "learn-limit", host: hostSnapshot(host, ctx), errors: [message.errorMessage, message.errorClassificationMessage].filter((e) => typeof e === "string") }));
+    const message = event.message as { role?: string; stopReason?: string; errorMessage?: string; errorClassificationMessage?: string; usage?: { input?: number; cacheRead?: number; cacheWrite?: number } };
+    if (message?.role !== "assistant") return;
+    if (message.stopReason === "error") {
+      whenCore(() => core({ op: "learn-limit", host: hostSnapshot(host, ctx), errors: [message.errorMessage, message.errorClassificationMessage].filter((e) => typeof e === "string") }));
+      return;
+    }
+    // A request the provider answered: its prompt fits the model's window, whatever the catalog says.
+    const u = message.usage;
+    const prompt = (u?.input ?? 0) + (u?.cacheRead ?? 0) + (u?.cacheWrite ?? 0);
+    if (prompt > 0) whenCore(() => core({ op: "learn-limit", host: hostSnapshot(host, ctx), errors: [], promptTokens: prompt }));
   });
 
   const onSettled = (event: { willContinue?: boolean; aborted?: boolean } | undefined, ctx: any) => {

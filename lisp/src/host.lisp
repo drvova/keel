@@ -78,9 +78,16 @@
 
 ;;; --- what each op makes of it -----------------------------------------------------
 
-(defun learn-limit (s errors)
+(defun model-chars-per-token (s)
+  "The model's chars per token as a request last measured them, or the heuristic."
+  (or (learned-chars-per-token (snapshot-config-dir s) (model-key (snapshot-model s))) +default-chars-per-token+))
+
+(defun learn-limit (s errors &optional prompt)
   "Keep the limit the first of ERRORS states for the model, when it is below the
-host's window (or the host knows none); T when it was recorded."
+host's window (or the host knows none); T when it was recorded. PROMPT, the
+prompt tokens of a request the provider answered, is kept as the largest it
+accepted."
+  (when (realp prompt) (record-evidence (snapshot-config-dir s) (model-key (snapshot-model s)) :prompt prompt))
   (let* ((limit (loop for e in errors for l = (limit-from-overflow-error e) when l return l))
          (model (snapshot-model s))
          (host (json-get model "contextWindow")))
@@ -140,8 +147,11 @@ tools do. Written once into the result, it reads the same on every later
 request. NIL when the host has not counted the context, or the trigger is unknown."
   (let ((tokens (snapshot-context-tokens s)) (trigger (snapshot-trigger s)))
     (and (realp tokens) (realp trigger) (> trigger 0)
-         (format nil "[context: ~~~a tokens, ~d% of where the host compacts (~~~a)]"
-                 (js-string-of (round tokens)) (round (* 100 tokens) trigger) (js-string-of (round trigger))))))
+         ;; What is left, as budget-aware agents are told it (Liu et al., arXiv 2511.17006): a model
+         ;; reads a remaining budget better than a share.
+         (format nil "[context: ~~~a tokens, ~d% of where the host compacts (~~~a); ~~~a left]"
+                 (js-string-of (round tokens)) (round (* 100 tokens) trigger) (js-string-of (round trigger))
+                 (js-string-of (max 0 (round (- trigger tokens))))))))
 
 (defun with-readout (s text)
   "TEXT with the context readout after it, when eviction is on and there is one."
@@ -175,9 +185,12 @@ registered), and what to tell the user."
       (when edit-ops
         (setf branch (concatenate 'vector branch
                                   (mapcar (lambda (op) (json-object "type" "custom" "customType" +evict-entry-type+ "data" op)) edit-ops)))))
-    (multiple-value-bind (drop stubs ops before after n-of dropped outs turns)
-        (evict-request branch (snapshot-index s) (coerce messages 'vector) :file file
-                       :trigger trigger :auto auto :count count :mark tool :mirror mirror)
+    (multiple-value-bind (drop stubs ops before after n-of dropped outs turns fit)
+        (let ((*chars-per-token* (model-chars-per-token s)))
+          (evict-request branch (snapshot-index s) (coerce messages 'vector) :file file
+                         :trigger trigger :auto auto :count count :mark tool :mirror mirror))
+      ;; What this request measured of the model's tokens, kept for the next session and for vcc_context.
+      (when fit (record-evidence (snapshot-config-dir s) (model-key (snapshot-model s)) :chars-per-token fit))
       (stamp-call ops branch)
       (when mirror
         (write-mirror file (render-mirror (coerce messages 'vector) n-of dropped outs turns (read-inserts branch))))
@@ -201,7 +214,8 @@ registered), and what to tell the user."
 
 (defun evict-for-host (s call)
   "One vcc_context call or evict command: what to tell, and the entries to append. Turn sizes come from the session file."
-  (let ((chars (make-hash-table)) (by-n (make-hash-table)) (file (snapshot-session-file s)))
+  (let ((chars (make-hash-table)) (by-n (make-hash-table)) (file (snapshot-session-file s))
+        (*chars-per-token* (model-chars-per-token s)))
     (when (and file (probe-file (native-path file)))
       (loop for (index nil message) in (read-session file)
             do (setf (gethash index chars) (message-chars message) (gethash index by-n) message)))

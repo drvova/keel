@@ -9,7 +9,7 @@
 (defpackage #:omp-vcc.test
   (:use #:cl #:omp-vcc)
   ;; Internals a test holds to their numbers.
-  (:import-from #:omp-vcc #:recall-output-chars #:tokens-from-chars #:calibrate-chars-per-token
+  (:import-from #:omp-vcc #:recall-output-chars #:tokens-from-chars #:calibrate-chars-per-token #:clamp-chars-per-token #:cjk-share
                 #:content-chars #:message-chars #:make-call #:reads-part-p #:strip-read-selector
                 #:js-canonical #:open-failures #:read-calls #:result-text #:result-index
                 #:js-number-of #:was-rewritten-p #:with-original-content #:index-by-id #:counted-entry-p)
