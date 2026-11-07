@@ -7,20 +7,40 @@
 ;;;; from the originals of everything out of context once the compaction lands
 ;;;; (calls.lisp reads the calls and results), within a budget and never more
 ;;;; than half of what the compaction removes.
+;;;;
+;;;; A summary says what happened; the next step needs what the agent was
+;;;; working from: the file it is changing, the output of the call that just
+;;;; failed. A compaction takes those out of context and the agent fetches them
+;;;; again, a request each (re-exploration after eviction, arXiv:2606.11213;
+;;;; tool calls made again after compression, arXiv:2608.29363). It reads
+;;;; everything out of context, not only what this compaction summarizes: in
+;;;; real sessions most files read again after a compaction were read before an
+;;;; earlier one. The half-of-removed cap means a compaction always frees room.
+;;;; It is chosen again at every compaction and never carried (the merge with
+;;;; the previous summary keeps only the sections it knows), so it stays bounded
+;;;; and is never rewritten. Nothing depends on wording: paths, failure flags,
+;;;; recency and recall's own ranking.
 
 (in-package #:omp-vcc)
 
-(defparameter +min-item-chars+ 400)
-(defparameter +max-item-share+ 0.6d0)
+(defparameter +min-item-chars+ 400 "Below this, an excerpt says too little to bring back.")
+(defparameter +max-item-share+ 0.6d0
+  "One item takes at most this share of the section, so a big file leaves room for the failure.")
 (defparameter +max-relevant+ 3)
-(defparameter +max-relevant-candidates+ 400)
-(defparameter +head-allowance+ 200)
-(defparameter +min-view-lines+ 2)
+(defparameter +max-relevant-candidates+ 400
+  "Recall ranks only the newest this many results, so a long session costs a compaction no more.")
+(defparameter +head-allowance+ 200 "Room for an item's head line (`- #N read \"path\", note:`) when sizing its body.")
+(defparameter +min-view-lines+ 2
+  "Below this many lines, what a call showed of a file says too little to bring back (`ok`, `Successfully replaced`).")
 
 (defun mentions-p (text path)
+  "TEXT names PATH as a whole token, not as part of a longer one (`src/a.ts` in
+`src/a.tsx`), and PATH names a file, not `.`."
   (and (rx-test (rx "[A-Za-z]") path)
        (rx-test (compile-regex (format nil "(?:^|[^\\w./-])~a(?![\\w/-]|\\.\\w)" (escape-regex path)) :ignore-case nil) text)))
 
+;; An excerpt's line is quoted clipped at 300 chars, and costs the section the
+;; line, its indent and its newline.
 (defun quoted-line (line) (if (> (js-length line) 300) (concatenate 'string (js-slice line 0 300) "…") line))
 (defun line-cost (line) (+ (js-length (quoted-line line)) 5))
 (defun item-cap (max) (max +min-item-chars+ (js-round (* max +max-item-share+))))
@@ -45,19 +65,29 @@
       (flet ((add (p) (unless (member p active :test #'string=) (setf active (append active (list p))))))
         (dolist (c (reverse kept-calls)) (when (on-file-p c) (mapc #'add (files-of c))))
         (dolist (p known) (when (mentions-p request p) (add p)))
+        ;; Then the files of the request in progress, read or changed since its
+        ;; message, newest first: in real runs these are what the agent read
+        ;; again after a compaction.
         (dolist (c (reverse all-calls)) (when (and (> (call-pos c) last-user-pos) (on-file-p c)) (mapc #'add (files-of c)))))
-      ;; 1. Files the work is on.
+      ;; 1. Files the work is on, most recently touched first, unless the kept
+      ;; tail already holds a read or a whole write of it.
       (dolist (path active)
         (unless (member path in-context :test #'string=)
           (let* ((touching (stable-sort (remove-if-not (lambda (c) (member path (files-of c) :test #'string=)) all-calls) #'< :key #'call-pos))
                  (base nil))
             (flet ((result-of (c) (let ((r (find c results :key #'result-call :test #'eq)))
                                     (and r (not (result-error r)) (plusp (length (js-trim (result-text r)))) r))))
+              ;; Its last whole view: a write's content, or the result of a read of all of it.
               (dolist (c touching)
                 (let ((whole (whole-text c)))
                   (cond (whole (setf base (list c whole (nth (call-pos c) indices))))
                         ((and (reads-one-p c) (not (reads-part-p c)))
                          (let ((r (result-of c))) (when r (setf base (list c (result-text r) (result-index r)))))))))
+              ;; What showed it after that: omp's edit results (the changed lines,
+              ;; numbered) and range reads. A file comes back whole, or as the lines
+              ;; shown of it since, newest first while they fit, never as its first
+              ;; lines: in real runs, after part of a file came back, the agent read
+              ;; it again anyway.
               (let* ((after (remove-if-not (lambda (c) (and (> (call-pos c) (if base (call-pos (first base)) -1))
                                                             (or (edits-p c) (and (reads-one-p c) (reads-part-p c)))))
                                            touching))
@@ -107,6 +137,8 @@
       ;; 3. What recall ranks highest for the latest request.
       (when (plusp (length (js-trim request)))
         (let ((latest-run (make-hash-table :test 'equal)) (candidates '()))
+          ;; Each run's latest result only: an earlier one is out of date. An edit's
+          ;; or a write's result is the agent's own change, which rule 1 covers.
           (dolist (r results) (when (result-call r) (setf (gethash (run-of (result-call r)) latest-run) (result-pos r))))
           (dolist (r (last-n results +max-relevant-candidates+))
             (let ((c (result-call r)))
@@ -131,6 +163,7 @@
       (nreverse items))))
 
 (defun excerpt (text max from-end)
+  "(values LINES OMITTED): the nonblank lines of TEXT that fit MAX chars, from its start or its end."
   (let* ((all (nonblank-lines (js-trim-end text)))
          (order (if from-end (reverse all) all))
          (lines '()) (size 0))
@@ -142,7 +175,9 @@
       (values lines (- (length all) (length lines))))))
 
 (defun format-working-set (items max-chars)
-  "The section's lines and the #N they show: working-set.ts formatWorkingSet."
+  "The section's lines and the #N they show: one head line per item, its excerpt
+indented under it. A section has no blank line inside (the summary's sections are
+told apart by them), and an indented line never reads as a section header."
   (let ((lines '()) (shown '()) (left max-chars))
     (dolist (item items)
       (let* ((head (format nil "- #~a ~a~@[, ~a~]:" (ws-item-index item) (ws-item-title item) (ws-item-note item)))
@@ -150,6 +185,7 @@
         (when (< room +min-item-chars+) (return))
         (multiple-value-bind (body omitted) (excerpt (ws-item-text item) room (ws-item-from-end item))
           (unless (or (null body) (and (ws-item-whole item) (> omitted 0)))
+            ;; Where the rest is: after the excerpt, or before it when the excerpt is the end.
             (let* ((more (if (> omitted 0)
                              (format nil "    …[~d ~a lines: ~a]" omitted (if (ws-item-from-end item) "earlier" "more") (recall-expand-call (ws-item-index item)))
                              ""))
@@ -164,5 +200,7 @@
     (values lines (nreverse shown))))
 
 (defun build-working-set (history indices kept budget-chars removed-chars)
+  "The section for a compaction that removes REMOVED-CHARS, within BUDGET-CHARS
+(the budgets' workingSetTokens) and at most half of what it removes."
   (let ((max (js-round (min budget-chars (* removed-chars 0.5d0)))))
     (format-working-set (select-working-set history indices kept max) max)))

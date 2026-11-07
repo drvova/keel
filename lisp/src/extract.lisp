@@ -2,11 +2,9 @@
 ;;;;
 ;;;; SPDX-License-Identifier: MIT
 ;;;;
-;;;; A port of src/extract/: user-messages.ts (what the user wrote, and the
-;;;; session's first requests), files.ts (files read, modified, created),
-;;;; commits.ts (git commits and their hashes) and tracked-commands.ts (the
-;;;; invocations of the commands settings name). tests/extract-*.test.ts hold
-;;;; them to what they read.
+;;;; What the user wrote and the session's first requests, files read, modified
+;;;; and created, git commits and their hashes, and the invocations of the
+;;;; commands settings name. tests/extract-*.test.ts hold them to what they read.
 
 (in-package #:omp-vcc)
 
@@ -41,8 +39,8 @@ which settles most text without segmenting it."
 
 ;;; --- [User Messages] and [Early Session Requests] ---------------------------------
 
-(defparameter +user-message-chars+ 300 "Each user message is clipped to this: user-messages.ts USER_MESSAGE_CHARS.")
-(defparameter +early-requests-kept+ 3 "user-messages.ts EARLY_REQUESTS_KEPT.")
+(defparameter +user-message-chars+ 300 "Each user message is clipped to this many characters.")
+(defparameter +early-requests-kept+ 3 "[Early Session Requests] keeps this many of the first messages.")
 
 (defun collapse-whitespace (text)
   "TEXT with each run of whitespace one space: replace(/\\s+/g, \" \")."
@@ -50,7 +48,9 @@ which settles most text without segmenting it."
 
 (defun user-words (text)
   "The user's own words in a message on one line, and the skills it expanded:
-(values WORDS SKILLS), WORDS \"\" when there are none."
+(values WORDS SKILLS), WORDS \"\" when there are none. An expanded skill alone is
+not the user's words; text that opens with a tag (`<peer_message …>`) was put
+there by a tool, and one-word replies (\"ok\") say little: both are none."
   (let* ((skills '())
          (rest (js-trim (collapse-whitespace
                          (rx-replace (skill-block-regex) text
@@ -60,6 +60,9 @@ which settles most text without segmenting it."
             (nreverse skills))))
 
 (defun user-line (text index)
+  "A user message as the summary lists it, behind a `[skill: name]` tag when it
+expanded one, clipped. A cut request reads as complete without a mark, and the
+cut part can be the constraint that matters, so a clipped one ends `… (#N)`."
   (multiple-value-bind (rest skills) (user-words text)
     (when (plusp (length rest))
       (let* ((line (if skills (format nil "[skill: ~a] ~a" (join-strings skills ", ") rest) rest))
@@ -82,8 +85,11 @@ which settles most text without segmenting it."
 (defun oset-list (set) (coerce (oset-items set) 'list))
 
 (defun extract-files (blocks file-ops)
-  "Files read, modified and created, in order, as (values READ MODIFIED CREATED):
-extract/files.ts extractFiles."
+  "Files read, modified and created, in order, as (values READ MODIFIED CREATED).
+A write to a path not seen before creates it, one after rewrites it; a file
+created here stays created when edited after. A failed read, write or edit did
+nothing. The host's FILE-OPS fill in only paths the blocks do not show: they
+come from the same calls with no result read, and say a write without its kind."
   (let ((read (make-oset)) (modified (make-oset)) (created (make-oset))
         (seen (make-hash-table :test 'equal)) (shown (make-hash-table :test 'equal)))
     (flet ((change (p) (unless (oset-has created p) (oset-add modified p))))
@@ -239,7 +245,7 @@ first; the same message hashless and hashed is one commit, kept hashed."
 
 ;;; --- [Tracked Commands] ----------------------------------------------------------------
 ;;;
-;;; Commands are scanned by code unit, as the TS indexes them.
+;;; Commands are scanned by UTF-16 code unit, as JavaScript indexes strings.
 
 (defun units-slice (units start &optional end)
   "The string of UNITS from START below END, a pair cut in half left as its surrogate."

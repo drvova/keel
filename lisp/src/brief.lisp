@@ -2,11 +2,12 @@
 ;;;;
 ;;;; SPDX-License-Identifier: MIT
 ;;;;
-;;;; A port of src/core/brief.ts (each block as a line or two: the user's words
-;;;; cut by significant words, the assistant's head and tail, a tool call in one
-;;;; line, a shell command compressed) and src/core/rank.ts (the blocks the
-;;;; brief covers when they do not all fit: scored by what they did, the newest
-;;;; kept, within a size budget).
+;;;; The brief transcript: each block as a line or two (the user's words cut by
+;;;; significant words, the assistant's head and tail, a tool call in one line,
+;;;; a shell command compressed). And the blocks it covers when they do not all
+;;;; fit: scored by what they did, by structure (a call's kind, a command's
+;;;; shape, failure flags, the host's file activity) and never by prose, the
+;;;; newest kept, within a size budget.
 
 (in-package #:omp-vcc)
 
@@ -35,13 +36,13 @@
                  "if" "then" "than" "when" "where" "how" "just" "also")
              table)
       (setf (gethash w table) t)))
-  "Words the brief's budgets do not count: brief.ts STOP_WORDS.")
+  "Words the brief's budgets do not count.")
 
 (defun significant-p (segment)
   (and (wordish-p segment) (not (gethash (string-downcase segment) +brief-stop-words+))))
 
 (defun flatten-for-budget (text)
-  "brief.ts normalizeForTokenBudget: CR as LF, other whitespace runs as one space, at most one blank line."
+  "TEXT as the word budgets read it: CR as LF, other whitespace runs as one space, at most one blank line."
   (js-trim (rx-replace (rx "\\n{3,}")
                        (rx-replace (rx "[^\\S\\n]+") (rx-replace (rx "\\r\\n?") text (string #\Newline) :all t) " " :all t)
                        (format nil "~%~%") :all t)))
@@ -75,11 +76,17 @@
 (defparameter +bash-cap+ 240)
 (defparameter +heredoc-body-cap+ 80)
 
+;; Preamble lines that carry no durable fact on their own: dropped when a script
+;; has more informative lines, so `set -euo pipefail\ngit commit` shows the commit.
 (defun trivial-line-p (line)
   (rx-test (rx "^(?:set\\s+[-+]|cd\\s+\\S+$|export\\s+\\w+=|(?:source|\\.)\\s+\\S+|pwd$|true$|:$|#)") line))
 
 (defun heredoc-close-index (lines i)
-  "The index of the line that closes the heredoc LINES[I] opens, or -1."
+  "The index of the line that closes the heredoc LINES[I] opens, or -1. An opener
+is `<<` at a command boundary (not after a word char or `)`, so `8 << 20` is a
+shift) with an identifier terminator, and only counts when that terminator
+appears later: a stray `<<` (a string, a truncated body) never swallows a later
+real command."
   (let ((m (rx-exec (rx "(?<![\\w)])<<-?\\s*[\"']?([A-Za-z_]\\w*)[\"']?") (aref lines i))))
     (if (null m)
         -1
@@ -103,7 +110,12 @@
 
 (defun compress-bash (raw)
   "A shell command as one line: heredoc bodies and preamble lines dropped, `cd x &&`
-and pipe tails stripped, lines joined with `; `, capped."
+and pipe tails stripped, lines joined with `; `, capped. A heredoc body bloats
+the brief without adding countable facts while its opener records what ran. A
+file writer's opener (`cat > f <<EOF`, tee, dd) names its target and is kept
+alone; every other opener (`python3 - <<PY`, `ssh host <<CMD`, `sqlite3 <<SQL`)
+says nothing, so the body's first meaningful line follows it as a preview. When
+every line is preamble, the first one stays, so the line is never empty."
   (let* ((raw-lines (coerce (split-string raw #\Newline) 'vector))
          (kept (make-array 0 :adjustable t :fill-pointer t)))
     (loop with i = 0
@@ -144,12 +156,16 @@ and pipe tails stripped, lines joined with `; `, capped."
 ;;; --- one tool call in one line --------------------------------------------------
 
 (defun recall-arg (value)
+  "A recall argument as the agent would write it again: `[1, 25]`, `sessions`."
   (if (json-array-p value)
       (format nil "[~a]" (join-strings (map 'list (lambda (v) (if (or (null v) (eq v :null)) "" (js-string-of v))) value) ", "))
       (js-clip (js-trim (js-string-of value)) 40)))
 
 (defun own-tool-line (name args)
-  "omp-vcc's own tools as what was recalled or pinned, or NIL for another tool."
+  "omp-vcc's own tools as what was recalled or pinned, or NIL for another tool. A
+recall line shows every param the call gave (so a page-2 call is not merged with
+page 1), which says what history the agent already went back to; a pin call
+with both a note and an unpin was refused and pinned nothing."
   (cond ((own-tool-p name +recall-tool+)
          (let ((parts '()) (query (json-get args "query")))
            (when (and (stringp query) (plusp (length (js-trim query))))
@@ -181,7 +197,9 @@ and pipe tails stripped, lines joined with `; `, capped."
 ;;; A section is (HEADER . ITEMS) with ITEMS a vector of (:text S), (:call S REFS)
 ;;; or (:omitted N).
 
-(defparameter +tool-calls-per-turn+ 8)
+(defparameter +tool-calls-per-turn+ 8
+  "Tool calls shown per [assistant] turn, the tail kept: the latest actions tend
+to be the deciding edits and writes, the head exploration.")
 
 (defun tool-item-p (item) (not (eq (first item) :text)))
 
@@ -195,6 +213,7 @@ and pipe tails stripped, lines joined with `; `, capped."
                    (t (format nil "~a (~{#~d~^, ~}) x~d" call refs (length refs))))))))
 
 (defun self-talk-stripped (text)
+  "TEXT without up to two leading filler words (`Hmm, actually, ...`), its content kept."
   (let ((raw text))
     (dotimes (i 2 raw)
       (let ((stripped (rx-replace (rx "^\\s*(?:hmm|wait|actually|oh|okay|ok|well|so)[,.!\\s-]+" "i") raw "")))
@@ -278,16 +297,21 @@ and pipe tails stripped, lines joined with `; `, capped."
 
 ;;; --- ranking ------------------------------------------------------------------------
 
-(defparameter +recent-blocks+ 16)
-(defparameter +brief-max-blocks+ 80 "window.ts DEFAULT_BUDGETS.briefMaxBlocks.")
-(defparameter +trivial-bash-penalty+ 16)
+(defparameter +recent-blocks+ 16 "The newest blocks kept for local continuity, within the char budget.")
+(defparameter +brief-max-blocks+ 80
+  "The brief's block cap when the ranking names none: the budgets' briefMaxBlocks on a ~128K window (window.lisp).")
+(defparameter +trivial-bash-penalty+ 16
+  "Taken off a command that is only scaffolding, so spare budget never pulls it in ahead of real edits and commands.")
 
 (defun test-command-p (s) (rx-test (rx "\\b(?:bun|npm|pnpm|yarn|node|pytest|cargo|go|mvn|gradle)\\b[^\\n]*(?:test|spec|check|lint|build|tsc)" "i") s))
+;; Durable workflow facts: which PR or issue was acted on, and git state changes.
 (defun workflow-command-p (s)
   (rx-test (rx "(?:^|\\s)(?:gh\\s+(?:pr|issue)\\s+[a-z-]+|git\\s+(?:commit|push|merge|rebase|revert|cherry-pick|tag|reset|checkout|branch)\\b)" "i") s))
 
 (defun trivial-only-bash-p (raw)
-  "Every meaningful line of RAW is scaffolding (set -e, cd, ls, echo, comments), heredoc bodies aside."
+  "Every meaningful line of RAW is scaffolding (set -e, cd, ls, echo, comments),
+heredoc bodies aside (they are content). The brief still shows an `ls`, but it is
+not what a turn did."
   (let* ((lines (coerce (split-string raw #\Newline) 'vector)) (kept '()))
     (loop with i = 0 while (< i (length lines))
           do (push (aref lines i) kept)
@@ -323,6 +347,7 @@ and pipe tails stripped, lines joined with `; `, capped."
               ((member kind '(:read :search)) (award r 6 "read-tool"))
               (t (award r 12 "tool-call")))
         (when (and command (workflow-command-p command)) (award r 14 "workflow-command"))
+        ;; An error state is the fact most worth carrying forward.
         (cond ((block-failed b) (award r 24 "failed-call"))
               ((and command (plusp (length command)) (trivial-only-bash-p command)) (award r (- +trivial-bash-penalty+) "trivial-bash")))))
     (when (eq (block-kind b) :bash)
@@ -331,6 +356,7 @@ and pipe tails stripped, lines joined with `; `, capped."
         (when nonzero (award r 24 "nonzero-exit"))
         (when (test-command-p (block-command b)) (award r 22 "test-command"))
         (when (workflow-command-p (block-command b)) (award r 14 "workflow-command"))
+        ;; A failed `ls` or `cd` still records a state fact, so it keeps its points.
         (when (and (trivial-only-bash-p (block-command b)) (not nonzero)) (award r (- +trivial-bash-penalty+) "trivial-bash"))))
     (let ((path (path-from-block b)))
       (when path
@@ -381,8 +407,13 @@ and pipe tails stripped, lines joined with `; `, capped."
              (and subject (format nil "tool:~a:~a" (string-downcase (block-name b)) (second subject))))))))
 
 (defun select-ranked-brief-blocks (block-list ranking file-ops)
-  "The blocks the brief covers: rank.ts selectRankedBriefBlocks, RANKING its
-options (maxBlocks, preserveRecentBlocks, maxBriefChars and its ceiling and slope)."
+  "The blocks the brief covers, RANKING its options (maxBlocks, preserveRecentBlocks,
+maxBriefChars and its ceiling and slope). The char budget is the primary limit
+and maxBlocks a safety bound: blocks are added by score until it is reached,
+lower-value ones skipped rather than the tail cut. With a ceiling and slope the
+budget scales with the block count between maxBriefChars and the ceiling: a
+longer transcript carries more high-value long tail (edits, commands, tests),
+a small one stays at the floor."
   (let* ((blocks (coerce block-list 'vector))
          (n (length blocks))
          (max-blocks (let ((m (json-get ranking "maxBlocks"))) (if (integerp m) m +brief-max-blocks+)))
@@ -399,6 +430,8 @@ options (maxBlocks, preserveRecentBlocks, maxBriefChars and its ceiling and slop
                (selected (make-hash-table)) (seen (make-hash-table :test 'equal))
                (costs (and budget (map 'vector (lambda (b) (if (eq (block-kind b) :tool-result) 0 (1+ (js-length (compile-brief (list b)))))) blocks)))
                (used 0))
+          ;; The newest blocks first, charged against the budget too: a run of large
+          ;; recent blocks alone once blew past it on very long transcripts.
           (loop for i from (1- n) downto (max 0 (- n preserve))
                 do (let ((b (aref blocks i)))
                      (unless (or (eq (block-kind b) :tool-result) (gethash i selected)
@@ -415,6 +448,7 @@ options (maxBlocks, preserveRecentBlocks, maxBriefChars and its ceiling and slop
                        (unless (or (gethash i selected) (eq (block-kind b) :tool-result))
                          (let ((key (dedup-key b)))
                            (unless (and key (gethash key seen))
+                             ;; Skipped, not stopped at, so smaller high-value blocks still fit.
                              (unless (and costs (> (+ used (aref costs i)) budget))
                                (when costs (incf used (aref costs i)))
                                (setf (gethash i selected) t)

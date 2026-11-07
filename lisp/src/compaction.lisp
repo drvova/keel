@@ -2,22 +2,23 @@
 ;;;;
 ;;;; SPDX-License-Identifier: MIT
 ;;;;
-;;;; A port of src/compaction/plan.ts planCompaction and what it is made of:
-;;;; cut.ts (the live window, the cut at a kept user turn, the token-budget
-;;;; rescues, a running turn's newest steps, the whole window, smart keep-tail),
-;;;; summary-input.ts, assemble.ts (the summary with its history index, pins and
-;;;; working set, and the growth guard), token-estimate.ts, history-index.ts,
-;;;; and the readers of what an earlier compaction stored (details.ts,
-;;;; summary-state.ts readState, pins.ts readPins).
+;;;; The plan of a compaction (op compact): the token estimates, the live
+;;;; window, where it cuts (smart keep-tail, the cut at a kept user turn, the
+;;;; token-budget rescues, a running turn's newest steps, the whole window),
+;;;; what it writes (the summary with [History Index], [Pinned Notes],
+;;;; [Working Set] and [Task State]), whether that is worth writing (the growth
+;;;; guard), and what the compaction entry stores; with the readers of what an
+;;;; earlier compaction stored.
 ;;;;
-;;;; The one thing it cannot do is the host's: convertToLlm. What that makes of
-;;;; each live message for the summary (summary-input.ts toSummaryMessage) the TS
-;;;; side computes and sends with the entry, of the message as it is (SUMMARY)
-;;;; and, where omp rewrote it, as the kept original (RESTORED).
+;;;; The one thing it cannot do is the host's: convertToLlm. The hook
+;;;; (src/hooks/compaction.ts) converts the messages MESSAGES-TO-CONVERT lists
+;;;; and sends the answers back; HOST-NOTES puts them beside each entry, of the
+;;;; message as it is (SUMMARY) and, where omp rewrote it, as the kept original
+;;;; (RESTORED).
 
 (in-package #:omp-vcc)
 
-;;; --- token estimates (token-estimate.ts) ---------------------------------------
+;;; --- token estimates ---------------------------------------------------------------
 
 (defparameter +image-content-chars+ 4800)
 (defparameter +default-chars-per-token+ 4)
@@ -27,7 +28,7 @@
   (js-length (json-string (if (or (null value) (eq value :null)) "" value))))
 
 (defun content-chars (content)
-  "estimateMessageContentChars: every token-bearing part of a message's content."
+  "The chars of every token-bearing part of a message's content."
   (cond ((stringp content) (js-length content))
         ((not (json-array-p content)) 0)
         (t (loop for part across content
@@ -48,7 +49,7 @@
                                  (t (if (stringp text) (js-length text) 0)))))))))
 
 (defun message-chars (m)
-  "estimateMessageChars: chars of one message, whatever its shape."
+  "The chars of one message, whatever its shape."
   (if (not (json-object-p m))
       0
       (flet ((len (v) (if (stringp v) (js-length v) 0)))
@@ -74,7 +75,7 @@
 ;;; --- the live window ----------------------------------------------------------------
 ;;;
 ;;; An item of the window is (ENTRY LIVE NOTE): the branch entry, its message as
-;;; the context holds it, and what the TS side sent of it.
+;;; the context holds it, and its note from HOST-NOTES.
 
 (defun js-date-ms (v)
   "new Date(V).getTime() for the timestamps the hosts write (an ISO string or milliseconds), or NIL."
@@ -189,7 +190,14 @@ MESSAGES-TO-CONVERT, in that order."
 (defun last-compaction-index (branch) (last-index-of-type branch "compaction" +reset-entry-type+))
 
 (defun live-window-start (branch)
-  "cut.ts liveWindowStart: the first entry still in the model's context."
+  "The index of the first branch entry still in the model's context.
+With no compaction, the whole branch (after omp's /clear). After one, its
+firstKeptEntryId; when that is \"\" (a compact-all's sentinel) or no longer on
+the branch, right after the compaction, or right after an omp native-replay
+compaction's providerReplayThroughEntryId, where omp's own kept tail starts. A
+reset_boundary (omp's /clear) after the latest compaction starts the window
+after it, and one before it bounds where the kept id is looked for, as omp's
+prepareCompaction does."
   (let ((reset (last-reset-index branch)) (compaction (last-compaction-index branch)))
     (if (< compaction 0)
         (1+ reset)
@@ -220,7 +228,9 @@ MESSAGES-TO-CONVERT, in that order."
     (and (json-object-p s) s)))
 
 (defun renders-p (items skip)
-  "summary-input.ts prefixHasRenderableContent: some message of ITEMS adds a block to the summary."
+  "Some message of ITEMS adds a block to the summary. A window or prefix that
+renders none would store an empty summary while keeping everything: the context
+never shrinks and the next pass triggers again."
   (some (lambda (item)
           (and (not (skipped-custom-p (item-live item) skip))
                (let ((m (note-summary (item-note item))))
@@ -238,11 +248,20 @@ MESSAGES-TO-CONVERT, in that order."
              :kept-user-turns (user-turns (nthcdr idx live)) :total-user-turns (user-turns live)
              :fallback nil :budget-cut budget-cut))
 
+;; The whole live window summarized. firstKeptEntryId "" matches no entry in
+;; the host's buildSessionContext (nothing kept from before the compaction), and
+;; the next cut starts after the compaction entry (LIVE-WINDOW-START). FALLBACK:
+;; compact-all because keep:N found no boundary, not because keep:0 asked for
+;; it, so a tail budget may still keep some.
 (defun compact-all-of (live fallback)
   (%make-cut :items live :first-kept "" :compact-all t :kept-user-turns 0 :total-user-turns (user-turns live) :fallback fallback))
 
 (defun build-own-cut (branch notes keep skip)
-  "cut.ts buildOwnCut: a cut, or the keyword of why there is none."
+  "The cut that keeps the last KEEP user turns, or the keyword of why there is
+none. When KEEP finds no safe boundary (one user prompt, none, or more asked
+than there are), or the prefix before it renders nothing (a lone system entry
+or a skipped custom message before the first user message), everything is
+summarized and APPLY-TAIL-BUDGET decides the tail."
   (let ((keep (if (realp keep) (max 0 (floor keep)) 0))
         (live (live-items branch notes)))
     (cond ((null live) :no-live-messages)
@@ -256,6 +275,10 @@ MESSAGES-TO-CONVERT, in that order."
                      ((not (renders-p (subseq live 0 cut) skip)) (compact-all-of live t))
                      (t (cut-at live cut))))))))
 
+;; The token-budget cut that rescues a default-path tail when the user-turn
+;; anchored one is absent (an autonomous run: no user turn in the live window)
+;; or oversized (one giant last user turn): where the newest MAX-TOKENS start,
+;; snapped forward off any tool result, like omp's own cut point.
 (defun budget-cut-index (live max-tokens per-token)
   (let ((acc 0) (crossed -1) (v (coerce live 'vector)))
     (loop for i from (1- (length v)) downto 0
@@ -268,6 +291,13 @@ MESSAGES-TO-CONVERT, in that order."
             -1))))
 
 (defun running-turn-cut (branch notes max-tokens per-token skip)
+  "A recovery pass (an overflow, a cut-off reply) on a turn still running whose
+live window has no earlier user turn: something must shrink, and summarizing the
+whole turn takes away the tool output the agent is working from. Keeps the
+turn's newest steps, at most half the window and MAX-TOKENS, and summarizes the
+request and the steps before them (their originals stay in recall). NIL when no
+boundary leaves that. What is kept and still too big, omp's own rescue trims
+after the compaction commits (it shakes oversized tool output)."
   (let* ((live (live-items branch notes))
          (v (coerce live 'vector))
          (tokens (map 'vector (lambda (i) (message-tokens (item-live i) per-token)) v))
@@ -282,10 +312,14 @@ MESSAGES-TO-CONVERT, in that order."
         (cut-at live best "running_turn"))))
 
 (defun whole-window-cut (branch notes skip)
+  "One or two live messages, summarized whole: on a recovery pass something must
+shrink, and a request or reply far too big for the window (a long paste, one huge
+result) shrinks to its summary line, its original in recall."
   (let ((live (live-items branch notes)))
     (if (or (null live) (not (renders-p live skip))) nil (compact-all-of live nil))))
 
 (defun final-answer-p (m)
+  "An assistant message that ends a turn: text, and no tool call waiting for its result."
   (let ((content (json-get m "content")))
     (and (equal (json-get m "role") "assistant") (json-array-p content)
          (some (lambda (p) (and (json-object-p p) (equal (json-get p "type") "text")
@@ -293,10 +327,18 @@ MESSAGES-TO-CONVERT, in that order."
                content)
          (notany (lambda (p) (and (json-object-p p) (equal (json-get p "type") "toolCall"))) content))))
 
-(defparameter +oversized-tail-factor+ 2.5d0)
+(defparameter +oversized-tail-factor+ 2.5d0
+  "A kept user-turn tail over this many times the tail budget is cut inside.")
 
 (defun apply-tail-budget (branch notes cut max-tokens per-token skip)
-  "cut.ts applyTailBudget: the token-budget rescues of a missing or oversized tail."
+  "The token-budget rescues of a missing or oversized tail, on the default path
+only (an explicit keep:N is respected absolutely, keep:0 included). A compact-all
+for want of a boundary is cut at the budget instead; a cut that keeps only the
+turn's final answer is a finished turn's reply (final_reply). When the whole
+window fits the budget and ends with that answer, the answer is kept: compact-all
+would take the reply out of context too, and omp's print mode, which prints the
+last assistant message, would then have nothing. A kept user-turn tail over
++OVERSIZED-TAIL-FACTOR+ times the budget is cut inside (oversized_tail)."
   (let ((live (live-items branch notes)))
     (flet ((renders (idx) (renders-p (subseq live 0 idx) skip)))
       (if (cut-compact-all cut)
@@ -319,6 +361,7 @@ MESSAGES-TO-CONVERT, in that order."
                   (if (<= idx start) cut (cut-at live idx "oversized_tail")))))))))
 
 (defun kept-chars (entries)
+  "Chars of what stays in context of ENTRIES: every live message, custom messages and branch summaries included."
   (loop for e in entries for m = (live-message e) when m sum (message-chars m)))
 
 (defun branch-from (branch id)
@@ -327,13 +370,18 @@ MESSAGES-TO-CONVERT, in that order."
     (and at (coerce (subseq branch at) 'list))))
 
 (defun tail-tokens-for-keep (branch notes keep skip per-token)
+  "The kept tail's tokens under keep:KEEP; NIL when that cuts nothing or summarizes
+everything, so smart keep-tail stops growing instead of losing the tail."
   (let ((cut (build-own-cut branch notes keep skip)))
     (when (and (cut-p cut) (not (cut-compact-all cut)))
       (let ((kept (position (cut-first-kept cut) branch :key (lambda (e) (json-get e "id")) :test #'equal)))
         (and kept (tokens-from-chars (kept-chars (coerce (subseq branch kept) 'list)) per-token))))))
 
 (defun resolve-smart-keep (branch notes requested smart skip min-tokens max-tokens per-token)
-  "cut.ts resolveSmartKeepUserTurns, as (values KEEP ADJUSTED)."
+  "The effective keep:N, as (values KEEP ADJUSTED). The user's keep:N is always
+respected; without SMART it is 1; with it, when keep:1's tail is at most
+MIN-TOKENS, the largest N whose tail stays within MAX-TOKENS, stopping where a
+cut would summarize everything."
   (let ((base (or requested 1)))
     (if (or requested (not smart))
         (values base nil)
@@ -352,14 +400,16 @@ MESSAGES-TO-CONVERT, in that order."
 ;;; --- what an earlier compaction stored -------------------------------------------------
 
 (defun vcc-details-of (details)
-  "details.ts vccDetailsOf: omp-vcc's (or pi-vcc's) details on a compaction, or NIL."
+  "omp-vcc's (or pi-vcc's) details on a compaction, also under omp's rollover (hookDetails), or NIL."
   (flet ((own-p (d) (member (json-get d "compactor") (list +compactor+ +legacy-compactor+) :test #'equal)))
     (let ((own (if (own-p details) details (json-get details "hookDetails"))))
       (and (own-p own) own))))
 
-;;; --- restoring originals for the working set (raw-store.ts restoreOriginals) -----------
+;;; --- restoring the originals omp-vcc kept ------------------------------------------------
 
 (defun restore-originals (messages ids file)
+  "MESSAGES with the original content omp-vcc kept in FILE's raw store put back
+where omp rewrote them (IDS parallel to MESSAGES)."
   (if (not (stringp file))
       messages
       (let ((wanted (make-hash-table :test 'equal)))
@@ -372,9 +422,11 @@ MESSAGES-TO-CONVERT, in that order."
                     collect (multiple-value-bind (content found) (if (stringp id) (gethash id kept) (values nil nil))
                               (if found (with-original-content m content) m))))))))
 
-;;; --- the plan (plan.ts planCompaction, assemble.ts assembleSummary) ---------------------------
+;;; --- the plan --------------------------------------------------------------------------------
 
-(defparameter +growth-margin-share+ 0.25d0)
+(defparameter +growth-margin-share+ 0.25d0
+  "Growth a summary may add before it is not worth writing: its framing (the
+budgets' growthMarginChars), or this share of what it replaces.")
 
 (defun live-roles (items)
   (let ((roles (mapcar #'item-role items)))
@@ -390,7 +442,10 @@ shows; how many messages it SUMMARIZED; the HISTORY ranges to store; the #N
 
 (defstruct (growth (:constructor make-growth (net allowed)))
   "How much a summary adds to the context: NET chars (its length less the previous
-summary's and what it removes) against the ALLOWED margin."
+summary's and what it removes; the kept tail is the same either way) against the
+ALLOWED margin. A short prefix (two messages after omp's plan-mode \"approve and
+compact\", a session barely past a low threshold) can be smaller than the
+sections and brief that would replace it."
   net allowed)
 
 (defun growth-grows-p (g) (> (growth-net g) (growth-allowed g)))
@@ -403,8 +458,10 @@ summary's and what it removes) against the ALLOWED margin."
          (per-token (json-get (json-get sizing "tokenEstimate") "charsPerToken"))
          (skip (strings-of (json-get (json-get input "settings") "skipCustomTypes")))
          (summarized 0) (messages '()) (indices '()))
-    ;; The summary is written from the originals omp-vcc kept (the TS sends what
-    ;; convertToLlm makes of them); the cut and the budgets count what the context holds.
+    ;; omp may have blanked or shaken some of these in place since they landed.
+    ;; The summary is all that will remain of them, so it is written from the
+    ;; originals omp-vcc kept (the hook sends what convertToLlm makes of them);
+    ;; the cut and the budgets count what the context holds now.
     (dolist (item (cut-items cut))
       (unless (skipped-custom-p (item-live item) skip)
         (incf summarized)
@@ -427,7 +484,10 @@ summary's and what it removes) against the ALLOWED margin."
                                               window-range
                                               (json-get (budget budgets "summary") "historyRanges"))))
            (working-lines nil) (working-shown nil))
-      ;; [Working Set], from everything out of context once this lands.
+      ;; [Working Set], from everything out of context once this lands since /clear
+      ;; (what this compaction summarizes and what earlier ones did), so the agent
+      ;; does not spend its next requests fetching it again. The budgets give it
+      ;; no room when the setting is off.
       (when (> (budget budgets "workingSetTokens") 0)
         (let* ((kept-at (if (plusp (length (cut-first-kept cut)))
                             (or (position (cut-first-kept cut) branch :key (lambda (e) (json-get e "id")) :test #'equal) -1)
@@ -490,8 +550,8 @@ edits applied) with NOTES beside its entries (host-notes), sized first
     plan))
 
 (defun compaction-details (input plan sizing)
-  "plan.ts detailsOf: what the compaction entry stores (details.ts): its sections
-and state, what it summarized, and what it was sized from."
+  "What the compaction entry stores: its sections and state, what it summarized,
+and what it was sized from (for debugging a compaction that kept too much or too little)."
   (let ((budgets (json-get sizing "budgets")) (window (json-get input "window")))
     (json-object
      "compactor" +compactor+
@@ -516,7 +576,7 @@ and state, what it summarized, and what it was sized from."
                            "workingSetTokens" (json-get budgets "workingSetTokens")))))
 
 (defun plan-sized (input branch notes sizing)
-  "plan.ts planSized: the plan once SIZING (the policy, trigger, budgets) is known."
+  "The plan once SIZING (the policy, trigger, budgets) is known."
   (let* ((settings (json-get input "settings"))
          (skip (strings-of (json-get settings "skipCustomTypes")))
          (budgets (json-get sizing "budgets"))
@@ -538,12 +598,21 @@ and state, what it summarized, and what it was sized from."
                             (budget budgets "minTailTokens") max-tail per-token)
       (let ((cut (build-own-cut branch notes keep skip)) (running nil))
         (when (and (cut-p cut) (null requested)) (setf cut (apply-tail-budget branch notes cut max-tail per-token skip)))
+        ;; An automatic pass on a turn still running (its last message is a tool
+        ;; result: omp compacts between the tool calls of one turn) whose live
+        ;; window has no earlier user turn and fits the tail budget: the only cut
+        ;; left is compact-all, which would summarize away the request and tool
+        ;; output the agent is working from. A threshold or idle pass waits until
+        ;; the turn has ended; a recovery pass keeps the turn's newest steps.
         (when (and (cut-p cut) (cut-compact-all cut) (cut-fallback cut) (not (eq (json-get input "fromCommand") :true))
                    (equal (item-role (car (last (cut-items cut)))) "toolResult")
                    (not (equal (json-get input "reason") "manual")))
           (unless recovering
             (return-from plan-sized (json-object "kind" "cancel" "why" "running_turn" "summarized" (length (cut-items cut)))))
           (setf cut (or (running-turn-cut branch notes max-tail per-token skip) cut) running t))
+        ;; One or two messages too big for the window: summarized whole on a recovery
+        ;; pass. Nothing live to summarize: no method of the host's can shrink it
+        ;; either, so a recovery pass is left to it.
         (when (and (not (cut-p cut)) recovering (eq cut :too-few-live-messages))
           (setf cut (or (whole-window-cut branch notes skip) cut)))
         (unless (cut-p cut)
@@ -555,6 +624,13 @@ and state, what it summarized, and what it was sized from."
                                "cutReason" (cut-reason-name cut) "liveRoles" roles)))))
         (let* ((a (assemble-summary branch notes cut input sizing))
                (growth (assembly-growth a)) (grows (growth-grows-p growth)) (n (length (cut-items cut))))
+            ;; Growth guard: a compaction that leaves the context bigger is not
+            ;; written, and a manual pass says why (an automatic one would say so on
+            ;; every turn until the prefix grows). Recovering, it is written when it
+            ;; keeps part of the window: what overflows is that kept part, and omp's
+            ;; rescue shakes its oversized tool output once this commits. When even
+            ;; summarizing the whole window grows the context, what fills it is what
+            ;; no compaction removes.
             (when (and grows (or (not recovering) (cut-compact-all cut)))
               (return-from plan-sized
                 (json-object "kind" "cancel" "why" "growth"

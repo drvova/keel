@@ -2,10 +2,11 @@
 ;;;;
 ;;;; SPDX-License-Identifier: MIT
 ;;;;
-;;;; A port of src/core/sanitize.ts, filter-noise.ts, skill-collapse.ts,
-;;;; normalize.ts and the parts of tools.ts the summary reads (a block's
-;;;; command, a call's files): each message becomes blocks (user, assistant,
-;;;; tool_call, tool_result, bash), the unit every section is built from.
+;;;; Text sanitized (terminal escapes, control characters), host noise left out
+;;;; (omp's reminders), skill bodies collapsed, and each message normalized into
+;;;; blocks (user, assistant, tool_call, tool_result, bash), the unit every
+;;;; section is built from; with what the summary reads of a block (its command,
+;;;; a call's files).
 
 (in-package #:omp-vcc)
 

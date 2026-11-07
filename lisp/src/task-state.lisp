@@ -9,11 +9,20 @@
 ;;;; shape, so an agent always finds where it stood in the same place; it is
 ;;;; built again each time and never carried, since a carried state would be a
 ;;;; previous compaction's guess at what is still true.
+;;;;
+;;;; The other sections say what happened; what the agent needs first after a
+;;;; compaction is where it is in the task in progress. Agents that keep that
+;;;; state apart from the history recover better on long tasks (HyMem's typed
+;;;; results, arXiv:2608.15703; a fixed task segment beside the history,
+;;;; arXiv:2512.22087); those papers have a model write it, here it is read off
+;;;; the transcript by rule, so nothing depends on wording. Each line names the
+;;;; #N that holds the rest, so the agent reads where it stands in one place
+;;;; instead of spending requests finding out.
 
 (in-package #:omp-vcc)
 
-(defparameter +changed-shown+ 8)
-(defparameter +error-line-chars+ 200)
+(defparameter +changed-shown+ 8 "Changed files named in the section; past this the count says how many more.")
+(defparameter +error-line-chars+ 200 "An error line is clipped to this many characters.")
 
 (defun ref-of (n) (if n (format nil " (#~d)" n) ""))
 

@@ -2,11 +2,11 @@
 ;;;;
 ;;;; SPDX-License-Identifier: MIT
 ;;;;
-;;;; A port of src/core/pins.ts (pinCallOf, addPin, removePin, listPins) and of
-;;;; what src/tools/pin.ts and src/commands/pin.ts make of a call. The notes are
-;;;; the pin ops replayed along the branch (compaction.lisp read-pins); a pin or
-;;;; unpin is an op the host appends (its appendEntry), so the core answers with
-;;;; the op to append and the text to tell, and the TS side appends and tells.
+;;;; What a vcc_pin call (src/tools/pin.ts) or a pin command (src/commands/pin.ts)
+;;;; does. The notes are the pin ops replayed along the branch (READ-PINS); a pin
+;;;; or unpin is an op the host appends (its appendEntry), so the core answers
+;;;; with the op to append and the text to tell, and the TS side
+;;;; (src/core/pins.ts) appends and tells.
 
 (in-package #:omp-vcc)
 
@@ -17,7 +17,7 @@
   (if (and (integerp n) (> (abs n) +max-safe-integer+)) (coerce n 'double-float) n))
 
 (defun format-pin (n)
-  "pins.ts formatPin: [ID] TEXT (BY, #AT)."
+  "A note as it is shown: [ID] TEXT (BY, #AT)."
   (let ((at (json-get n "at")))
     (format nil "[~a] ~a (~a~a)" (js-string-of (js-id (json-get n "id"))) (json-get n "text") (json-get n "by")
             (if at (format nil ", #~a" (js-string-of (js-id at))) ""))))
@@ -51,7 +51,7 @@ pin and unpin replayed along it, so a branch keeps the pins made on it."
       (mapcar (lambda (id) (gethash id notes)) ids))))
 
 (defun next-pin-id (branch)
-  "pins.ts nextPinId: one past every id used on this branch, unpinned ones included."
+  "The next note's id: one past every id used on this branch, unpinned ones included."
   (let ((max 0))
     (loop for e across branch
           when (and (pin-entry-p e) (js-integer-p (json-get (json-get e "data") "id")))
@@ -66,7 +66,7 @@ pin and unpin replayed along it, so a branch keeps the pins made on it."
     (values (js-clip flat +pin-chars+) (> (js-length flat) +pin-chars+))))
 
 (defun pin-id-of (value)
-  "pins.ts toPinId: \"3\", \"#3\", \"[3]\", 3 -> 3; NIL for anything else."
+  "A note id as the agent or the user writes it: \"3\", \"#3\", \"[3]\", 3 -> 3; NIL for anything else."
   (cond ((realp value) (and (js-integer-p value) value))
         ((stringp value)
          (let ((m (rx-exec (rx "^\\[?#?(\\d+)\\]?$") (js-trim value))))
@@ -75,7 +75,7 @@ pin and unpin replayed along it, so a branch keeps the pins made on it."
 (defun same-id-p (a b) (and (realp a) (realp b) (= (js-id a) (js-id b))))
 
 (defun add-pin (branch entries raw by)
-  "pins.ts addPin: (values DONE TEXT OP)."
+  "Pin RAW by BY, one line and clipped, unless it is empty or pinned already: (values DONE TEXT OP)."
   (multiple-value-bind (text clipped) (pin-text raw)
     (when (zerop (length text)) (return-from add-pin (values nil "Nothing to pin: give the note text." nil)))
     (let ((existing (find text (read-pins branch) :key (lambda (n) (json-get n "text")) :test #'string=)))
@@ -86,7 +86,7 @@ pin and unpin replayed along it, so a branch keeps the pins made on it."
       (values t (format nil "Pinned ~a~a." (format-pin op) (if clipped (format nil " (clipped to ~d chars)" +pin-chars+) "")) op))))
 
 (defun remove-pin (branch value)
-  "pins.ts removePin: (values DONE TEXT OP)."
+  "Unpin the note VALUE names, or list the notes when none does: (values DONE TEXT OP)."
   (let* ((id (pin-id-of value))
          (notes (read-pins branch))
          (note (and id (find id notes :key (lambda (n) (json-get n "id")) :test #'same-id-p))))
@@ -106,7 +106,7 @@ pin and unpin replayed along it, so a branch keeps the pins made on it."
          (branch (coerce (json-get input "branch" #()) 'vector))
          (entries (coerce (json-get input "entries" branch) 'vector)))
     (if (equal (json-get call "surface") "tool")
-        ;; tools/pin.ts executePin.
+        ;; The tool: a note, an unpin, or the list; both at once is refused.
         (let* ((params (json-get call "params"))
                (raw-note (json-get params "note"))
                (note (and (stringp raw-note) (not (unset-p raw-note)) raw-note))
@@ -115,7 +115,7 @@ pin and unpin replayed along it, so a branch keeps the pins made on it."
                 (note (add-pin branch entries note "agent"))
                 (unpin (remove-pin branch unpin))
                 (t (values nil (format-pin-list (read-pins branch))))))
-        ;; commands/pin.ts.
+        ;; The commands: /…-unpin ID, /…-pin TEXT, or the list.
         (let ((args (let ((a (json-get call "args"))) (if (stringp a) a ""))))
           (if (equal (json-get call "name") "unpin")
               (multiple-value-bind (done text op) (remove-pin branch (js-trim args))

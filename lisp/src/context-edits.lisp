@@ -2,8 +2,8 @@
 ;;;;
 ;;;; SPDX-License-Identifier: MIT
 ;;;;
-;;;; A port of src/core/context-edits.ts (itself a port of Pi's
-;;;; buildSessionProjection / projectContextEntry). Pi never rewrites an entry:
+;;;; Pi's buildSessionProjection / projectContextEntry (its
+;;;; dist/core/session-manager.js), ported. Pi never rewrites an entry:
 ;;;; a later `context_edit` entry omits an earlier one from the model's context
 ;;;; (`replacement: null`) or swaps its content, keeping its role and metadata.
 ;;;; A compaction reads the branch as the context holds it; recall reads the raw
@@ -51,8 +51,8 @@
                    (t entry))))))
 
 (defun apply-context-edits (branch notes)
-  "context-edits.ts applyContextEdits on the vector BRANCH, with NOTES (parallel to
-it) kept beside each entry left: (values BRANCH NOTES), both as they were when
+  "The vector BRANCH as Pi's context holds it, with NOTES (parallel to it) kept
+beside each entry left: (values BRANCH NOTES), both as they were when
 there are no edits."
   (let ((edits (make-hash-table :test 'equal)))
     (loop for e across branch when (context-edit-p e) do (setf (gethash (json-get e "targetId") edits) e))

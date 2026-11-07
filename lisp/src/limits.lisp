@@ -2,10 +2,10 @@
 ;;;;
 ;;;; SPDX-License-Identifier: MIT
 ;;;;
-;;;; A port of src/core/model-limits.ts and of the decision in
-;;;; src/hooks/window-limits.ts's settle handler. omp-vcc takes the window from
-;;;; the host; when a provider serves less, the limit its overflow error states
-;;;; is kept per model in omp-vcc-models.json next to the config, with the
+;;;; With the decision src/hooks/window-limits.ts asks for once a run settles.
+;;;; omp-vcc takes the window from the host and makes no network call of its
+;;;; own; when a provider serves less, the limit its overflow error states
+;;;; ("maximum context length is 32768 tokens") is kept per model in omp-vcc-models.json next to the config, with the
 ;;;; host's compaction policy as the latest compaction for that model carried it,
 ;;;; so a later session starts from both.
 
@@ -14,7 +14,7 @@
 (defparameter +limits-file+ "omp-vcc-models.json")
 
 (defun model-key (model)
-  "model-limits.ts modelKey: provider/id, or NIL without both."
+  "The key the limits file names MODEL by: provider/id, or NIL without both."
   (let ((provider (json-get model "provider")) (id (json-get model "id")))
     (and (truthy-p provider) (truthy-p id) (format nil "~a/~a" (js-string-of provider) (js-string-of id)))))
 
@@ -52,7 +52,7 @@
     (and (realp n) (> n 0) n)))
 
 (defun record-learned-window (dir key window &optional (now (iso-now)))
-  "model-limits.ts recordLearnedWindow: a smaller limit replaces a larger one, never the reverse."
+  "Keep the limit an overflow error stated for KEY: a smaller limit replaces a larger one, never the reverse."
   (when (and key (realp window) (> window 0))
     (let* ((limits (read-limits dir))
            (known (json-get (limit-of limits key) "contextWindow")))
@@ -69,7 +69,8 @@
     (and (or (hash-table-p policy) (json-array-p policy)) policy)))
 
 (defun record-host-policy (dir key policy)
-  "model-limits.ts recordHostPolicy: for a model with a learned window only, written when it changed."
+  "Keep the host's POLICY a compaction carried, for a model with a learned window
+only (where it is read); written when it changed."
   (when (and key (truthy-p policy))
     (let* ((limits (read-limits dir)) (known (limit-of limits key)))
       (when (and (truthy-p known)
@@ -79,12 +80,12 @@
           (write-limits dir limits))))))
 
 (defun effective-window (&rest windows)
-  "window.ts effectiveWindow: the smallest window known."
+  "The smallest window known."
   (let ((known (remove nil (mapcar #'positive-floor windows))))
     (and known (reduce #'min known))))
 
 (defun window-of (model host-name dir)
-  "model-limits.ts windowOf: the host's window, the learned one, the smaller, and whose it is."
+  "The window for MODEL: the host's, the learned one, the smaller, and whose it is."
   (let* ((cw (json-get model "contextWindow"))
          (host (and (realp cw) (> cw 0) cw))
          (learned (learned-window dir (model-key model)))
@@ -95,7 +96,7 @@
                                 (t host-name)))))
 
 (defun settled-compaction (input)
-  "window-limits.ts once a run settles: whether omp-vcc compacts in the host's
+  "Once a run settles (src/hooks/window-limits.ts): whether omp-vcc compacts in the host's
 stead (the host's window is above the real one, its last recorded policy
 compacts, the context is past the trigger), at what trigger, and the note
 that says so."

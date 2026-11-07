@@ -2,10 +2,10 @@
 ;;;;
 ;;;; SPDX-License-Identifier: MIT
 ;;;;
-;;;; A port of src/core/compact-args.ts. `/omp-vcc keep:N` becomes
-;;;; customInstructions carrying a marker, so the hook knows the pass is the
-;;;; command's; `/compact` text may end or start with keep:N and carry a prompt
-;;;; to send once it is done. The regexes are the TS's, on the same engine.
+;;;; `/omp-vcc keep:N` becomes customInstructions carrying a marker, so the
+;;;; hook knows the pass is the command's; `/compact` text may end or start with
+;;;; keep:N and carry a prompt to send once it is done. src/core/compact-args.ts
+;;;; asks for both.
 
 (in-package #:omp-vcc)
 
@@ -17,7 +17,7 @@
     (and m (min (parse-integer (rx-group m 1)) +max-safe-keep+))))
 
 (defun parse-keep-and-prompt (args)
-  "compact-args.ts parseKeepAndPrompt: (values FOLLOW-UP-PROMPT KEEP), keep:N first or last."
+  "ARGS as (values FOLLOW-UP-PROMPT KEEP), keep:N its first word or its last."
   (let* ((trimmed (if (stringp args) (js-trim args) ""))
          (first (rx-exec (rx "^(\\S+)(?:\\s+([\\s\\S]*))?$") trimmed))
          (first-keep (and first (keep-of (rx-group first 1)))))
@@ -30,11 +30,12 @@
               (values trimmed nil))))))
 
 (defun vcc-custom-instructions (keep)
-  "compact-args.ts buildVccCustomInstructions."
+  "The customInstructions /omp-vcc hands the host: the marker, then keep:N when KEEP is given."
   (if keep (format nil "~a keep:~d" +compact-instruction+ keep) +compact-instruction+))
 
 (defun parse-instructions (custom)
-  "compact-args.ts parseInstructions: (values FROM-COMMAND KEEP FOLLOW-UP-PROMPT)."
+  "The customInstructions a compaction came with, as (values FROM-COMMAND KEEP
+FOLLOW-UP-PROMPT): the command's marker and its keep:N, or `/compact` text."
   (let ((trimmed (and (stringp custom) (js-trim custom))))
     (if (and trimmed (or (string= trimmed +compact-instruction+)
                          (starts-with (format nil "~a " +compact-instruction+) trimmed)))

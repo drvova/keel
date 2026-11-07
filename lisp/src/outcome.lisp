@@ -2,9 +2,10 @@
 ;;;;
 ;;;; SPDX-License-Identifier: MIT
 ;;;;
-;;;; A port of src/compaction/stats.ts formatCompactionStats, of what
-;;;; src/commands/compact-feedback.ts says when a compaction /omp-vcc asked for
-;;;; did not happen, and of settings.ts handlesHostCompactions.
+;;;; The outcome line a compaction is told with, what /omp-vcc says when the
+;;;; compaction it asked for did not happen (src/commands/compact-feedback.ts
+;;;; asks), and whether omp-vcc handles the host's compactions at all (the
+;;;; user's opt-outs).
 
 (in-package #:omp-vcc)
 
@@ -19,7 +20,7 @@
   (if (>= n 1000) (format nil "~ak" (js-to-fixed-1 (/ (coerce n 'double-float) 1000d0))) (js-string-of n)))
 
 (defun format-compaction-stats (stats)
-  "stats.ts formatCompactionStats: the outcome line."
+  "The outcome line: what was kept, and how many messages were summarized."
   (let ((cut (json-get stats "budgetCut"))
         (kept (format-tokens (json-get stats "keptTokensEst")))
         (summarized (js-string-of (json-get stats "summarized"))))
@@ -33,7 +34,10 @@
                      (if (truthy-p (json-get stats "smartKeepAdjusted")) ", smart-keep" ""))))))
 
 (defun compact-error-feedback (input)
-  "compact-feedback.ts reportCompactError: (values TEXT SEVERITY), or NIL when nothing is told."
+  "Why a compaction /omp-vcc asked for did not happen, from the host's error:
+(values TEXT SEVERITY), or NIL when nothing is told. The hook's own cancel notice
+was told already; omp's TUI shows its own \"Compaction cancelled\" or
+\"Compaction failed\", so there only the hint for a session still too short is added."
   (let ((message (let ((m (json-get input "message"))) (if (stringp m) m (js-string-of m))))
         (host (json-get input "hostName"))
         (compacted (>= (last-compaction-index (coerce (json-get input "branch" #()) 'vector)) 0)))
@@ -49,7 +53,8 @@
           (t (values (format nil "Compaction failed: ~a" message) "error")))))
 
 (defun handles-host-compactions-p (settings provider)
-  "settings.ts handlesHostCompactions: unless the user opted out, for every provider or this one."
+  "Whether omp-vcc answers the host's compactions: unless the user opted out
+(overrideDefaultCompaction, skipForProviders), for every provider or this one."
   (and (eq (json-get settings "overrideDefaultCompaction") :true)
        (not (and (stringp provider)
                  (let ((p (sb-unicode:lowercase provider)))
