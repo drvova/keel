@@ -269,7 +269,8 @@ describe("an eviction that does not pay", () => {
     setEvict(true);
     const s = session(10);
     // One turn of ten from the oldest end: the provider would read the other nine again for it.
-    expect(tool(s, { drop: [0] })).toBe("Not worth it: that frees ~67 tokens but makes the provider read the ~597 after it again, uncached, which a smaller context repays only after many requests. Take out more in one go, from the oldest end: oldest:4.");
+    // No prices yet (too few requests): a cache at a tenth of the price, 20 requests ahead.
+    expect(tool(s, { drop: [0] })).toBe("Not worth it: that frees ~67 tokens but makes the provider read the ~597 after it again; assuming a cache at 10% of the input price, over 20 more requests, a drop must free 45% of what it makes it read again. Take out more in one go, from the oldest end: oldest:4.");
     expect(s.appended).toEqual([]);
     expect(tool(s, { oldest: 3 })).toStartWith("Not worth it:");
     expect(tool(s, { oldest: 4 })).toStartWith("Out of context from the next request: #0–#15 (4 turns");
@@ -360,6 +361,34 @@ describe("the context's size on omp-vcc's own results", () => {
     expect(executePin({ note: "a note" }, s.host, ctx.sessionManager, ctx)).toEndWith(`\n${readout}`);
     setEvict(false);
     expect(executePin({ note: "another note" }, s.host, ctx.sessionManager, ctx)).not.toContain("[context:");
+  });
+});
+
+describe("when an eviction pays, by the session's own prices", () => {
+  /** SESSION(10)'s messages, every assistant message with this usage. */
+  const priced = (usage: Record<string, unknown>) => {
+    const messages: any[] = [];
+    for (let i = 0; i < 10; i++) {
+      messages.push({ role: "user", content: `request number ${i} please read f${i}.ts` });
+      messages.push({ role: "assistant", content: [{ type: "toolCall", id: `c${i}`, name: "read", arguments: { path: `f${i}.ts` } }], usage });
+      messages.push({ role: "toolResult", toolCallId: `c${i}`, toolName: "read", content: [{ type: "text", text: `${i}:`.padEnd(200, "x") }] });
+      messages.push({ role: "assistant", content: [{ type: "text", text: `Read f${i}.ts.` }], usage });
+    }
+    return sessionOf(messages);
+  };
+
+  it("counts a cache at the price the session paid, over as many requests as it has made", () => {
+    setEvict(true);
+    // An input token at 1e-6, a cached one at a quarter of that, 20 requests: a drop must free (1 - 0.25) / (0.25 x 20) = 15%.
+    const s = priced({ input: 1000, cacheRead: 5000, cacheWrite: 0, output: 10, cost: { input: 0.001, cacheRead: 0.00125, cacheWrite: 0, output: 0 } });
+    expect(tool(s, { drop: [0] })).toBe("Not worth it: that frees ~67 tokens but makes the provider read the ~597 after it again; at this session's prices, a cached token 25% of an input token's, over 20 more requests, a drop must free 15% of what it makes it read again. Take out more in one go, from the oldest end: oldest:2.");
+    expect(tool(s, { oldest: 2 })).toStartWith("Out of context from the next request: #0–#7");
+  });
+
+  it("lets any drop through where the provider caches nothing", () => {
+    setEvict(true);
+    const s = priced({ input: 6000, cacheRead: 0, cacheWrite: 0, output: 10, cost: { input: 0.006, cacheRead: 0, cacheWrite: 0, output: 0 } });
+    expect(tool(s, { drop: [0] })).toStartWith("Out of context from the next request: #0–#3");
   });
 });
 

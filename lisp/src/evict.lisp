@@ -30,15 +30,61 @@
 
 (defparameter +evict-at-share+ (/ +evict-at-percent+ 100d0) "Past this share of the host's trigger, the oldest finished turns leave.")
 (defparameter +evict-to-share+ 0.5d0 "They leave until the context is estimated at this share of the trigger.")
-(defparameter +evict-min-return+ 0.45d0
-  "An eviction by the agent must free at least this share of what it makes the
-provider read again. Every edit makes the provider read all that follows it
-uncached, once; a provider's cache then reads each kept token at about a tenth
-of the price, so what leaves saves that tenth on every later request. At 0.45
-an eviction has paid for itself within about 20 requests (0.9 x read again /
-(0.1 x freed)); a smaller one, a turn or two from the oldest end of a long
-context, costs more than it saves. Dropping the oldest half passes, as does
-anything near the end of the context.")
+(defstruct (payback (:constructor make-payback (share cache write ahead measured)))
+  "When an eviction by the agent pays, worked out from the session: SHARE, how
+much of what it makes the provider read again it must free; CACHE and WRITE, a
+cached and a written token's price as a share of an input token's; AHEAD, the
+requests it is counted over; MEASURED, whether the prices are the session's own."
+  share cache write ahead measured)
+
+(defparameter +payback-default-cache+ 0.1d0 "A cached token's price as a share of an input token's, before the session shows its own.")
+(defparameter +payback-min-requests+ 3 "Requests a session must have made before its own prices and cache are believed.")
+(defparameter +payback-ahead+ '(5 . 200) "The requests an eviction is counted over: as many as the session has made, within these.")
+
+(defun eviction-payback (messages)
+  "When an eviction pays, from MESSAGES (the session's): every edit makes the
+provider read all that follows it again, uncached or written to the cache anew,
+once (each such token at WRITE of an input token's price instead of CACHE);
+what leaves then saves CACHE on every later request. Over AHEAD requests it
+pays when FREED x CACHE x AHEAD >= READ-AGAIN x (WRITE - CACHE): SHARE is
+(WRITE - CACHE) / (CACHE x AHEAD). The prices are the session's own (each
+request's usage: tokens and their cost, as both hosts record them), the
+requests ahead as many as it has made (a session that has run long tends to run
+on); a provider that caches nothing has nothing to read again at a premium, so
+any eviction pays. Before enough requests, a cache at a tenth of the price and
+20 requests ahead, a share of 0.45."
+  (let ((n 0) (input 0) (input-cost 0) (read 0) (read-cost 0) (write 0) (write-cost 0))
+    (dolist (m messages)
+      (let ((u (and (json-object-p m) (equal (json-get m "role") "assistant") (json-get m "usage"))))
+        (when (and (json-object-p u) (usage-prompt-tokens m))
+          (let ((cost (json-get u "cost")))
+            (incf n)
+            (incf input (number-or-zero (json-get u "input"))) (incf read (number-or-zero (json-get u "cacheRead")))
+            (incf write (number-or-zero (json-get u "cacheWrite")))
+            (when (json-object-p cost)
+              (incf input-cost (number-or-zero (json-get cost "input"))) (incf read-cost (number-or-zero (json-get cost "cacheRead")))
+              (incf write-cost (number-or-zero (json-get cost "cacheWrite"))))))))
+    (let* ((measured (>= n +payback-min-requests+))
+           (ahead (max (car +payback-ahead+) (min (cdr +payback-ahead+) (if measured n 20))))
+           (input-price (and (plusp input) (plusp input-cost) (/ input-cost input))))
+      (cond ((and measured (zerop read))
+             (make-payback 0d0 1d0 1d0 ahead t))
+            (t
+             (let* ((cache (if (and measured input-price (plusp read) (plusp read-cost))
+                               (min 1d0 (coerce (/ (/ read-cost read) input-price) 'double-float))
+                               +payback-default-cache+))
+                    (write-share (if (and measured input-price (plusp write) (plusp write-cost))
+                                     (coerce (/ (/ write-cost write) input-price) 'double-float)
+                                     1d0)))
+               (make-payback (max 0d0 (/ (- write-share cache) (* cache ahead))) cache write-share ahead
+                             (and measured input-price (plusp read-cost) t))))))))
+
+(defun payback-words (p)
+  (if (zerop (payback-share p))
+      "this provider has cached nothing this session, so nothing is read again at a premium"
+      (format nil "~:[assuming a cache at ~d% of the input price~;at this session's prices, a cached token ~d% of an input token's~]~@[ and a cache write ~d%~], over ~d more requests"
+              (payback-measured p) (round (* 100 (payback-cache p)))
+              (and (/= (payback-write p) 1d0) (round (* 100 (payback-write p)))) (payback-ahead p))))
 (defparameter +stub-requests-shown+ 3 "Requests a stub names of the turns it stands for.")
 (defparameter +turns-listed+ 40 "Turns a listing shows, newest last.")
 (defparameter +budget-note-from+ 5
@@ -489,29 +535,29 @@ context after its first #N that stays), in chars: (values FREED READ-AGAIN)."
                                   sum (gethash n chars 0)))))
     (values freed after)))
 
-(defun pays-p (leaving turns outs chars)
+(defun pays-p (leaving turns outs chars payback)
   (multiple-value-bind (freed again) (eviction-cost leaving turns outs chars)
-    (>= freed (* +evict-min-return+ again))))
+    (>= freed (* (payback-share payback) again))))
 
-(defun not-worth-it (leaving turns outs chars)
+(defun not-worth-it (leaving turns outs chars payback)
   "Why the agent's eviction of LEAVING is refused, with the smallest run from the oldest end that would pay."
   (multiple-value-bind (freed again) (eviction-cost leaving turns outs chars)
     (let* ((in (turns-in turns outs))
-           (k (loop for k from 1 to (length in) when (pays-p (subseq in 0 k) turns outs chars) return k))
+           (k (loop for k from 1 to (length in) when (pays-p (subseq in 0 k) turns outs chars payback) return k))
            (tok (lambda (c) (js-string-of (tokens-from-chars c +default-chars-per-token+)))))
-      (format nil "Not worth it: that frees ~~~a tokens but makes the provider read the ~~~a after it again, uncached, which a smaller context repays only after many requests. ~:[Nothing taken out would pay yet; wait until more of the context is old.~;Take out more in one go, from the oldest end: oldest:~:*~d.~]"
-              (funcall tok freed) (funcall tok again) k))))
+      (format nil "Not worth it: that frees ~~~a tokens but makes the provider read the ~~~a after it again; ~a, a drop must free ~d% of what it makes it read again. ~:[Nothing taken out would pay yet; wait until more of the context is old.~;Take out more in one go, from the oldest end: oldest:~:*~d.~]"
+              (funcall tok freed) (funcall tok again) (payback-words payback) (round (* 100 (payback-share payback))) k))))
 
-(defun evict-turns (leaving turns outs chars by note count &optional check)
+(defun evict-turns (leaving turns outs chars by note count &optional payback)
   "Record LEAVING (turns, oldest first) as out: (values TEXT OPS). With CHECK
-(the agent's call), an eviction that does not pay (+EVICT-MIN-RETURN+) is refused."
+(the agent's call), an eviction that does not pay (PAYBACK, EVICTION-PAYBACK) is refused."
   (let ((leaving (intersection leaving (turns-in turns outs))))
     (setf leaving (sort (copy-list leaving) #'< :key #'turn-from))
     (cond
       ((null leaving)
        (values "Nothing to take out: those turns are out already, or one is the turn running, which stays." '()))
-      ((and check (not (pays-p leaving turns outs chars)))
-       (values (not-worth-it leaving turns outs chars) '()))
+      ((and payback (not (pays-p leaving turns outs chars payback)))
+       (values (not-worth-it leaving turns outs chars payback) '()))
       (t
         (let ((ops (mapcar (lambda (r) (evict-op "evict" (car r) (cdr r) by count note)) (ranges-in leaving outs))))
           (values (format nil "Out of context from the next request: ~{~a~^, ~} (~a, ~~~a tokens). ~a reads any entry back word for word."
@@ -594,8 +640,12 @@ OPS). An undo is an edit too, so a second one does the first again."
                           (let ((k (count-if (lambda (op) (equal (json-get op "op") "insert")) ops))) (and (plusp k) k)))
                   ops)))))
 
+(defun payback-of (by-n)
+  (eviction-payback (mapcar #'cdr (sort (loop for n being the hash-keys of by-n using (hash-value m) collect (cons n m)) #'< :key #'car))))
+
 (defun run-evict (call branch index chars by-n count)
-  "One vcc_context call or evict command on BRANCH: (values TEXT OPS)."
+  "One vcc_context call or evict command on BRANCH: (values TEXT OPS). The agent's
+evictions must pay, by the session's own prices (EVICTION-PAYBACK over BY-N)."
   (let* ((turns (branch-turns branch index)) (outs (read-evictions branch))
          (by (if (equal (json-get call "surface") "tool") "agent" "user")))
     (if (equal by "agent")
@@ -605,9 +655,9 @@ OPS). An undo is an edit too, so a second one does the first again."
                (note (let ((n (json-get params "note"))) (and (stringp n) (plusp (length (js-trim n))) (js-clip (js-trim n) +context-note-chars+)))))
           (cond ((eq (json-get params "undo") :true) (undo-last branch by count))
                 (restore (restore-turns restore outs by count))
-                (drop (evict-turns (turns-touching drop turns) turns outs chars by note count t))
+                (drop (evict-turns (turns-touching drop turns) turns outs chars by note count (payback-of by-n)))
                 (oldest (let ((in (turns-in turns outs)))
-                          (evict-turns (subseq in 0 (min oldest (length in))) turns outs chars by note count t)))
+                          (evict-turns (subseq in 0 (min oldest (length in))) turns outs chars by note count (payback-of by-n))))
                 (t (values (list-context turns outs chars by-n (read-pins branch)) '()))))
         (let* ((args (js-trim (let ((a (json-get call "args"))) (if (stringp a) a ""))))
                (words (remove "" (rx-split (rx "\\s+") args) :test #'string=)))
