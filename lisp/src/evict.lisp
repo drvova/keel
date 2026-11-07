@@ -539,30 +539,59 @@ context after its first #N that stays), in chars: (values FREED READ-AGAIN)."
       (when (and leaving (>= sum half)) (return (nreverse leaving)))
       (push tr leaving) (incf sum (turn-chars tr chars outs)))))
 
+(defun stamp-call (ops branch)
+  "OPS, one call's, stamped with it: the number of ledger entries on BRANCH before
+them, so undo tells two calls apart even with no message between them."
+  (let ((call (count-if #'evict-entry-p branch)))
+    (dolist (op ops ops) (setf (gethash "call" op) call))))
+
+(defun same-call-p (a b)
+  (if (and (js-integer-p (json-get a "call")) (js-integer-p (json-get b "call")))
+      (= (json-get a "call") (json-get b "call"))
+      (and (equal (json-get a "by") (json-get b "by")) (eql (op-at a) (op-at b)))))
+
 (defun undo-last (branch by count)
-  "The last context edit on BRANCH undone: the ops of the last call (the runs it
-took out, or brought back) recorded in reverse. (values TEXT OPS). An undo is an
-edit too, so a second one does the first again."
-  (let* ((edits (loop for i from (1+ (last-reset-index branch)) below (length branch)
-                      for e = (aref branch i)
-                      when (and (evict-entry-p e) (member (json-get (json-get e "data") "op") '("evict" "restore") :test #'equal))
-                        collect (json-get e "data")))
-         (last (car (last edits)))
-         ;; One call's ops: the run at the end with the same kind, author and #N count.
-         (call (and last (let ((same '()))
-                           (dolist (op (reverse edits) same)
-                             (if (and (equal (json-get op "op") (json-get last "op")) (equal (json-get op "by") (json-get last "by"))
-                                      (eql (op-at op) (op-at last)))
-                                 (push op same)
-                                 (return same)))))))
-    (if (null call)
+  "The last context edit on BRANCH undone: every op of the last call (what it took
+out, brought back, rewrote, or noted, in its context's file too) reversed, by
+replaying the ledger without them and recording the difference. (values TEXT
+OPS). An undo is an edit too, so a second one does the first again."
+  (let* ((edit-p (lambda (e) (and (evict-entry-p e) (member (json-get (json-get e "data") "op") '("evict" "restore" "insert") :test #'equal))))
+         (last (loop for i from (1- (length branch)) downto (1+ (last-reset-index branch))
+                     when (funcall edit-p (aref branch i)) return i)))
+    (if (null last)
         (values "Nothing to undo: no turn was taken out or brought back." '())
-        (let* ((back (equal (json-get last "op") "evict"))
-               (ops (mapcar (lambda (op) (evict-op (if back "restore" "evict") (json-get op "from") (json-get op "to") by count
-                                                   (and (not back) (stringp (json-get op "note")) (json-get op "note"))))
-                            call)))
-          (values (format nil "Undone: ~{~a~^, ~} ~:[out of context again~;back in context~] from the next request."
-                          (mapcar (lambda (op) (range-text (json-get op "from") (json-get op "to"))) ops) back)
+        (let* ((key (json-get (aref branch last) "data"))
+               ;; One call's ops: the edits at the end of the ledger stamped with its call (STAMP-CALL), or else its author and #N count.
+               (first (loop with first = last
+                            for i from (1- last) downto (1+ (last-reset-index branch))
+                            for e = (aref branch i)
+                            do (when (funcall edit-p e)
+                                 (if (same-call-p (json-get e "data") key)
+                                     (setf first i)
+                                     (return first)))
+                            finally (return first)))
+               (prefix (subseq branch 0 first))
+               (was (read-evictions prefix)) (now (read-evictions branch))
+               (same (lambda (a b) (and (= (out-from a) (out-from b)) (= (out-to a) (out-to b)) (equal (out-text a) (out-text b)))))
+               (back (remove-if (lambda (o) (find o was :test same)) now))
+               (again (remove-if (lambda (o) (find o now :test same)) was))
+               (notes-was (read-inserts prefix)) (notes-now (read-inserts branch))
+               (notes (remove-duplicates (append (mapcar #'car notes-was) (mapcar #'car notes-now))))
+               (ops (append (mapcar (lambda (o) (evict-op "restore" (out-from o) (out-to o) by count)) back)
+                            (mapcar (lambda (o) (let ((op (evict-op "evict" (out-from o) (out-to o) by count (out-note o))))
+                                                  (when (out-text o) (setf (gethash "text" op) (out-text o)))
+                                                  op))
+                                    again)
+                            (loop for n in (sort notes #'<)
+                                  for before = (or (cdr (assoc n notes-was)) "")
+                                  unless (equal before (or (cdr (assoc n notes-now)) ""))
+                                    collect (json-object "v" 1 "op" "insert" "after" n "text" before "by" by "at" count)))))
+          (values (format nil "Undone:~@[ ~{~a~^, ~} back in context~]~@[;~*~]~@[ ~{~a~^, ~} out of context again~]~@[;~*~]~@[ ~d note~:p as ~:*~[~;it was~:;they were~]~] from the next request."
+                          (and back (mapcar (lambda (o) (range-text (out-from o) (out-to o))) back))
+                          (and back (or again (plusp (length (remove-if-not (lambda (op) (equal (json-get op "op") "insert")) ops)))))
+                          (and again (mapcar (lambda (o) (range-text (out-from o) (out-to o))) again))
+                          (and again (some (lambda (op) (equal (json-get op "op") "insert")) ops))
+                          (let ((k (count-if (lambda (op) (equal (json-get op "op") "insert")) ops))) (and (plusp k) k)))
                   ops)))))
 
 (defun run-evict (call branch index chars by-n count)

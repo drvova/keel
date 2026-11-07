@@ -147,17 +147,21 @@ AGENT: the agent's call, which leaves a note the user pinned as it is."
     (coerce (remove-if-not (lambda (e) (and (hash-table-p e) (gethash (json-get e "id") ids))) entries) 'vector)))
 
 (defun carried-pins (entries files)
-  "The named notes a new session starts with: those of the project's last session
-before it (FILES, newest first), as pin ops of this one, marked with the session
-they came from. A note is named to be kept; an unnamed one stays with its
-session. Nothing for a session that has a message or a pin already (resumed,
+  "The named notes a new session starts with: the user's of the project's last
+session before it (FILES, newest first), as pin ops of this one, marked with
+the session they came from. A note is named to be kept; an unnamed one stays
+with its session. The agent's stay with theirs too: a note the agent pinned
+may hold what a page or a file told it, and an instruction carried into every
+later session is how an injection persists (Context Language Models, section
+6); the agent finds them with vcc_recall sessions and pins again what still
+holds. Nothing for a session that has a message or a pin already (resumed,
 forked, or carried into once)."
   (unless (or (some #'counted-entry-p entries) (some #'pin-entry-p entries) (null files))
     (let* ((previous (first files))
            (from (let ((id (json-get (read-header previous) "id"))) (if (stringp id) (subseq id 0 (min 8 (length id))) "")))
            (id 0))
       (loop for n in (read-pins (file-branch previous))
-            when (pin-name n)
+            when (and (pin-name n) (equal (json-get n "by") "user"))
               collect (let ((op (json-object "v" 1 "op" "add" "id" (incf id) "name" (pin-name n) "text" (json-get n "text")
                                              "by" (json-get n "by") "at" :null)))
                         (setf (gethash "from" op) from)

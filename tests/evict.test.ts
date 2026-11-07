@@ -52,7 +52,7 @@ const sessionOf = (messages: any[]) => {
   const appended: any[] = [];
   const host = {
     appendEntry: (customType: string, data?: unknown) => {
-      const e = { type: "custom", id: `x${appended.length}`, parentId: entries.at(-1)?.id ?? null, customType, data };
+      const e = { type: "custom", id: `x${entries.length}`, parentId: entries.at(-1)?.id ?? null, customType, data };
       entries.push(e);
       appended.push(e);
     },
@@ -303,6 +303,15 @@ describe("the context's file", () => {
     s.appended.length = 0;
     sent(s, undefined, true);
     expect(s.appended).toEqual([]);
+    // Rewriting what is out again, then undoing it: the earlier rewrite stands again, whole.
+    edit(s, (t) => t.replace("f1.ts exports totals(); nothing else in it matters.", "f1.ts: totals() only."));
+    sent(s, undefined, true);
+    expect(readFileSync(mirror(s), "utf8")).toContain("[[CTX_OUT #4–#7]]\nf1.ts: totals() only.");
+    expect(call(s, { surface: "command", args: "undo" })).toBe("Undone: #4–#7 back in context; #4–#7 out of context again from the next request.");
+    sent(s, undefined, true);
+    expect(readFileSync(mirror(s), "utf8")).toContain("[[CTX_OUT #4–#7]]\nf1.ts exports totals(); nothing else in it matters.");
+    // And the agent's whole first edit undone: both turns back.
+    expect(call(s, { surface: "command", args: "undo" })).toStartWith("Undone:");
   });
 
   it("takes the agent's notes between blocks as notes after the turn before, and leaves the running turn as it is", () => {

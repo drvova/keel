@@ -171,12 +171,14 @@ registered), and what to tell the user."
     ;; The agent's edit of the file since the last request: ops of the ledger, seen by this request already.
     (when mirror
       (multiple-value-setq (edit-ops ignored) (mirror-edits file branch (snapshot-index s) count))
+      (stamp-call edit-ops branch)
       (when edit-ops
         (setf branch (concatenate 'vector branch
                                   (mapcar (lambda (op) (json-object "type" "custom" "customType" +evict-entry-type+ "data" op)) edit-ops)))))
     (multiple-value-bind (drop stubs ops before after n-of dropped outs turns)
         (evict-request branch (snapshot-index s) (coerce messages 'vector) :file file
                        :trigger trigger :auto auto :count count :mark tool :mirror mirror)
+      (stamp-call ops branch)
       (when mirror
         (write-mirror file (render-mirror (coerce messages 'vector) n-of dropped outs turns (read-inserts branch))))
       (multiple-value-bind (note note-op)
@@ -204,7 +206,8 @@ registered), and what to tell the user."
       (loop for (index nil message) in (read-session file)
             do (setf (gethash index chars) (message-chars message) (gethash index by-n) message)))
     (multiple-value-bind (text ops) (run-evict call (snapshot-branch s) (snapshot-index s) chars by-n (snapshot-count s))
-      (json-object "text" (if (equal (json-get call "surface") "tool") (with-readout s text) text) "ops" (coerce ops 'vector)))))
+      (json-object "text" (if (equal (json-get call "surface") "tool") (with-readout s text) text)
+                   "ops" (coerce (stamp-call ops (snapshot-branch s)) 'vector)))))
 
 ;;; --- a compaction, in two calls --------------------------------------------------
 

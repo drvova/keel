@@ -136,7 +136,7 @@ describe("the user's notes", () => {
 });
 
 describe("named notes across sessions", () => {
-  it("a new session starts with the named notes of the project's last one, once", () => {
+  it("a new session starts with the user's named notes of the project's last one, once", () => {
     const dir = freshDir();
     const old = join(dir, "2026-01-01_aaaa1111.jsonl");
     writeJsonl(old, [
@@ -151,8 +151,9 @@ describe("named notes across sessions", () => {
     writeJsonl(file, [{ type: "session", id: "bbbb2222-0000", cwd: "/x" }]);
     const s = session();
     const sm = { ...s.sm, getSessionFile: () => file, getSessionDir: () => dir };
-    expect(carryPins(s.host, ompBinding, { sessionManager: sm } as any)).toBe("Carried from the last session: [1] plan: ship v2 (agent, from session aaaa1111); [2] deploy: only from main (user, from session aaaa1111).");
-    expect(readPins(s.entries)).toEqual([[1, "plan: ship v2", "agent"], [2, "deploy: only from main", "user"]]);
+    // The user's named notes only: the agent's stay with their session (it can read them there and pin again).
+    expect(carryPins(s.host, ompBinding, { sessionManager: sm } as any)).toBe("Carried from the last session: [1] deploy: only from main (user, from session aaaa1111).");
+    expect(readPins(s.entries)).toEqual([[1, "deploy: only from main", "user"]]);
     // Carried once: the session has pins now.
     expect(carryPins(s.host, ompBinding, { sessionManager: sm } as any)).toBeUndefined();
     // A session with a message in it already (resumed, forked) carries nothing.
