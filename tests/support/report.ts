@@ -1,12 +1,13 @@
-import { pairs, searchHits } from "./pairs";
+import { renderedOf, searchHits } from "./pairs";
 import type { Message } from "@oh-my-pi/pi-ai";
 // A before/after report of one compile over a session's messages, for the
 // real-session tests and the benchmark scripts, at a ~128K window's limits.
-import { clip } from "../../src/core/content";
-import { renderMessage } from "../../src/core/render-entries";
 import { type CompileInput, type CompiledSummary, compileSummary } from "../../src/core/summarize";
 import { DEFAULT_SUMMARY_LIMITS } from "../../src/core/window";
-import { estimateTokensFromChars } from "../../src/core/token-estimate";
+
+/** Tokens at the heuristic ~4 chars each, rounded up. */
+const estimateTokensFromChars = (chars: number): number => Math.ceil(chars / 4);
+const clip = (text: string, max: number): string => (text.length <= max ? text : text.slice(0, max));
 import { briefOf } from "./summary";
 
 /** The header sections the report counts (the brief is not one). */
@@ -89,10 +90,9 @@ const countBlocks = (messages: Message[]): BlockCounts => {
   return counts;
 };
 
+/** Chars of every message as recall's full view renders it. */
 const inputCharsOf = (messages: Message[]): number =>
-  messages
-    .map((msg, index) => renderMessage(msg, index, true).summary.length)
-    .reduce((sum, len) => sum + len, 0);
+  renderedOf(messages).reduce((sum, e) => sum + e.text.length, 0);
 
 /** The files the summary lists: changed first, then read. */
 const filesOf = (compiled: CompiledSummary): string[] => {
@@ -101,7 +101,7 @@ const filesOf = (compiled: CompiledSummary): string[] => {
 };
 
 const previewOf = (messages: Message[], edgeCount = 3): string => {
-  const rendered = messages.map((msg, index) => renderMessage(msg, index));
+  const rendered = renderedOf(messages);
   if (rendered.length === 0) return "(empty)";
   if (rendered.length <= edgeCount * 2) {
     return rendered
@@ -152,8 +152,6 @@ const probesOf = (messages: Message[], compiled: CompiledSummary): RecallProbe[]
     { label: "file", text: filesOf(compiled)[0] ?? "" },
   ];
 
-  const rendered = messages.map((msg, index) => renderMessage(msg, index));
-
   return rawProbes
     .map(({ label, text }) => {
       const sourceText = text.trim();
@@ -164,7 +162,7 @@ const probesOf = (messages: Message[], compiled: CompiledSummary): RecallProbe[]
         sourceText,
         query,
         summaryMentioned: matchesQuery(summary, query),
-        recallHits: searchHits(pairs(rendered, messages), query).length,
+        recallHits: searchHits(messages, query).length,
       };
     })
     .filter((probe): probe is RecallProbe => probe !== null);

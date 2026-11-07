@@ -1,14 +1,25 @@
 import { ompBinding } from "./support/binding";
 import { describe, it, expect } from "bun:test";
 import { validateToolArguments } from "@oh-my-pi/pi-ai";
-import { ignoredNote, normalizeToolParams, parseCommandRequest, parseToolRequest } from "../src/core/recall-request";
 import { registerRecallTool } from "../src/tools/recall";
+import { core } from "../src/core/lisp-core";
 
-describe("parseToolRequest", () => {
+// A recall call's params, or a command's text, as the core reads them (lisp/src/request.lisp, op request).
+interface Request { scope: string; session?: string; action: { kind: string } & Record<string, unknown>; ignored: string[]; note: string }
+const read = (r: Record<string, any>): Request => ({ ...r.request, note: r.note });
+const parseToolRequest = (params: unknown): Request => read(core({ op: "request", params }));
+const parseCommandRequest = (args: string): Request => read(core({ op: "request", args }));
+const ignoredNote = (r: Request): string => r.note;
+const normalizeToolParams = (params: unknown): { params: Record<string, unknown>; dropped: string[] } => {
+  const r = core({ op: "request", params });
+  return { params: r.params as Record<string, unknown>, dropped: r.dropped as string[] };
+};
+
+describe("the tool's params read as a request", () => {
   it("does not report filler defaults as ignored", () => {
     const r = parseToolRequest({ query: "auth", page: 1, expand: [], mode: "hybrid", scope: "lineage" });
     expect(r.action.kind).toBe("search");
-    expect(r.ignored).toBeUndefined();
+    expect(r.ignored).toEqual([]);
     expect(ignoredNote(r)).toBe("");
   });
 
@@ -23,13 +34,13 @@ describe("parseToolRequest", () => {
   it("keeps page for range and names the query", () => {
     const r = parseToolRequest({ range: [10, 50], page: 2, query: "auth" });
     expect(r.action).toEqual({ kind: "range", range: [10, 50], page: 2 });
-    expect(r.ignored?.map((i) => i.param)).toEqual(["query"]);
+    expect(r.ignored).toEqual(["query"]);
   });
 
   it("names everything touched does not use", () => {
     const r = parseToolRequest({ mode: "touched", query: "x", expand: [1], page: 2 });
     expect(r.action.kind).toBe("touched");
-    expect(r.ignored?.map((i) => i.param)).toEqual(["query", "expand"]);
+    expect(r.ignored).toEqual(["query", "expand"]);
   });
 
   it("names page without anything to page", () => {
@@ -43,22 +54,22 @@ describe("parseToolRequest", () => {
     const fromCommand = parseCommandRequest("x scope:project session:abcd");
     for (const r of [fromTool, fromCommand]) {
       expect(r).toMatchObject({ scope: "lineage", session: "abcd" });
-      expect(r.ignored?.map((i) => i.param)).toEqual(["scope"]);
+      expect(r.ignored).toEqual(["scope"]);
     }
   });
 });
 
-describe("parseCommandRequest", () => {
+describe("the command's text read as a request", () => {
   it("takes scope:, session: and page: out of the query, and lists the sessions for 'sessions' alone", () => {
-    expect(parseCommandRequest("license scope:all page:2")).toEqual({ scope: "all", action: { kind: "search", query: "license", page: 2 } });
-    expect(parseCommandRequest("license page:2")).toEqual({ scope: "lineage", action: { kind: "search", query: "license", page: 2 } });
+    expect(parseCommandRequest("license scope:all page:2")).toMatchObject({ scope: "all", action: { kind: "search", query: "license", page: 2 }, ignored: [] });
+    expect(parseCommandRequest("license page:2")).toMatchObject({ scope: "lineage", action: { kind: "search", query: "license", page: 2 }, ignored: [] });
     expect(parseCommandRequest("rolled back scope:project")).toMatchObject({ scope: "project", action: { kind: "search", query: "rolled back" } });
     expect(parseCommandRequest("session:aaaa1111 rolled back")).toMatchObject({ session: "aaaa1111", action: { kind: "search", query: "rolled back" } });
     expect(parseCommandRequest("sessions").action).toEqual({ kind: "sessions", page: 1 });
   });
 });
 
-describe("normalizeToolParams", () => {
+describe("the tool's params repaired", () => {
   it("repairs mistakes whose meaning is certain", () => {
     expect(normalizeToolParams({ expand: ["459", "#460", 461] }).params).toEqual({ expand: [459, 460, 461] });
     expect(normalizeToolParams({ expand: 459 }).params).toEqual({ expand: [459] });

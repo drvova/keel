@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { registerRecallTool } from "../src/tools/recall";
-import { parseDrillDown } from "../src/core/drill-down";
+import { core } from "../src/core/lisp-core";
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -280,9 +280,15 @@ describe("vcc_recall drill-down", () => {
   });
 });
 
-// ── Unit: parseDrillDown anchoring ────────────────────────────────────────
+// ── #N:path anchoring ────────────────────────────────────────
 
-describe("parseDrillDown", () => {
+/** A #N:path query as the core reads it (op request): its target, or null for a plain search. */
+const parseDrillDown = (query: string) => {
+  const { action } = core({ op: "request", params: { query } }).request as { action: { kind: string; target?: object } };
+  return action.kind === "drill" ? action.target! : null;
+};
+
+describe("a #N:path query", () => {
   it("anchors on ^ so inline mentions are not drill-down", () => {
     expect(parseDrillDown("#42:auth.ts")).not.toBeNull();
     expect(parseDrillDown("#42:auth.ts:full")).not.toBeNull();

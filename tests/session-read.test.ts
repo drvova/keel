@@ -2,10 +2,13 @@ import { describe, it, expect } from "bun:test";
 import { mkdtempSync, writeFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { readSession, renderMessages } from "../src/core/load-messages";
+import { core } from "../src/core/lisp-core";
 
-// A session file as a recall view loads it (recall-run.ts): read, then rendered.
-const load = (file: string, full: boolean, allowed?: ReadonlySet<string>) => renderMessages(readSession(file).messages, full, allowed);
+// A session file as recall reads it (lisp/src/session.lisp, op load): the
+// entries on the branch given (all of them without one), each with its #N.
+interface Loaded { index: number; role: string; summary: string; text: string; files?: string[] }
+const load = (file: string, allowed?: ReadonlySet<string>): Loaded[] =>
+  core({ op: "load", source: { file, ids: allowed ? [...allowed] : null } }).entries as Loaded[];
 
 describe("reading a session for recall", () => {
   it("loads all message entries when no lineage filter is provided", () => {
@@ -21,8 +24,8 @@ describe("reading a session for recall", () => {
       ];
       writeFileSync(file, lines.join("\n") + "\n", "utf8");
 
-      const loaded = load(file, false);
-      expect(loaded.map((m) => m.entry.index)).toEqual([0, 1, 2]);
+      const loaded = load(file);
+      expect(loaded.map((m) => m.index)).toEqual([0, 1, 2]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -40,8 +43,8 @@ describe("reading a session for recall", () => {
       ];
       writeFileSync(file, lines.join("\n") + "\n", "utf8");
 
-      const loaded = load(file, false);
-      expect(loaded.map((m) => [m.entry.index, m.entry.role, m.message.role])).toEqual([[1, "user", "user"], [3, "assistant", "assistant"]]);
+      const loaded = load(file);
+      expect(loaded.map((m) => [m.index, m.role])).toEqual([[1, "user"], [3, "assistant"]]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -59,8 +62,8 @@ describe("reading a session for recall", () => {
       // Deliberately omit the final newline to cover the buffered tail as well.
       writeFileSync(file, lines.join("\n"), "utf8");
 
-      const loaded = load(file, true);
-      expect(loaded.map((m) => m.entry.summary)).toEqual([largeText, "after boundary"]);
+      const loaded = load(file);
+      expect(loaded.map((m) => m.text)).toEqual([largeText, "after boundary"]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -70,7 +73,7 @@ describe("reading a session for recall", () => {
     // Fresh session: pi has not persisted any entry, so the JSONL does not exist.
     const dir = mkdtempSync(join(tmpdir(), "omp-vcc-load-missing-"));
     try {
-      const loaded = load(join(dir, "nope", "session.jsonl"), false);
+      const loaded = load(join(dir, "nope", "session.jsonl"));
       expect(loaded).toEqual([]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -82,7 +85,7 @@ describe("reading a session for recall", () => {
     const file = join(dir, "session.jsonl");
     try {
       writeFileSync(file, "", "utf8");
-      const loaded = load(file, false);
+      const loaded = load(file);
       expect(loaded).toEqual([]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -94,7 +97,7 @@ describe("reading a session for recall", () => {
     // an empty history. It must not be swallowed.
     const dir = mkdtempSync(join(tmpdir(), "omp-vcc-load-eisdir-"));
     try {
-      expect(() => load(dir, false)).toThrow();
+      expect(() => load(dir)).toThrow();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -111,8 +114,8 @@ describe("reading a session for recall", () => {
       ];
       writeFileSync(file, lines.join("\n") + "\n", "utf8");
 
-      const loaded = load(file, false, new Set(["m2"]));
-      expect(loaded.map((m) => [m.entry.index, m.message.role])).toEqual([[1, "assistant"]]);
+      const loaded = load(file, new Set(["m2"]));
+      expect(loaded.map((m) => [m.index, m.role])).toEqual([[1, "assistant"]]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

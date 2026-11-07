@@ -14,7 +14,6 @@ import {
 } from "../src/core/raw-store";
 import { captureNewEntries, createRawCaptureState, pointPlaceholders, registerRawCapture } from "../src/hooks/raw-capture";
 import { registerRecallTool } from "../src/tools/recall";
-import { listProjectSessions } from "../src/core/sessions";
 
 let dir: string;
 const prev = process.env.OMP_VCC_CONFIG_PATH;
@@ -121,7 +120,7 @@ describe("with omp's own session manager", () => {
 
     // The copy is not a session to omp or to recall's project listing.
     expect(existsSync(rawStorePath(file))).toBe(true);
-    expect(listProjectSessions(sessions, "").map((s) => s.file)).toEqual([file]);
+    expect(await recallOn(sm, { mode: "sessions" })).toStartWith("No earlier sessions in this project");
 
     // Without it, the placeholder is all there is.
     rmSync(rawStorePath(file));

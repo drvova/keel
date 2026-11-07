@@ -14,8 +14,7 @@ import { hostNotes } from "../src/compaction/plan";
 import { core } from "../src/core/lisp-core";
 import { toSummaryMessage } from "../src/compaction/summary-input";
 import { summarize } from "./support/summary";
-import { touchedFiles } from "../src/core/touched";
-import { fileWriteOf } from "../src/core/tools";
+import { recallOn } from "./support/pairs";
 import { openConfig } from "../src/core/settings";
 import { bind, MANUAL_TRIGGER, PI_HOST } from "../src/host";
 
@@ -73,10 +72,14 @@ describe.skipIf(!piInstalled())("Pi shapes", () => {
     const edit: any = { role: "assistant", content: [{ type: "toolCall", id: "t", name: "edit", arguments: args }] };
 
     test("is a change: listed as modified, drillable in mode:'touched'", () => {
-      expect(fileWriteOf({ name: "edit", args })?.edits).toHaveLength(2);
       expect(summarize([{ kind: "tool_call", name: "edit", args } as any]).state.files.modified).toEqual(["src/money.ts"]);
-      const touched = touchedFiles([{ entry: { index: 4, role: "assistant", summary: "" }, message: edit }]);
-      expect(touched[0]).toMatchObject({ path: "src/money.ts", entries: [{ index: 4, toolName: "edit" }] });
+      const touched = recallOn([edit], { mode: "touched" });
+      expect(touched).toContain("  src/money.ts    #0 (edit)");
+      expect(touched).toContain("query:'#0:money.ts'");
+      // Both of its edits are what it put in the file.
+      const content = recallOn([edit], { query: "#0:src/money.ts" });
+      expect(content).toContain("floor : floor + 1");
+      expect(content).toContain("b");
     });
   });
 

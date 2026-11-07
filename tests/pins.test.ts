@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { PIN_CHARS, readPins } from "../src/core/pins";
+import { PIN_CHARS } from "../src/core/pins";
 import { PIN_ENTRY_TYPE } from "../src/names";
 import { executePin } from "../src/tools/pin";
 import { registerPinCommands } from "../src/commands/pin";
@@ -20,6 +20,13 @@ const session = (initial: any[] = []) => {
   };
 };
 
+/** The notes pinned on the session's branch, as vcc_pin lists them: [id, text, by]. */
+const readPins = (entries: any[]): Array<[number, string, string]> => {
+  const s = { appendEntry: () => {} };
+  const listed = executePin({}, s, { getBranch: () => entries, getEntries: () => entries });
+  return [...listed.matchAll(/^- \[(\d+)\] (.*) \((user|agent)(?:, #\d+)?\)$/gm)].map((m) => [Number(m[1]), m[2], m[3]]);
+};
+
 const message = (id: string, role = "user", text = "hello there") =>
   ({ type: "message", id, message: role === "user" ? { role, content: text } : { role, content: [{ type: "text", text }] } });
 
@@ -32,9 +39,9 @@ describe("pinned notes: storage", () => {
     const s = session([message("m1"), message("m2", "assistant")]);
     expect(pin(s, "never edit migrations/")).toBe("Pinned [1] never edit migrations/ (agent, #1).");
     expect(pin(s, "  sessions   in SQLite ")).toBe("Pinned [2] sessions in SQLite (agent, #1).");
-    expect(readPins(s.entries).map((n) => [n.id, n.text, n.by])).toEqual([[1, "never edit migrations/", "agent"], [2, "sessions in SQLite", "agent"]]);
+    expect(readPins(s.entries)).toEqual([[1, "never edit migrations/", "agent"], [2, "sessions in SQLite", "agent"]]);
     expect(unpin(s, "#1")).toBe("Unpinned [1] never edit migrations/ (agent, #1).");
-    expect(readPins(s.entries).map((n) => n.id)).toEqual([2]);
+    expect(readPins(s.entries).map(([id]) => id)).toEqual([2]);
     // An id is never reused, so an old [1] cannot come to mean a new note.
     expect(pin(s, "a third note")).toBe("Pinned [3] a third note (agent, #1).");
   });
@@ -56,7 +63,7 @@ describe("pinned notes: storage", () => {
       { type: "reset_boundary", id: "r" },
       { type: "custom", customType: PIN_ENTRY_TYPE, data: { v: 1, op: "add", id: 2, text: "after clear", by: "agent" } },
     ];
-    expect(readPins(entries).map((n) => n.text)).toEqual(["after clear"]);
+    expect(readPins(entries).map(([, text]) => text)).toEqual(["after clear"]);
   });
 });
 

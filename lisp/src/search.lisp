@@ -2,15 +2,12 @@
 ;;;;
 ;;;; SPDX-License-Identifier: MIT
 ;;;;
-;;;; A port of src/core/search-entries.ts, held to it number for number: the
-;;;; same stopwords and stems, the same BM25 constants and order of operations
-;;;; in double floats, the same relative floor and cap, the same snippets cut at
-;;;; the same code units. tests/lisp-core.test.ts runs both on the same corpus
-;;;; and compares every hit, snippet and count.
+;;;; Ported from the TypeScript search it replaced, number for number: BM25 in
+;;;; double floats, stems, stopwords, a relative floor and a cap, snippets cut
+;;;; at JavaScript's code units. tests/search.test.ts drives it through recall.
 ;;;;
 ;;;; What reaches it is each entry's role, text and files, the text as recall
-;;;; reads it (search-entries.ts, rawSearchText); deciding what an entry's text
-;;;; is stays with the code that reads the host's messages.
+;;;; reads it (render.lisp); deciding what an entry's text is stays there.
 ;;;;
 ;;;; Term queries only, for now. A query with a regex metacharacter is
 ;;;; answered :REGEX, and the caller runs it as before: JavaScript's regex
@@ -32,14 +29,28 @@
                  "this" "what" "which" "who" "whom" "these" "those")
                 table)
       (setf (gethash w table) t)))
-  "Words a term query drops: search-entries.ts's STOPWORDS.")
+  "Words a term query drops.")
 
 (defparameter +bm25-k+ 1.2d0)
 (defparameter +bm25-b+ 0.75d0)
+;;; The floor applies only to a query of two or more distinct terms ("auth auth"
+;;; is one): a single term's score differences are term frequency and document
+;;; length, not the OR-tail noise the floor is for. Measured with
+;;; scripts/benchmark-recall-quality.ts on real sessions (two runs, 161 and 222
+;;; queries): 0.20 cut the multi-term median from 49 to 23 hits and from 60.5 to
+;;; 23.5, with no zero-hit query and no top-1 change, and the top 5 changed in 7%
+;;; and 5% of queries; 0.10 barely thinned the tail (median 49 to 39), and 0.25
+;;; doubled the top-5 changes for little more. The top hit always survives: its
+;;; own score is at least floor times itself.
 (defparameter +relative-floor+ 0.2d0
-  "Multi-term hits scoring below this share of the top one are dropped; why 0.2 is in search-entries.ts.")
+  "Multi-term hits scoring below this share of the top one are dropped.")
+;;; Uncapped, the same queries returned up to 380 hits (median 32 and 29.5, p90
+;;; 119 and 115.9). 50 is above the median and below the p90: 29% and 30% of
+;;; queries were clipped, against 56% at 25, and the worst case shrinks by 87%.
+;;; With the floor: the median went from 32 to 18 and 29.5 to 20, p90 to 50, and
+;;; the top 5 changed in 3% and 2% of queries.
 (defparameter +result-cap+ 50
-  "Most hits a search returns; why 50 is in search-entries.ts.")
+  "Most hits a search returns, by terms or by a regex alike.")
 (defparameter +snippet-line-chars+ 300
   "Longest snippet line, in code units.")
 (defparameter +base64-run+ 1000

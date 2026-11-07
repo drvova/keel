@@ -12,15 +12,12 @@
 // along the current branch, so a branch keeps the pins made on it and an edited
 // or retried turn drops the ones made after the edit point. omp's /clear (a
 // reset_boundary) hides earlier pins, as it does omp's own context notes.
-import { afterReset, hostBranch, hostEntries, RESET_ENTRY_TYPE, type SessionManagerLike } from "./session-file";
-import { PIN_ENTRY_TYPE, PIN_PARAMS, PIN_TOOL } from "../names";
-import { isUnset } from "./tools";
+import { hostBranch, hostEntries, RESET_ENTRY_TYPE, type SessionManagerLike } from "./session-file";
+import { PIN_ENTRY_TYPE } from "../names";
 import { core } from "./lisp-core";
 
 /** One note is clipped to this many characters. */
 export const PIN_CHARS = 300;
-/** Notes shown in a summary; past this the newest are shown and the count says so. */
-const PINS_SHOWN = 20;
 
 type PinAuthor = "user" | "agent";
 
@@ -38,42 +35,8 @@ type PinOp =
 
 const isPinEntry = (e: any): boolean => e?.type === "custom" && e.customType === PIN_ENTRY_TYPE && e.data && typeof e.data === "object";
 
-/** An entry readPins replays: a pin op, or a /clear boundary that ends what came before it. */
+/** An entry the core replays to read the pins: a pin op, or a /clear boundary that ends what came before it. */
 export const replaysPins = (e: any): boolean => isPinEntry(e) || e?.type === RESET_ENTRY_TYPE;
-
-/** The notes pinned on this branch, oldest first. */
-export const readPins = (branch: readonly any[]): PinnedNote[] => {
-  const notes = new Map<number, PinnedNote>();
-  for (const e of afterReset(branch)) {
-    if (!isPinEntry(e)) continue;
-    const op = e.data as Partial<PinOp> & Record<string, unknown>;
-    if (!Number.isInteger(op.id)) continue;
-    if (op.op === "add" && typeof op.text === "string" && op.text.trim()) {
-      notes.set(op.id as number, {
-        id: op.id as number,
-        text: op.text,
-        by: op.by === "agent" ? "agent" : "user",
-        ...(Number.isInteger(op.at) ? { at: op.at as number } : {}),
-      });
-    } else if (op.op === "remove") {
-      notes.delete(op.id as number);
-    }
-  }
-  return [...notes.values()].sort((a, b) => a.id - b.id);
-};
-
-export const formatPin = (n: PinnedNote): string =>
-  `[${n.id}] ${n.text} (${n.by}${n.at != null ? `, #${n.at}` : ""})`;
-
-/** The [Pinned Notes] items: the newest PINS_SHOWN, oldest first, with a count of the rest. */
-export const formatPinLines = (notes: readonly PinnedNote[]): string[] => {
-  const shown = notes.slice(-PINS_SHOWN);
-  const hidden = notes.length - shown.length;
-  return [
-    ...(hidden > 0 ? [`(+${hidden} older pinned notes; ${PIN_TOOL} lists them all)`] : []),
-    ...shown.map(formatPin),
-  ];
-};
 
 // ── Pinning and unpinning, for the tool and the commands ──
 
@@ -81,21 +44,6 @@ export const formatPinLines = (notes: readonly PinnedNote[]): string[] => {
 export interface PinHost {
   appendEntry: (customType: string, data?: unknown) => void;
 }
-
-/**
- * A vcc_pin call as the tool runs it and the brief reads it: a note to pin,
- * an [N] to unpin, both (refused), or neither (a listing). A param sent empty
- * is not sent (tools.ts isUnset).
- */
-export const pinCallOf = (args: Record<string, unknown>): { note: string } | { unpin: unknown } | { both: true } | { list: true } => {
-  const rawNote = args[PIN_PARAMS.note];
-  const note = typeof rawNote === "string" && !isUnset(rawNote) ? rawNote : undefined;
-  const unpin = isUnset(args[PIN_PARAMS.unpin]) ? undefined : args[PIN_PARAMS.unpin];
-  if (note !== undefined && unpin !== undefined) return { both: true };
-  if (note !== undefined) return { note };
-  if (unpin !== undefined) return { unpin };
-  return { list: true };
-};
 
 /** What a pin or unpin did: `done` when the note changed, `text` what to tell. */
 interface PinResult {

@@ -56,7 +56,7 @@ export interface Sizing {
   policy: object | undefined;
   trigger: number | undefined;
   overheadTokens: number;
-  /** Chars per token, calibrated on the messages where the host counted the context (token-estimate.ts's shape). */
+  /** Chars per token, calibrated on the messages where the host counted the context (lisp/src/window.lisp calibrate-chars-per-token). */
   tokenEstimate: { mode: "heuristic" | "calibrated"; charsPerToken: number; sourceChars?: number; sourceTokens?: number; rawCharsPerToken?: number };
   budgets: CompactionBudgets;
 }

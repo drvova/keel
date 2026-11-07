@@ -21,7 +21,7 @@
 ;;;;   within maxBytes and maxEntries (a later one is a project's earlier
 ;;;;   session, and `searched` counts those read).
 ;;;;
-;;;; load: one source's entries as the core reads them, for the parity test
+;;;; load: one source's entries as the core reads them, for the tests of reading a session
 ;;;;   {"op":"load","source":SOURCE} -> {"ok":true,"entries":[{"index","role","summary","files"?,"text"}...]}
 ;;;;
 ;;;; regex: one pattern as `new RegExp(P, "i")` on texts, for the parity test
@@ -51,6 +51,11 @@
 ;;;; working-set: [Working Set] alone (working-set.lisp), for its tests
 ;;;;   {"op":"working-set","history":[MESSAGE...],"indices":[N...],"kept":[MESSAGE...],"maxChars":C}
 ;;;;   -> {"ok":true,"items":[{index,title,note,text}...],"lines":[L...],"shown":[N...]}
+;;;;
+;;;; request: a recall call's params or text as the core reads them (request.lisp), for its tests
+;;;;   {"op":"request","params":P} or {"op":"request","args":TEXT}
+;;;;   -> {"ok":true,"request":{scope, session?, action:{kind,...}, ignored:[PARAM...]},"note":N,
+;;;;       "params":{...},"dropped":[D...]} (params and dropped for the tool's params)
 ;;;;
 ;;;; context-edits: a branch as Pi's context holds it (src/core/context-edits.ts), for the parity test
 ;;;;   {"op":"context-edits","branch":[ENTRY...]} -> {"ok":true,"entries":[ENTRY...]}
@@ -212,8 +217,7 @@ less the indices it skips."
                          "searched" searched)))))))
 
 (defun handle-load (request)
-  "A source's entries as recall renders them and search reads them: what the
-parity test compares with the TS side's load."
+  "A source's entries as recall renders them and search reads them (tests/session-read.test.ts)."
   (json-object "ok" :true
                "entries" (map 'vector (lambda (e)
                                         (destructuring-bind (index role summary files text) e
@@ -305,6 +309,38 @@ parity test compares with JavaScript's own."
                                 items)
                    "lines" (coerce lines 'vector) "shown" (coerce shown 'vector)))))
 
+(defun action-json (action)
+  "A request's action as recall-request.ts wrote it."
+  (destructuring-bind (kind &rest rest) action
+    (case kind
+      (:search (json-object "kind" "search" "query" (first rest) "page" (second rest)))
+      (:expand (json-object "kind" "expand" "indices" (coerce (first rest) 'vector)))
+      (:range (json-object "kind" "range" "range" (coerce (first rest) 'vector) "page" (second rest)))
+      ((:touched :sessions) (json-object "kind" (string-downcase (symbol-name kind)) "page" (first rest)))
+      (:recent (json-object "kind" "recent"))
+      (:drill (destructuring-bind (index path full offset limit) rest
+                (json-object "kind" "drill" "target" (json-object "index" index "pathPattern" path "full" (if full :true :false)
+                                                                   "offset" offset "limit" limit))))
+      (t (json-object "kind" (string-downcase (symbol-name kind)))))))
+
+(defun handle-request-parse (request)
+  "A recall call's params (or a command's text) read as a request, and the note on what it ignored."
+  (let* ((args (json-get request "args"))
+         (req (if (stringp args) (parse-command-request args) (parse-tool-request (json-get request "params"))))
+         (out (json-object "ok" :true
+                           "request" (let ((o (json-object "scope" (getf req :scope) "action" (action-json (getf req :action))
+                                                           "ignored" (map 'vector #'car (getf req :ignored)))))
+                                       (when (getf req :session) (setf (gethash "session" o) (getf req :session)))
+                                       o)
+                           "note" (ignored-note req))))
+    (unless (stringp args)
+      (multiple-value-bind (params dropped) (normalize-tool-params (json-get request "params"))
+        (let ((p (json-object)))
+          (loop for (key value) on params by #'cddr
+                when value do (setf (gethash (string-downcase (symbol-name key)) p) (if (listp value) (coerce value 'vector) value)))
+          (setf (gethash "params" out) p (gethash "dropped" out) (coerce dropped 'vector)))))
+    out))
+
 (defun handle-recall (request)
   "recall-run.ts recall() on the call REQUEST carries in \"input\"."
   (multiple-value-bind (ok text severity) (run-recall (json-get request "input"))
@@ -380,6 +416,7 @@ parity test compares with JavaScript's own."
           ((equal op "summarize") (handle-summarize request))
           ((equal op "compact") (handle-compact request))
           ((equal op "cut") (handle-cut request))
+          ((equal op "request") (handle-request-parse request))
           ((equal op "working-set") (handle-working-set request))
           ((equal op "recall") (handle-recall request))
           ((equal op "window") (handle-window request))

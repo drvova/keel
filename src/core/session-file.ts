@@ -39,15 +39,6 @@ export const RESET_ENTRY_TYPE = "reset_boundary";
 /** An entry `#N` counts: a persisted message. */
 export const isCountedEntry = (entry: any): boolean => entry?.type === "message" && entry.message != null;
 
-/** Index of the branch's last compaction still in context, -1 for none: one before a later `/clear` has left it. */
-export const lastCompactionIndex = (branch: readonly any[]): number => {
-  for (let i = branch.length - 1; i >= 0; i--) {
-    if (branch[i]?.type === "compaction") return i;
-    if (branch[i]?.type === RESET_ENTRY_TYPE) return -1;
-  }
-  return -1;
-};
-
 /** Index of the branch's last `/clear`, -1 for none. */
 export const lastResetIndex = (branch: readonly any[]): number => {
   for (let i = branch.length - 1; i >= 0; i--) if (branch[i]?.type === RESET_ENTRY_TYPE) return i;
@@ -79,12 +70,6 @@ export const indexById = (entries: readonly any[]): Map<string, number> => {
   return byId;
 };
 
-/** `#N` of the last message entry. */
-export const lastIndex = (entries: readonly any[]): number | undefined => {
-  const n = entries.filter(isCountedEntry).length;
-  return n > 0 ? n - 1 : undefined;
-};
-
 /** The file's entries in order; undefined when it does not exist (a new session's file is written with its first entry). Lines that do not parse are skipped. */
 export const readEntries = (file: string): any[] | undefined => {
   const entries: any[] = [];
@@ -95,81 +80,11 @@ export const readEntries = (file: string): any[] | undefined => {
   return found ? entries : undefined;
 };
 
-/** A message entry with its `#N`. */
-interface IndexedMessage {
-  index: number;
-  id: string | undefined;
-  message: Record<string, unknown>;
-}
-
-/** The message entries of a file's entries, each with its `#N`. */
-export const indexedMessages = (entries: readonly any[]): IndexedMessage[] => {
-  const out: IndexedMessage[] = [];
-  for (const entry of entries) {
-    if (!isCountedEntry(entry)) continue;
-    out.push({ index: out.length, id: typeof entry.id === "string" ? entry.id : undefined, message: entry.message });
-  }
-  return out;
-};
-
-/** The ids from `last` back to the root through `parentOf`. */
-const pathToRoot = (parentOf: ReadonlyMap<string, string | null>, last: string | undefined): Set<string> => {
-  const ids = new Set<string>();
-  for (let id: string | null | undefined = last; id && !ids.has(id); id = parentOf.get(id)) ids.add(id);
-  return ids;
-};
-
-/** The entries the tree is made of: everything but the header and omp's title slot. */
-const inTree = (type: unknown): boolean => type !== "session" && type !== "title";
-
-/** The ids on the active branch: the last entry back to the root. Empty for a file without ids (an old format). */
-export const activeBranchIds = (entries: readonly any[]): Set<string> => {
-  const parentOf = new Map<string, string | null>();
-  let last: string | undefined;
-  for (const e of entries) {
-    if (!inTree(e?.type) || typeof e.id !== "string") continue;
-    parentOf.set(e.id, typeof e.parentId === "string" ? e.parentId : null);
-    last = e.id;
-  }
-  return pathToRoot(parentOf, last);
-};
-
 /** The ids on the branch the session manager is on (its whole tree when it gives no branch). */
 export const currentBranchIds = (sessionManager: SessionManagerLike): Set<string> => {
   const branch = hostBranch(sessionManager);
   const entries = branch?.length ? branch : hostEntries(sessionManager) ?? [];
   return new Set(entries.map((e) => e?.id).filter((id): id is string => typeof id === "string" && id !== ""));
-};
-
-/**
- * What a line says without parsing it whole: its type, id and parentId, which
- * both hosts write first. Listing many sessions reads only these.
- */
-export const entryHead = (line: Buffer): { type?: string; id?: string; parentId?: string | null } => {
-  const head = line.subarray(0, Math.min(line.length, 400)).toString("utf8");
-  const type = head.match(/^\{"type":"([^"]+)"/)?.[1];
-  const id = head.match(/"id":"([^"]+)"/)?.[1];
-  const parent = head.match(/"parentId":(?:"([^"]+)"|null)/);
-  return { type, id, ...(parent ? { parentId: parent[1] ?? null } : {}) };
-};
-
-/**
- * A scan of a file's lines by their heads: `onLine` sees each non-empty line
- * and its head; the result is the active branch's ids.
- */
-export const scanLines = (file: string, onLine: (line: Buffer, head: ReturnType<typeof entryHead>) => void): Set<string> | undefined => {
-  const parentOf = new Map<string, string | null>();
-  let last: string | undefined;
-  const found = forEachJsonlLine(file, (line) => {
-    if (line.length === 0) return;
-    const head = entryHead(line);
-    if (inTree(head.type) && head.id) {
-      parentOf.set(head.id, head.parentId ?? null);
-      last = head.id;
-    }
-    onLine(line, head);
-  });
-  return found ? pathToRoot(parentOf, last) : undefined;
 };
 
 const HEADER_BYTES = 64 * 1024;

@@ -2,15 +2,12 @@
 //
 // omp validates arguments before any extension code runs and has no
 // prepareArguments hook, so the schema also accepts the loose forms
-// normalizeToolParams repairs (an index as "#12", a range as "10-20", a scope
-// value in mode, enum values in another case); executeRecall then normalizes
-// them. A key that is no param reaches execute() too, and is named as ignored.
+// the core repairs (lisp/src/request.lisp: an index as "#12", a range as "10-20", a scope
+// value in mode, enum values in another case). A key that is no param reaches execute() too, and is named as ignored.
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { untilCore } from "../core/core-wait";
 import type { Binding } from "../host";
-import { parseToolRequest, type RecallScope } from "../core/recall-request";
-import { scopeParam, sessionParam, withParams } from "../core/format-recall";
-import { RANGE_PAGE_SIZE, RECALL_OUTPUT_CHARS, recall, SEARCH_PAGE_SIZE, type RecallInput, type RecallPagingHints } from "../core/recall-run";
+import { RANGE_PAGE_SIZE, RECALL_OUTPUT_CHARS, recall, SEARCH_PAGE_SIZE, type RecallInput } from "../core/recall-run";
 import { SESSION_REF_MIN_CHARS } from "../core/sessions";
 import { RECALL_PARAMS, RECALL_TOOL } from "../names";
 
@@ -50,29 +47,10 @@ const RECALL_PARAM_DESCRIPTIONS: Record<(typeof RECALL_PARAMS)[number], string> 
   session: `Id (or its first ${SESSION_REF_MIN_CHARS}+ characters) of an earlier session from mode:'sessions' or a [session id] hit: the call reads that session instead of this one.`,
 };
 
-/** Follow-up hints in the tool's own params; inside an earlier session they carry session:'id'. */
-export const toolHints = (short?: string): RecallPagingHints => {
-  const session = sessionParam(short);
-  /** A call's params, written as the agent sends them: what it reads, in which session and scope. */
-  const call = (param: string, scope: RecallScope) => [session, param, scopeParam(scope)].filter(Boolean).join(", ");
-  return {
-    outOfRange: (_query, _scope, totalPages, truncated) => truncated
-      ? `Use a page between 1 and ${totalPages}.`
-      : `Use a page between 1 and ${totalPages}, or refine your query.`,
-    nextPage: (_query, scope, page) => `\n--- Use page:${page}${withParams(session, scopeParam(scope))} for more results ---`,
-    listPage: (mode, page, scope) => `\n--- Use mode:'${mode}' page:${page}${withParams(session, scopeParam(scope))} for more results ---`,
-    // Both calls in the hit's scope: off the current path, a range without scope:'all' skips the hit.
-    aroundHit: (n, scope) =>
-      `\n--- Read around a hit: ${call(`range:[${Math.max(0, n - 3)}, ${n + 3}]`, scope)}; full text: ${call(`expand:[${n}]`, scope)} ---`,
-    otherSessions: (n) =>
-      `This project has ${n} earlier session${n === 1 ? "" : "s"}: scope:'project' searches ${n === 1 ? "it" : "them"} too; mode:'sessions' lists ${n === 1 ? "it" : "them"}.`,
-  };
-};
-
 /**
  * One vcc_recall call. `params` is what omp's schema check let through
- * (RECALL_PARAMETERS); normalizeToolParams repairs the loose forms first.
- * `contextWindow` (the model's) scales the output ceiling (recallOutputChars).
+ * (RECALL_PARAMETERS); the core repairs the loose forms first.
+ * `contextWindow` (the model's) scales the output ceiling.
  */
 export const executeRecall = (
   params: unknown,
@@ -80,7 +58,7 @@ export const executeRecall = (
   options: { contextWindow?: number } = {},
 ): string =>
   // The agent has its current turn in context, and its question would match itself.
-  recall({ request: parseToolRequest(params), sessionManager, ...options, skipCurrentTurn: true, call: { surface: "tool", params } }, toolHints).text;
+  recall({ sessionManager, ...options, skipCurrentTurn: true, call: { surface: "tool", params } }).text;
 
 const numberOrText = { anyOf: [{ type: "number" }, { type: "string" }] };
 const indices = { anyOf: [{ type: "array", items: numberOrText }, { type: "string" }, { type: "number" }] };

@@ -3,12 +3,14 @@
 ;;;; SPDX-License-Identifier: MIT
 ;;;;
 ;;;; No test framework: DEFTEST registers a test, IS records a failure, and
-;;;; RUN-ALL runs every test and answers whether all passed. The parity of the
-;;;; core with the TS code it replaces is checked from the TS side
-;;;; (tests/lisp-core.test.ts); these tests hold what only the Lisp side sees.
+;;;; RUN-ALL runs every test and answers whether all passed. The TypeScript
+;;;; suite drives the core through its ops; these tests hold its parts.
 
 (defpackage #:omp-vcc.test
   (:use #:cl #:omp-vcc)
+  ;; Internals a test holds to their numbers.
+  (:import-from #:omp-vcc #:recall-output-chars #:tokens-from-chars #:calibrate-chars-per-token
+                #:content-chars #:message-chars #:make-ws-call #:reads-part-p #:strip-read-selector)
   (:export #:run-all))
 
 (in-package #:omp-vcc.test)

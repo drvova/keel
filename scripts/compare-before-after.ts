@@ -1,8 +1,7 @@
 import { basename } from "node:path";
 import { compile } from "../src/core/summarize";
 import { DEFAULT_SUMMARY_LIMITS } from "../src/core/window";
-import { renderMessage } from "../src/core/render-entries";
-import { clip } from "../src/core/content";
+import { renderedOf } from "../tests/support/pairs";
 import { prepareSessionSamples } from "../tests/support/real-sessions";
 import { loadSessionMessages } from "../tests/support/load-session";
 
@@ -13,10 +12,7 @@ for (const sample of samples) {
   const loaded = loadSessionMessages(sample.copy);
   const { messages } = loaded;
 
-  const rendered = messages.map((m, i) => renderMessage(m, i));
-  const beforeLines = rendered.map(
-    (e) => `#${e.index} [${e.role}] ${clip(e.summary, 300)}`,
-  );
+  const beforeLines = renderedOf(messages).map((e) => `#${e.index} [${e.role}] ${e.summary.slice(0, 300)}`);
   const beforeText = beforeLines.join("\n");
   const afterText = compile({ messages, limits: DEFAULT_SUMMARY_LIMITS });
 

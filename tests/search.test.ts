@@ -1,8 +1,11 @@
-import { pairs, searchHits } from "./support/pairs";
+// Recall's search (lisp/src/search.lisp): terms ranked by BM25 with stems and
+// a relative floor, or a regex, over each message as recall renders it.
+import { search, searchHits } from "./support/pairs";
 import { describe, it, expect } from "bun:test";
-import { searchEntries } from "../src/core/search-entries";
-import type { RenderedEntry } from "../src/core/render-entries";
 import type { Message } from "@oh-my-pi/pi-ai";
+
+/** What recall listed of an entry, which the search no longer reads: kept so each case still says what it is. */
+type RenderedEntry = { index: number; role: string; summary: string; files?: string[] };
 
 const entries: RenderedEntry[] = [
   { index: 0, role: "user", summary: "Fix login bug" },
@@ -18,19 +21,19 @@ const messages: Message[] = [
   { role: "assistant", content: [{ type: "text", text: "Found the root cause in auth module" }] } as any,
 ];
 
-describe("searchEntries", () => {
+describe("search", () => {
   it("finds nothing for an empty query", () => {
-    expect(searchHits(pairs(entries, messages), "  ")).toEqual([]);
+    expect(searchHits(messages, "  ")).toEqual([]);
   });
 
   it("filters by single term", () => {
-    const r = searchHits(pairs(entries, messages), "login");
+    const r = searchHits(messages, "login");
     expect(r).toHaveLength(1);
     expect(r[0].index).toBe(0);
   });
 
   it("returns empty for no match", () => {
-    expect(searchHits(pairs(entries, messages), "xyz123")).toEqual([]);
+    expect(searchHits(messages, "xyz123")).toEqual([]);
   });
 
   it("finds keyword beyond clip boundary in full content", () => {
@@ -41,7 +44,7 @@ describe("searchEntries", () => {
     const longMsgs: Message[] = [
       { role: "user", content: longText } as any,
     ];
-    const r = searchHits(pairs(longEntries, longMsgs), "hidden_keyword");
+    const r = searchHits(longMsgs, "hidden_keyword");
     expect(r).toHaveLength(1);
     expect(r[0].snippet).toContain("hidden_keyword");
   });
@@ -49,13 +52,13 @@ describe("searchEntries", () => {
   // ── regex support ──
 
   it("supports regex pattern: alternation", () => {
-    const r = searchHits(pairs(entries, messages), "login|auth");
+    const r = searchHits(messages, "login|auth");
     expect(r).toHaveLength(3); // "login bug", "auth.ts", "auth module"
     expect(r.map((h) => h.index).sort()).toEqual([0, 1, 3]);
   });
 
   it("supports regex pattern: wildcard", () => {
-    const r = searchHits(pairs(entries, messages), "Read.*auth");
+    const r = searchHits(messages, "Read.*auth");
     expect(r).toHaveLength(1);
     expect(r[0].index).toBe(1);
   });
@@ -69,13 +72,13 @@ describe("searchEntries", () => {
       { role: "user", content: "error with (foo pattern" } as any,
       { role: "assistant", content: [{ type: "text", text: "no match here" }] } as any,
     ];
-    const r = searchHits(pairs(extraEntries, extraMsgs), "(foo");
+    const r = searchHits(extraMsgs, "(foo");
     expect(r).toHaveLength(1);
     expect(r[0].index).toBe(0);
   });
 
   it("regex is case-insensitive", () => {
-    const r = searchHits(pairs(entries, messages), "FIX|ROOT");
+    const r = searchHits(messages, "FIX|ROOT");
     expect(r).toHaveLength(2);
   });
 
@@ -83,7 +86,7 @@ describe("searchEntries", () => {
 
   it("natural language query uses OR logic", () => {
     // "root cause auth" -- matches entries containing ANY of these terms
-    const r = searchHits(pairs(entries, messages), "root cause auth");
+    const r = searchHits(messages, "root cause auth");
     expect(r.length).toBeGreaterThanOrEqual(2); // #3 has all 3, #1 has auth
     // Best match (highest BM25) should come first
     expect(r[0].index).toBe(3); // "Found the root cause in auth module" matches all 3
@@ -91,14 +94,14 @@ describe("searchEntries", () => {
 
   it("filters stopwords from queries", () => {
     // Searches login and bug; searching "the" as well would also match #3.
-    const r = searchHits(pairs(entries, messages), "what is the login bug");
+    const r = searchHits(messages, "what is the login bug");
     expect(r.map((h) => h.index)).toEqual([0]);
   });
 
   it("keeps all terms if all are stopwords", () => {
     // When all terms are stopwords, keep them (don't drop everything)
     // "the" appears in "Found the root cause" so it matches
-    const r = searchHits(pairs(entries, messages), "the");
+    const r = searchHits(messages, "the");
     expect(r.length).toBeGreaterThan(0);
   });
 
@@ -108,7 +111,7 @@ describe("searchEntries", () => {
     const multiline = "line 0\nline 1\nline 2 TARGET\nline 3\nline 4\nline 5";
     const e: RenderedEntry[] = [{ index: 0, role: "user", summary: "test" }];
     const m: Message[] = [{ role: "user", content: multiline } as any];
-    const r = searchHits(pairs(e, m), "TARGET");
+    const r = searchHits(m, "TARGET");
     expect(r).toHaveLength(1);
     const snip = r[0].snippet!;
     expect(snip).toContain("line 2 TARGET");
@@ -121,7 +124,7 @@ describe("searchEntries", () => {
     const multiline = "TARGET here\nline 1\nline 2\nline 3";
     const e: RenderedEntry[] = [{ index: 0, role: "user", summary: "test" }];
     const m: Message[] = [{ role: "user", content: multiline } as any];
-    const r = searchHits(pairs(e, m), "TARGET");
+    const r = searchHits(m, "TARGET");
     const snip = r[0].snippet!;
     expect(snip).toContain("TARGET here");
     expect(snip).toContain("line 2");
@@ -129,7 +132,7 @@ describe("searchEntries", () => {
   });
 });
 
-describe("searchEntries regex safety", () => {
+describe("search regex safety", () => {
   const corpus = (n: number) => {
     const entries: any[] = [];
     const messages: any[] = [];
@@ -147,7 +150,7 @@ describe("searchEntries regex safety", () => {
     entries.push({ index: 20, role: "user", summary: text, files: [] });
     messages.push({ role: "user", content: [{ type: "text", text }] });
     // As a pattern it matches none of these, and the backtracking runs the search out of its time budget.
-    const r = searchEntries(pairs(entries, messages), "(a+)+$");
+    const r = search(messages, "(a+)+$");
     expect(r.aborted).toBeUndefined();
     expect(r.hits.map((h) => h.index)).toEqual([20]);
   });
@@ -161,13 +164,13 @@ describe("searchEntries regex safety", () => {
       role: "user",
       content: [{ type: "text", text: e.summary }],
     }));
-    const hits = searchHits(pairs(entries, messages), "stag(ing|e)");
+    const hits = searchHits(messages, "stag(ing|e)");
     expect(hits.length).toBe(1);
     expect(hits[0].index).toBe(0);
   });
 });
 
-describe("searchEntries mode fallback", () => {
+describe("search mode fallback", () => {
   const texts = [
     "We decided to drop the Redis cache because invalidation kept breaking staging.",
     "The auth flow now uses short-lived tokens refreshed by the gateway.",
@@ -178,8 +181,8 @@ describe("searchEntries mode fallback", () => {
 
   it("falls back to term search when punctuation forces the regex path", () => {
     // A trailing "?" makes looksLikeRegex treat the whole sentence as one pattern.
-    expect(searchHits(pairs(entries, messages), "why did we drop the cache?").length)
-      .toBe(searchHits(pairs(entries, messages), "why did we drop the cache").length);
+    expect(searchHits(messages, "why did we drop the cache?").length)
+      .toBe(searchHits(messages, "why did we drop the cache").length);
   });
 
   it("keeps regex results when the pattern actually matches", () => {
@@ -187,11 +190,11 @@ describe("searchEntries mode fallback", () => {
     const texts = ["the cache came up once in a long note about deploys, staging and the gateway", "cache cache"];
     const e: RenderedEntry[] = texts.map((t, i) => ({ index: i, role: "user", summary: t }));
     const m: Message[] = texts.map((t) => ({ role: "user", content: t } as any));
-    expect(searchHits(pairs(e, m), "cache|redis").map((h) => h.index)).toEqual([0, 1]);
+    expect(searchHits(m, "cache|redis").map((h) => h.index)).toEqual([0, 1]);
   });
 });
 
-describe("searchEntries toolCall arguments", () => {
+describe("search toolCall arguments", () => {
   it("finds a command, written content or edit text that exists only in toolCall arguments", () => {
     const cases: Array<[string, Record<string, unknown>, string]> = [
       ["bash", { command: "grep -rn UNIQUEMARKER42 src" }, "UNIQUEMARKER42"],
@@ -201,7 +204,7 @@ describe("searchEntries toolCall arguments", () => {
     for (const [name, args, needle] of cases) {
       const e: RenderedEntry[] = [{ index: 0, role: "assistant", summary: "Working on it" }];
       const m: Message[] = [{ role: "assistant", content: [{ type: "toolCall", name, arguments: args }] } as any];
-      const r = searchHits(pairs(e, m), needle);
+      const r = searchHits(m, needle);
       expect(r.map((h) => h.index)).toEqual([0]);
       expect(r[0].snippet).toContain(needle);
     }
@@ -216,7 +219,7 @@ describe("searchEntries toolCall arguments", () => {
         arguments: { path: "a.ts", edits: [{ oldText: "old", newText: "const NARWHAL_FLAG = true;" }] },
       }],
     } as any];
-    const r = searchHits(pairs(e, m), "NARWHAL_FLAG");
+    const r = searchHits(m, "NARWHAL_FLAG");
     expect(r).toHaveLength(1);
     expect(r[0].snippet).toContain("NARWHAL_FLAG");
   });
@@ -230,7 +233,7 @@ describe("searchEntries toolCall arguments", () => {
       role: "assistant",
       content: [{ type: "toolCall", name: "Write", arguments: { content: giant } }],
     } as any];
-    expect(searchHits(pairs(e, m), "NEEDLE_PAST_THE_CAP")).toHaveLength(0);
+    expect(searchHits(m, "NEEDLE_PAST_THE_CAP")).toHaveLength(0);
   });
 
   it("aggregates multiple toolCalls under ONE message-level budget, not per-call", () => {
@@ -248,12 +251,12 @@ describe("searchEntries toolCall arguments", () => {
         { type: "toolCall", name: "bash", arguments: call2 },
       ],
     } as any];
-    const early = searchHits(pairs(e, m), "EARLY_MARKER");
+    const early = searchHits(m, "EARLY_MARKER");
     expect(early).toHaveLength(1);
     expect(early[0].snippet).toContain("EARLY_MARKER");
     // Combined raw text (call1 + "\n" + call2) is ~3011 chars; LATE_MARKER_XYZ
     // sits at the tail of call2, past the shared 2000-char budget.
-    expect(searchHits(pairs(e, m), "LATE_MARKER_XYZ")).toHaveLength(0);
+    expect(searchHits(m, "LATE_MARKER_XYZ")).toHaveLength(0);
   });
 
   it("excludes the recall tool's own arguments from search (no self-hit)", () => {
@@ -265,7 +268,7 @@ describe("searchEntries toolCall arguments", () => {
       role: "assistant",
       content: [{ type: "toolCall", name: "vcc_recall", arguments: { query: "SELF_HIT_MARKER" } }],
     } as any];
-    expect(searchHits(pairs(e, m), "SELF_HIT_MARKER")).toHaveLength(0);
+    expect(searchHits(m, "SELF_HIT_MARKER")).toHaveLength(0);
   });
 
   it("excludes only the recall tool call, not a sibling toolCall in the same message", () => {
@@ -277,8 +280,8 @@ describe("searchEntries toolCall arguments", () => {
         { type: "toolCall", name: "bash", arguments: { command: "echo SIBLING_MARKER" } },
       ],
     } as any];
-    expect(searchHits(pairs(e, m), "SELF_HIT_MARKER")).toHaveLength(0);
-    const r = searchHits(pairs(e, m), "SIBLING_MARKER");
+    expect(searchHits(m, "SELF_HIT_MARKER")).toHaveLength(0);
+    const r = searchHits(m, "SIBLING_MARKER");
     expect(r).toHaveLength(1);
     expect(r[0].snippet).toContain("SIBLING_MARKER");
   });
@@ -289,11 +292,11 @@ describe("searchEntries toolCall arguments", () => {
       role: "assistant",
       content: [{ type: "toolCall", name: "VCC_Recall", arguments: { query: "SELF_HIT_MARKER_2" } }],
     } as any];
-    expect(searchHits(pairs(e, m), "SELF_HIT_MARKER_2")).toHaveLength(0);
+    expect(searchHits(m, "SELF_HIT_MARKER_2")).toHaveLength(0);
   });
 });
 
-describe("searchEntries recall toolResult exclusion", () => {
+describe("search recall toolResult exclusion", () => {
   // A vcc_recall call is [toolCall args (assistant)] -> [toolResult text].
   // The toolCall-args side is covered above; these cover the toolResult side
   // — its "N matches for \"<query>\">" text must not self-match a repeat query.
@@ -304,7 +307,7 @@ describe("searchEntries recall toolResult exclusion", () => {
       role: "toolResult", toolName: "vcc_recall",
       content: [{ type: "text", text: '1 matches for "MARKER" (page 1/1)' }],
     } as any];
-    expect(searchHits(pairs(e, m), "MARKER")).toHaveLength(0);
+    expect(searchHits(m, "MARKER")).toHaveLength(0);
   });
 
   it("keeps an ordinary (non-recall) toolResult searchable", () => {
@@ -313,7 +316,7 @@ describe("searchEntries recall toolResult exclusion", () => {
       role: "toolResult", toolName: "Read",
       content: [{ type: "text", text: "export const MARKER_VALUE = 1;" }],
     } as any];
-    const r = searchHits(pairs(e, m), "MARKER_VALUE");
+    const r = searchHits(m, "MARKER_VALUE");
     expect(r).toHaveLength(1);
     expect(r[0].snippet).toContain("MARKER_VALUE");
   });
@@ -324,11 +327,11 @@ describe("searchEntries recall toolResult exclusion", () => {
       role: "toolResult", toolName: "VCC_Recall",
       content: [{ type: "text", text: '1 matches for "MARKER2"' }],
     } as any];
-    expect(searchHits(pairs(e, m), "MARKER2")).toHaveLength(0);
+    expect(searchHits(m, "MARKER2")).toHaveLength(0);
   });
 });
 
-describe("searchEntries relative noise floor", () => {
+describe("search relative noise floor", () => {
   // Query matches all 4 terms multiple times in entry 0, all 4 terms once
   // in entry 1, and only 1 of 4 terms once each in entries 2-4 — a clear
   // score cliff between {0,1} and {2,3,4} under multi-term BM25 OR scoring.
@@ -345,12 +348,12 @@ describe("searchEntries relative noise floor", () => {
 
   it("drops a clearly low-score tail but preserves the surviving hits' order (default floor)", () => {
     // Baseline (floor disabled): every entry matches at least one term.
-    const baseline = searchEntries(pairs(gradedEntries, gradedMessages), query, { relativeFloor: 0, cap: 1e9 });
+    const baseline = search(gradedMessages, query, { relativeFloor: 0, cap: 1e9 });
     expect(baseline.hits.map((h) => h.index)).toEqual([0, 1, 2, 4, 3]);
 
     // Default floor (no tuning override — the real production constant):
     // the low-score tail (2, 3, 4) is dropped, top order (0, 1) preserved.
-    const r = searchEntries(pairs(gradedEntries, gradedMessages), query);
+    const r = search(gradedMessages, query);
     expect(r.hits.map((h) => h.index)).toEqual([0, 1]);
     expect(r.totalBeforeCap).toBe(2);
     expect(r.truncated).toBe(false); // floor-filtered, not cap-truncated
@@ -360,7 +363,7 @@ describe("searchEntries relative noise floor", () => {
     const texts = ["nothing relevant here at all", "the redis cache invalidation kept failing in staging"];
     const e: RenderedEntry[] = texts.map((t, i) => ({ index: i, role: "user", summary: t }));
     const m: Message[] = texts.map((t) => ({ role: "user", content: t } as any));
-    const r = searchEntries(pairs(e, m), "redis cache invalidation");
+    const r = search(m, "redis cache invalidation");
     expect(r.hits).toHaveLength(1);
     expect(r.hits[0].index).toBe(1);
   });
@@ -377,7 +380,7 @@ describe("searchEntries relative noise floor", () => {
     ];
     const e: RenderedEntry[] = singleTermTexts.map((t, i) => ({ index: i, role: "user", summary: t }));
     const m: Message[] = singleTermTexts.map((t) => ({ role: "user", content: t } as any));
-    const r = searchEntries(pairs(e, m), "auth", { relativeFloor: 0.9, cap: 1e9 });
+    const r = search(m, "auth", { relativeFloor: 0.9, cap: 1e9 });
     expect(r.hits.map((h) => h.index)).toEqual([0, 1]); // both survive: gate bypassed floor entirely
 
     // Control: the SAME floor override on an equivalent MULTI-term corpus
@@ -389,7 +392,7 @@ describe("searchEntries relative noise floor", () => {
     ];
     const e2: RenderedEntry[] = multiTermTexts.map((t, i) => ({ index: i, role: "user", summary: t }));
     const m2: Message[] = multiTermTexts.map((t) => ({ role: "user", content: t } as any));
-    const r2 = searchEntries(pairs(e2, m2), "alpha beta gamma delta", { relativeFloor: 0.9, cap: 1e9 });
+    const r2 = search(m2, "alpha beta gamma delta", { relativeFloor: 0.9, cap: 1e9 });
     expect(r2.hits.map((h) => h.index)).toEqual([0]); // low-score hit filtered
   });
 
@@ -405,13 +408,13 @@ describe("searchEntries relative noise floor", () => {
     const m: Message[] = texts.map((t) => ({ role: "user", content: t } as any));
 
     for (const q of ["auth auth", "Auth AUTH", "auth Auth auth"]) {
-      const r = searchEntries(pairs(e, m), q, { relativeFloor: 0.9, cap: 1e9 });
+      const r = search(m, q, { relativeFloor: 0.9, cap: 1e9 });
       expect(r.hits.map((h) => h.index).sort()).toEqual([0, 1]);
     }
   });
 });
 
-describe("searchEntries hard result cap", () => {
+describe("search hard result cap", () => {
   const size = 60;
   const bm25Entries: RenderedEntry[] = Array.from({ length: size }, (_, i) => ({
     index: i, role: "user", summary: `zebra_query_tag entry number ${i}`,
@@ -421,7 +424,7 @@ describe("searchEntries hard result cap", () => {
   it("bounds the BM25/natural-language path to SEARCH_RESULT_CAP (50)", () => {
     // Disable the floor so the cap's effect is isolated — all 60 entries
     // are equally strong single-term matches, so none would be floor-filtered.
-    const r = searchEntries(pairs(bm25Entries, bm25Messages), "zebra_query_tag", { relativeFloor: 0 });
+    const r = search(bm25Messages, "zebra_query_tag", { relativeFloor: 0 });
     expect(r.totalBeforeCap).toBe(60);
     expect(r.hits).toHaveLength(50);
     expect(r.truncated).toBe(true);
@@ -433,7 +436,7 @@ describe("searchEntries hard result cap", () => {
     }));
     const regexMessages: Message[] = regexEntries.map((e) => ({ role: "user", content: e.summary } as any));
     // "." makes this a regex-mode query (looksLikeRegex), no BM25/floor involved.
-    const r = searchEntries(pairs(regexEntries, regexMessages), "zebra_query_tag.*entry");
+    const r = search(regexMessages, "zebra_query_tag.*entry");
     expect(r.totalBeforeCap).toBe(60);
     expect(r.hits).toHaveLength(50);
     expect(r.truncated).toBe(true);
@@ -442,7 +445,7 @@ describe("searchEntries hard result cap", () => {
   it("does not truncate when raw hits are under the cap", () => {
     const small = bm25Entries.slice(0, 10);
     const smallMsgs = bm25Messages.slice(0, 10);
-    const r = searchEntries(pairs(small, smallMsgs), "zebra_query_tag");
+    const r = search(smallMsgs, "zebra_query_tag");
     expect(r.hits).toHaveLength(10);
     expect(r.totalBeforeCap).toBe(10);
     expect(r.truncated).toBe(false);
@@ -454,7 +457,7 @@ describe("a hit's snippet", () => {
     const e: RenderedEntry[] = [{ index: 0, role: "assistant", summary: "x" }];
     const m: Message[] = [{ role: "assistant", content: [{ type: "text", text: `${"filler line\n".repeat(12)}the totals round down here\nlast line` }] } as any];
     // "rounding" matches "round" by its stem only.
-    const [hit] = searchHits(pairs(e, m), "rounding");
+    const [hit] = searchHits(m, "rounding");
     expect(hit.snippet).toContain("round down");
   });
 });

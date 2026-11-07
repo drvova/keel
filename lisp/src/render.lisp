@@ -2,12 +2,10 @@
 ;;;;
 ;;;; SPDX-License-Identifier: MIT
 ;;;;
-;;;; A port of the parts of src/core/content.ts (readableMessage, textOf),
-;;;; src/core/tools.ts (a call's kind, its paths, its subject, its argument
-;;;; text) and src/core/render-entries.ts (renderMessage's one-line view) that
-;;;; recall's search reads, and of search-entries.ts's fullText. Each is held to
-;;;; the TS output character for character: tests/lisp-core.test.ts compares
-;;;; every entry of generated sessions both sides render.
+;;;; A message made readable whatever it holds, a tool call read (its kind, its
+;;;; paths, its subject, its argument text), the one-line view a range or a
+;;;; search shows, and the full text expand shows and search reads.
+;;;; tests/recall-render.test.ts and the shape tests drive it through recall.
 ;;;;
 ;;;; Messages are the JSON objects the session file holds (json.lisp's
 ;;;; hash tables), read in JavaScript's key order (JSON-KEYS).

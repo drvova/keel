@@ -74,8 +74,8 @@ jobs:
           bun -e "import { VERSION } from '@earendil-works/pi-coding-agent'; console.log('pi', VERSION)"
 
       # The Lisp core (lisp/): Ubuntu's SBCL builds it, its own tests run, and
-      # bun run test below builds the executable and compares it with the TS
-      # search (tests/lisp-core.test.ts) and runs it in real omp and Pi.
+      # bun run test below builds the executable, which every test runs on, in
+      # real omp and Pi too.
       - name: Install SBCL
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends sbcl
       - name: Lisp core tests
@@ -104,8 +104,5 @@ jobs:
           check pi.ts "@earendil-works/pi-coding-agent"
 
       # Each file in a fresh module registry: omp answers Pi's package names once it is loaded (tests/support/pi.ts).
+      # Every test runs on the core, which the preload builds (tests/support/core-on.ts).
       - run: bun run test
-
-      # The same suite with every recall search answered by the Lisp core.
-      - name: Tests through the Lisp core
-        run: OMP_VCC_CORE="$PWD/lisp/build/omp-vcc-core" OMP_VCC_CORE_STRICT=1 bun run test
