@@ -204,7 +204,6 @@
           (setf candidates (nreverse candidates))
           (when candidates
             (multiple-value-bind (hits) (search-docs (js-slice request 0 2000) (map 'vector #'rest candidates) :cap +max-relevant+)
-              (when (eq hits :regex) (error 'left-to-ts :detail "working set request is a regex the core leaves to TS"))
               (unless (eq hits :aborted)
                 (dolist (hit hits)
                   (let* ((index (first (nth (car hit) candidates)))

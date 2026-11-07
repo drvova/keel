@@ -1,6 +1,7 @@
 // /omp-vcc-recall (/pi-vcc-recall on Pi): recall typed by a person, the output
 // sent to the agent as a message of its own.
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+import { whenCore } from "../core/core-wait";
 import { parseCommandRequest, type RecallScope } from "../core/recall-request";
 import { recall, type RecallPagingHints } from "../core/recall-run";
 import { tell, type Binding } from "../host";
@@ -30,10 +31,11 @@ export const registerVccRecallCommand = (pi: ExtensionAPI, host: Pick<Binding, "
       "Recall earlier parts of this session. Plain keywords work best; scope:all reaches edited or retried turns, " +
       "scope:project this project's earlier sessions; 'sessions' lists them, session:<id> reads one.",
     handler: async (args: string, ctx) => {
-      const result = recall(
+      const result = whenCore(() => recall(
         { request: parseCommandRequest(args), sessionManager: ctx.sessionManager, contextWindow: host.window(ctx.model).effective, call: { surface: "command", name, args } },
         commandHints(name),
-      );
+      ), (why) => tell(ctx, why, "warning"));
+      if (!result) return;
       if (!result.ok) {
         tell(ctx, result.text, result.severity);
         return;

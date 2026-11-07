@@ -9,10 +9,6 @@
 
 (in-package #:omp-vcc)
 
-(define-condition left-to-ts (error) ((detail :initarg :detail :reader left-to-ts-detail))
-  (:report (lambda (c s) (format s "left to the TS code: ~a" (left-to-ts-detail c))))
-  (:documentation "Input this port would not be sure to read as the TS does; the caller runs the TS code."))
-
 ;;; --- text a host or a terminal put in --------------------------------------
 
 (defun sanitize (text)

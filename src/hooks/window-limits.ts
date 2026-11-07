@@ -5,7 +5,8 @@ import { learnedHostPolicy, learnWindow, modelKey, type WindowInfo } from "../co
 import { handlesHostCompactions } from "../core/settings";
 import { limitFromOverflowError, triggerFor, type TriggerRule } from "../core/window";
 import { compactAndWait, tell, type Binding, type CompactionTrigger } from "../host";
-import { callCore } from "../core/lisp-core";
+import { callCore, CoreUnavailable } from "../core/lisp-core";
+import { whenCore } from "../core/core-wait";
 
 /** What window tracking learns over a binding's sessions, and the compaction it starts itself. */
 export interface WindowState {
@@ -69,14 +70,23 @@ export const registerWindowTracking = (pi: ExtensionAPI, state: WindowState, hos
   pi.on("message_end", (event, ctx) => {
     const message = event.message as { role?: string; stopReason?: string; errorMessage?: string; errorClassificationMessage?: string };
     if (message?.role !== "assistant" || message.stopReason !== "error") return;
-    const limit = overflowLimit([message.errorMessage, message.errorClassificationMessage]);
-    const hostWindow = ctx?.model?.contextWindow;
-    if (limit && (typeof hostWindow !== "number" || !(hostWindow > 0) || limit < hostWindow)) learnWindow(host.config.dir(), ctx?.model, limit);
+    whenCore(() => {
+      const limit = overflowLimit([message.errorMessage, message.errorClassificationMessage]);
+      const hostWindow = ctx?.model?.contextWindow;
+      if (limit && (typeof hostWindow !== "number" || !(hostWindow > 0) || limit < hostWindow)) learnWindow(host.config.dir(), ctx?.model, limit);
+    });
   });
 
   const onSettled = (event: { willContinue?: boolean; aborted?: boolean } | undefined, ctx: any) => {
     if (event?.willContinue || event?.aborted || scheduled) return;
-    const decided = settledInCore(host, ctx);
+    let decided: { notice: string } | null | undefined;
+    try {
+      decided = settledInCore(host, ctx);
+    } catch (err) {
+      // While the core is not there yet, omp-vcc does not compact in the host's stead.
+      if (err instanceof CoreUnavailable) return;
+      throw err;
+    }
     if (decided !== undefined) {
       if (!decided) return;
       return compactInHostsStead(ctx, decided.notice);

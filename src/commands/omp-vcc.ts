@@ -15,14 +15,17 @@
 import { commandArgs } from "../core/compact-args";
 import type { CompactionState } from "../hooks/compaction";
 import { reportCompactDone, reportCompactError } from "../commands/compact-feedback";
-import { compactAndWait, type HostProfile } from "../host";
+import { compactAndWait, tell, type HostProfile } from "../host";
+import { whenCore } from "../core/core-wait";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 
 export const registerOmpVccCommand = (pi: ExtensionAPI, state: CompactionState, host: HostProfile) => {
   pi.registerCommand(host.command, {
     description: "Compact the conversation into an omp-vcc structured summary (keep:N keeps the last N user turns)",
     handler: async (args, ctx) => {
-      const { followUpPrompt, instructions } = commandArgs(args);
+      const parsed = whenCore(() => commandArgs(args), (why) => tell(ctx, why, "warning"));
+      if (!parsed) return;
+      const { followUpPrompt, instructions } = parsed;
       state.lastStats = null;
       state.lastCancelNotice = null;
       state.pendingManualInstructions = instructions;

@@ -1,6 +1,6 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
-import { callCore } from "./lisp-core";
+import { callCore, CoreUnavailable } from "./lisp-core";
 
 const SETTINGS_FILE = "omp-vcc-config.json";
 /** The file pi-vcc read on omp before the rename; copied to SETTINGS_FILE once. */
@@ -152,14 +152,26 @@ export interface Config {
 
 export const openConfig = (agentDir: () => string): Config => {
   const path = () => process.env.OMP_VCC_CONFIG_PATH ?? join(agentDir(), SETTINGS_FILE);
-  return {
+  let scaffoldPending = false;
+  const config: Config = {
     path,
     dir: () => dirname(path()),
     // The Lisp core reads and scaffolds the file itself (lisp/src/settings.lisp, op settings) when there is one.
-    load: () => (callCore({ op: "settings", path: path() })?.settings as VccSettings | undefined) ?? parseSettings(readJson(path())),
+    load: () => {
+      // A scaffold the core could not do yet (it was being built when omp-vcc loaded) is done now.
+      if (scaffoldPending) config.scaffold();
+      return (callCore({ op: "settings", path: path() })?.settings as VccSettings | undefined) ?? parseSettings(readJson(path()));
+    },
     scaffold() {
       const legacy = process.env.OMP_VCC_CONFIG_PATH == null ? join(dirname(path()), LEGACY_SETTINGS_FILE) : null;
-      if (callCore({ op: "settings", path: path(), legacy, scaffold: true })) return;
+      scaffoldPending = false;
+      try {
+        if (callCore({ op: "settings", path: path(), legacy, scaffold: true })) return;
+      } catch (err) {
+        if (!(err instanceof CoreUnavailable)) throw err;
+        scaffoldPending = true;
+        return;
+      }
       try {
         const file = path();
         const dir = dirname(file);
@@ -188,4 +200,5 @@ export const openConfig = (agentDir: () => string): Config => {
       }
     },
   };
+  return config;
 };

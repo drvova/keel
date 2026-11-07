@@ -2,6 +2,7 @@
 // unpin also takes "#3"; omp has no prepareArguments, so the schema takes a
 // number or a string and removePin (core/pins.ts) reads either form.
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+import { untilCore } from "../core/core-wait";
 import type { HostProfile } from "../host";
 import { addPin, listPins, PIN_CHARS, pinCallOf, pinInCore, removePin, type PinHost } from "../core/pins";
 import type { SessionManagerLike } from "../core/session-file";
@@ -56,7 +57,7 @@ export const registerPinTool = (pi: ExtensionAPI, host: Pick<HostProfile, "comma
     // It writes only omp-vcc's own session entry, not the workspace.
     approval: "read",
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const text = executePin(params, pi, ctx.sessionManager);
+      const text = untilCore(() => executePin(params, pi, ctx.sessionManager));
       return { content: [{ type: "text", text }], details: undefined };
     },
   });

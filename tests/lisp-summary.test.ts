@@ -186,10 +186,11 @@ maybe("Lisp core summary", () => {
     }
   });
 
-  it("leaves text in scripts segmented by dictionary to the TS code", () => {
+  it("answers text in scripts segmented by dictionary itself, by UAX #29's words", () => {
+    // Intl.Segmenter finds the dictionary's words; UAX #29 makes each ideograph one, so a request in Chinese is listed.
     const input: CompileInput = { messages: [{ role: "user", content: "请修复这个错误" }] as any, limits: DEFAULT_SUMMARY_LIMITS };
-    const { ts, lisp, answered } = both(input);
-    expect(answered).toBe(false);
-    expect(lisp).toEqual(ts);
+    const { lisp, answered } = both(input);
+    expect(answered).toBe(true);
+    expect(lisp.text).toContain("请修复这个错误");
   });
 });

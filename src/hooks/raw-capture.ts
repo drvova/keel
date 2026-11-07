@@ -33,16 +33,18 @@ export const captureNewEntries = (state: RawCaptureState, sessionManager: Sessio
   // entry, after what its store and its parents' stores hold (a fork carries
   // its parent's entries, the rewritten ones' originals in the parent's store).
   const switched = file !== state.file;
+  const entries = hostEntries(sessionManager) ?? [];
+  const seen = switched || entries.length < state.seen ? 0 : state.seen;
+  const kept = switched ? new Set<string>() : state.kept;
+  // The Lisp core decides what to keep and appends the store (lisp/src/raw-capture.lisp, op raw-capture).
+  // The binding's place changes only once it answered: while the core is not there yet, the next event tries again from here.
+  const fresh = entries.slice(seen).filter((e: any) => e?.type === "message");
+  const inCore = callCore({ op: "raw-capture", input: { file, entries: fresh, kept: fresh.flatMap((e: any) => (kept.has(e.id) ? [e.id] : [])), lineage: switched } });
   if (switched) {
     state.file = file;
-    state.seen = 0;
-    state.kept = new Set();
+    state.kept = kept;
   }
-  const entries = hostEntries(sessionManager) ?? [];
-  if (entries.length < state.seen) state.seen = 0;
-  // The Lisp core decides what to keep and appends the store (lisp/src/raw-capture.lisp, op raw-capture).
-  const fresh = entries.slice(state.seen).filter((e: any) => e?.type === "message");
-  const inCore = callCore({ op: "raw-capture", input: { file, entries: fresh, kept: fresh.flatMap((e: any) => (state.kept.has(e.id) ? [e.id] : [])), lineage: switched } });
+  state.seen = seen;
   if (inCore) {
     for (const id of (inCore.lineage as string[] | undefined) ?? []) state.kept.add(id);
     if (inCore.stored !== true) return 0;

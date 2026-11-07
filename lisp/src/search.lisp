@@ -291,16 +291,14 @@ list of terms, or a regex (the regex path's one pattern)."
 (defun search-docs (query docs &key (floor +relative-floor+) (cap +result-cap+))
   "Rank DOCS, a vector of (ROLE TEXT FILES), for QUERY, as search-entries.ts
 search does. Returns the hits as a list of (INDEX . SNIPPET) best first, the
-count before the cap, and whether the cap cut it; (values :ABORTED MESSAGE)
-past the time budget; or :REGEX for a query this port leaves to the TS side
-(a construct regex.lisp refuses, or the control stack running out)."
+count before the cap, and whether the cap cut it; or (values :ABORTED MESSAGE)
+past the time budget or the control stack."
   (let ((*regex-deadline* (+ (get-internal-real-time)
                              (* +search-budget-ms+ (/ internal-time-units-per-second 1000))))
         (*steps* 0))
     (handler-case (search-docs-within query docs floor cap)
-      (regex-unsupported () :regex)
-      (storage-condition () :regex)
-      (regex-aborted () (values :aborted +search-aborted+)))))
+      ;; A regex too deep for the stack is one too costly to search, as one past the budget is.
+      ((or regex-aborted storage-condition) () (values :aborted +search-aborted+)))))
 
 (defun cap-hits (hits cap)
   (let ((total (length hits)))
@@ -329,10 +327,6 @@ past the time budget; or :REGEX for a query this port leaves to the TS side
   "The term search: BM25 over HAYS for RAW-QUERY's meaningful words."
   (let* ((terms (mapcar #'make-term (meaningful-terms (js-split-whitespace raw-query))))
          (n (length hays)))
-    ;; The snippet regex joins the terms with |, which numbers a later term's
-    ;; groups after the earlier ones': a later back-reference would mean another group.
-    (when (some (lambda (term) (and (term-regex term) (regex-backrefs (term-regex term)))) (rest terms))
-      (error 'regex-unsupported :detail "back-reference in a later term"))
     (let* ((lens (map 'vector (lambda (h) (word-count (hay-folded h))) hays))
            (df (make-hash-table :test 'equal))
            (matched (make-array n))

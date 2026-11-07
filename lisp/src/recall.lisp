@@ -223,8 +223,7 @@
   (let ((v (coerce loaded 'vector)))
     (multiple-value-bind (hits total truncated)
         (search-docs query (map 'vector (lambda (e) (list (getf e :role) (search-text (getf e :message)) (getf e :files))) v))
-      (cond ((eq hits :regex) (error 'left-to-ts :detail "a query the core leaves to TS"))
-            ((eq hits :aborted) (values :aborted total))
+      (cond ((eq hits :aborted) (values :aborted total))
             (t (values (mapcar (lambda (h) (append (list :snippet (cdr h)) (aref v (car h)))) hits) total truncated))))))
 
 (defun search-before (v query skip)

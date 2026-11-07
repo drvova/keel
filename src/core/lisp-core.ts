@@ -11,29 +11,41 @@ import type { SearchHit, SearchResult } from "./search-entries";
  * synchronous; a start costs ~5 ms.
  *
  * Which executable: OMP_VCC_CORE when it names one, else the build of this
- * copy's lisp/ sources, lisp/build/omp-vcc-core-<hash of the sources>, which
- * omp-vcc builds itself with the user's SBCL the first time it is needed (a
- * minute or so, in the background; an update of the sources builds again).
- * OMP_VCC_CORE=off turns the core off (the tests' TypeScript runs).
+ * copy's lisp/ sources, lisp/build/omp-vcc-core-<hash of the sources> (or in
+ * OMP_VCC_CORE_BUILD_DIR), which
+ * omp-vcc builds itself with the user's SBCL the first time it is needed (in
+ * the background, a few seconds; an update of the sources builds again).
  *
- * While the core is not there yet, and on a refusal (a query it leaves to the
- * TypeScript), the answer is undefined and the caller runs the TypeScript code.
- * Any other failure is undefined too, unless OMP_VCC_CORE_STRICT is set (the
- * tests, CI), which makes it throw, so a test cannot pass on the fallback.
+ * While it is not there (being built, no SBCL, a failed build) a call throws
+ * CoreUnavailable, which says why in words a user can act on; each surface
+ * catches it and steps aside or tells (src/core/core-wait.ts). A core that
+ * fails throws too. OMP_VCC_CORE=off answers undefined: the tests' TypeScript
+ * side, while TypeScript copies remain to compare against.
  */
 export const callCore = (request: object): Record<string, unknown> | undefined => {
   const status = coreStatus();
-  if (status.state !== "ready") return undefined;
+  if (status.state === "off") return undefined;
+  if (status.state !== "ready") throw new CoreUnavailable(status);
   const run = spawnSync(status.path, [], { input: JSON.stringify(request), encoding: "utf8", maxBuffer: 1 << 30 });
   let reply: any;
   try { reply = run.error || run.status !== 0 ? undefined : JSON.parse(run.stdout); } catch {}
   if (reply?.ok === true) return reply;
-  // A query the core leaves to TypeScript is an answer too; anything else is
-  // the core failing, which OMP_VCC_CORE_STRICT (the tests, CI) makes loud.
-  if (process.env.OMP_VCC_CORE_STRICT && reply?.unsupported === undefined) {
-    throw new Error(`omp-vcc's Lisp core failed: ${reply?.error ?? run.error?.message ?? run.stderr ?? `exit ${run.status}`}`);
+  throw new Error(`omp-vcc's core failed: ${reply?.error ?? run.error?.message ?? (run.stderr || `exit ${run.status}`)}`);
+};
+
+/** The core cannot answer yet, or here: `message` says why, as a user is told. */
+export class CoreUnavailable extends Error {
+  constructor(readonly status: Exclude<CoreStatus, { state: "ready" } | { state: "off" }>) {
+    super(coreUnavailableText(status));
   }
-  return undefined;
+}
+
+const coreUnavailableText = (status: CoreUnavailable["status"]): string => {
+  switch (status.state) {
+    case "building": return "omp-vcc is building its core, once for this version (a few seconds); until then it steps aside.";
+    case "no-sbcl": return `omp-vcc needs SBCL to build its core and found none (${status.sbcl}): install SBCL (apt install sbcl, brew install sbcl, or sbcl.org), or set SBCL to its path, and start a new session; until then it steps aside.`;
+    case "failed": return `omp-vcc could not build its core with SBCL: ${status.why}`;
+  }
 };
 
 /** Where the core stands: ready at a path, being built, or not buildable here (and why). */
@@ -45,7 +57,8 @@ export type CoreStatus =
   | { state: "failed"; why: string };
 
 const LISP_DIR = fileURLToPath(new URL("../../lisp/", import.meta.url));
-const BUILD_DIR = join(LISP_DIR, "build");
+/** Where builds go: lisp/build, or OMP_VCC_CORE_BUILD_DIR (an install whose own directory is read-only). */
+const buildDir = (): string => process.env.OMP_VCC_CORE_BUILD_DIR || join(LISP_DIR, "build");
 /** A lock older than this is a build that died with its process: built again. */
 const STALE_LOCK_MS = 15 * 60_000;
 
@@ -57,14 +70,14 @@ const sourceFiles = (dir: string): string[] =>
     return /\.(lisp|asd)$/.test(d.name) ? [p] : [];
   }).sort();
 
-let built: { hash: string; path: string } | undefined;
+let sourcesHash: string | undefined;
 /** The build of these sources: its path is named by their hash, so an update builds again. */
 const buildOfSources = (): { hash: string; path: string } => {
-  if (built) return built;
+  if (sourcesHash) return { hash: sourcesHash, path: join(buildDir(), `omp-vcc-core-${sourcesHash}`) };
   const h = createHash("sha256");
   for (const f of sourceFiles(LISP_DIR)) h.update(relative(LISP_DIR, f)).update("\0").update(readFileSync(f)).update("\0");
-  const hash = h.digest("hex").slice(0, 16);
-  return (built = { hash, path: join(BUILD_DIR, `omp-vcc-core-${hash}`) });
+  sourcesHash = h.digest("hex").slice(0, 16);
+  return buildOfSources();
 };
 
 /** One build per installed copy, shared by every binding of this process. */
@@ -84,7 +97,8 @@ export const coreStatus = (): CoreStatus => {
 const startBuild = (path: string): CoreStatus => {
   const sbcl = process.env.SBCL ?? "sbcl";
   if (spawnSync(sbcl, ["--version"], { stdio: "ignore" }).status !== 0) return { state: "no-sbcl", sbcl };
-  mkdirSync(BUILD_DIR, { recursive: true });
+  const dir = buildDir();
+  mkdirSync(dir, { recursive: true });
   // Another process (another omp or Pi session) may be building it already.
   const lock = `${path}.lock`;
   try {
@@ -106,7 +120,7 @@ const startBuild = (path: string): CoreStatus => {
       if (code === 0 && existsSync(out)) {
         renameSync(out, path);
         // Builds of older sources are of no use now.
-        for (const f of readdirSync(BUILD_DIR)) if (/^omp-vcc-core-[0-9a-f]+$/.test(f) && join(BUILD_DIR, f) !== path) rmSync(join(BUILD_DIR, f), { force: true });
+        for (const f of readdirSync(dir)) if (/^omp-vcc-core-[0-9a-f]+$/.test(f) && join(dir, f) !== path) rmSync(join(dir, f), { force: true });
         building = undefined;
       } else {
         rmSync(out, { force: true });

@@ -12,17 +12,13 @@
 
 ;;; --- words -------------------------------------------------------------------
 ;;;
-;;; The TS counts words with Intl.Segmenter, here SBCL's UAX #29 segmentation:
-;;; the two agree on scripts written with spaces, and not on those ICU segments
-;;; by dictionary (Chinese, Japanese, Thai, Lao, Khmer, Myanmar), whose text is
-;;; left to the TS code.
-
-(defparameter +dictionary-scripts+ '(:han :hiragana :katakana :thai :lao :khmer :myanmar))
+;;; Words are SBCL's UAX #29 segments. They are Intl.Segmenter's in scripts
+;;; written with spaces; in those ICU segments by dictionary (Chinese,
+;;; Japanese, Thai, Lao, Khmer, Myanmar), UAX #29 makes each ideograph a word
+;;; and a run of Thai one, where ICU finds the dictionary's words.
 
 (defun word-segments (text)
   "TEXT's segments as (SEGMENT START END), START and END in code units."
-  (when (some (lambda (c) (member (sb-unicode:script c) +dictionary-scripts+)) text)
-    (error 'left-to-ts :detail "text in a script segmented by dictionary"))
   (let ((at 0))
     (mapcar (lambda (seg) (prog1 (list seg at (+ at (js-length seg))) (incf at (js-length seg))))
             (sb-unicode:words text))))

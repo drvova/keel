@@ -14,6 +14,8 @@ import { keepHostPolicy } from "../core/model-limits";
 import type { WindowState } from "./window-limits";
 import { vccDetailsOf } from "../details";
 import { planCompaction } from "../compaction/plan";
+import { CoreUnavailable } from "../core/lisp-core";
+import { whenCore } from "../core/core-wait";
 import { tellCompactionStats, type CompactionStats } from "../compaction/stats";
 
 /** What the compaction hook needs of its host. */
@@ -33,6 +35,8 @@ export interface CompactionState {
   pendingManualInstructions: string | null;
   /** Why the hook last cancelled a compaction, for /omp-vcc to report where omp shows no notifications. */
   lastCancelNotice: string | null;
+  /** The user was told the core is not there yet (src/core/lisp-core.ts). */
+  coreNoticeShown: boolean;
 }
 
 export const createCompactionState = (): CompactionState => ({
@@ -41,6 +45,7 @@ export const createCompactionState = (): CompactionState => ({
   pendingFollowUpPrompt: null,
   pendingManualInstructions: null,
   lastCancelNotice: null,
+  coreNoticeShown: false,
 });
 
 
@@ -72,6 +77,20 @@ export const registerCompactionHook = (
   };
 
   pi.on("session_before_compact", (event, ctx) => {
+    try {
+      return beforeCompact(event, ctx);
+    } catch (err) {
+      if (!(err instanceof CoreUnavailable)) throw err;
+      // The host compacts as it would without omp-vcc; the user hears why once.
+      if (!state.coreNoticeShown) {
+        state.coreNoticeShown = true;
+        try { tell(ctx, err.message, "warning"); } catch {}
+      }
+      return undefined;
+    }
+  });
+
+  const beforeCompact = (event: any, ctx: any) => {
     const { preparation } = event;
     // As the host has it: the plan reads it through Pi's context edits (core/context-edits.ts).
     const branchEntries = event.branchEntries as any[];
@@ -176,7 +195,7 @@ export const registerCompactionHook = (
         firstKeptEntryId,
       },
     };
-  });
+  };
 
   // Fire success toast for /compact and automatic compactions (delayed to let the
   // UI settle). /omp-vcc reports through its own onComplete callback.
@@ -185,7 +204,7 @@ export const registerCompactionHook = (
     // Another compaction extension can win even when omp-vcc also returned a
     // result, so read the persisted entry rather than lifecycle state: omp-vcc
     // stamps its compactor, reason and willRetry on its own details.
-    const details = vccDetailsOf(event.compactionEntry?.details);
+    const details = whenCore(() => vccDetailsOf(event.compactionEntry?.details));
     if (!details) return;
     const followUpPrompt = state.pendingFollowUpPrompt;
     state.pendingFollowUpPrompt = null;

@@ -29,7 +29,17 @@ omp install https://github.com/drvova/omp-vcc
 pi install git:github.com/drvova/omp-vcc
 ```
 
-omp-vcc needs omp 18.14 or later, or Pi 1.0 or later. `package.json` points each host at its entry: `omp.extensions` at `index.ts`, `pi.extensions` at `pi.ts` (omp reads its own key first).
+omp-vcc needs omp 18.14 or later, or Pi 1.0 or later, and [SBCL](https://www.sbcl.org/) (Steel Bank Common Lisp) on the `PATH`, or named by `SBCL`:
+
+```bash
+sudo apt install sbcl   # Debian, Ubuntu
+```
+
+```bash
+brew install sbcl       # macOS
+```
+
+omp-vcc's work is done by a core written in Common Lisp, which omp-vcc builds with that SBCL the first time it loads (a few seconds, once for each version, into `lisp/build/`, or `OMP_VCC_CORE_BUILD_DIR` when the install directory is read-only). Until it is built, or without SBCL, omp-vcc steps aside, says why once, and the host compacts as it would without it. `package.json` points each host at its entry: `omp.extensions` at `index.ts`, `pi.extensions` at `pi.ts` (omp reads its own key first).
 
 ## Usage
 

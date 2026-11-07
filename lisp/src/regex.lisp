@@ -633,9 +633,11 @@ when given, is that vector to reuse, cleared here."
     nil))
 
 (defun safe-regex (pattern)
-  "PATTERN as search-entries.ts safeRegex compiles it: its text literally when it
-nests quantifiers or does not compile."
+  "PATTERN as a search compiles it: its text literally when it nests
+quantifiers, does not compile, or holds the one construct this engine does
+not follow (a back-reference into or inside a look-behind, which JavaScript
+matches backwards)."
   (if (nested-quantifier-p pattern)
       (compile-regex (escape-regex pattern))
       (handler-case (compile-regex pattern)
-        (regex-syntax-error () (compile-regex (escape-regex pattern))))))
+        ((or regex-syntax-error regex-unsupported) () (compile-regex (escape-regex pattern))))))

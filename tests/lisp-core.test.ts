@@ -85,10 +85,10 @@ maybe("Lisp core search", () => {
     expect(lisp.hits[0].snippet).toContain("needle");
   });
 
-  it("runs regex queries, and leaves refused constructs to the TS code", () => {
+  it("runs regex queries, and searches the one construct it does not follow as text", () => {
     expect(withCore(core, () => callCore({ op: "search", query: "money.ts", docs: [{ role: "user", text: "money.ts", files: [] }] }))?.hits).toHaveLength(1);
-    // A back-reference to what a look-behind captured, which JavaScript matches backwards: the one construct refused.
-    expect(withCore(core, () => callCore({ op: "search", query: "(?<=(a))\\1", docs: [] }))).toBeUndefined();
+    // A back-reference to what a look-behind captured, which JavaScript matches backwards: searched as its text.
+    expect(withCore(core, () => callCore({ op: "search", query: "(?<=(a))\\1", docs: [{ role: "user", text: "see (?<=(a))\\1 here", files: [] }] }))?.hits).toHaveLength(1);
     const items = corpus(3, 30);
     for (const q of ["round.*fail", "(?<n>round)", "zz.z rounding", "(a+)+ round"]) {
       const { ts, lisp } = both(items, q);

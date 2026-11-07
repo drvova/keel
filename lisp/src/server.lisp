@@ -27,12 +27,10 @@
 ;;;; regex: one pattern as `new RegExp(P, "i")` on texts, for the parity test
 ;;;;   {"op":"regex","pattern":P,"texts":[T...]}
 ;;;;   -> {"ok":true,"status":"ok","results":[{"test":B,"search":I,"count":N}...]}
-;;;;      or "status":"syntax" (JavaScript throws) or "unsupported" (left to TS)
+;;;;      or "status":"syntax" (JavaScript throws) or "unsupported" (a back-reference into a look-behind)
 ;;;;
 ;;;; summarize: a compaction's summary (src/core/summarize.ts compileSummary)
 ;;;;   {"op":"summarize","input":COMPILE-INPUT} -> {"ok":true,"text":T,"state":STATE,"sections":[S...]}
-;;;;   or {"ok":false,"unsupported":"summary"} for input left to TS (text in a
-;;;;   script segmented by dictionary, a regex construct it refuses)
 ;;;;
 ;;;; compact: what a compaction does (src/compaction/plan.ts planCompaction)
 ;;;;   {"op":"compact","input":{branch, notes, keepUserTurns, fromCommand, reason,
@@ -99,8 +97,7 @@
 ;;;;    sessionFile, projectFiles (newest first), cwd, lineageIds, hostBranch, contextWindow, skipCurrentTurn}}
 ;;;;   -> {"ok":true,"recall":{"ok":B,"text":T,"severity":S?}}
 ;;;;
-;;;; Either search may answer {"ok":false,"unsupported":"regex"}, and the caller
-;;;; searches as before; {"ok":false,"error":MESSAGE} on any failure.
+;;;; Any failure answers {"ok":false,"error":MESSAGE}.
 ;;;;
 ;;;; Any error is answered, never thrown past MAIN: a caller that gets no
 ;;;; answer falls back, so a broken core costs speed, not recall.
@@ -127,7 +124,6 @@
                      :floor (if (realp floor) (coerce floor 'double-float) +relative-floor+)
                      :cap (if (integerp cap) cap +result-cap+))
       (cond
-        ((eq hits :regex) (json-object "ok" :false "unsupported" "regex"))
         ((eq hits :aborted) (aborted-reply total))
         (t
           (json-object "ok" :true
@@ -187,8 +183,7 @@ less the indices it skips."
                        :floor (if (realp floor) (coerce floor 'double-float) +relative-floor+)
                        :cap (if (integerp cap) cap +result-cap+))
         (cond
-          ((eq hits :regex) (json-object "ok" :false "unsupported" "regex"))
-          ((eq hits :aborted) (aborted-reply total searched))
+            ((eq hits :aborted) (aborted-reply total searched))
           (t
             (json-object "ok" :true
                          "hits" (map 'vector
@@ -232,22 +227,17 @@ parity test compares with JavaScript's own."
 
 (defun handle-summarize (request)
   "compileSummary on the CompileInput REQUEST carries in \"input\"."
-  (handler-case
-      (multiple-value-bind (text state sections) (compile-summary (json-get request "input"))
-        (json-object "ok" :true "text" text "state" (state-json state) "sections" (coerce sections 'vector)))
-    ((or left-to-ts regex-unsupported storage-condition) () (json-object "ok" :false "unsupported" "summary"))))
+  (multiple-value-bind (text state sections) (compile-summary (json-get request "input"))
+    (json-object "ok" :true "text" text "state" (state-json state) "sections" (coerce sections 'vector))))
 
 (defun handle-compact (request)
   "planCompaction on the PlanInput REQUEST carries in \"input\", the host's convertToLlm already applied."
-  (handler-case (json-object "ok" :true "plan" (plan-compaction (json-get request "input")))
-    ((or left-to-ts regex-unsupported storage-condition) () (json-object "ok" :false "unsupported" "compact"))))
+  (json-object "ok" :true "plan" (plan-compaction (json-get request "input"))))
 
 (defun handle-recall (request)
   "recall-run.ts recall() on the call REQUEST carries in \"input\"."
-  (handler-case
-      (multiple-value-bind (ok text severity) (run-recall (json-get request "input"))
-        (json-object "ok" :true "recall" (json-object "ok" (if ok :true :false) "text" text "severity" severity)))
-    ((or left-to-ts regex-unsupported storage-condition) () (json-object "ok" :false "unsupported" "recall"))))
+  (multiple-value-bind (ok text severity) (run-recall (json-get request "input"))
+    (json-object "ok" :true "recall" (json-object "ok" (if ok :true :false) "text" text "severity" severity))))
 
 (defun handle-context-edits (request)
   "The branch REQUEST carries, Pi's context edits applied (context-edits.lisp)."
@@ -264,10 +254,8 @@ parity test compares with JavaScript's own."
 
 (defun handle-pin (request)
   "A pin call (pins.lisp run-pin): what to tell, and the op to append."
-  (handler-case
-      (multiple-value-bind (done text op severity note) (run-pin (json-get request "input"))
-        (json-object "ok" :true "pin" (json-object "done" (if done :true :false) "text" text "op" op "severity" severity "agentNote" note)))
-    (regex-unsupported () (json-object "ok" :false "unsupported" "pin"))))
+  (multiple-value-bind (done text op severity note) (run-pin (json-get request "input"))
+    (json-object "ok" :true "pin" (json-object "done" (if done :true :false) "text" text "op" op "severity" severity "agentNote" note))))
 
 (defun handle-raw-capture (request)
   "Copy the entries REQUEST carries that omp may rewrite into the store (raw-capture.lisp)."
@@ -350,7 +338,8 @@ large request."
   "Entry point of the dumped executable."
   (let ((response (handler-case
                       (handle-request (parse-json (read-stdin)))
-                    (error (e) (json-object "ok" :false "error" (princ-to-string e))))))
+                    ;; The heap or the stack running out too: the caller says the core failed.
+                    (serious-condition (e) (json-object "ok" :false "error" (princ-to-string e))))))
     (write-json response *standard-output*)
     (terpri *standard-output*)
     (finish-output *standard-output*)

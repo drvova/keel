@@ -6,6 +6,7 @@
 // value in mode, enum values in another case); executeRecall then normalizes
 // them. A key that is no param reaches execute() too, and is named as ignored.
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+import { untilCore } from "../core/core-wait";
 import type { Binding } from "../host";
 import { parseToolRequest, type RecallScope } from "../core/recall-request";
 import { scopeParam, sessionParam, withParams } from "../core/format-recall";
@@ -109,7 +110,7 @@ export const registerRecallTool = (pi: ExtensionAPI, host: Pick<Binding, "window
     loadMode: "essential",
     approval: "read",
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const text = executeRecall(params, ctx.sessionManager, { contextWindow: host.window(ctx.model).effective });
+      const text = untilCore(() => executeRecall(params, ctx.sessionManager, { contextWindow: host.window(ctx.model).effective }));
       return { content: [{ type: "text", text }], details: undefined };
     },
   });
