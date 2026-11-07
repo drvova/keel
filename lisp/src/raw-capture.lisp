@@ -55,23 +55,12 @@
                   'vector)))))
 
 (defun store-ids (path ids)
-  "raw-store.ts rawStoreIds of PATH, into the set IDS: the id at each line's
-start, read from its first 512 bytes; a head that does not read stops the scan."
+  "The ids PATH's store keeps, into the set IDS: the id at each line's head (a line that does not read is passed over)."
   (let ((bytes (ignore-errors (read-file-octets (raw-store-path path)))))
     (when bytes
-      ;; The lines between newlines, and a final one without its newline (forEachJsonlLine).
-      (let ((lines (loop for start = 0 then (1+ end)
-                         for end = (or (position 10 bytes :start start) (length bytes))
-                         collect (cons start end)
-                         while (< end (length bytes)))))
-        (when (and lines (= (car (car (last lines))) (length bytes))) (setf lines (butlast lines)))
-        (loop for (start . end) in lines
-              do (let* ((head (decode-utf-8 (subseq bytes start (min end (+ start 512)))))
-                        (m (rx-exec (rx "^\\{\"id\":\"((?:[^\"\\\\]|\\\\.)*)\"") head)))
-                   (when m
-                     (let ((id (handler-case (parse-json (format nil "\"~a\"" (rx-group m 1)))
-                                 (error () (return)))))
-                       (setf (gethash id ids) t)))))))
+      (dolist (line (split-string (decode-utf-8 bytes) #\Newline))
+        (let ((id (and (plusp (length line)) (line-head-id line))))
+          (when (stringp id) (setf (gethash id ids) t)))))
     ids))
 
 (defun lineage-kept-ids (file)
@@ -108,19 +97,6 @@ session file) and returned."
               (and lineage (loop for k being the hash-keys of lineage collect k))))))
 
 ;;; --- pointers on omp's placeholders --------------------------------------------------
-
-(defun index-by-id (entries)
-  "session-file.ts indexById: #N by entry id; an id seen twice is left out."
-  (let ((by-id (make-hash-table :test 'equal)) (ambiguous (make-hash-table :test 'equal)) (n 0))
-    (loop for e across entries
-          when (counted-entry-p e)
-            do (let ((id (json-get e "id")))
-                 (when (and (stringp id) (plusp (length id)))
-                   (if (or (nth-value 1 (gethash id by-id)) (gethash id ambiguous))
-                       (progn (remhash id by-id) (setf (gethash id ambiguous) t))
-                       (setf (gethash id by-id) n))))
-                 (incf n))
-    by-id))
 
 (defun point-placeholders (input)
   "raw-capture.ts pointPlaceholders: for each candidate tool result whose text is

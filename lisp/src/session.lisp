@@ -59,9 +59,30 @@ does not exist (a new session's file is written with its first entry)."
                           (let ((id (json-get entry "id"))) (and (stringp id) id))
                           (json-get entry "message")))))
 
+(defun index-by-id (entries)
+  "#N by entry id over ENTRIES (a vector, in file order); an id seen twice is left out, so a ref is missing rather than wrong."
+  (let ((by-id (make-hash-table :test 'equal)) (ambiguous (make-hash-table :test 'equal)) (n 0))
+    (loop for e across entries
+          when (counted-entry-p e)
+            do (let ((id (json-get e "id")))
+                 (when (and (stringp id) (plusp (length id)))
+                   (if (or (nth-value 1 (gethash id by-id)) (gethash id ambiguous))
+                       (progn (remhash id by-id) (setf (gethash id ambiguous) t))
+                       (setf (gethash id by-id) n))))
+                 (incf n))
+    by-id))
+
 (defun in-tree-p (type)
   "Entries the tree is made of: everything but the header and omp's title slot."
   (not (member type '("session" "title") :test #'equal)))
+
+(defun walk-to-root (parent-of last)
+  "The ids from LAST back to the root through PARENT-OF (id -> parent id), as an EQUAL hash set."
+  (let ((ids (make-hash-table :test 'equal)))
+    (loop for id = last then (gethash id parent-of)
+          while (and id (not (gethash id ids)))
+          do (setf (gethash id ids) t))
+    ids))
 
 (defun active-branch-ids (entries)
   "The ids on the active branch, the last entry back to the root, as an EQUAL
@@ -72,11 +93,7 @@ hash set; empty for a file without ids (an old format)."
         (when (and (hash-table-p e) (in-tree-p (entry-type e)) (stringp id))
           (setf (gethash id parent-of) (let ((p (json-get e "parentId"))) (and (stringp p) p))
                 last id))))
-    (let ((ids (make-hash-table :test 'equal)))
-      (loop for id = last then (gethash id parent-of)
-            while (and id (not (gethash id ids)))
-            do (setf (gethash id ids) t))
-      ids)))
+    (walk-to-root parent-of last)))
 
 ;;; --- the header and the sessions a fork came from ------------------------------
 
@@ -101,7 +118,9 @@ hash set; empty for a file without ids (an old format)."
 are `<timestamp>_<id>.jsonl`)."
   (let ((parent (json-get (read-header path) "parentSession")))
     (when (and (stringp parent) (plusp (length parent)))
-      (if (char= (char parent 0) #\/)
+      ;; An absolute path, as Node's isAbsolute reads one on either system.
+      (if (or (char= (char parent 0) #\/) (char= (char parent 0) #\\)
+              (rx-test (rx "^[A-Za-z]:[\\\\/]") parent))
           (and (probe-file parent) parent)
           (let ((suffix (format nil "_~a.jsonl" parent)))
             (loop for file in (ignore-errors (directory (merge-pathnames "*.jsonl" (directory-namestring path))))

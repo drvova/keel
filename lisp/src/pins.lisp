@@ -29,9 +29,26 @@
               (join-strings (mapcar (lambda (n) (format nil "- ~a" (format-pin n))) notes) (string #\Newline)))))
 
 (defun pin-entry-p (e)
-  "pins.ts isPinEntry: an omp-vcc.pin custom entry whose data is an object (an array is one too)."
+  "A pin or unpin entry: omp-vcc's custom entry, its data an object (an array is one to JavaScript too)."
   (and (equal (json-get e "type") "custom") (equal (json-get e "customType") +pin-entry-type+)
        (let ((d (json-get e "data"))) (or (json-object-p d) (json-array-p d)))))
+
+(defun read-pins (branch)
+  "The notes pinned on BRANCH since its last /clear, oldest first, as JSON: each
+pin and unpin replayed along it, so a branch keeps the pins made on it."
+  (let ((notes (make-hash-table)))
+    (loop for i from (1+ (last-reset-index branch)) below (length branch)
+          for e = (aref branch i)
+          do (let ((op (json-get e "data")))
+               (when (and (pin-entry-p e) (json-object-p op) (js-integer-p (json-get op "id")))
+                 (let ((id (as-integer (json-get op "id"))) (text (json-get op "text")))
+                   (cond ((and (equal (json-get op "op") "add") (stringp text) (plusp (length (js-trim text))))
+                          (setf (gethash id notes)
+                                (json-object "id" id "text" text "by" (if (equal (json-get op "by") "agent") "agent" "user")
+                                             "at" (and (js-integer-p (json-get op "at")) (as-integer (json-get op "at"))))))
+                         ((equal (json-get op "op") "remove") (remhash id notes)))))))
+    (let ((ids (sort (loop for k being the hash-keys of notes collect k) #'<)))
+      (mapcar (lambda (id) (gethash id notes)) ids))))
 
 (defun next-pin-id (branch)
   "pins.ts nextPinId: one past every id used on this branch, unpinned ones included."
@@ -57,17 +74,13 @@
 
 (defun same-id-p (a b) (and (realp a) (realp b) (= (js-id a) (js-id b))))
 
-(defun counted-messages (entries)
-  (count-if (lambda (e) (and (equal (json-get e "type") "message") (let ((m (json-get e "message" :null))) (not (eq m :null)))))
-            entries))
-
 (defun add-pin (branch entries raw by)
   "pins.ts addPin: (values DONE TEXT OP)."
   (multiple-value-bind (text clipped) (pin-text raw)
     (when (zerop (length text)) (return-from add-pin (values nil "Nothing to pin: give the note text." nil)))
     (let ((existing (find text (read-pins branch) :key (lambda (n) (json-get n "text")) :test #'string=)))
       (when existing (return-from add-pin (values nil (format nil "Already pinned: ~a." (format-pin existing)) nil))))
-    (let* ((counted (counted-messages entries))
+    (let* ((counted (count-if #'counted-entry-p entries))
            (at (and (plusp counted) (1- counted)))
            (op (json-object "v" 1 "op" "add" "id" (next-pin-id branch) "text" text "by" by "at" at)))
       (values t (format nil "Pinned ~a~a." (format-pin op) (if clipped (format nil " (clipped to ~d chars)" +pin-chars+) "")) op))))

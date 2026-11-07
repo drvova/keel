@@ -318,23 +318,6 @@
   "A stored index (details.historyIndex) as a list of ranges, or :INVALID when it is not a well-formed one."
   (if (and (json-array-p index) (every #'history-range-p index)) (coerce index 'list) :invalid))
 
-(defun read-pins (branch)
-  "pins.ts readPins: the notes pinned on this branch since its last /clear, by id, as JSON."
-  (let ((notes (make-hash-table)))
-    (loop for i from (1+ (last-reset-index branch)) below (length branch)
-          for e = (aref branch i)
-          do (let ((op (json-get e "data")))
-               (when (and (equal (json-get e "type") "custom") (equal (json-get e "customType") +pin-entry-type+) (json-object-p op)
-                          (js-integer-p (json-get op "id")))
-                 (let ((id (as-integer (json-get op "id"))) (text (json-get op "text")))
-                   (cond ((and (equal (json-get op "op") "add") (stringp text) (plusp (length (js-trim text))))
-                          (setf (gethash id notes)
-                                (json-object "id" id "text" text "by" (if (equal (json-get op "by") "agent") "agent" "user")
-                                             "at" (and (js-integer-p (json-get op "at")) (as-integer (json-get op "at"))))))
-                         ((equal (json-get op "op") "remove") (remhash id notes)))))))
-    (let ((ids (sort (loop for k being the hash-keys of notes collect k) #'<)))
-      (mapcar (lambda (id) (gethash id notes)) ids))))
-
 ;;; --- [History Index] (history-index.ts) -------------------------------------------------------
 
 (defun longest-first (asks)
