@@ -246,7 +246,7 @@ parity test compares with JavaScript's own."
 
 (defun handle-summarize (request)
   "compileSummary on the CompileInput REQUEST carries in \"input\"."
-  (multiple-value-bind (text state sections) (compile-summary (json-get request "input"))
+  (multiple-value-bind (text state sections) (compile-summary (summary-input-from-json (json-get request "input")))
     (json-object "ok" :true "text" text "state" (state-json state) "sections" (coerce sections 'vector))))
 
 (defun with-ok (reply) (setf (gethash "ok" reply) :true) reply)

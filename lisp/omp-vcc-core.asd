@@ -48,6 +48,7 @@
      (:file "blocks")
      (:file "extract")
      (:file "brief")
+     (:file "history")
      (:file "summary")
      ;; The compaction: its cut, the working set, and the plan the hook acts on.
      (:file "calls")

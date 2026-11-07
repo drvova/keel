@@ -83,19 +83,34 @@
                       (&key early-requests early-slots modified created read commits tracked user-messages (brief ""))))
   early-requests early-slots modified created read commits tracked user-messages brief)
 
-(defun state-from-json (v)
-  "A state the TS side read and checked (summary-state.ts readState)."
-  (let ((files (json-get v "files")))
-    (make-state :early-requests (strings-of (json-get v "earlyRequests"))
-                :early-slots (json-get v "earlySlots")
-                :modified (strings-of (json-get files "modified"))
-                :created (strings-of (json-get files "created"))
-                :read (strings-of (json-get files "read"))
-                :commits (map 'list (lambda (c) (make-commit (json-get c "message") (let ((h (json-get c "hash"))) (and (stringp h) h))))
-                              (json-get v "commits" #()))
-                :tracked (map 'list (lambda (tr) (cons (json-get tr "name") (strings-of (json-get tr "entries")))) (json-get v "tracked" #()))
-                :user-messages (strings-of (json-get v "userMessages"))
-                :brief (string-or (json-get v "brief") ""))))
+(defun read-state (v)
+  "A stored state (details.summaryState) as a state, or NIL when V is none or not a well-formed one.
+A list it lacks is empty; earlySlots it lacks is what the requests it holds leave of three."
+  (when (json-object-p v)
+    (let ((files (json-get v "files" (make-hash-table :test 'equal))) (ok t))
+      (labels ((strings-p (x) (and (json-array-p x) (every #'stringp x)))
+               (commit-p (c) (and (json-object-p c) (stringp (json-get c "message"))
+                                  (multiple-value-bind (h p) (gethash "hash" c) (or (not p) (stringp h)))))
+               (tracked-p (tr) (and (json-object-p tr) (stringp (json-get tr "name")) (strings-p (json-get tr "entries"))))
+               (field (obj key test default)
+                 (multiple-value-bind (x present) (gethash key obj)
+                   (cond ((not present) default) ((funcall test x) x) (t (setf ok nil) default)))))
+        (unless (json-object-p files) (return-from read-state nil))
+        (let* ((early (strings-of (field v "earlyRequests" #'strings-p #())))
+               (state (make-state
+                       :early-requests early
+                       :modified (strings-of (field files "modified" #'strings-p #()))
+                       :created (strings-of (field files "created" #'strings-p #()))
+                       :read (strings-of (field files "read" #'strings-p #()))
+                       :commits (map 'list (lambda (c) (make-commit (json-get c "message") (let ((h (json-get c "hash"))) (and (stringp h) h))))
+                                     (field v "commits" (lambda (x) (and (json-array-p x) (every #'commit-p x))) #()))
+                       :tracked (map 'list (lambda (tr) (cons (json-get tr "name") (strings-of (json-get tr "entries"))))
+                                     (field v "tracked" (lambda (x) (and (json-array-p x) (every #'tracked-p x))) #()))
+                       :user-messages (strings-of (field v "userMessages" #'strings-p #()))
+                       :brief (field v "brief" #'stringp "")
+                       :early-slots (as-integer (field v "earlySlots" (lambda (x) (and (js-integer-p x) (>= x 0)))
+                                                       (max 0 (- +early-requests-kept+ (length early))))))))
+          (and ok state))))))
 
 (defun state-json (s)
   (json-object "earlyRequests" (coerce (state-early-requests s) 'vector)
@@ -315,57 +330,54 @@
                                         (let ((at (json-get n "at"))) (and at (not (eq at :null)) (js-string-of at)))))
                     shown))))
 
-(defun plural (n one) (format nil "~d ~a~a" n one (if (= n 1) "" "s")))
-
-(defun history-files (files)
-  (if (<= (length files) 3)
-      (format nil "changed ~a" (join-strings (mapcar (lambda (p) (join-strings (last (split-string p #\/) 2) "/")) files) ", "))
-      (let* ((dirs (remove-duplicates (mapcar (lambda (p) (let ((parts (remove "" (split-string p #\/) :test #'string=)))
-                                                            (if (> (length parts) 1) (nth (- (length parts) 2) parts) ".")))
-                                              files)
-                                      :test #'string= :from-end t)))
-        (format nil "changed ~a files in ~a~a" (if (>= (length files) 24) (format nil "~d+" (length files)) (length files))
-                (join-strings (subseq dirs 0 (min 6 (length dirs))) ", ") (if (> (length dirs) 6) ", …" "")))))
-
-(defun history-line (r)
-  "One [History Index] range: history-index.ts formatHistoryRange."
-  (let ((parts '()) (requests (json-get r "requests")) (files (strings-of (json-get r "files")))
-        (commits (strings-of (json-get r "commits"))) (count (json-get r "commitCount")) (failed (json-get r "failed")))
-    (cond ((or (null requests) (eq requests :null)) (push "earlier, not indexed; search it with vcc_recall" parts))
-          ((and (realp requests) (> requests 0))
-           (push (format nil "~a: ~a" (plural requests "request")
-                         (join-strings (mapcar (lambda (a) (format nil "\"~a\"" a)) (subseq (strings-of (json-get r "asks")) 0 (min 1 (length (strings-of (json-get r "asks")))))) ", "))
-                 parts)))
-    (when files (push (history-files files) parts))
-    (when (and (realp count) (> count 0))
-      (let ((last (if commits (car (last commits)) "undefined")))
-        (push (if (= count 1) (format nil "1 commit: ~a" last) (format nil "~d commits, last ~a" count last)) parts)))
-    (when (and (realp failed) (> failed 0)) (push (plural failed "failed call") parts))
-    (format nil "#~a–#~a~:[~;: ~a~]" (js-string-of (json-get r "from")) (js-string-of (json-get r "to")) parts (join-strings (nreverse parts) " · "))))
-
 ;;; --- compileSummary --------------------------------------------------------------------
 
+(defstruct (summary-input (:constructor make-summary-input
+                              (&key messages indices previous previous-summary previous-foreign file-ops
+                                    track-commands history pins working-set task-state limits ranking)))
+  "What a summary is compiled from. MESSAGES (a vector) with INDICES, their #N;
+PREVIOUS the state the previous compaction stored, else PREVIOUS-SUMMARY its
+text, which another compactor wrote when PREVIOUS-FOREIGN; FILE-OPS the host's;
+TRACK-COMMANDS the names [Tracked Commands] lists; HISTORY the ranges, PINS the
+pinned notes, WORKING-SET and TASK-STATE their lines; LIMITS each section's size
+and RANKING the brief's (window.lisp)."
+  messages indices previous previous-summary previous-foreign file-ops
+  track-commands history pins working-set task-state limits ranking)
+
+(defun summary-input-from-json (input)
+  "op summarize's CompileInput (src/core/summarize.ts) as a summary-input."
+  (make-summary-input
+   :messages (json-get input "messages" #())
+   :indices (let ((ix (json-get input "sourceIndices"))) (and (json-array-p ix) ix))
+   :previous (read-state (json-get input "previous"))
+   :previous-summary (let ((s (json-get input "previousSummary"))) (and (stringp s) s))
+   :previous-foreign (eq (json-get input "previousSummaryForeign") :true)
+   :file-ops (json-get input "fileOps")
+   :track-commands (strings-of (json-get input "trackCommands"))
+   :history (let ((h (json-get input "historyIndex"))) (and (json-array-p h) (remove nil (map 'list #'range-from-json h))))
+   :pins (let ((notes (json-get input "pinnedNotes"))) (and (json-array-p notes) (coerce notes 'list)))
+   :working-set (strings-of (json-get input "workingSet"))
+   :task-state (strings-of (json-get input "taskState"))
+   :limits (json-get input "limits")
+   :ranking (json-get input "ranking")))
+
 (defun compile-summary (input)
-  "The summary of a window and the state to store: summarize.ts compileSummary.
-INPUT is its CompileInput as JSON. Returns (values TEXT STATE SECTIONS)."
-  (let* ((limits (json-get input "limits"))
-         (blocks (summary-blocks (json-get input "messages" #())
-                                 (let ((ix (json-get input "sourceIndices"))) (and (json-array-p ix) ix))))
-         (stored (let ((p (json-get input "previous"))) (and (json-object-p p) (state-from-json p))))
-         (previous-summary (let ((s (json-get input "previousSummary"))) (and (stringp s) (plusp (length s)) s)))
-         (legacy (and (null stored) previous-summary
-                      (legacy-previous previous-summary (eq (json-get input "previousSummaryForeign") :true))))
+  "The summary of a window and the state to store, from the summary-input INPUT: (values TEXT STATE SECTIONS)."
+  (let* ((limits (summary-input-limits input))
+         (blocks (summary-blocks (summary-input-messages input) (summary-input-indices input)))
+         (stored (summary-input-previous input))
+         (previous-summary (let ((s (summary-input-previous-summary input))) (and s (plusp (length s)) s)))
+         (legacy (and (null stored) previous-summary (legacy-previous previous-summary (summary-input-previous-foreign input))))
          (previous (or stored legacy))
-         (file-ops (json-get input "fileOps"))
+         (file-ops (summary-input-file-ops input))
          (fresh (fresh-state blocks
-                             (select-ranked-brief-blocks blocks (json-get input "ranking") file-ops)
+                             (select-ranked-brief-blocks blocks (summary-input-ranking input) file-ops)
                              file-ops
-                             (strings-of (json-get input "trackCommands"))
+                             (summary-input-track-commands input)
                              (if previous (state-early-slots previous) +early-requests-kept+)))
          (merged (merge-states (if legacy (with-full-paths legacy fresh) previous) fresh limits))
-         (pins (let ((notes (json-get input "pinnedNotes"))) (and (vectorp notes) (plusp (length notes)) (pin-lines (coerce notes 'list)))))
-         (history (let ((h (json-get input "historyIndex"))) (and (vectorp h) (map 'list #'history-line h))))
-         (working-set (let ((w (strings-of (json-get input "workingSet")))) w))
-         (task-state (strings-of (json-get input "taskState"))))
-    (multiple-value-bind (text sections) (render-summary merged limits pins history working-set task-state)
+         (pins (and (summary-input-pins input) (pin-lines (summary-input-pins input))))
+         (history (mapcar #'history-line (summary-input-history input))))
+    (multiple-value-bind (text sections)
+        (render-summary merged limits pins history (summary-input-working-set input) (summary-input-task-state input))
       (values text (cap-state merged limits) sections))))

@@ -134,6 +134,10 @@ describe("[History Index] lines", () => {
     expect(lines([range(0, 9, { files: ["src/auth/a.ts", "src/auth/b.ts", "src/billing/c.ts", "lib/d.ts"] })])[0]).toContain("changed 4 files in auth, billing, lib");
   });
 
+  it("counts commits a range does not list without inventing the last one", () => {
+    expect(lines([range(0, 9, { commits: [], commitCount: 2 })])).toEqual(['#0–#9: 1 request: "ask 0" · 2 commits']);
+  });
+
   it("marks history from before the index", () => {
     expect(lines([{ from: 0, to: 99, asks: [], files: [], commits: [], commitCount: 0, failed: 0 }])).toEqual(["#0–#99: earlier, not indexed; search it with vcc_recall"]);
   });

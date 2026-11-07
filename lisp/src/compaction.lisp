@@ -357,113 +357,6 @@ MESSAGES-TO-CONVERT, in that order."
     (let ((own (if (own-p details) details (json-get details "hookDetails"))))
       (and (own-p own) own))))
 
-(defun read-state (v)
-  "summary-state.ts readState: a stored state, as JSON, or NIL when V is none."
-  (when (json-object-p v)
-    (let ((files (let ((f (json-get v "files" :absent))) (cond ((eq f :absent) (make-hash-table :test 'equal)) ((json-object-p f) f)))))
-      (when files
-        (labels ((strings-p (x) (and (json-array-p x) (every #'stringp x)))
-                 (field (key obj test default)
-                   (multiple-value-bind (x present) (gethash key obj)
-                     (cond ((not present) (values default t)) ((funcall test x) (values x t)) (t (values nil nil))))))
-          (let ((ok t) (out (make-hash-table :test 'equal)) (fout (make-hash-table :test 'equal)))
-            (macrolet ((take (key obj test default target)
-                         `(multiple-value-bind (x good) (field ,key ,obj ,test ,default)
-                            (if good (setf (gethash ,key ,target) x) (setf ok nil)))))
-              (take "earlyRequests" v #'strings-p #() out)
-              (take "modified" files #'strings-p #() fout)
-              (take "created" files #'strings-p #() fout)
-              (take "read" files #'strings-p #() fout)
-              (take "commits" v (lambda (x) (and (json-array-p x)
-                                                 (every (lambda (c) (and (json-object-p c) (stringp (json-get c "message"))
-                                                                         (multiple-value-bind (h p) (gethash "hash" c) (or (not p) (stringp h)))))
-                                                        x)))
-                    #() out)
-              (take "tracked" v (lambda (x) (and (json-array-p x)
-                                                 (every (lambda (tr) (and (json-object-p tr) (stringp (json-get tr "name")) (strings-p (json-get tr "entries")))) x)))
-                    #() out)
-              (take "userMessages" v #'strings-p #() out)
-              (take "brief" v #'stringp "" out))
-            (when ok
-              (multiple-value-bind (slots good)
-                  (field "earlySlots" v (lambda (x) (and (js-integer-p x) (>= x 0)))
-                         (max 0 (- +early-requests-kept+ (length (gethash "earlyRequests" out)))))
-                (when good
-                  (setf (gethash "earlySlots" out) (as-integer slots)
-                        (gethash "files" out) fout)
-                  out)))))))))
-
-(defun history-range-p (r)
-  (and (json-object-p r)
-       (js-integer-p (json-get r "from")) (js-integer-p (json-get r "to")) (<= (json-get r "from") (json-get r "to"))
-       (every (lambda (k) (let ((x (json-get r k))) (json-array-p x))) '("asks" "files" "commits"))
-       (js-integer-p (json-get r "commitCount")) (js-integer-p (json-get r "failed"))
-       (multiple-value-bind (q present) (gethash "requests" r) (or (not present) (js-integer-p q)))))
-
-(defun read-history-index (index)
-  "A stored index (details.historyIndex) as a list of ranges, or :INVALID when it is not a well-formed one."
-  (if (and (json-array-p index) (every #'history-range-p index)) (coerce index 'list) :invalid))
-
-;;; --- [History Index] (history-index.ts) -------------------------------------------------------
-
-(defun longest-first (asks)
-  (let ((unique (remove-duplicates asks :test #'string= :from-end t)))
-    (let ((sorted (stable-sort (copy-list unique) #'> :key #'js-length)))
-      (subseq sorted 0 (min 4 (length sorted))))))
-
-(defun range-of-window (messages indices)
-  "The range this compaction summarizes, as JSON, or NIL when it has no #N."
-  (let ((known (remove-if-not #'realp (coerce indices 'list))))
-    (when known
-      (let* ((blocks (summary-blocks messages indices))
-             (changed (multiple-value-bind (read modified created) (extract-files blocks nil)
-                        (declare (ignore read))
-                        (remove-duplicates (append modified created) :test #'string= :from-end t)))
-             (commits (mapcar (lambda (c) (js-clip (if (commit-hash c) (format nil "~a ~a" (commit-hash c) (commit-message c)) (commit-message c)) 45))
-                              (extract-commits blocks)))
-             (asks (extract-user-messages blocks)))
-        (json-object "from" (reduce #'min known) "to" (reduce #'max known)
-                     "requests" (length asks)
-                     "asks" (coerce (mapcar (lambda (a) (js-clip a 80)) (longest-first asks)) 'vector)
-                     "files" (coerce (subseq changed 0 (min 24 (length changed))) 'vector)
-                     "commits" (coerce (last-n commits 4) 'vector)
-                     "commitCount" (length commits)
-                     "failed" (count-if (lambda (b) (and (eq (block-kind b) :tool-call) (block-failed b))) blocks))))))
-
-(defun merge-two-ranges (a b)
-  (let ((ra (json-get a "requests")) (rb (json-get b "requests")))
-    (json-object "from" (min (json-get a "from") (json-get b "from"))
-                 "to" (max (json-get a "to") (json-get b "to"))
-                 "requests" (and (realp ra) (realp rb) (+ ra rb))
-                 "asks" (coerce (longest-first (append (strings-of (json-get a "asks")) (strings-of (json-get b "asks")))) 'vector)
-                 "files" (let ((f (remove-duplicates (append (coerce (json-get a "files") 'list) (coerce (json-get b "files") 'list)) :test #'equal :from-end t)))
-                           (coerce (subseq f 0 (min 24 (length f))) 'vector))
-                 "commits" (coerce (last-n (append (coerce (json-get a "commits") 'list) (coerce (json-get b "commits") 'list)) 4) 'vector)
-                 "commitCount" (+ (json-get a "commitCount") (json-get b "commitCount"))
-                 "failed" (+ (json-get a "failed") (json-get b "failed")))))
-
-(defun says-nothing-p (r)
-  (and (eql (json-get r "requests") 0) (zerop (length (json-get r "files"))) (eql (json-get r "commitCount") 0) (eql (json-get r "failed") 0)))
-
-(defun merge-history-index (previous fresh max-ranges)
-  (let* ((ranges (copy-list previous)) (last (car (last ranges))))
-    (if (and fresh last (says-nothing-p fresh) (<= (json-get fresh "from") (1+ (json-get last "to"))) (> (json-get fresh "to") (json-get last "to")))
-        (let ((extended (copy-object last))) (setf (gethash "to" extended) (json-get fresh "to"))
-          (append (butlast ranges) (list extended)))
-        (progn
-          (when fresh (setf ranges (append ranges (list fresh))))
-          (setf ranges (stable-sort ranges #'< :key (lambda (r) (json-get r "from"))))
-          (loop while (> (length ranges) (max 2 max-ranges))
-                do (let ((best 0) (best-span nil) (v (coerce ranges 'vector)))
-                     (loop for i from 0 below (- (length v) 2)
-                           for span = (- (json-get (aref v (1+ i)) "to") (json-get (aref v i) "from"))
-                           when (or (null best-span) (< span best-span)) do (setf best i best-span span))
-                     (setf ranges (append (subseq ranges 0 best) (list (merge-two-ranges (aref v best) (aref v (1+ best)))) (nthcdr (+ best 2) ranges)))))
-          ranges))))
-
-(defun unindexed-range (to)
-  (json-object "from" 0 "to" to "asks" #() "files" #() "commits" #() "commitCount" 0 "failed" 0))
-
 ;;; --- restoring originals for the working set (raw-store.ts restoreOriginals) -----------
 
 (defun restore-originals (messages ids file)
@@ -489,8 +382,23 @@ MESSAGES-TO-CONVERT, in that order."
 
 (defun budget (budgets key) (json-get budgets key))
 
+(defstruct (assembly (:constructor make-assembly (text state sections summarized history shown growth)))
+  "A summary written for a cut: its TEXT, the STATE to store and the SECTIONS it
+shows; how many messages it SUMMARIZED; the HISTORY ranges to store; the #N
+[Working Set] SHOWN; and its GROWTH."
+  text state sections summarized history shown growth)
+
+(defstruct (growth (:constructor make-growth (net allowed)))
+  "How much a summary adds to the context: NET chars (its length less the previous
+summary's and what it removes) against the ALLOWED margin."
+  net allowed)
+
+(defun growth-grows-p (g) (> (growth-net g) (growth-allowed g)))
+(defun growth-json (g)
+  (json-object "netChars" (growth-net g) "allowedChars" (growth-allowed g) "grows" (bool (growth-grows-p g))))
+
 (defun assemble-summary (branch notes cut input sizing)
-  "assemble.ts assembleSummary: (values TEXT STATE SECTIONS SUMMARIZED HISTORY WORKING-SET-SHOWN GROWTH)."
+  "The summary of CUT, with the sections built beside it: an assembly."
   (let* ((budgets (json-get sizing "budgets"))
          (per-token (json-get (json-get sizing "tokenEstimate") "charsPerToken"))
          (skip (strings-of (json-get (json-get input "settings") "skipCustomTypes")))
@@ -514,7 +422,7 @@ MESSAGES-TO-CONVERT, in that order."
            (stored-index (if previous-compaction (read-history-index (json-get details "historyIndex")) '()))
            (history (and window-range
                          (merge-history-index (if (eq stored-index :invalid)
-                                                  (if (> (json-get window-range "from") 0) (list (unindexed-range (1- (json-get window-range "from")))) '())
+                                                  (if (> (range-from window-range) 0) (list (unindexed-range (1- (range-from window-range)))) '())
                                                   stored-index)
                                               window-range
                                               (json-get (budget budgets "summary") "historyRanges"))))
@@ -543,27 +451,27 @@ MESSAGES-TO-CONVERT, in that order."
              (previous-summary (let ((p (json-get input "previousSummary"))) (and (stringp p) p)))
              (stored-state (and previous-summary previous-compaction (read-state (json-get details "summaryState"))))
              (summary-input
-               (json-object "previous" stored-state
-                            "previousSummary" previous-summary
-                            "previousSummaryForeign" (if (and previous-compaction (null details)) :true :false)
-                            "messages" messages
-                            "sourceIndices" indices
-                            "historyIndex" (and history (coerce history 'vector))
-                            "pinnedNotes" (coerce (read-pins branch) 'vector)
-                            "workingSet" (and working-lines (coerce working-lines 'vector))
-                            "taskState" (and task-lines (coerce task-lines 'vector))
-                            "fileOps" (json-get input "fileOps")
-                            "trackCommands" (json-get (json-get input "settings") "trackCommands")
-                            "limits" (budget budgets "summary")
-                            "ranking" (json-object "maxBriefChars" (js-round (* (budget budgets "briefTokens") per-token))
-                                                   "maxBriefCharsCeiling" (js-round (* (budget budgets "briefCeilingTokens") per-token))
-                                                   "briefCharsPerBlock" (js-round (* (budget budgets "briefTokensPerBlock") per-token))
-                                                   "maxBlocks" (budget budgets "briefMaxBlocks")))))
+               (make-summary-input
+                :previous stored-state
+                :previous-summary previous-summary
+                :previous-foreign (and previous-compaction (null details) t)
+                :messages messages
+                :indices indices
+                :history history
+                :pins (read-pins branch)
+                :working-set working-lines
+                :task-state task-lines
+                :file-ops (json-get input "fileOps")
+                :track-commands (strings-of (json-get (json-get input "settings") "trackCommands"))
+                :limits (budget budgets "summary")
+                :ranking (json-object "maxBriefChars" (js-round (* (budget budgets "briefTokens") per-token))
+                                      "maxBriefCharsCeiling" (js-round (* (budget budgets "briefCeilingTokens") per-token))
+                                      "briefCharsPerBlock" (js-round (* (budget budgets "briefTokensPerBlock") per-token))
+                                      "maxBlocks" (budget budgets "briefMaxBlocks")))))
         (multiple-value-bind (text state sections) (compile-summary summary-input)
-          (let* ((net (- (js-length text) (if previous-summary (js-length previous-summary) 0) removed))
-                 (allowed (max (budget budgets "growthMarginChars") (js-round (* removed +growth-margin-share+)))))
-            (values text state sections summarized history working-shown
-                    (json-object "netChars" net "allowedChars" allowed "grows" (if (> net allowed) :true :false)))))))))
+          (make-assembly text state sections summarized history working-shown
+                         (make-growth (- (js-length text) (if previous-summary (js-length previous-summary) 0) removed)
+                                      (max (budget budgets "growthMarginChars") (js-round (* removed +growth-margin-share+))))))))))
 
 (defparameter +cut-notices+
   '((:no-live-messages . "omp-vcc: Nothing to compact (no live messages)")
@@ -645,26 +553,26 @@ and state, what it summarized, and what it was sized from."
                   (json-object "kind" "step_aside" "cutReason" (cut-reason-name cut) "liveRoles" roles)
                   (json-object "kind" "cancel" "why" "no_cut" "notice" (cdr (assoc cut +cut-notices+))
                                "cutReason" (cut-reason-name cut) "liveRoles" roles)))))
-        (multiple-value-bind (text state sections summarized history shown growth) (assemble-summary branch notes cut input sizing)
-          (let ((grows (eq (json-get growth "grows") :true)) (n (length (cut-items cut))))
+        (let* ((a (assemble-summary branch notes cut input sizing))
+               (growth (assembly-growth a)) (grows (growth-grows-p growth)) (n (length (cut-items cut))))
             (when (and grows (or (not recovering) (cut-compact-all cut)))
               (return-from plan-sized
                 (json-object "kind" "cancel" "why" "growth"
                              "notice" (cond (recovering (format nil "omp-vcc: Not compacted: the ~d messages left are smaller than a summary of them; the context is full of what no compaction removes (the system prompt and tools)." n))
                                             ((equal (json-get input "reason") "manual")
                                              (format nil "omp-vcc: Not compacted: the summary would be ~d chars larger than the ~d messages it replaces.~a"
-                                                     (json-get growth "netChars") n (if (cut-compact-all cut) "" " keep:0 summarizes everything."))))
-                             "growth" growth "summarized" n)))
+                                                     (growth-net growth) n (if (cut-compact-all cut) "" " keep:0 summarizes everything."))))
+                             "growth" (growth-json growth) "summarized" n)))
             (let ((kept (and (plusp (length (cut-first-kept cut))) (branch-from branch (cut-first-kept cut)))))
               (json-object "kind" "compact"
-                           "summary" text
+                           "summary" (assembly-text a)
                            "firstKeptEntryId" (cut-first-kept cut)
-                           "sections" (coerce sections 'vector)
-                           "summaryState" (state-json state)
-                           "summarized" summarized
-                           "historyIndex" (and history (coerce history 'vector))
-                           "workingSet" (and shown (coerce shown 'vector))
-                           "stats" (json-object "summarized" summarized
+                           "sections" (coerce (assembly-sections a) 'vector)
+                           "summaryState" (state-json (assembly-state a))
+                           "summarized" (assembly-summarized a)
+                           "historyIndex" (and (assembly-history a) (map 'vector #'range-json (assembly-history a)))
+                           "workingSet" (and (assembly-shown a) (coerce (assembly-shown a) 'vector))
+                           "stats" (json-object "summarized" (assembly-summarized a)
                                                 "keptUserTurns" (cut-kept-user-turns cut)
                                                 "totalUserTurns" (cut-total-user-turns cut)
                                                 "keptTokensEst" (tokens-from-chars (kept-chars kept) per-token)
@@ -672,5 +580,5 @@ and state, what it summarized, and what it was sized from."
                                                 "budgetCut" (cut-budget-cut cut))
                            "budgetCut" (cut-budget-cut cut)
                            "compactAll" (if (cut-compact-all cut) :true :false)
-                           "writtenForRescue" (and grows (json-object "growth" growth "summarized" n))
-                           "runningTurnRecovery" (and running :true)))))))))
+                           "writtenForRescue" (and grows (json-object "growth" (growth-json growth) "summarized" n))
+                           "runningTurnRecovery" (and running :true))))))))
