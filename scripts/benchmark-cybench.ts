@@ -24,7 +24,7 @@ import { spawn } from "child_process";
 import { openSync } from "fs";
 import { resolve } from "path";
 import { CYBENCH_TASKS, runCybench } from "../tests/support/cybench";
-import { LONG_HORIZON_MODEL, realModel, sessionHost } from "../tests/support/host-session";
+import { LONG_HORIZON_MODEL, realModel, sessionHost, statsLine } from "../tests/support/host-session";
 
 const args = process.argv.slice(2).filter((a) => a !== "--detach" && !a.startsWith("--max-requests=") && !a.startsWith("--host="));
 const capArg = process.argv.find((a) => a.startsWith("--max-requests="));
@@ -71,7 +71,7 @@ for (const a of r.recall) {
   if (a.correct) t.again++;
   t.calls += a.toolCalls;
 }
-console.log(`\n${tasks} tasks, ${Math.round(contextWindow / 1000)}K window, ${host}, ${model}, ${mode}: ${r.compactions} compactions (${r.byOmpVcc} by omp-vcc), ${r.requests} requests, ${Math.round(r.promptTokens / 1000)}K prompt tokens, ${minutes} min`);
+console.log(`\n${tasks} tasks, ${Math.round(contextWindow / 1000)}K window, ${host}, ${model}, ${mode}: ${r.compactions} compactions (${r.byOmpVcc} by omp-vcc), ${statsLine(r.stats)}, ${minutes} min`);
 console.log("task                                  answered  again  calls to answer again");
 for (const [name, t] of byTask) console.log(`${name.slice(0, 36).padEnd(37)} ${`${t.right}/${t.total}`.padStart(8)}  ${t.asked ? `${t.again}/${t.asked}`.padStart(5) : "    -"}  ${t.asked ? t.calls : "-"}`);
 const right = r.answers.filter((a) => a.correct).length;

@@ -15,8 +15,6 @@
 import { PIN_ENTRY_TYPE } from "../names";
 import { core } from "./lisp-core";
 import { hostSnapshot, type HostCtx } from "./host-snapshot";
-import type { Binding } from "../host";
-
 
 /** Where a pin or unpin is written: the host's appendEntry. */
 export interface PinHost {

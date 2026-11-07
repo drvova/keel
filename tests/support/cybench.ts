@@ -16,7 +16,7 @@
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { basename, join, resolve } from "path";
-import { openHostSession, textOf, type Host, type HostSession } from "./host-session";
+import { openHostSession, runStats, textOf, type Host, type HostSession, type RunStats } from "./host-session";
 
 export const CYBENCH_REPO = "https://github.com/andyzorigin/cybench.git";
 export const CYBENCH_COMMIT = "ca483c6443f17a20ba7d6bac3d274859a1721e51";
@@ -100,8 +100,7 @@ export interface CybenchResult {
   recall: AnswerScore[];
   compactions: number;
   byOmpVcc: number;
-  requests: number;
-  promptTokens: number;
+  stats: RunStats;
 }
 
 const git = (cwd: string, ...args: string[]) => {
@@ -252,15 +251,13 @@ export const runCybench = async (options: CybenchOptions = {}): Promise<CybenchR
     await sessionManager.flush?.();
     const branch = sessionManager.getBranch();
     const compactions = branch.filter((e: any) => e.type === "compaction");
-    const assistants = branch.filter((e: any) => e.type === "message" && e.message.role === "assistant" && e.message.usage);
     return {
       host: omp.host,
       answers,
       recall,
       compactions: compactions.length,
       byOmpVcc: compactions.filter((e: any) => e.details?.compactor === "omp-vcc").length,
-      requests: assistants.length,
-      promptTokens: assistants.reduce((n: number, e: any) => n + (e.message.usage.input ?? 0) + (e.message.usage.cacheRead ?? 0), 0),
+      stats: runStats(branch),
     };
   } finally {
     await omp?.close();

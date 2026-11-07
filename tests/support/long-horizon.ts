@@ -26,7 +26,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { dirname, join } from "path";
 import { sessionMessages } from "./pairs";
-import { openHostSession, realModel, textOf, type Host, type HostSession } from "./host-session";
+import { openHostSession, realModel, runStats, textOf, type Host, type HostSession, type RunStats } from "./host-session";
 
 export { LONG_HORIZON_MODEL, realModel } from "./host-session";
 
@@ -76,6 +76,8 @@ export interface LongHorizonResult {
   turns: number;
   /** Compactions the host committed: its periodic passes (omp's idle pass, Pi's /compact), and any threshold pass it decided on. */
   compactions: number;
+  /** Requests, prompt tokens, the cache's share and who evicted what. */
+  stats: RunStats;
   /** Of those, the ones omp-vcc wrote (all of them, when it works). */
   byOmpVcc: number;
   summaryChars: number[];
@@ -283,6 +285,7 @@ export const runLongHorizon = async (options: LongHorizonOptions = {}): Promise<
       host: hostSession.host,
       turns,
       compactions: compactionEntries.length,
+      stats: runStats(sessionManager.getBranch()),
       byOmpVcc: compactionEntries.filter((e: any) => e.details?.compactor === "omp-vcc").length,
       summaryChars,
       sectionChars,

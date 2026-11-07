@@ -21,6 +21,7 @@
  * its entry on page 1 of a reworded vcc_recall query (- = not found).
  */
 import { runLongHorizon } from "../tests/support/long-horizon";
+import { statsLine } from "../tests/support/host-session";
 
 const hostArg = process.argv.find((a) => a.startsWith("--host="));
 if (hostArg) process.env.OMP_VCC_LH_HOST = hostArg.split("=")[1];
@@ -35,7 +36,7 @@ const windows: Array<number | undefined> = windowArg === "all" ? [32_768, 128_00
 for (const contextWindow of windows) for (const t of [turns, turns * 2]) {
   const r = await runLongHorizon({ turns: t, compactEvery: every, contextWindow, config });
   const label = contextWindow ? `, ${Math.round(contextWindow / 1000)}K window` : "";
-  console.log(`\n${t} turns in ${r.host}, ${r.host === "pi" ? "Pi's /compact" : "omp's idle pass"} every ${every}${label}${mode === "evict" ? ", turns out whole" : ""} -> ${r.compactions} compactions (${r.byOmpVcc} by omp-vcc); summary chars first/max/last: ${r.summaryChars[0]}/${Math.max(...r.summaryChars)}/${r.summaryChars.at(-1)}`);
+  console.log(`\n${t} turns in ${r.host}, ${r.host === "pi" ? "Pi's /compact" : "omp's idle pass"} every ${every}${label}${mode === "evict" ? ", turns out whole" : ""} -> ${r.compactions} compactions (${r.byOmpVcc} by omp-vcc); summary chars first/max/last: ${r.summaryChars[0] ?? 0}/${r.summaryChars.length ? Math.max(...r.summaryChars) : 0}/${r.summaryChars.at(-1) ?? 0}; ${statsLine(r.stats)}`);
   console.log("kind          turn  summary  pointer  context  recall");
   const yes = (b: boolean) => (b ? "yes" : "no").padEnd(7);
   for (const n of r.needles) {
