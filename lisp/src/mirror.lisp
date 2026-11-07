@@ -38,7 +38,11 @@ request (with the pinned notes), the same on each."
           path))
 
 (defun mirror-marker (kind from to &optional running)
-  (format nil "[[CTX_~a ~a~:[~; running, stays as it is~]]]" kind (range-text from to) running))
+  "A block's marker line. The running turn's names only where it starts: it grows
+with every request, and its line must hold still while the agent edits the file."
+  (if running
+      (format nil "[[CTX_~a #~d running, stays as it is]]" kind from)
+      (format nil "[[CTX_~a ~a]]" kind (range-text from to))))
 
 (defun message-mirror-text (m n)
   "A message as the file shows it: its role and #N, and its full text as recall's expand reads it."
@@ -65,8 +69,11 @@ and each of the agent's notes, in request order."
                       (let ((tr (and n (find-if (lambda (tr) (<= (turn-from tr) n (turn-to tr))) turns))))
                         (when (and tr (not (equal current (list :turn (turn-from tr)))))
                           (open-block (mirror-marker "TURN" (turn-from tr) (turn-to tr) (eq tr running)))
+                          (when (eq tr running) (format out "(the turn running now: it stays as it is, and is not in this file, so the file holds still while you edit it)~%"))
                           (setf current (list :turn (turn-from tr))))
-                        (format out "~a~%" (message-mirror-text m n))
+                        ;; The running turn's messages are left out: it grows with every request,
+                        ;; and a file that changes under the agent's edit is an edit misread.
+                        (unless (and tr (eq tr running)) (format out "~a~%" (message-mirror-text m n)))
                         (let ((note (and n (cdr (assoc n inserts)))))
                           (when note
                             (format out "~%~a~%~a~%" (format nil "[[CTX_NOTE after #~d]]" n) note)
@@ -101,6 +108,10 @@ the agent's own, is kind NIL), its body the lines up to the next, trimmed."
             (when marker (push line body))))
       (close-block))
     (nreverse blocks)))
+
+(defun same-text-p (a b)
+  "A and B the same but for whitespace: an agent's script that rejoins lines or trims them has not rewritten anything."
+  (string= (js-trim (rx-replace (rx "\\s+") a " " :all t)) (js-trim (rx-replace (rx "\\s+") b " " :all t))))
 
 (defun mirror-ops (written edited branch index count)
   "What the agent's edit of its context's file did, as ledger ops, from WRITTEN
@@ -145,7 +156,7 @@ IGNORED the running turn's block when the agent changed it."
             (cond (now
                    (flush (nreverse removed) prev)
                    (setf removed '() prev (mblock-marker b))
-                   (unless (equal (mblock-body now) (mblock-body b))
+                   (unless (same-text-p (mblock-body now) (mblock-body b))
                      (case (mblock-kind b)
                        (:turn (if (mblock-running b)
                                   (setf ignored t)
@@ -162,7 +173,18 @@ IGNORED the running turn's block when the agent changed it."
                      ;; An [[CTX_OUT]] block deleted: it stays out, as it was.
                      (t nil))))))
         (flush (nreverse removed) prev)))
-    (values (nreverse ops) ignored)))
+    (values (dedupe-ops (nreverse ops)) ignored)))
+
+(defun dedupe-ops (ops)
+  "OPS with each range restored once and evicted once (the last evict for it
+standing, as the last edit of a block does) and each note once, in order:
+an edit that names a block twice is one edit of it."
+  (let ((seen (make-hash-table :test 'equal)) (kept '()))
+    (dolist (op (reverse ops) kept)
+      (let ((key (list (json-get op "op") (json-get op "from") (json-get op "to") (json-get op "after"))))
+        (unless (gethash key seen)
+          (setf (gethash key seen) t)
+          (push op kept))))))
 
 ;;; --- files ---------------------------------------------------------------------------
 

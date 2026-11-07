@@ -291,7 +291,8 @@ describe("the context's file", () => {
     sent(s, undefined, true);
     const text = readFileSync(mirror(s), "utf8");
     expect(text).toContain("[[CTX_TURN #0–#3]]\n[user #0] request number 0 please read f0.ts\n[assistant #1]");
-    expect(text).toContain("[[CTX_TURN #12–#15 running, stays as it is]]");
+    expect(text).toContain("[[CTX_TURN #12 running, stays as it is]]\n(the turn running now: it stays as it is, and is not in this file, so the file holds still while you edit it)\n");
+    expect(text).not.toContain("[user #12]");
     // The agent deletes turn 0 and rewrites turn 1 as what it keeps of it.
     edit(s, (t) => t.replace(/\[\[CTX_TURN #0–#3\]\][\s\S]*?(?=\n\[\[CTX_)/, "").replace(/(\[\[CTX_TURN #4–#7\]\]\n)[\s\S]*?(?=\n\[\[CTX_)/, "$1f1.ts exports totals(); nothing else in it matters."));
     const r = sent(s, undefined, true);
@@ -319,13 +320,27 @@ describe("the context's file", () => {
     setEvict(true);
     const s = session(4);
     sent(s, undefined, true);
-    edit(s, (t) => t.replace("\n[[CTX_TURN #12–#15", "\n[[CTX_TURN 9 role=notes]]\nremember: totals() rounds down\n\n[[CTX_TURN #12–#15").replace("[user #12] request number 3", "[user #12] something else"));
+    edit(s, (t) => t.replace("\n[[CTX_TURN #12 running", "\n[[CTX_TURN 9 role=notes]]\nremember: totals() rounds down\n\n[[CTX_TURN #12 running").replace("(the turn running now", "something else (the turn running now"));
     const r = sent(s, undefined, true);
     expect(s.appended.map((e) => [e.data.op, e.data.after, e.data.text])).toEqual([["insert", 11, "remember: totals() rounds down"]]);
     expect(r.notice).toBe("omp-vcc: the agent edited its context's file: 1 note; its edit of the running turn is left out.");
     const reply = (r.messages as any[]).find((m) => m.role === "assistant" && m.content.some((p: any) => p.text === "Read f2.ts."));
     expect(reply.content.map((p: any) => p.text)).toEqual(["Read f2.ts.", "remember: totals() rounds down"]);
     expect(readFileSync(mirror(s), "utf8")).toContain("[[CTX_NOTE after #11]]\nremember: totals() rounds down");
+  });
+
+  it("reads a script's rewrite of the whole file as what changed: whitespace is no edit, a block named twice is one", () => {
+    setEvict(true);
+    const s = session(4);
+    sent(s, undefined, true);
+    // Every line trimmed and blank lines dropped, as a script that rejoins the file does: nothing changed.
+    edit(s, (t) => t.split("\n").map((l) => l.trim()).filter(Boolean).join("\n"));
+    sent(s, undefined, true);
+    expect(s.appended).toEqual([]);
+    // Turn 1's block written twice with the same new text: one rewrite of it.
+    edit(s, (t) => t.replace(/(\[\[CTX_TURN #4–#7\]\]\n)[\s\S]*?(?=\n\[\[CTX_)/, "$1f1 only.\n\n$1f1 only."));
+    sent(s, undefined, true);
+    expect(s.appended.map((e) => [e.data.op, e.data.from, e.data.to, e.data.text])).toEqual([["evict", 4, 7, "f1 only."]]);
   });
 
   it("is not written without vcc_context", () => {
