@@ -4,7 +4,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 // The project's other sessions (lisp/src/sessions.lisp): listed by mode:'sessions',
 // searched by scope:'project', read by session:'id'.
-import { executeRecall } from "../src/tools/recall";
+import { executeRecall, ompBinding } from "./support/binding";
 import { recall } from "../src/core/recall-run";
 import { core } from "../src/core/lisp-core";
 import { PIN_ENTRY_TYPE } from "../src/names";
@@ -211,7 +211,7 @@ describe("vcc_recall across sessions", () => {
 
   it("the command, which has no read-around hint, gives none for a hit in an earlier session either", () => {
     const args = "rolled back release tag scope:project";
-    const result = recall({ sessionManager: sm(currentBranch), call: { surface: "command", name: "omp-vcc-recall", args } });
+    const result = recall(ompBinding, { sessionManager: sm(currentBranch) }, { surface: "command", name: "omp-vcc-recall", args });
     expect(result.ok && result.text).toMatch(/\[session aaaa1111\] #1 \[assistant\]/);
     expect(result.ok && result.text).not.toContain("Read around a hit");
   });

@@ -172,7 +172,7 @@ less the indices it skips."
                 when (and (or (null allowed) (and id (gethash id allowed)))
                           (not (member index skip)))
                   append (let ((rendered (ignore-errors (render-entry message))))
-                           (and rendered (list (list* index (append rendered (list (search-text message)))))))))))))
+                           (and rendered (list (list* index (append rendered (list (search-text message) id message))))))))))))
 
 (defun handle-search-sessions (request)
   (let* ((sources (let ((s (json-get request "sources" #()))) (if (vectorp s) (coerce s 'list) '())))
@@ -194,8 +194,8 @@ less the indices it skips."
           (cap (json-get request "cap")))
       (multiple-value-bind (hits total truncated)
           (search-docs (let ((q (json-get request "query"))) (if (stringp q) q ""))
-                       (map 'vector (lambda (e) (destructuring-bind (index role summary files text session) e
-                                                  (declare (ignore index summary session))
+                       (map 'vector (lambda (e) (destructuring-bind (index role summary files text id message session) e
+                                                  (declare (ignore index summary id message session))
                                                   (list role text files)))
                             entries)
                        :floor (if (realp floor) (coerce floor 'double-float) +relative-floor+)
@@ -206,8 +206,8 @@ less the indices it skips."
             (json-object "ok" :true
                          "hits" (map 'vector
                                      (lambda (h)
-                                       (destructuring-bind (index role summary files text session) (aref entries (car h))
-                                         (declare (ignore text))
+                                       (destructuring-bind (index role summary files text id message session) (aref entries (car h))
+                                         (declare (ignore text id message))
                                          (json-object "index" index "role" role "summary" summary
                                                       "files" (and files (coerce files 'vector))
                                                       "session" session
@@ -221,9 +221,11 @@ less the indices it skips."
   "A source's entries as recall renders them and search reads them (tests/session-read.test.ts)."
   (json-object "ok" :true
                "entries" (map 'vector (lambda (e)
-                                        (destructuring-bind (index role summary files text) e
-                                          (json-object "index" index "role" role "summary" summary
-                                                       "files" (and files (coerce files 'vector)) "text" text)))
+                                        (destructuring-bind (index role summary files text id message) e
+                                          (json-object "index" index "id" id "role" role "summary" summary
+                                                       "files" (and files (coerce files 'vector)) "text" text
+                                                       ;; The message as the core reads it: what omp rewrote, with its kept original back.
+                                                       "message" message)))
                               (source-entries (json-get request "source")))))
 
 (defun handle-regex (request)
@@ -247,9 +249,11 @@ parity test compares with JavaScript's own."
   (multiple-value-bind (text state sections) (compile-summary (json-get request "input"))
     (json-object "ok" :true "text" text "state" (state-json state) "sections" (coerce sections 'vector))))
 
+(defun with-ok (reply) (setf (gethash "ok" reply) :true) reply)
+
 (defun handle-compact (request)
-  "planCompaction on the PlanInput REQUEST carries in \"input\", the host's convertToLlm already applied."
-  (json-object "ok" :true "plan" (plan-compaction (json-get request "input"))))
+  "A session_before_compact for the host REQUEST's snapshot names (host.lisp compact-for-host)."
+  (with-ok (compact-for-host (read-snapshot (json-get request "host")) (json-get request "event") (json-get request "converted"))))
 
 (defun cut-json (cut)
   "A cut as cut.ts's OwnCutResult."
@@ -278,25 +282,30 @@ parity test compares with JavaScript's own."
                  :budget-cut (json-get v "budgetCut"))))
 
 (defun handle-cut (request)
-  "One of the cut's steps on REQUEST's branch, as the context holds it."
-  (multiple-value-bind (branch notes)
-      (apply-context-edits (coerce (json-get request "branch" #()) 'vector) (coerce (json-get request "notes" #()) 'vector))
-    (let ((action (json-get request "action"))
-          (skip (strings-of (json-get request "skip" #())))
-          (max (json-get request "maxTokens"))
-          (per-token (let ((c (json-get request "charsPerToken"))) (if (realp c) c +default-chars-per-token+))))
-      (cond ((equal action "own") (json-object "ok" :true "cut" (cut-json (build-own-cut branch notes (json-get request "keep") skip))))
-            ((equal action "tail-budget")
-             (let ((cut (json-cut (json-get request "cut") (live-items branch notes))))
-               (json-object "ok" :true "cut" (cut-json (if (cut-p cut) (apply-tail-budget branch notes cut max per-token skip) cut)))))
-            ((equal action "running-turn") (json-object "ok" :true "cut" (cut-json (running-turn-cut branch notes max per-token skip))))
-            ((equal action "whole-window") (json-object "ok" :true "cut" (cut-json (whole-window-cut branch notes skip))))
-            ((equal action "smart-keep")
-             (multiple-value-bind (keep adjusted)
-                 (resolve-smart-keep branch notes (let ((r (json-get request "requested"))) (and (realp r) r))
-                                     (eq (json-get request "smart") :true) skip (json-get request "minTokens") max per-token)
-               (json-object "ok" :true "keep" keep "adjusted" (if adjusted :true :false))))
-            (t (json-object "ok" :false "error" "cut: unknown action"))))))
+  "One of the cut's steps on REQUEST's branch, as the context holds it; like op
+compact, it first asks for what the host's convertToLlm makes of the messages."
+  (let ((branch (projected-branch request)))
+    (multiple-value-bind (live originals) (host-messages branch nil)
+      (let ((wanted (messages-to-convert live originals)) (converted (json-get request "converted")))
+        (when (and wanted (not (json-array-p converted)))
+          (return-from handle-cut (json-object "ok" :true "kind" "convert" "messages" (coerce wanted 'vector))))
+        (let ((notes (host-notes branch live originals (or converted #()) (make-hash-table :test 'equal)))
+              (action (json-get request "action"))
+              (skip (strings-of (json-get request "skip" #())))
+              (max (json-get request "maxTokens"))
+              (per-token (let ((c (json-get request "charsPerToken"))) (if (realp c) c +default-chars-per-token+))))
+          (cond ((equal action "own") (json-object "ok" :true "cut" (cut-json (build-own-cut branch notes (json-get request "keep") skip))))
+                ((equal action "tail-budget")
+                 (let ((cut (json-cut (json-get request "cut") (live-items branch notes))))
+                   (json-object "ok" :true "cut" (cut-json (if (cut-p cut) (apply-tail-budget branch notes cut max per-token skip) cut)))))
+                ((equal action "running-turn") (json-object "ok" :true "cut" (cut-json (running-turn-cut branch notes max per-token skip))))
+                ((equal action "whole-window") (json-object "ok" :true "cut" (cut-json (whole-window-cut branch notes skip))))
+                ((equal action "smart-keep")
+                 (multiple-value-bind (keep adjusted)
+                     (resolve-smart-keep branch notes (let ((r (json-get request "requested"))) (and (realp r) r))
+                                         (eq (json-get request "smart") :true) skip (json-get request "minTokens") max per-token)
+                   (json-object "ok" :true "keep" keep "adjusted" (bool adjusted))))
+                (t (json-object "ok" :false "error" "cut: unknown action"))))))))
 
 (defun handle-working-set (request)
   "The items [Working Set] picks of REQUEST's history, and the section's lines."
@@ -343,9 +352,10 @@ parity test compares with JavaScript's own."
     out))
 
 (defun handle-recall (request)
-  "recall-run.ts recall() on the call REQUEST carries in \"input\"."
-  (multiple-value-bind (ok text severity) (run-recall (json-get request "input"))
-    (json-object "ok" :true "recall" (json-object "ok" (if ok :true :false) "text" text "severity" severity))))
+  "One recall call (recall.lisp run-recall) in the session REQUEST's snapshot names."
+  (multiple-value-bind (ok text severity)
+      (run-recall (recall-input (read-snapshot (json-get request "host")) (json-get request "call") (json-get request "projectFiles" #())))
+    (json-object "ok" :true "recall" (json-object "ok" (bool ok) "text" text "severity" severity))))
 
 (defun handle-context-edits (request)
   "The branch REQUEST carries, Pi's context edits applied (context-edits.lisp)."
@@ -361,9 +371,9 @@ parity test compares with JavaScript's own."
     (json-object "ok" :true "settings" (load-settings path))))
 
 (defun handle-pin (request)
-  "A pin call (pins.lisp run-pin): what to tell, and the op to append."
-  (multiple-value-bind (done text op severity note) (run-pin (json-get request "input"))
-    (json-object "ok" :true "pin" (json-object "done" (if done :true :false) "text" text "op" op "severity" severity "agentNote" note))))
+  "A pin call (pins.lisp run-pin): what to tell, and the op the host appends."
+  (multiple-value-bind (done text op severity note) (run-pin (pin-input (read-snapshot (json-get request "host")) (json-get request "call")))
+    (json-object "ok" :true "pin" (json-object "done" (bool done) "text" text "op" op "severity" severity "agentNote" note))))
 
 (defun handle-raw-capture (request)
   "Copy the entries REQUEST carries that omp may rewrite into the store (raw-capture.lisp)."
@@ -372,36 +382,40 @@ parity test compares with JavaScript's own."
                  "lineage" (and lineage (coerce lineage 'vector)))))
 
 (defun handle-placeholders (request)
-  (json-object "ok" :true "replace" (coerce (point-placeholders (json-get request "input")) 'vector)))
+  (json-object "ok" :true "replace"
+               (coerce (point-placeholders (placeholders-input (read-snapshot (json-get request "host"))
+                                                               (json-get request "candidates" #()) (json-get request "kept" #())))
+                       'vector)))
 
 (defun handle-limits (request)
+  "The learned-limits file read and written alone (for its tests): by a model, or its provider/id key."
   (let* ((action (json-get request "action")) (model (json-get request "model")) (dir (json-get request "dir"))
-         ;; A model, or its provider/id key as the learned-limits file names it.
          (key (let ((k (json-get request "key"))) (if (stringp k) k (model-key model)))))
     (unless (stringp dir) (return-from handle-limits (json-object "ok" :false "error" "limits: no dir")))
     (cond ((equal action "window") (json-object "ok" :true "window" (window-of model (json-get request "hostName") dir)))
           ((equal action "learn")
            (json-object "ok" :true "recorded"
-                        (if (record-learned-window dir key (json-get request "window")
-                                                   (let ((now (json-get request "now"))) (if (stringp now) now (iso-now))))
-                            :true :false)))
+                        (bool (record-learned-window dir key (json-get request "window")
+                                                     (let ((now (json-get request "now"))) (if (stringp now) now (iso-now)))))))
           ((equal action "learned") (json-object "ok" :true "window" (learned-window dir key)))
-          ((equal action "policy") (json-object "ok" :true "policy" (learned-host-policy dir key)))
-          ((equal action "record-policy") (record-host-policy dir key (json-get request "policy")) (json-object "ok" :true))
-          ((equal action "settled")
-           (let ((path (json-get request "configPath")))
-             (json-object "ok" :true "settled"
-                          (and (stringp path) (handles-host-compactions-p (load-settings path) (json-get request "provider"))
-                               (settled-compaction request)))))
           (t (json-object "ok" :false "error" "limits: unknown action")))))
+
+(defun handle-learn-limit (request)
+  "An assistant message that ended in an error: the limit it states, kept for the model when below the host's window."
+  (json-object "ok" :true "recorded" (bool (learn-limit (read-snapshot (json-get request "host")) (strings-of (json-get request "errors"))))))
+
+(defun handle-settled (request)
+  "A run that settled: whether omp-vcc compacts in the host's stead, and the note that says so."
+  (json-object "ok" :true "settled" (settled-check (read-snapshot (json-get request "host")))))
 
 (defun handle-outcome (request)
   (cond ((nth-value 1 (gethash "stats" request)) (json-object "ok" :true "line" (format-compaction-stats (json-get request "stats"))))
         ((nth-value 1 (gethash "error" request))
-         (multiple-value-bind (text severity) (compact-error-feedback (json-get request "error"))
+         (multiple-value-bind (text severity)
+             (compact-error-feedback (compact-error-input (read-snapshot (json-get request "host")) (json-get request "error")))
            (json-object "ok" :true "text" text "severity" severity)))
         ((nth-value 1 (gethash "details" request)) (json-object "ok" :true "own" (vcc-details-of (json-get request "details"))))
-        (t (json-object "ok" :true "handles" (if (handles-host-compactions-p (json-get request "settings") (json-get request "provider")) :true :false)))))
+        (t (json-object "ok" :true "handles" (bool (handles-host-compactions-p (json-get request "settings") (json-get request "provider")))))))
 
 (defun handle-window (request)
   "The window rules on each of REQUEST's cases (window.lisp window-case)."
@@ -427,6 +441,8 @@ parity test compares with JavaScript's own."
           ((equal op "raw-capture") (handle-raw-capture request))
           ((equal op "args") (handle-args request))
           ((equal op "limits") (handle-limits request))
+          ((equal op "learn-limit") (handle-learn-limit request))
+          ((equal op "settled") (handle-settled request))
           ((equal op "outcome") (handle-outcome request))
           ((equal op "placeholders") (handle-placeholders request))
           ((equal op "context-edits") (handle-context-edits request))

@@ -63,6 +63,9 @@ All notable changes to `@drvova/omp-vcc` are documented in this file. Entries fr
 
 ### Fixes
 
+- **The debug record goes beside the config** — with `debug` on, each compaction's decisions are written to `omp-vcc-debug.json` next to `omp-vcc-config.json`, not to a fixed `/tmp/omp-vcc-debug.json` that every session and subagent shared and overwrote.
+- **A compaction's outcome line belongs to that compaction** — the line omp-vcc tells after a compaction is the one of the compaction the host applied, matched by its summary; a pass the host did not apply, or one another extension's compaction replaced, leaves nothing behind for a later one.
+
 - **Tool calls read by the hosts' own tools** — the summary and recall each kept their own list of tool names, some from neither host (Claude Code's `file_path`, Factory's `TodoWrite`), and none had omp's `ast_edit`. One reading of a call now serves them all, by the names and arguments of omp's and Pi's own tools, and by shape for another extension's tool. What it fixes:
   - A search shows its pattern: the brief said `* grep "src"` and recall `grep(path=src)` for every grep, and kept only one of a turn's greps over the same directory; now `* grep "authRetry"`, one line per pattern.
   - `[Commits]` and tracked commands read the commands the user ran themselves (`!git commit -m …`, `!docker …`) and Pi's `powershell` tool, not only the agent's `bash` calls.

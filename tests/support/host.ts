@@ -1,15 +1,11 @@
 // The compaction hook on omp's own convertToLlm, the way index.ts binds it, for
 // tests that drive the hook or the cut helpers without a running omp.
-import { DEFAULT_BUDGETS, DEFAULT_SUMMARY_LIMITS } from "./window";
-import { compileSummary } from "../../src/core/summarize";
-import { toSummaryMessage } from "../../src/compaction/summary-input";
+import { DEFAULT_BUDGETS } from "./window";
 import { convertToLlm } from "@oh-my-pi/pi-coding-agent/session/messages";
 import { createCompactionState, registerCompactionHook, type CompactionHost, type CompactionState } from "../../src/hooks/compaction";
 import { createWindowState } from "../../src/hooks/window-limits";
 import { testConfig } from "./binding";
-import { hostNotes, type OwnCutCancelReason } from "../../src/compaction/plan";
 import { core } from "../../src/core/lisp-core";
-import type { CompactionStats } from "../../src/compaction/stats";
 import { ompHost } from "../../src/hooks/omp-host";
 import { bind, MANUAL_TRIGGER, OMP_HOST } from "../../src/host";
 import type { CompactionReason } from "../../src/types";
@@ -33,16 +29,21 @@ export type OwnCutResult =
       keepFallbackToCompactAll: boolean;
       budgetCut?: "final_reply" | "running_turn" | "no_anchor" | "oversized_tail";
     }
-  | { ok: false; reason: OwnCutCancelReason };
+  | { ok: false; reason: "no_live_messages" | "too_few_live_messages" };
 
-/** The brief's lines the core writes of these messages, through the hook's toSummaryMessage: what the summarizer gets of them. */
-export const renderedBlocks = (messages: any[]): string[] =>
-  compileSummary({ messages: messages.map((m) => toSummaryMessage(m, ompConvertToLlm)).filter((m) => m != null), limits: DEFAULT_SUMMARY_LIMITS })
-    .state.brief.split("\n").filter((l) => l.trim() !== "");
+/** What omp's convertToLlm makes of each message, as the hook hands it to the core (it converts one at a time). */
+export const convertEach = (messages: unknown[]): unknown[][] => messages.map((m) => {
+  try { return ompConvertToLlm([m]); } catch { return []; }
+});
+
+/** A request to the core that first asks for what the host's convertToLlm makes of messages (op cut, op compact): asked, converted, asked again. */
+export const withConversions = (request: Record<string, unknown>): Record<string, any> => {
+  const first = core(request);
+  return first.kind === "convert" ? core({ ...request, converted: convertEach(first.messages as unknown[]) }) : first;
+};
 
 /** One step of the core's cut (op cut) on these entries, on omp's convertToLlm. */
-const cutStep = (branchEntries: any[], request: Record<string, unknown>) =>
-  core({ op: "cut", branch: branchEntries, notes: hostNotes({ branchEntries, convert: ompConvertToLlm, sessionFile: undefined, indexById: undefined }), ...request });
+const cutStep = (branchEntries: any[], request: Record<string, unknown>) => withConversions({ op: "cut", branchEntries, ...request });
 
 export const buildOwnCut = (branchEntries: any[], keepUserTurns?: number, skipCustomTypes: readonly string[] = []): OwnCutResult =>
   cutStep(branchEntries, { action: "own", keep: keepUserTurns ?? 1, skip: skipCustomTypes }).cut;
@@ -104,5 +105,5 @@ export const registerHook = (pi: any): RegisteredHook => {
   return lastRegistered;
 };
 
-/** Stats of the last compaction of the most recently registered hook. */
-export const getLastCompactionStats = (): CompactionStats | null => lastRegistered?.state.lastStats ?? null;
+/** The outcome line of the last compaction the most recently registered hook wrote. */
+export const getLastCompactionStats = (): string | null => lastRegistered?.state.written?.statsLine ?? null;

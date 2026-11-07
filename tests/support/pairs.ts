@@ -45,10 +45,14 @@ export const searchHits = (messages: readonly unknown[], query: string): SearchH
 export const recallOn = (messages: readonly unknown[], params: Record<string, unknown>, options: { contextWindow?: number } = {}): string => {
   const file = sessionFileOf(messages);
   const branch = messages.map((message, i) => ({ type: "message", id: `m${i}`, parentId: i ? `m${i - 1}` : null, message }));
-  const { executeRecall } = require("../../src/tools/recall") as typeof import("../../src/tools/recall");
+  const { executeRecall } = require("./binding") as typeof import("./binding");
   return executeRecall(params, { getSessionFile: () => file, getBranch: () => branch, getEntries: () => branch }, options);
 };
 
 /** Each message as recall renders it (op load): its one-line summary, and the full text search reads. */
 export const renderedOf = (messages: readonly unknown[]): Array<{ index: number; role: string; summary: string; text: string; files?: string[] }> =>
   core({ op: "load", source: { file: sessionFileOf(messages), ids: null } }).entries as any[];
+
+/** A session file's messages as the core reads them (op load): each one's #N and id, and the message, with what omp rewrote put back. */
+export const sessionMessages = (file: string): Array<{ index: number; id?: string; message: any; text: string }> =>
+  core({ op: "load", source: { file, ids: null } }).entries as any[];

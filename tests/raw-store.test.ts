@@ -1,17 +1,27 @@
 // vcc_recall keeps the originals of what omp rewrites in the session file
-// (src/core/raw-store.ts, src/hooks/raw-capture.ts), with no omp setting changed.
-import { ompBinding, testConfig } from "./support/binding";
-import { sessionLineage } from "../src/core/session-file";
+// (<session>.jsonl.vcc-raw: src/hooks/raw-capture.ts, lisp/src/raw-capture.lisp and
+// session.lisp), with no omp setting changed. Putting an original back is held
+// to its rules in lisp/test/store.lisp.
+import { ompBinding } from "./support/binding";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import {
-  rawStorePath,
-  readRawStore,
-  wasRewritten,
-  withOriginalContent,
-} from "../src/core/raw-store";
+
+/** The store beside a session file. */
+const rawStorePath = (file: string): string => `${file}.vcc-raw`;
+/** What the store keeps, by id: the first copy of each (the store's format: one {id, content} line each). */
+const readRawStore = (file: string, ids: Set<string>): Map<string, unknown> => {
+  const kept = new Map<string, unknown>();
+  if (!existsSync(rawStorePath(file))) return kept;
+  for (const line of readFileSync(rawStorePath(file), "utf8").split("\n")) {
+    try {
+      const r = JSON.parse(line);
+      if (ids.has(r.id) && !kept.has(r.id)) kept.set(r.id, r.content);
+    } catch {}
+  }
+  return kept;
+};
 import { captureNewEntries, createRawCaptureState, pointPlaceholders, registerRawCapture } from "../src/hooks/raw-capture";
 import { registerRecallTool } from "../src/tools/recall";
 
@@ -58,17 +68,6 @@ describe("what is kept", () => {
     ]);
     expect(kept.get("k0")).toEqual([{ type: "text", text: "a" }, { type: "image", mimeType: "image/png" }]);
     expect((kept.get("k1") as any[])[0].text).toEndWith("...[omp-vcc kept the first 1000000 of 1000010 chars]");
-  });
-
-  it("puts back what omp rewrote: a tool result whole, another message block by block", () => {
-    expect(wasRewritten({ role: "toolResult", content: text("[Output truncated - 900 tokens]"), prunedAt: 5 })).toBe(true);
-    expect(wasRewritten({ role: "assistant", content: text("see [… moved to artifact://3]") })).toBe(true);
-    expect(wasRewritten({ role: "assistant", content: text("plain") })).toBe(false);
-    expect(withOriginalContent({ role: "toolResult", content: text("[Output truncated]"), prunedAt: 5, toolCallId: "c" } as any, text("full output")))
-      .toEqual({ role: "toolResult", content: text("full output"), toolCallId: "c" });
-    const call = { type: "toolCall", id: "t", name: "read", arguments: { path: "a.ts" } };
-    expect(withOriginalContent({ role: "assistant", content: [{ type: "text", text: "[artifact://3]" }, call] }, [{ type: "text", text: "the block" }, call]))
-      .toEqual({ role: "assistant", content: [{ type: "text", text: "the block" }, call] });
   });
 });
 
@@ -129,7 +128,7 @@ describe("with omp's own session manager", () => {
 
   it("is taken on omp's events, and not when keepOriginals is off", () => {
     const handlers = new Map<string, Array<(e: unknown, c: unknown) => void>>();
-    registerRawCapture({ on: (name: string, h: any) => handlers.set(name, [...(handlers.get(name) ?? []), h]) } as any, testConfig);
+    registerRawCapture({ on: (name: string, h: any) => handlers.set(name, [...(handlers.get(name) ?? []), h]) } as any, ompBinding);
     const file = join(dir, "events.jsonl");
     const entries: any[] = [{ type: "message", id: "r1", message: { role: "toolResult", toolCallId: "c", content: text("out") } }];
     const ctx = { sessionManager: { getSessionFile: () => file, getEntries: () => entries } };
@@ -228,19 +227,19 @@ describe("omp's placeholders point at the original", () => {
   it("names the recall ref when omp-vcc kept the original, the same text every time", () => {
     for (const notice of ["[Output truncated - 1200 tokens]", "[Superseded by a newer read of this file]", "[Uneventful result elided]"]) {
       const messages = [{ role: "user", content: "look at the log" }, placeholder(notice)];
-      const out = pointPlaceholders(messages, kept(["r1"]), sm) as any[];
+      const out = pointPlaceholders(messages, kept(["r1"]), ompBinding, { sessionManager: sm }) as any[];
       expect(out[1].content).toEqual(text(`${notice} (the original: vcc_recall expand:[2])`));
-      expect(pointPlaceholders(messages, kept(["r1"]), sm)).toEqual(out);
+      expect(pointPlaceholders(messages, kept(["r1"]), ompBinding, { sessionManager: sm })).toEqual(out);
       // The request's own messages are not changed in place.
       expect(messages[1].content).toEqual(text(notice));
     }
   });
 
   it("says nothing it cannot back: no original kept, or not omp's placeholder", () => {
-    expect(pointPlaceholders([placeholder("[Output truncated - 1200 tokens]")], kept([]), sm)).toBeUndefined();
-    expect(pointPlaceholders([placeholder("[Output truncated - 1200 tokens]")], kept(["other"]), sm)).toBeUndefined();
-    expect(pointPlaceholders([placeholder("real output that happens to be short")], kept(["r1"]), sm)).toBeUndefined();
-    expect(pointPlaceholders([{ ...placeholder("[Output truncated - 1200 tokens]"), toolCallId: "unknown" }], kept(["r1"]), sm)).toBeUndefined();
+    expect(pointPlaceholders([placeholder("[Output truncated - 1200 tokens]")], kept([]), ompBinding, { sessionManager: sm })).toBeUndefined();
+    expect(pointPlaceholders([placeholder("[Output truncated - 1200 tokens]")], kept(["other"]), ompBinding, { sessionManager: sm })).toBeUndefined();
+    expect(pointPlaceholders([placeholder("real output that happens to be short")], kept(["r1"]), ompBinding, { sessionManager: sm })).toBeUndefined();
+    expect(pointPlaceholders([{ ...placeholder("[Output truncated - 1200 tokens]"), toolCallId: "unknown" }], kept(["r1"]), ompBinding, { sessionManager: sm })).toBeUndefined();
   });
 });
 
@@ -270,7 +269,6 @@ describe("a fork reads its parent's originals", () => {
     await sm.rewriteEntries();
     expect(sm.getSessionFile()).not.toBe(parentFile);
     expect(existsSync(rawStorePath(sm.getSessionFile()))).toBe(false);
-    expect(sessionLineage(sm.getSessionFile())).toEqual([sm.getSessionFile(), parentFile]);
     // Its capture knows the parent's copy, so nothing is copied twice.
     expect(captureNewEntries(state, sm)).toBe(0);
 

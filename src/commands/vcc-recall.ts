@@ -6,7 +6,7 @@ import { recall } from "../core/recall-run";
 import { tell, type Binding } from "../host";
 import { RECALL_COMMAND_MESSAGE_TYPE } from "../names";
 
-export const registerVccRecallCommand = (pi: ExtensionAPI, host: Pick<Binding, "command" | "window">) => {
+export const registerVccRecallCommand = (pi: ExtensionAPI, host: Binding) => {
   const name = `${host.command}-recall`;
   pi.registerCommand(name, {
     description:
@@ -14,7 +14,7 @@ export const registerVccRecallCommand = (pi: ExtensionAPI, host: Pick<Binding, "
       "scope:project this project's earlier sessions; 'sessions' lists them, session:<id> reads one.",
     handler: async (args: string, ctx) => {
       const result = whenCore(
-        () => recall({ sessionManager: ctx.sessionManager, contextWindow: host.window(ctx.model).effective, call: { surface: "command", name, args } }),
+        () => recall(host, ctx, { surface: "command", name, args }),
         (why) => tell(ctx, why, "warning"),
       );
       if (!result) return;

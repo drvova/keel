@@ -10,10 +10,9 @@ import { join } from "path";
 import { createCompactionState, registerCompactionHook, type CompactionHost } from "../src/hooks/compaction";
 import { createWindowState } from "../src/hooks/window-limits";
 import { testConfig } from "./support/binding";
-import { hostNotes } from "../src/compaction/plan";
 import { core } from "../src/core/lisp-core";
-import { toSummaryMessage } from "../src/compaction/summary-input";
 import { summarize } from "./support/summary";
+import { COMPACT_INSTRUCTION } from "../src/names";
 import { recallOn } from "./support/pairs";
 import { openConfig } from "../src/core/settings";
 import { bind, MANUAL_TRIGGER, PI_HOST } from "../src/host";
@@ -44,26 +43,45 @@ describe.skipIf(!piInstalled())("Pi shapes", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  const summaryOf = (message: any) => toSummaryMessage(message, host.convertToLlm);
+  /** The summary /pi-vcc keep:0 writes of a branch with these entries, on Pi's convertToLlm. */
+  const summaryOf = (...entries: any[]): string => {
+    const at = (i: number) => ({ id: `e${i}`, parentId: i ? `e${i - 1}` : null, timestamp: "2026-11-06T00:00:00.000Z" });
+    const branch = [
+      { type: "message", ...at(0), message: { role: "user", content: "Look at the build", timestamp: 1 } },
+      ...entries.map((e, i) => ({ ...at(i + 1), ...e })),
+      // A long reply, so summarizing shrinks the context and the growth guard lets it be written.
+      { type: "message", ...at(entries.length + 1), message: { role: "assistant", content: [{ type: "text", text: "Done. ".repeat(400) }], timestamp: 1 } },
+    ];
+    const handlers = new Map<string, any>();
+    registerCompactionHook({ on: (name: string, h: any) => handlers.set(name, h) } as any, host, createCompactionState(), createWindowState());
+    return handlers.get("session_before_compact")(
+      { type: "session_before_compact", customInstructions: `${COMPACT_INSTRUCTION} keep:0`, branchEntries: branch,
+        preparation: { tokensBefore: 5000, fileOps: { read: new Set(), written: new Set(), edited: new Set() }, settings: { enabled: true, reserveTokens: 16_384 } } },
+      { sessionManager: { getEntries: () => branch, getBranch: () => branch } },
+    ).compaction.summary;
+  };
+  const message = (m: any) => ({ type: "message", message: { timestamp: 1, ...m } });
 
   describe("Pi's message roles in the summary", () => {
     test("a user-run command stays one line; one run with !! (kept out of Pi's context) is left out", () => {
-      const run = { role: "bashExecution", command: "bun test", output: "3 pass", exitCode: 0, cancelled: false, truncated: false, timestamp: 1 };
-      expect(summaryOf(run)).toBe(run);
-      expect(summaryOf({ ...run, excludeFromContext: true })).toBeNull();
+      const run = { role: "bashExecution", command: "bun test --watch-not", output: "3 pass", exitCode: 0, cancelled: false, truncated: false };
+      expect(summaryOf(message(run))).toContain("$ bun test --watch-not");
+      expect(summaryOf(message({ ...run, excludeFromContext: true }))).not.toContain("bun test --watch-not");
     });
 
     test("an extension's custom message reads as injected user content, a branch summary as user content", () => {
-      expect(summaryOf({ role: "custom", customType: "note", content: "From the CI extension", display: true, timestamp: 1 }))
-        .toMatchObject({ role: "user", injected: true, content: [{ type: "text", text: "From the CI extension" }] });
-      const branch = summaryOf({ role: "branchSummary", summary: "Tried the queue approach, dropped it.", fromId: "x", timestamp: 1 });
-      expect(branch.role).toBe("user");
-      expect(JSON.stringify(branch.content)).toContain("Tried the queue approach, dropped it.");
+      const summary = summaryOf(
+        { type: "custom_message", customType: "note", content: "From the CI extension", display: true },
+        { type: "branch_summary", summary: "Tried the queue approach, dropped it.", fromId: "x" },
+      );
+      expect(summary).toContain("From the CI extension");
+      expect(summary).toContain("Tried the queue approach, dropped it.");
+      // Injected: not a request the user wrote.
+      expect(summary).not.toMatch(/\[Early Session Requests\][^[]*From the CI extension/);
     });
 
     test("a system message in the transcript renders nothing", () => {
-      const system = summaryOf({ role: "system", content: "You are Pi.", timestamp: 1 });
-      expect(summarize({ messages: [system].filter(Boolean) }).state.brief).toBe("");
+      expect(summaryOf(message({ role: "system", content: "You are Pi, a system prompt." }))).not.toContain("You are Pi");
     });
   });
 
@@ -123,7 +141,9 @@ describe.skipIf(!piInstalled())("Pi shapes", () => {
 
     test("a compact-all keeps nothing, which Pi reads from an empty firstKeptEntryId", () => {
       // The core's cut (op cut) at keep:0, on Pi's convertToLlm.
-      const cut = core({ op: "cut", action: "own", keep: 0, skip: [], branch: branch(), notes: hostNotes({ branchEntries: branch(), convert: host.convertToLlm, sessionFile: undefined, indexById: undefined }) }).cut;
+      const ask = (converted?: unknown[][]) => core({ op: "cut", action: "own", keep: 0, skip: [], branchEntries: branch(), ...(converted ? { converted } : {}) });
+      const first = ask();
+      const cut = (first.kind === "convert" ? ask((first.messages as unknown[]).map((m) => { try { return host.convertToLlm([m]); } catch { return []; } })) : first).cut as any;
       expect(cut.ok && cut.compactAll).toBe(true);
       if (!cut.ok) return;
       // Pi's buildContextEntries keeps nothing before a compaction whose kept id is not on the path.

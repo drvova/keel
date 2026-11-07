@@ -294,8 +294,6 @@
 
 ;;; --- the other actions -----------------------------------------------------------------------
 
-(defun entry-plist (e) e)
-
 (defun run-expand (indices v)
   (let* ((pools (if (equal (view-scope v) "all") (list v) (list v (view-widen v))))
          (found (mapcar (lambda (i) (cons i (and (integerp i)

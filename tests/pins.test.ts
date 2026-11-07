@@ -1,11 +1,10 @@
-import { OMP_HOST } from "../src/host";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { PIN_CHARS } from "../src/names";
 import { PIN_ENTRY_TYPE } from "../src/names";
-import { executePin } from "../src/tools/pin";
+import { executePin, ompBinding } from "./support/binding";
 import { registerPinCommands } from "../src/commands/pin";
 import { registerHook } from "./support/host";
 
@@ -58,10 +57,10 @@ describe("pinned notes: storage", () => {
   it("ignores other extensions' entries and malformed data, and hides pins made before omp's /clear", () => {
     const entries = [
       { type: "custom", customType: "someone-else", data: { op: "add", id: 1, text: "not ours" } },
-      { type: "custom", customType: PIN_ENTRY_TYPE, data: { op: "add", id: "x", text: "bad id" } },
-      { type: "custom", customType: PIN_ENTRY_TYPE, data: { v: 1, op: "add", id: 1, text: "before clear", by: "user" } },
+      { type: "custom", id: "p1", customType: PIN_ENTRY_TYPE, data: { op: "add", id: "x", text: "bad id" } },
+      { type: "custom", id: "p2", customType: PIN_ENTRY_TYPE, data: { v: 1, op: "add", id: 1, text: "before clear", by: "user" } },
       { type: "reset_boundary", id: "r" },
-      { type: "custom", customType: PIN_ENTRY_TYPE, data: { v: 1, op: "add", id: 2, text: "after clear", by: "agent" } },
+      { type: "custom", id: "p3", customType: PIN_ENTRY_TYPE, data: { v: 1, op: "add", id: 2, text: "after clear", by: "agent" } },
     ];
     expect(readPins(entries).map(([, text]) => text)).toEqual(["after clear"]);
   });
@@ -95,7 +94,7 @@ describe("/omp-vcc-pin and /omp-vcc-unpin", () => {
       registerCommand: (name: string, c: any) => commands.set(name, c.handler),
       appendEntry: s.host.appendEntry,
       sendMessage: (m: any, o: any) => sent.push({ m, o }),
-    } as any, OMP_HOST);
+    } as any, ompBinding);
     const ctx = { sessionManager: s.sm, ui: { notify: (m: string) => notices.push(m) } };
     await commands.get("omp-vcc-pin")!("never edit migrations/", ctx);
     expect(notices.at(-1)).toBe("Pinned [1] never edit migrations/ (user, #0).");

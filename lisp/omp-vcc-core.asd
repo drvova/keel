@@ -71,6 +71,8 @@
      (:file "request")
      (:file "sessions")
      (:file "recall")
+     ;; host: the snapshot of what the host knows, which every op for a host event reads.
+     (:file "host")
      (:file "server"))))
   :in-order-to ((test-op (test-op "omp-vcc-core/test"))))
 
@@ -86,7 +88,9 @@
      (:file "json")
      (:file "search")
      (:file "estimate")
-     (:file "tools"))))
+     (:file "tools")
+     (:file "store")
+     (:file "numbers"))))
   :perform (test-op (op c)
              (declare (ignore op c))
              (unless (uiop:symbol-call '#:omp-vcc.test '#:run-all)

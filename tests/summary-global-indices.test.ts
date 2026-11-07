@@ -12,11 +12,6 @@ import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } fr
 import { existsSync, unlinkSync, writeFileSync, mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import {
-  indexById,
-  isCountedEntry,
-  readEntries,
-} from "../src/core/session-file";
 import { compile as compileAt, type CompileInput } from "../src/core/summarize";
 import { DEFAULT_SUMMARY_LIMITS } from "./support/window";
 import { COMPACT_INSTRUCTION } from "../src/names";
@@ -50,74 +45,7 @@ function setConfig(cfg: Record<string, unknown>) {
   writeFileSync(CONFIG_PATH, JSON.stringify(cfg));
 }
 
-// ── #N by entry id (src/core/session-file.ts) ──────────────────────────
-
-describe("indexById", () => {
-  test("counts only message entries in order", () => {
-    const entries = [
-      { type: "session", id: "header" },
-      { id: "m1", type: "message", message: { role: "user" } },
-      { id: "c1", type: "compaction", firstKeptEntryId: "" },
-      { id: "x1", type: "custom_message", customType: "ext.foo" },
-      { id: "m2", type: "message", message: { role: "assistant" } },
-      { id: "m3", type: "message", message: { role: "toolResult" } },
-    ];
-    const map = indexById(entries);
-    expect(map.get("m1")).toBe(0);
-    expect(map.get("m2")).toBe(1);
-    expect(map.get("m3")).toBe(2);
-    expect(map.has("c1")).toBe(false);
-    expect(map.has("x1")).toBe(false);
-  });
-
-  test("drops duplicate ids fail-closed but still advances positions", () => {
-    const entries = [
-      { id: "a", type: "message", message: { role: "user" } },
-      { id: "a", type: "message", message: { role: "assistant" } },
-      { id: "b", type: "message", message: { role: "assistant" } },
-    ];
-    const map = indexById(entries);
-    expect(map.has("a")).toBe(false);
-    expect(map.get("b")).toBe(2);
-  });
-
-  test("entries without ids still occupy an index", () => {
-    const entries = [
-      { type: "message", message: { role: "user" } },
-      { id: "x", type: "message", message: { role: "assistant" } },
-    ];
-    expect(indexById(entries).get("x")).toBe(1);
-  });
-
-  test("isCountedEntry requires a message payload", () => {
-    expect(isCountedEntry({ type: "message", message: {} })).toBe(true);
-    expect(isCountedEntry({ type: "message" })).toBe(false);
-    expect(isCountedEntry({ type: "compaction" })).toBe(false);
-    expect(isCountedEntry(null)).toBe(false);
-  });
-});
-
-describe("#N from the session file (the hook's fallback)", () => {
-  test("counts message entries in file order across non-message lines", () => {
-    const file = join(tmpDir, "session.jsonl");
-    const lines = [
-      { type: "session", id: "h" },
-      { id: "m1", type: "message", message: { role: "user" } },
-      { id: "c1", type: "compaction", firstKeptEntryId: "" },
-      "not-json{{{",
-      { id: "m2", type: "message", message: { role: "assistant" } },
-    ];
-    writeFileSync(file, lines.map((l) => (typeof l === "string" ? l : JSON.stringify(l))).join("\n") + "\n");
-    const map = indexById(readEntries(file)!);
-    expect(map?.get("m1")).toBe(0);
-    expect(map?.get("m2")).toBe(1);
-    expect(map?.has("c1")).toBe(false);
-  });
-
-  test("returns undefined for a missing file", () => {
-    expect(readEntries(join(tmpDir, "does-not-exist.jsonl"))).toBeUndefined();
-  });
-});
+// How #N is counted: lisp/test/numbers.lisp; reading it from a session file: tests/session-read.test.ts.
 
 // ── compile threading ───────────────────────────────────────────────────
 

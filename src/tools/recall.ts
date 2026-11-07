@@ -7,7 +7,7 @@
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { untilCore } from "../core/core-wait";
 import type { Binding } from "../host";
-import { recall, type RecallInput } from "../core/recall-run";
+import { recall } from "../core/recall-run";
 import { RANGE_PAGE_SIZE, RECALL_OUTPUT_CHARS, RECALL_PARAMS, RECALL_TOOL, SEARCH_PAGE_SIZE, SESSION_REF_MIN_CHARS } from "../names";
 
 const RECALL_TOOL_LABEL = "VCC Recall";
@@ -46,19 +46,6 @@ const RECALL_PARAM_DESCRIPTIONS: Record<(typeof RECALL_PARAMS)[number], string> 
   session: `Id (or its first ${SESSION_REF_MIN_CHARS}+ characters) of an earlier session from mode:'sessions' or a [session id] hit: the call reads that session instead of this one.`,
 };
 
-/**
- * One vcc_recall call. `params` is what omp's schema check let through
- * (RECALL_PARAMETERS); the core repairs the loose forms first.
- * `contextWindow` (the model's) scales the output ceiling.
- */
-export const executeRecall = (
-  params: unknown,
-  sessionManager: RecallInput["sessionManager"],
-  options: { contextWindow?: number } = {},
-): string =>
-  // The agent has its current turn in context, and its question would match itself.
-  recall({ sessionManager, ...options, skipCurrentTurn: true, call: { surface: "tool", params } }).text;
-
 const numberOrText = { anyOf: [{ type: "number" }, { type: "string" }] };
 const indices = { anyOf: [{ type: "array", items: numberOrText }, { type: "string" }, { type: "number" }] };
 const SCHEMA: Record<(typeof RECALL_PARAMS)[number], object> = {
@@ -76,7 +63,7 @@ const RECALL_PARAMETERS = {
   properties: Object.fromEntries(RECALL_PARAMS.map((p) => [p, { ...SCHEMA[p], description: RECALL_PARAM_DESCRIPTIONS[p] }])),
 } as const;
 
-export const registerRecallTool = (pi: ExtensionAPI, host: Pick<Binding, "window">) => {
+export const registerRecallTool = (pi: ExtensionAPI, host: Binding) => {
   pi.registerTool({
     name: RECALL_TOOL,
     label: RECALL_TOOL_LABEL,
@@ -87,7 +74,8 @@ export const registerRecallTool = (pi: ExtensionAPI, host: Pick<Binding, "window
     loadMode: "essential",
     approval: "read",
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const text = untilCore(() => executeRecall(params, ctx.sessionManager, { contextWindow: host.window(ctx.model).effective }));
+      // params is what omp's schema check let through; the core repairs the loose forms first.
+      const text = untilCore(() => recall(host, ctx, { surface: "tool", params }).text);
       return { content: [{ type: "text", text }], details: undefined };
     },
   });

@@ -1,5 +1,5 @@
 // Copies what omp may rewrite in the session file as it lands
-// (core/raw-store.ts), so vcc_recall keeps the originals. It reads omp's own
+// (<session>.jsonl.vcc-raw, lisp/src/raw-capture.lisp), so vcc_recall keeps the originals. It reads omp's own
 // entries (the persisted form), not the event's message: omp shows extensions a
 // de-obfuscated copy of an assistant message, and the copy keeps what the
 // session file keeps.
@@ -10,9 +10,11 @@
 // read a newer read supersedes is an older one), so a message is copied well
 // before omp could rewrite it.
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
-import { hostBranch, hostEntries, type SessionManagerLike } from "../core/session-file";
+import { hostEntries, type SessionManagerLike } from "../core/session-file";
 import type { Config } from "../core/settings";
 import { core } from "../core/lisp-core";
+import { whenCore } from "../core/core-wait";
+import { hostSnapshot, type HostCtx } from "../core/host-snapshot";
 
 /** One binding's place in its session: which file, how many entries it has looked at, which are kept. */
 interface RawCaptureState {
@@ -53,25 +55,6 @@ export const captureNewEntries = (state: RawCaptureState, sessionManager: Sessio
 };
 
 /**
- * The Lisp core's new text for the tool results it points (lisp/src/raw-capture.lisp,
- * op placeholders), or undefined without it. It gets each tool result of the
- * request's one-text-block shape, the branch's tool results by call id, of every
- * entry what #N counts, and which of the branch's results are kept.
- */
-const placeholdersInCore = (messages: unknown[], state: RawCaptureState, sessionManager: SessionManagerLike | undefined): Array<{ i: number; text: string }> => {
-  const candidates = messages.flatMap((m: any, i) =>
-    m?.role === "toolResult" && typeof m.toolCallId === "string" && Array.isArray(m.content) && m.content.length === 1
-      && m.content[0]?.type === "text" && typeof m.content[0].text === "string"
-      ? [{ i, callId: m.toolCallId, text: m.content[0].text }] : []);
-  if (candidates.length === 0) return [];
-  const branch = (hostBranch(sessionManager) ?? []).flatMap((e: any) =>
-    e?.type === "message" && e.message?.role === "toolResult" && typeof e.message.toolCallId === "string" ? [{ id: e.id ?? null, toolCallId: e.message.toolCallId }] : []);
-  const entries = (hostEntries(sessionManager) ?? []).map((e: any) => ({ type: e?.type, id: e?.id, ...(e?.message != null ? { message: 1 } : {}) }));
-  const kept = branch.flatMap((r) => (typeof r.id === "string" && state.kept.has(r.id) ? [r.id] : []));
-  return core({ op: "placeholders", input: { candidates, branch, entries, kept } }).replace as Array<{ i: number; text: string }>;
-};
-
-/**
  * The request's messages with each placeholder omp wrote over a tool result
  * whose original omp-vcc kept followed by where to read it, or undefined when
  * there is none. A placeholder alone reads as content that is gone, and an
@@ -80,9 +63,15 @@ const placeholdersInCore = (messages: unknown[], state: RawCaptureState, session
  * The ref is the entry's session-wide #N, so the text is the same on every
  * request and the provider's prompt cache keeps it.
  */
-export const pointPlaceholders = (messages: unknown[], state: RawCaptureState, sessionManager: SessionManagerLike | undefined): unknown[] | undefined => {
+export const pointPlaceholders = (messages: unknown[], state: RawCaptureState, host: Parameters<typeof hostSnapshot>[0], ctx: HostCtx): unknown[] | undefined => {
   if (state.kept.size === 0) return undefined;
-  const replace = placeholdersInCore(messages, state, sessionManager);
+  // The request's tool results of the one-text-block shape omp writes a placeholder in.
+  const candidates = messages.flatMap((m: any, i) =>
+    m?.role === "toolResult" && typeof m.toolCallId === "string" && Array.isArray(m.content) && m.content.length === 1
+      && m.content[0]?.type === "text" && typeof m.content[0].text === "string"
+      ? [{ i, callId: m.toolCallId, text: m.content[0].text }] : []);
+  if (candidates.length === 0) return undefined;
+  const replace = core({ op: "placeholders", host: hostSnapshot(host, ctx), candidates, kept: [...state.kept] }).replace as Array<{ i: number; text: string }>;
   if (replace.length === 0) return undefined;
   const out = [...messages];
   for (const { i, text } of replace) out[i] = { ...(messages[i] as Record<string, unknown>), content: [{ type: "text", text }] };
@@ -91,28 +80,25 @@ export const pointPlaceholders = (messages: unknown[], state: RawCaptureState, s
 
 
 /** Keep originals for the session this binding serves (`keepOriginals`, default on). */
-export const registerRawCapture = (pi: ExtensionAPI, config: Config): void => {
+export const registerRawCapture = (pi: ExtensionAPI, host: Parameters<typeof hostSnapshot>[0] & { config: Pick<Config, "load"> }): void => {
+  const { config } = host;
   const state = createRawCaptureState();
+  // While the core is not there yet, the next event tries again from where this one was.
   const capture = (ctx: unknown) => {
-    try {
-      if (!config.load().keepOriginals) return;
-      captureNewEntries(state, (ctx as { sessionManager?: SessionManagerLike })?.sessionManager);
-    } catch {}
+    whenCore(() => {
+      if (config.load().keepOriginals) captureNewEntries(state, (ctx as { sessionManager?: SessionManagerLike })?.sessionManager);
+    });
   };
   pi.on("session_start", (_event, ctx) => capture(ctx));
   pi.on("message_end", (_event, ctx) => capture(ctx));
   pi.on("turn_end", (_event, ctx) => capture(ctx));
   pi.on("agent_end", (_event, ctx) => capture(ctx));
-  pi.on("context", (event, ctx) => {
-    try {
-      if (!config.load().keepOriginals) return;
-      const sessionManager = (ctx as { sessionManager?: SessionManagerLike })?.sessionManager;
+  pi.on("context", (event, ctx) =>
+    whenCore(() => {
+      if (!config.load().keepOriginals) return undefined;
       // Entries that arrived since the last event, so a result omp just blanked is known to be kept.
-      captureNewEntries(state, sessionManager);
-      const messages = pointPlaceholders((event as { messages?: unknown[] }).messages ?? [], state, sessionManager);
+      captureNewEntries(state, (ctx as { sessionManager?: SessionManagerLike })?.sessionManager);
+      const messages = pointPlaceholders((event as { messages?: unknown[] }).messages ?? [], state, host, ctx as HostCtx);
       return messages ? { messages: messages as any } : undefined;
-    } catch {
-      return undefined;
-    }
-  });
+    }));
 };

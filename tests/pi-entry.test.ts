@@ -6,7 +6,7 @@ import { assertRealPi, piInstalled } from "./support/pi";
 import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join, dirname } from "path";
-import { recordLearnedWindow } from "../src/core/model-limits";
+import { recordLearnedWindow } from "./support/window";
 
 
 

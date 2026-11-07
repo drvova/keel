@@ -1,7 +1,9 @@
-// Pi's context edits as the compaction plan applies them (lisp/src/context-edits.lisp,
-// through plan.ts asContextHolds), checked against Pi's own projection where Pi is installed.
+// Pi's context edits as the compaction applies them (lisp/src/context-edits.lisp,
+// op context-edits), checked against Pi's own projection where Pi is installed.
 import { describe, expect, test } from "bun:test";
-import { asContextHolds as applyContextEdits } from "../src/compaction/plan";
+import { core } from "../src/core/lisp-core";
+
+const applyContextEdits = (branch: any[]): any[] => core({ op: "context-edits", branch }).entries as any[];
 import { assertRealPi, piInstalled } from "./support/pi";
 
 const msg = (id: string, message: any) => ({ type: "message", id, parentId: null, timestamp: "2026-11-06T00:00:00.000Z", message });
@@ -17,9 +19,9 @@ const branch = () => [
 ];
 
 describe("the branch as Pi's context holds it", () => {
-  test("a branch without edits (every omp branch) comes back as the same array", () => {
+  test("a branch without edits (every omp branch) comes back as it is", () => {
     const b = branch();
-    expect(applyContextEdits(b)).toBe(b);
+    expect(applyContextEdits(b)).toEqual(b);
   });
 
   test("an omission drops the target, a replacement swaps only its content, and the edits themselves go", () => {

@@ -14,19 +14,18 @@
 // before it clears the state.
 import { commandArgs } from "../core/compact-args";
 import type { CompactionState } from "../hooks/compaction";
-import { reportCompactDone, reportCompactError } from "../commands/compact-feedback";
-import { compactAndWait, tell, type HostProfile } from "../host";
+import { reportCompactDone, reportCompactError } from "./compact-feedback";
+import { compactAndWait, tell, type Binding } from "../host";
 import { whenCore } from "../core/core-wait";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 
-export const registerOmpVccCommand = (pi: ExtensionAPI, state: CompactionState, host: HostProfile) => {
+export const registerOmpVccCommand = (pi: ExtensionAPI, state: CompactionState, host: Binding) => {
   pi.registerCommand(host.command, {
     description: "Compact the conversation into an omp-vcc structured summary (keep:N keeps the last N user turns)",
     handler: async (args, ctx) => {
       const parsed = whenCore(() => commandArgs(args), (why) => tell(ctx, why, "warning"));
       if (!parsed) return;
       const { followUpPrompt, instructions } = parsed;
-      state.lastStats = null;
       state.lastCancelNotice = null;
       state.pendingManualInstructions = instructions;
       try {
@@ -34,8 +33,12 @@ export const registerOmpVccCommand = (pi: ExtensionAPI, state: CompactionState, 
           customInstructions: instructions,
           // A follow-up prompt replaces omp's resume of a turn the compaction interrupted.
           ...(followUpPrompt ? { suppressContinuation: true } : {}),
-          onComplete: () => reportCompactDone(ctx, state.lastStats, followUpPrompt, (content) => pi.sendUserMessage(content)),
-          onError: (err: Error) => reportCompactError(ctx, err, state.lastCancelNotice, host.displayName),
+          onComplete: () => {
+            // The compaction this pass wrote, which the hook keeps for the command to tell.
+            const written = state.written?.fromCommand ? state.written : null;
+            reportCompactDone(ctx, written?.statsLine ?? null, followUpPrompt, (content) => pi.sendUserMessage(content));
+          },
+          onError: (err: Error) => reportCompactError(host, ctx as any, err, state.lastCancelNotice),
         });
       } catch {
         // A compact() that throws has reported through onError.

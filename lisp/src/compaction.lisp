@@ -76,14 +76,100 @@
 ;;; An item of the window is (ENTRY LIVE NOTE): the branch entry, its message as
 ;;; the context holds it, and what the TS side sent of it.
 
+(defun js-date-ms (v)
+  "new Date(V).getTime() for the timestamps the hosts write (an ISO string or milliseconds), or NIL."
+  (cond ((realp v) v)
+        ((stringp v)
+         (let ((m (rx-exec (rx "^(\\d{4})-(\\d{2})-(\\d{2})T(\\d{2}):(\\d{2}):(\\d{2})(?:\\.(\\d{1,3})\\d*)?Z$") v)))
+           (when m
+             (flet ((g (i) (parse-integer (rx-group m i))))
+               (+ (* 1000 (- (encode-universal-time (g 6) (g 5) (g 4) (g 3) (g 2) (g 1) 0) 2208988800))
+                  (let ((ms (rx-group m 7))) (if ms (* (parse-integer ms) (expt 10 (- 3 (length ms)))) 0)))))))))
+
 (defun live-message (entry)
-  "summary-input.ts toLiveMessage: a branch entry's message in the context, or NIL."
+  "A branch entry's message in the context, or NIL: a message entry's own; a
+custom_message or a branch summary as the host's context builds it, with what
+the host's convertToLlm reads of it (an extension's attribution and details)."
   (let ((type (json-get entry "type")))
     (cond ((and (equal type "message") (truthy-p (json-get entry "message"))) (json-get entry "message"))
           ((equal type "custom_message")
-           (json-object "role" "custom" "customType" (json-get entry "customType") "content" (json-get entry "content")))
-          ((equal type "branch_summary") (json-object "role" "branchSummary" "summary" (json-get entry "summary")))
+           (let ((m (json-object "role" "custom" "customType" (json-get entry "customType") "content" (json-get entry "content")
+                                 "display" (json-get entry "display") "details" (json-get entry "details")
+                                 "timestamp" (js-date-ms (json-get entry "timestamp")))))
+             (multiple-value-bind (a present) (gethash "attribution" entry)
+               (when present (setf (gethash "attribution" m) a)))
+             m))
+          ((equal type "branch_summary")
+           (json-object "role" "branchSummary" "summary" (json-get entry "summary") "fromId" (json-get entry "fromId")
+                        "timestamp" (js-date-ms (json-get entry "timestamp"))))
           (t nil))))
+
+;;; --- what the host's convertToLlm makes of each message, for the summary ---------
+
+(defun host-converts-p (m)
+  "Whether the summary reads M through the host's convertToLlm: omp's developer
+turns (host reminders) and @file mentions are host context, not conversation,
+and the notice /omp-vcc-pin sends the agent is left out ([Pinned Notes] carries
+the note itself)."
+  (let ((role (json-get m "role")))
+    (not (or (member role '("developer" "fileMention") :test #'equal)
+             (and (equal role "custom") (equal (json-get m "customType") +pin-notice-type+))))))
+
+(defun summary-message (m converted)
+  "What M becomes in the summary's input, given CONVERTED, what the host's
+convertToLlm made of it (a vector, NIL where it was not asked): :NULL for
+nothing. A command the user ran (`!cmd`, a python cell) stays as it is: the
+brief shows it as one line with its output behind vcc_recall, where
+convertToLlm would make it user text. An extension's message, a branch's
+summary and user text an extension sent on the agent's behalf are marked
+injected, so the early requests, [User Messages] and [History Index] read only
+what the user wrote; omp converts a custom message to a developer message, which
+is read back as user content."
+  (let ((role (json-get m "role")))
+    (cond ((or (not (host-converts-p m)) (not (json-array-p converted)) (zerop (length converted))) :null)
+          ((member role '("bashExecution" "pythonExecution") :test #'equal) m)
+          ((equal role "custom")
+           (let ((c (copy-object (aref converted 0)))) (setf (gethash "role" c) "user" (gethash "injected" c) :true) c))
+          ((or (equal role "branchSummary") (extension-user-p m))
+           (let ((c (copy-object (aref converted 0)))) (setf (gethash "injected" c) :true) c))
+          (t (aref converted 0)))))
+
+(defun host-messages (branch file)
+  "Each entry's live message on BRANCH and, where omp rewrote it, the original
+omp-vcc kept: (values LIVE ORIGINALS), vectors parallel to BRANCH, NIL where none."
+  (let* ((live (map 'vector #'live-message branch))
+         (at (loop for m across live for i from 0 when m collect i))
+         (restored (restore-originals (mapcar (lambda (i) (aref live i)) at)
+                                      (mapcar (lambda (i) (json-get (aref branch i) "id")) at) file))
+         (originals (make-array (length branch) :initial-element nil)))
+    (loop for i in at for r in restored unless (eq r (aref live i)) do (setf (aref originals i) r))
+    (values live originals)))
+
+(defun messages-to-convert (live originals)
+  "The messages the host is asked to convert, in order: each live one, then its original."
+  (loop for m across live for o across originals
+        when (and m (host-converts-p m)) collect m
+        when (and o (host-converts-p o)) collect o))
+
+(defun host-notes (branch live originals converted index)
+  "The note beside each entry: its #N, and what the summary reads of its message,
+as it is and as its kept original; CONVERTED is the host's answer for
+MESSAGES-TO-CONVERT, in that order."
+  (let ((answers (coerce converted 'list)))
+    (flet ((summary-of (m) (summary-message m (when (host-converts-p m) (pop answers)))))
+      (map 'vector
+           (lambda (e m o)
+             (let ((note (json-object)))
+               (multiple-value-bind (n found) (gethash (json-get e "id") index)
+                 (when (and found (stringp (json-get e "id"))) (setf (gethash "n" note) n)))
+               (when m (setf (gethash "summary" note) (summary-of m)))
+               (when o (setf (gethash "restored" note) (summary-of o)))
+               note))
+           branch live originals))))
+
+(defun recovery-p (reason will-retry)
+  "A pass that must shrink the context: an overflow, a reply cut off at the limit, one the host retries."
+  (or (member reason '("overflow" "incomplete") :test #'equal) (eq will-retry :true)))
 
 (defun item-entry (item) (first item))
 (defun item-live (item) (second item))
@@ -485,17 +571,15 @@
 
 (defun cut-reason-name (reason) (if (eq reason :no-live-messages) "no_live_messages" "too_few_live_messages"))
 
-(defun plan-compaction (input)
-  "plan.ts planCompaction: what the compaction does, on the branch as the context
-holds it (Pi's context edits applied, context-edits.lisp), sized first
+(defun plan-compaction (input branch notes)
+  "What the compaction does, on BRANCH as the context holds it (Pi's context
+edits applied) with NOTES beside its entries (host-notes), sized first
 (window.lisp), as the plan's JSON."
-  (multiple-value-bind (branch notes)
-      (apply-context-edits (coerce (json-get input "branch" #()) 'vector) (coerce (json-get input "notes" #()) 'vector))
-    (let* ((sizing (size-compaction input branch))
-           (plan (plan-sized input branch notes sizing)))
-      (when (equal (json-get plan "kind") "compact") (setf (gethash "details" plan) (compaction-details input plan sizing)))
-      (setf (gethash "sizing" plan) sizing)
-      plan)))
+  (let* ((sizing (size-compaction input branch))
+         (plan (plan-sized input branch notes sizing)))
+    (when (equal (json-get plan "kind") "compact") (setf (gethash "details" plan) (compaction-details input plan sizing)))
+    (setf (gethash "sizing" plan) sizing)
+    plan))
 
 (defun compaction-details (input plan sizing)
   "plan.ts detailsOf: what the compaction entry stores (details.ts): its sections

@@ -1,4 +1,4 @@
-// Limits that follow the model's context window (src/core/window.ts, model-limits.ts, hooks/window-limits.ts).
+// Limits that follow the model's context window (lisp/src/window.lisp, limits.lisp), held to each host's own.
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test";
 import { assertRealPi, piInstalled } from "./support/pi";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
@@ -19,10 +19,9 @@ import {
 import type { TriggerRule } from "../src/core/window";
 // omp's own function, which omp-vcc ports since omp does not export it to extensions.
 import { resolveThresholdTokens } from "@oh-my-pi/pi-agent-core/compaction";
-import { learnedWindow, recordLearnedWindow } from "../src/core/model-limits";
+import { learnedWindow, recordLearnedWindow, windowOf as windowOfHost } from "./support/window";
 import type { CompactionReason } from "../src/types";
-import { windowOf as windowOfHost } from "../src/core/model-limits";
-import { isRecovery, type HostName } from "../src/host";
+import type { HostName } from "../src/host";
 
 /** The learned limits sit next to the test's config. */
 const configDir = () => dirname(process.env.OMP_VCC_CONFIG_PATH!);
@@ -30,7 +29,8 @@ const configDir = () => dirname(process.env.OMP_VCC_CONFIG_PATH!);
 const windowOf = (model: Parameters<typeof windowOfHost>[0], host: HostName = "omp") => windowOfHost(model, host, configDir());
 /** As the hook calls it, for a pass the host does not retry: omp's rule unless a test names another. */
 const triggerFor = (w: ReturnType<typeof windowOfHost>, reason: CompactionReason, before: number, policy?: object, rule: TriggerRule = "omp") =>
-  triggerForRule(w.effective, isRecovery({ reason, willRetry: false }), before, policy, rule);
+  // A pass the host does not retry is a recovery only for an overflow or a cut-off reply.
+  triggerForRule(w.effective, reason === "overflow" || reason === "incomplete", before, policy, rule);
 
 let dir: string;
 const prev = process.env.OMP_VCC_CONFIG_PATH;

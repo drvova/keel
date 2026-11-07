@@ -1,7 +1,6 @@
 import { describe, test, expect } from "bun:test";
-// Blocks the summarizer would actually get (renderedBlocks): the hook's
-// toSummaryMessage, which reads custom messages as user content, then normalize.
-import { applyTailBudget, buildOwnCut, renderedBlocks, resolveSmartKeepUserTurns } from "./support/host";
+// Where a compaction cuts (lisp/src/compaction.lisp, op cut), on omp's convertToLlm.
+import { applyTailBudget, buildOwnCut, resolveSmartKeepUserTurns } from "./support/host";
 
 const msg = (id: string, role: "user" | "assistant" | "toolResult", content = "x") => ({
   id,
@@ -283,8 +282,6 @@ describe("buildOwnCut: entries normalize() cannot render", () => {
     for (const role of withSys.messages.map((m: any) => m.role)) {
       expect(["system", "user", "assistant", "toolResult"]).toContain(role);
     }
-    // And the summarized region has a block to render.
-    expect(renderedBlocks(withSys.messages).length).toBeGreaterThan(0);
   });
 
   test("a window of only system entries cancels instead of summarizing nothing", () => {
@@ -309,7 +306,6 @@ describe("buildOwnCut: entries normalize() cannot render", () => {
     if (!r.ok) return;
     expect(r.compactAll).toBe(false);
     expect(r.firstKeptEntryId).toBe("m1");
-    expect(renderedBlocks(r.messages).length).toBeGreaterThan(0);
   });
 
   test("a custom_message listed in skipCustomTypes counts as unrenderable", () => {
@@ -349,7 +345,6 @@ describe("buildOwnCut: entries normalize() cannot render", () => {
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect(r.budgetCut).toBeUndefined();
-    expect(renderedBlocks(r.messages).length).toBeGreaterThan(0);
   });
 });
 

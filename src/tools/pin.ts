@@ -3,9 +3,8 @@
 // number or a string and the core (lisp/src/pins.lisp) reads either form.
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { untilCore } from "../core/core-wait";
-import type { HostProfile } from "../host";
-import { pinInCore, type PinHost } from "../core/pins";
-import type { SessionManagerLike } from "../core/session-file";
+import type { Binding } from "../host";
+import { pin } from "../core/pins";
 import { PIN_CHARS, PIN_PARAMS, PIN_TOOL } from "../names";
 
 const PIN_TOOL_LABEL = "VCC Pin";
@@ -28,9 +27,6 @@ const PIN_PARAM_DESCRIPTIONS: Record<(typeof PIN_PARAMS)[number], string> = {
   unpin: "The [N] of a pinned note to remove.",
 };
 
-/** One vcc_pin call: note pins, unpin removes, neither lists. */
-export const executePin = (params: unknown, host: PinHost, session: SessionManagerLike): string =>
-  pinInCore(host, session, { surface: "tool", params: params ?? null }).text;
 
 const PIN_PARAMETERS = {
   type: "object",
@@ -40,7 +36,7 @@ const PIN_PARAMETERS = {
   },
 } as const;
 
-export const registerPinTool = (pi: ExtensionAPI, host: Pick<HostProfile, "command">) => {
+export const registerPinTool = (pi: ExtensionAPI, host: Binding) => {
   pi.registerTool({
     name: PIN_TOOL,
     label: PIN_TOOL_LABEL,
@@ -50,7 +46,8 @@ export const registerPinTool = (pi: ExtensionAPI, host: Pick<HostProfile, "comma
     // It writes only omp-vcc's own session entry, not the workspace.
     approval: "read",
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const text = untilCore(() => executePin(params, pi, ctx.sessionManager));
+      // One call: note pins, unpin removes, neither lists.
+      const text = untilCore(() => pin(pi, host, ctx, { surface: "tool", params: params ?? null }).text);
       return { content: [{ type: "text", text }], details: undefined };
     },
   });

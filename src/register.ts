@@ -23,7 +23,7 @@ export const register = (pi: ExtensionAPI, host: Host): void => {
   const windows = createWindowState();
   registerCompactionHook(pi, binding, state, windows);
   registerWindowTracking(pi, windows, binding);
-  if (binding.rewritesInPlace) registerRawCapture(pi, binding.config);
+  if (binding.rewritesInPlace) registerRawCapture(pi, binding);
   registerOmpVccCommand(pi, state, binding);
   registerVccRecallCommand(pi, binding);
   registerRecallTool(pi, binding);

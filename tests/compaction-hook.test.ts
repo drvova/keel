@@ -3,16 +3,17 @@ import { existsSync, unlinkSync, writeFileSync, readFileSync, mkdtempSync, rmSyn
 import { tmpdir } from "os";
 import { join } from "path";
 import { COMPACT_INSTRUCTION } from "../src/names";
-import { formatCompactionStats } from "../src/compaction/stats";
 import { applyTailBudget, buildOwnCut, getLastCompactionStats, registerHook, type RegisteredHook } from "./support/host";
 
 let tmpDir: string;
 let CONFIG_PATH: string;
-const DEBUG_PATH = "/tmp/omp-vcc-debug.json";
+/** The debug setting writes each pass's decisions beside the config. */
+let DEBUG_PATH: string;
 
 beforeAll(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "omp-vcc-test-"));
   CONFIG_PATH = join(tmpDir, "omp-vcc-config.json");
+  DEBUG_PATH = join(tmpDir, "omp-vcc-debug.json");
   process.env.OMP_VCC_CONFIG_PATH = CONFIG_PATH;
 });
 
@@ -59,14 +60,18 @@ function createMockOmp() {
       customMessages.push({ message, options });
     },
   } as any;
+  // What the hook last returned, which the host persists as the compaction entry when omp-vcc's answer wins.
+  let last: any;
   return {
     pi,
     invokeBefore: (event: any) => {
       const { reason, willRetry: _willRetry, ...ompEvent } = event;
       if (reason && reason !== "manual") pi.__hook.autoCompactionStart(reason);
-      return beforeHandler!(ompEvent, ctx);
+      return (last = beforeHandler!(ompEvent, ctx));
     },
-    invokeCompact: (event: any) => compactHandler!(event, ctx),
+    /** The host applied a compaction: omp-vcc's own (details compactor "omp-vcc") is the one the hook returned. */
+    invokeCompact: (event: any) => compactHandler!(
+      event.compactionEntry?.details?.compactor === "omp-vcc" ? { ...event, compactionEntry: last?.compaction } : event, ctx),
     notifyCalls,
     userMessages,
     customMessages,
@@ -197,8 +202,8 @@ describe("compaction hook: cancel paths", () => {
  
     expect(existsSync(DEBUG_PATH)).toBe(true);
     const snapshot = JSON.parse(readFileSync(DEBUG_PATH, "utf-8"));
-    expect(snapshot.cancelled).toBe(true);
-    expect(snapshot.reason).toBe("too_few_live_messages");
+    expect(snapshot.kind).toBe("cancel");
+    expect(snapshot.cutReason).toBe("too_few_live_messages");
  
     // No content leakage
     const serialized = JSON.stringify(snapshot);
@@ -271,7 +276,7 @@ describe("compaction hook: compact-all path", () => {
 
     const entries = [msg("m1", "user"), msg("m2", "assistant"), msg("m3", "user"), msg("m4", "assistant")];
     const result = invokeBefore(makeEvent(entries, undefined, { reason: "threshold" }));
-    await invokeCompact({ type: "session_compact", fromExtension: true, compactionEntry: { details: result.compaction.details } });
+    await invokeCompact({ type: "session_compact", fromExtension: true, compactionEntry: { details: { compactor: "omp-vcc" } } });
     jest.runAllTimers();
 
     expect(customMessages).toEqual([]);
@@ -346,10 +351,7 @@ describe("compaction hook: compact-all path", () => {
     jest.runAllTimers();
 
     expect(result.compaction.firstKeptEntryId).toBe("m3");
-    expect(getLastCompactionStats()).toMatchObject({
-      keptUserTurns: 3,
-      totalUserTurns: 4,
-    });
+    expect(getLastCompactionStats()).toContain("kept 3/4 turns");
     expect(userMessages).toEqual(["continue"]);
   });
 
@@ -368,10 +370,7 @@ describe("compaction hook: compact-all path", () => {
     jest.runAllTimers();
 
     expect(result.compaction.firstKeptEntryId).toBe("m3");
-    expect(getLastCompactionStats()).toMatchObject({
-      keptUserTurns: 2,
-      totalUserTurns: 3,
-    });
+    expect(getLastCompactionStats()).toContain("kept 2/3 turns");
     expect(userMessages).toEqual(["continue"]);
   });
 
@@ -383,29 +382,12 @@ describe("compaction hook: compact-all path", () => {
     const entries = [msg("m1", "user"), msg("m2", "assistant"), msg("m3", "user"), msg("m4", "assistant")];
     const result = invokeBefore(makeEvent(entries, "continue", { reason: "overflow" }));
     expect(result.compaction.details).toMatchObject({ reason: "overflow", willRetry: true });
-    await invokeCompact({ type: "session_compact", fromExtension: true, compactionEntry: { details: result.compaction.details } });
+    await invokeCompact({ type: "session_compact", fromExtension: true, compactionEntry: { details: { compactor: "omp-vcc" } } });
     jest.runAllTimers();
 
     expect(userMessages).toEqual([]);
     expect(customMessages).toEqual([]);
     expect(notifyCalls).toEqual([]);
-  });
-
-  test("formatCompactionStats shows kept 0/N for a compact-all fallback, explicit keep or default, without extra wording", () => {
-    const fallback = { summarized: 2, keptUserTurns: 0, keptTokensEst: 10 };
-    expect(formatCompactionStats({ ...fallback, totalUserTurns: 2 })).toBe("omp-vcc: kept 0/2 turns, ~10 tok (summarized 2).");
-    expect(formatCompactionStats({ ...fallback, totalUserTurns: 1 })).toBe("omp-vcc: kept 0/1 turns, ~10 tok (summarized 2).");
-  });
-
-  test("formatCompactionStats appends smart-keep tag when adjusted", () => {
-    const msg = formatCompactionStats({
-      summarized: 5,
-      keptUserTurns: 3,
-      totalUserTurns: 5,
-      keptTokensEst: 3200,
-      smartKeepAdjusted: true,
-    });
-    expect(msg).toBe("omp-vcc: kept 3/5 turns, ~3.2k tok (summarized 5, smart-keep).");
   });
 
   test("/omp-vcc keep instruction changes firstKeptEntryId and stats", () => {
@@ -425,11 +407,8 @@ describe("compaction hook: compact-all path", () => {
 
     expect(result.compaction.firstKeptEntryId).toBe("u2");
     expect(result.compaction.details.sourceMessageCount).toBe(2);
-    expect(getLastCompactionStats()).toMatchObject({
-      summarized: 2,
-      keptUserTurns: 2,
-      totalUserTurns: 3,
-    });
+    expect(getLastCompactionStats()).toContain("kept 2/3 turns");
+    expect(getLastCompactionStats()).toContain("summarized 2");
   });
 
   test("/omp-vcc marker with trailing prompt does not leak marker as follow-up", async () => {
@@ -450,9 +429,7 @@ describe("compaction hook: compact-all path", () => {
     jest.runAllTimers();
 
     expect(result.compaction.firstKeptEntryId).toBe("u2");
-    expect(getLastCompactionStats()).toMatchObject({
-      keptUserTurns: 2,
-    });
+    expect(getLastCompactionStats()).toContain("kept 2/");
     expect(userMessages).toEqual([]);
   });
 
@@ -465,10 +442,7 @@ describe("compaction hook: compact-all path", () => {
     const result = invokeBefore(makeEvent(entries, `${COMPACT_INSTRUCTION} keep:999999999999999999999`));
 
     expect(result.compaction.firstKeptEntryId).toBe("");
-    expect(getLastCompactionStats()).toMatchObject({
-      keptUserTurns: 0,
-      totalUserTurns: 2,
-    });
+    expect(getLastCompactionStats()).toContain("kept 0/2 turns");
   });
 });
 
@@ -578,19 +552,6 @@ describe("applyTailBudget: token-budget tail cut (default path)", () => {
     expect(keptFirst.message.role).toBe("assistant");
   });
 
-  test("formatCompactionStats leads with tail tokens for budget cuts", () => {
-    const base = {
-      summarized: 4,
-      keptUserTurns: 0,
-      totalUserTurns: 1,
-      keptTokensEst: 5000,
-    };
-    expect(formatCompactionStats({ ...base, budgetCut: "no_anchor" })).toBe("omp-vcc: kept ~5.0k tok tail (mid-turn cut, no user anchor), summarized 4.");
-    expect(formatCompactionStats({ ...base, budgetCut: "oversized_tail" })).toBe("omp-vcc: kept ~5.0k tok tail (mid-turn cut, oversized tail), summarized 4.");
-    // A finished turn whose final reply was kept is not a mid-turn cut (seen with a real model).
-    expect(formatCompactionStats({ ...base, budgetCut: "final_reply" })).toBe("omp-vcc: kept the final reply (~5.0k tok), summarized 4.");
-    expect(formatCompactionStats({ ...base, budgetCut: "running_turn" })).toBe("omp-vcc: kept the running turn's latest steps (~5.0k tok), summarized 4.");
-  });
 });
 
 describe("compaction hook: budget-cut hook integration", () => {
@@ -611,7 +572,7 @@ describe("compaction hook: budget-cut hook integration", () => {
     const result = invokeBefore(makeEvent(entries, COMPACT_INSTRUCTION));
     expect(result.cancel).toBeUndefined();
     expect(result.compaction.firstKeptEntryId).not.toBe("");
-    expect(getLastCompactionStats()!.budgetCut).toBe("no_anchor");
+    expect(getLastCompactionStats()).toContain("(mid-turn cut, no user anchor)");
   });
 
   test("Case A small window: unchanged compact-all fallback and no budgetCut", () => {
@@ -626,7 +587,7 @@ describe("compaction hook: budget-cut hook integration", () => {
     ];
     const result = invokeBefore(makeEvent(entries, COMPACT_INSTRUCTION));
     expect(result.compaction.firstKeptEntryId).toBe("");
-    expect(getLastCompactionStats()!.budgetCut).toBeUndefined();
+    expect(getLastCompactionStats()).not.toContain("mid-turn cut");
   });
 
   test("Explicit keep:N with giant last turn is untouched (no budgetCut)", () => {
@@ -643,7 +604,7 @@ describe("compaction hook: budget-cut hook integration", () => {
     ];
     const result = invokeBefore(makeEvent(entries, `${COMPACT_INSTRUCTION} keep:2`));
     expect(result.compaction.firstKeptEntryId).toBe("u2");
-    expect(getLastCompactionStats()!.budgetCut).toBeUndefined();
+    expect(getLastCompactionStats()).not.toContain("mid-turn cut");
   });
 });
 
@@ -858,7 +819,7 @@ describe("compaction hook: skipForProviders (#27)", () => {
     // omp-vcc compacts once (anthropic) → stale stats now exist.
     mock.ctx.model = { provider: "anthropic" };
     const own = mock.invokeBefore(makeEvent(entries(), undefined, { reason: "threshold" }));
-    await mock.invokeCompact({ type: "session_compact", fromExtension: true, compactionEntry: { details: own.compaction.details } });
+    await mock.invokeCompact({ type: "session_compact", fromExtension: true, compactionEntry: { details: { compactor: "omp-vcc" } } });
     jest.runAllTimers();
     const notifiesAfterVcc = mock.notifyCalls.length;
     expect(notifiesAfterVcc).toBe(1); // stats toast for omp-vcc's own compaction
@@ -893,17 +854,6 @@ describe("compaction hook: skipForProviders (#27)", () => {
     expect(mock.notifyCalls).toEqual([]); // no stats toast for someone else's compaction
     expect(mock.userMessages).toEqual([]);
   });
-
-  test("a compaction stored under the old pi-vcc name still counts as omp-vcc's", async () => {
-    setConfig({ debug: false, overrideDefaultCompaction: true });
-    const mock = createMockOmp();
-    register(mock.pi);
-    expect(mock.invokeBefore(makeEvent(entries(), "continue"))?.compaction).toBeTruthy();
-    await mock.invokeCompact({ type: "session_compact", fromExtension: true, compactionEntry: { details: { compactor: "pi-vcc" } } });
-    jest.runAllTimers();
-    expect(mock.userMessages).toEqual(["continue"]);
-  });
-
 });
 
 describe("compaction hook: skipCustomTypes", () => {

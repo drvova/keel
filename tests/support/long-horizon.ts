@@ -25,8 +25,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { dirname, join } from "path";
-import { indexById } from "../../src/core/session-file";
-import { restoreOriginals } from "../../src/core/raw-store";
+import { sessionMessages } from "./pairs";
 import { openHostSession, realModel, textOf, type Host, type HostSession } from "./host-session";
 
 export { LONG_HORIZON_MODEL, realModel } from "./host-session";
@@ -237,20 +236,13 @@ export const runLongHorizon = async (options: LongHorizonOptions = {}): Promise<
     const finalSummary: string = compactionEntries.at(-1)?.summary ?? "";
 
     // Where each fact landed, by omp-vcc's own #N, in the originals of what omp rewrote in place.
-    const entries = sessionManager.getEntries();
-    const numberOf = indexById(entries);
-    const stored = entries.filter((e: any) => e.type === "message" && e.message);
-    const originals = restoreOriginals(stored.map((e: any) => e.message), stored.map((e: any) => e.id), sessionManager.getSessionFile());
-    const messages = stored.map((e: any, i: number) => ({ id: e.id, message: originals[i] }));
-    const at = (pred: (m: any) => boolean): number | undefined => {
-      const e = messages.find((x: any) => pred(x.message));
-      return e ? numberOf.get(e.id) : undefined;
-    };
+    const messages = sessionMessages(sessionManager.getSessionFile());
+    const at = (pred: (m: any) => boolean): number | undefined => messages.find((x) => pred(x.message))?.index;
     for (const needle of needles) {
       if (needle.kind === "early_commit") {
         const commit = messages.find((x: any) => x.message.role === "toolResult" && textOf(x.message).includes(`feat(${COMPONENTS[needle.turn % COMPONENTS.length]}):`));
         needle.key = textOf(commit?.message).match(/\[main ([0-9a-f]{7,})\]/)?.[1] ?? "(no commit)";
-        needle.index = commit ? numberOf.get(commit.id) : undefined;
+        needle.index = commit?.index;
         continue;
       }
       needle.index = at((m) => {

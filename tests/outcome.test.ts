@@ -1,12 +1,17 @@
-// What a compaction's outcome is told as (src/compaction/stats.ts,
-// src/commands/compact-feedback.ts), whose details a compaction entry carries
-// (src/details.ts), and the provider opt-out (settings.ts
-// handlesHostCompactions): the core's op outcome, case by case.
+// What a compaction's outcome is told as, what /omp-vcc says when its
+// compaction did not happen (src/commands/compact-feedback.ts), whose details a
+// compaction entry carries, and the provider opt-out: lisp/src/outcome.lisp, case by case.
 import { describe, expect, it } from "bun:test";
-import { formatCompactionStats } from "../src/compaction/stats";
 import { reportCompactError } from "../src/commands/compact-feedback";
-import { vccDetailsOf } from "../src/details";
-import { handlesHostCompactions, type VccSettings } from "../src/core/settings";
+import type { VccSettings } from "../src/core/settings";
+import { core } from "../src/core/lisp-core";
+import { ompBinding } from "./support/binding";
+
+const formatCompactionStats = (stats: object): string => core({ op: "outcome", stats }).line as string;
+/** omp-vcc's details on a compaction entry (omp's notes-backed rollover nests them under hookDetails), or undefined. */
+const vccDetailsOf = (details: unknown) => (core({ op: "outcome", details: details ?? null }).own as object | undefined) ?? undefined;
+/** Whether omp-vcc answers the host's own compactions for a model of this provider. */
+const handlesHostCompactions = (settings: VccSettings, provider: unknown): boolean => core({ op: "outcome", settings, provider: provider ?? null }).handles === true;
 
 const base = { summarized: 40, keptUserTurns: 2, totalUserTurns: 9 };
 
@@ -29,7 +34,7 @@ describe("the outcome line", () => {
 describe("what /omp-vcc says when its compaction did not happen", () => {
   const told = (message: string, mode: string, notice: string | null, branch: unknown[] = []) => {
     const out: unknown[] = [];
-    reportCompactError({ mode, hasUI: true, ui: { notify: (m: string, t: string) => out.push([m, t]) }, sessionManager: { getBranch: () => branch } } as any, new Error(message), notice, "omp");
+    reportCompactError(ompBinding, { mode, hasUI: true, ui: { notify: (m: string, t: string) => out.push([m, t]) }, sessionManager: { getBranch: () => branch } } as any, new Error(message), notice);
     return out;
   };
 
@@ -45,7 +50,7 @@ describe("what /omp-vcc says when its compaction did not happen", () => {
   });
 
   it("explains the host's own refusal, after a compaction or before any, in its TUI too", () => {
-    expect(told("Nothing to compact", "tui", null, [{ type: "compaction" }])).toEqual([[
+    expect(told("Nothing to compact", "tui", null, [{ type: "compaction", id: "c1" }])).toEqual([[
       "Nothing to compact yet: what came after the last compaction still fits in the recent part omp always keeps (compaction.keepRecentTokens in omp settings). Try again after a few more turns.",
       "warning",
     ]]);

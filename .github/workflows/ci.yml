@@ -80,6 +80,9 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends sbcl
       - name: Lisp core tests
         run: sbcl --noinform --non-interactive --eval '(require :asdf)' --eval '(push (truename "lisp/") asdf:*central-registry*)' --eval '(asdf:test-system "omp-vcc-core")'
+      # Every warning SBCL's compiler raises, and functions nothing names.
+      - name: Lisp lint
+        run: sbcl --noinform --non-interactive --load lisp/lint.lisp
 
       - run: bun run typecheck
 
