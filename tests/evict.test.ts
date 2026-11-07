@@ -300,15 +300,17 @@ describe("pinned notes when turns leave", () => {
     setEvict(true);
     const s = session(4);
     // Pinned in turn 0 (#0–#3) and turn 1; the one in turn 1 is defined again in turn 3.
+    s.host.appendEntry(PIN_ENTRY_TYPE, { v: 1, op: "add", id: 9, name: "plan", text: "ship v2", by: "agent", at: null, from: "aaaa1111" });
     s.host.appendEntry(PIN_ENTRY_TYPE, { v: 1, op: "add", id: 1, text: "sessions live in SQLite", by: "agent", at: 1 });
     s.host.appendEntry(PIN_ENTRY_TYPE, { v: 1, op: "add", id: 2, name: "test-cmd", text: "bun test", by: "agent", at: 5 });
     s.host.appendEntry(PIN_ENTRY_TYPE, { v: 1, op: "add", id: 3, name: "test-cmd", text: "bun test --isolate", by: "agent", at: 13 });
     record(s, { op: "evict", from: 0, to: 7 });
     const line = texts(sent(s).messages)[0];
-    expect(line).toContain("Pinned there, still held: [1] sessions live in SQLite (agent, #1).");
+    // The first line also carries what was pinned before any turn: the notes carried from the last session.
+    expect(line).toContain("Pinned there, still held: [1] sessions live in SQLite (agent, #1); [9] plan: ship v2 (agent, from session aaaa1111).");
     expect(line).not.toContain("test-cmd");
     const listing = tool(s, null);
-    expect(listing).toContain("Pinned (vcc_pin; a name pinned again replaces its note):\n  [1] sessions live in SQLite (agent, #1)\n  [3] test-cmd: bun test --isolate (agent, #13)");
+    expect(listing).toContain("Pinned (vcc_pin; a name pinned again replaces its note):\n  [1] sessions live in SQLite (agent, #1)\n  [3] test-cmd: bun test --isolate (agent, #13)\n  [9] plan: ship v2 (agent, from session aaaa1111)");
   });
 });
 

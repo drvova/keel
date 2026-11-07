@@ -18,6 +18,8 @@ All notable changes to `@drvova/omp-vcc` are documented in this file. Entries fr
 
 ### Added
 
+- **Named notes carry into the next session, and the user's stay the user's** — a new session (a restart, `/new`) starts with the named notes of the project's last session, marked with the session they came from (`(agent, from session 01a194d8)`), and is told so; unnamed notes stay with their session. The agent can no longer define again or unpin a note the user pinned: it is told the note is the user's and to ask, or to pin its own under another name.
+
 - **Evictions that pay** — the agent's `vcc_context` drop is refused when it frees less than 45% of what it makes the provider read again uncached (everything after it), which a smaller context would repay only after many requests; the answer names the run from the oldest end that would pay (`oldest:4`). The user's command and the automatic eviction are not checked.
 
 - **Turn numbers in view** — with `vcc_context` there, each request in the context starts with its turn's `#N` (`[#12]`), the same on every request, so the agent takes turns out by number without listing them first.

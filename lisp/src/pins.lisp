@@ -18,7 +18,9 @@
   "A note as it is shown, in a listing and in [Pinned Notes]: [ID] NAME: TEXT (BY, #AT), NAME only for a named one."
   (let ((at (let ((a (json-get n "at"))) (and (not (eq a :null)) a))))
     (format nil "[~a] ~@[~a: ~]~a (~a~a)" (js-string-of (js-id (json-get n "id"))) (pin-name n) (json-get n "text") (json-get n "by")
-            (if at (format nil ", #~a" (js-string-of (js-id at))) ""))))
+            (cond (at (format nil ", #~a" (js-string-of (js-id at))))
+                  ((stringp (json-get n "from")) (format nil ", from session ~a" (json-get n "from")))
+                  (t "")))))
 
 (defun pin-name (n) (let ((name (json-get n "name"))) (and (stringp name) name)))
 
@@ -61,6 +63,7 @@ pin and unpin replayed along it, so a branch keeps the pins made on it."
                                   (let ((note (json-object "id" id "text" text "by" (if (equal (json-get op "by") "agent") "agent" "user")
                                                            "at" (and (js-integer-p (json-get op "at")) (as-integer (json-get op "at"))))))
                                     (when name (setf (gethash "name" note) name))
+                                    (when (stringp (json-get op "from")) (setf (gethash "from" note) (json-get op "from")))
                                     note))))
                          ((equal (json-get op "op") "remove") (remhash id notes)))))))
     (let ((ids (sort (loop for k being the hash-keys of notes collect k) #'<)))
@@ -100,6 +103,8 @@ the new note replaces the one it named."
            (named (and name (find name notes :key #'pin-name :test #'equal)))
            (existing (find-if (lambda (n) (and (string= (json-get n "text") text) (equal (pin-name n) name))) notes)))
       (when existing (return-from add-pin (values nil (format nil "Already pinned: ~a." (format-pin existing)) nil)))
+      (when (and named (equal by "agent") (equal (json-get named "by") "user"))
+        (return-from add-pin (values nil (users-note named "defined again") nil)))
       (let* ((counted (count-if #'counted-entry-p entries))
              (at (and (plusp counted) (1- counted)))
              (op (json-object "v" 1 "op" "add" "id" (next-pin-id branch) "text" text "by" by "at" at)))
@@ -109,28 +114,65 @@ the new note replaces the one it named."
                           (and named (format-pin named)))
                 op)))))
 
-(defun remove-pin (branch value)
-  "Unpin the note VALUE names, or list the notes when none does: (values DONE TEXT OP)."
+(defun users-note (note what)
+  "Why the agent may not change NOTE, one the user pinned: it stays until the user changes it."
+  (format nil "~a is the user's note and stays: only the user has it ~a (/…-pin, /…-unpin). Tell the user what should change, or pin yours under another name."
+          (format-pin note) what))
+
+(defun remove-pin (branch value &optional agent)
+  "Unpin the note VALUE names, or list the notes when none does: (values DONE TEXT OP).
+AGENT: the agent's call, which leaves a note the user pinned as it is."
   (let* ((id (pin-id-of value))
          (notes (read-pins branch))
          (note (if id
                    (find id notes :key (lambda (n) (json-get n "id")) :test #'same-id-p)
                    (let ((name (pin-name-of value))) (and name (find name notes :key #'pin-name :test #'equal))))))
-    (if note
-        (values t (format nil "Unpinned ~a." (format-pin note)) (json-object "v" 1 "op" "remove" "id" (json-get note "id")))
+    (cond
+      ((and note agent (equal (json-get note "by") "user"))
+       (values nil (users-note note "unpinned") nil))
+      (note
+        (values t (format nil "Unpinned ~a." (format-pin note)) (json-object "v" 1 "op" "remove" "id" (json-get note "id"))))
+      (t
         (values nil (format nil "No pinned note ~a. ~a"
                             (if id (format nil "[~a]" (js-string-of id)) (json-string value))
                             (format-pin-list notes))
-                nil))))
+                nil)))))
 
 (defun lower-first (text)
   (if (plusp (length text)) (concatenate 'string (string-downcase (subseq text 0 1)) (subseq text 1)) text))
 
+(defun file-branch (path)
+  "The entries on PATH's active branch, in file order."
+  (let* ((entries (jsonl-values path)) (ids (active-branch-ids entries)))
+    (coerce (remove-if-not (lambda (e) (and (hash-table-p e) (gethash (json-get e "id") ids))) entries) 'vector)))
+
+(defun carried-pins (entries files)
+  "The named notes a new session starts with: those of the project's last session
+before it (FILES, newest first), as pin ops of this one, marked with the session
+they came from. A note is named to be kept; an unnamed one stays with its
+session. Nothing for a session that has a message or a pin already (resumed,
+forked, or carried into once)."
+  (unless (or (some #'counted-entry-p entries) (some #'pin-entry-p entries) (null files))
+    (let* ((previous (first files))
+           (from (let ((id (json-get (read-header previous) "id"))) (if (stringp id) (subseq id 0 (min 8 (length id))) "")))
+           (id 0))
+      (loop for n in (read-pins (file-branch previous))
+            when (pin-name n)
+              collect (let ((op (json-object "v" 1 "op" "add" "id" (incf id) "name" (pin-name n) "text" (json-get n "text")
+                                             "by" (json-get n "by") "at" :null)))
+                        (setf (gethash "from" op) from)
+                        op)))))
+
 (defun run-pin (input)
-  "One vcc_pin call or /…-pin, /…-unpin command: (values DONE TEXT OP SEVERITY AGENT-NOTE)."
+  "One vcc_pin call or /…-pin, /…-unpin command: (values DONE TEXT OP SEVERITY AGENT-NOTE).
+A carry (a session starting) answers with the ops instead: (values T TEXT OPS)."
   (let* ((call (json-get input "call"))
          (branch (coerce (json-get input "branch" #()) 'vector))
          (entries (coerce (json-get input "entries" branch) 'vector)))
+    (when (equal (json-get call "surface") "carry")
+      (let ((ops (carried-pins entries (coerce (json-get call "files" #()) 'list))))
+        (return-from run-pin
+          (values (and ops t) (and ops (format nil "Carried from the last session: ~{~a~^; ~}." (mapcar #'format-pin ops))) (coerce ops 'vector)))))
     (if (equal (json-get call "surface") "tool")
         ;; The tool: a note, an unpin, or the list; both at once is refused.
         (let ((pin (pin-call-of (json-get call "params"))))
@@ -140,7 +182,7 @@ the new note replaces the one it named."
                  (if (and (third pin) (not (pin-name-of (third pin))))
                      (values nil (format nil "Not a name: ~a. A name is letters, digits and . _ - (up to ~d chars), e.g. auth-plan." (json-string (third pin)) +pin-name-chars+))
                      (add-pin branch entries (second pin) "agent" (pin-name-of (third pin)))))
-                (t (remove-pin branch (second pin)))))
+                (t (remove-pin branch (second pin) t))))
         ;; The commands: /…-unpin ID, /…-pin TEXT, or the list.
         (let ((args (let ((a (json-get call "args"))) (if (stringp a) a ""))))
           (if (equal (json-get call "name") "unpin")

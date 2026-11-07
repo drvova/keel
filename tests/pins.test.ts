@@ -7,6 +7,9 @@ import { PIN_ENTRY_TYPE } from "../src/names";
 import { executePin, ompBinding } from "./support/binding";
 import { registerPinCommands } from "../src/commands/pin";
 import { registerHook } from "./support/host";
+import { carryPins } from "../src/core/pins";
+import { writeJsonl, freshDir } from "./support/session-files";
+import { utimesSync } from "fs";
 
 /** A session whose branch is an array; appendEntry adds to it, as the hosts do. */
 const session = (initial: any[] = []) => {
@@ -23,7 +26,7 @@ const session = (initial: any[] = []) => {
 const readPins = (entries: any[]): Array<[number, string, string]> => {
   const s = { appendEntry: () => {} };
   const listed = executePin({}, s, { getBranch: () => entries, getEntries: () => entries });
-  return [...listed.matchAll(/^- \[(\d+)\] (.*) \((user|agent)(?:, #\d+)?\)$/gm)].map((m) => [Number(m[1]), m[2], m[3]]);
+  return [...listed.matchAll(/^- \[(\d+)\] (.*) \((user|agent)(?:, [^)]*)?\)$/gm)].map((m) => [Number(m[1]), m[2], m[3]]);
 };
 
 const message = (id: string, role = "user", text = "hello there") =>
@@ -110,6 +113,51 @@ describe("named notes", () => {
     expect(notices.at(-1)).toBe("Pinned [2] Note: name:x is not at the start (user, #0).");
     await commands.get("omp-vcc-unpin")!("test-cmd", ctx);
     expect(readPins(s.entries).map(([id]) => id)).toEqual([2]);
+  });
+});
+
+describe("the user's notes", () => {
+  it("stay as the user pinned them: the agent can neither define their name again nor unpin them", async () => {
+    const s = session([message("m1")]);
+    const commands = new Map<string, (args: string, ctx: any) => Promise<void>>();
+    registerPinCommands({ registerCommand: (name: string, c: any) => commands.set(name, c.handler), appendEntry: s.host.appendEntry, sendMessage: () => {} } as any, ompBinding);
+    const ctx = { sessionManager: s.sm, ui: { notify: () => {} } };
+    await commands.get("omp-vcc-pin")!("name:deploy only from main", ctx);
+    expect(executePin({ note: "deploy from any branch", name: "deploy" }, s.host, s.sm))
+      .toBe("[1] deploy: only from main (user, #0) is the user's note and stays: only the user has it defined again (/…-pin, /…-unpin). Tell the user what should change, or pin yours under another name.");
+    expect(executePin({ unpin: "deploy" }, s.host, s.sm)).toStartWith("[1] deploy: only from main (user, #0) is the user's note and stays: only the user has it unpinned");
+    expect(readPins(s.entries)).toEqual([[1, "deploy: only from main", "user"]]);
+    // The agent's own notes it changes freely; the user changes theirs.
+    expect(executePin({ note: "v1", name: "plan" }, s.host, s.sm)).toStartWith("Pinned [2] plan: v1");
+    expect(executePin({ note: "v2", name: "plan" }, s.host, s.sm)).toStartWith("Redefined [3] plan: v2");
+    await commands.get("omp-vcc-pin")!("name:deploy from main or release/*", ctx);
+    expect(readPins(s.entries).map(([, text]) => text)).toEqual(["plan: v2", "deploy: from main or release/*"]);
+  });
+});
+
+describe("named notes across sessions", () => {
+  it("a new session starts with the named notes of the project's last one, once", () => {
+    const dir = freshDir();
+    const old = join(dir, "2026-01-01_aaaa1111.jsonl");
+    writeJsonl(old, [
+      { type: "session", id: "aaaa1111-0000", cwd: "/x" },
+      { type: "message", id: "m1", parentId: null, message: { role: "user", content: "hi" } },
+      { type: "custom", id: "p1", parentId: "m1", customType: PIN_ENTRY_TYPE, data: { v: 1, op: "add", id: 1, name: "plan", text: "ship v2", by: "agent", at: 0 } },
+      { type: "custom", id: "p2", parentId: "p1", customType: PIN_ENTRY_TYPE, data: { v: 1, op: "add", id: 2, text: "an unnamed note", by: "user", at: 0 } },
+      { type: "custom", id: "p3", parentId: "p2", customType: PIN_ENTRY_TYPE, data: { v: 1, op: "add", id: 3, name: "deploy", text: "only from main", by: "user", at: 0 } },
+    ]);
+    utimesSync(old, new Date(1_700_000_000_000), new Date(1_700_000_000_000));
+    const file = join(dir, "2026-01-02_bbbb2222.jsonl");
+    writeJsonl(file, [{ type: "session", id: "bbbb2222-0000", cwd: "/x" }]);
+    const s = session();
+    const sm = { ...s.sm, getSessionFile: () => file, getSessionDir: () => dir };
+    expect(carryPins(s.host, ompBinding, { sessionManager: sm } as any)).toBe("Carried from the last session: [1] plan: ship v2 (agent, from session aaaa1111); [2] deploy: only from main (user, from session aaaa1111).");
+    expect(readPins(s.entries)).toEqual([[1, "plan: ship v2", "agent"], [2, "deploy: only from main", "user"]]);
+    // Carried once: the session has pins now.
+    expect(carryPins(s.host, ompBinding, { sessionManager: sm } as any)).toBeUndefined();
+    // A session with a message in it already (resumed, forked) carries nothing.
+    const t = session([message("m9")]);
+    expect(carryPins(t.host, ompBinding, { sessionManager: { ...t.sm, getSessionFile: () => file, getSessionDir: () => dir } } as any)).toBeUndefined();
   });
 });
 

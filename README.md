@@ -51,6 +51,8 @@ omp-vcc runs whenever the host compacts, or on demand. The commands carry the ho
 | `/omp-vcc keep:N [prompt]` | `/pi-vcc keep:N [prompt]` | Keep the last `N` user turns (`keep:0` compacts everything), then send the optional prompt to the agent instead of resuming the interrupted turn. |
 | `/omp-vcc-pin <note>` | `/pi-vcc-pin <note>` | Pin a note that stays at the top of every summary; with no note, list them. `name:NAME` first names it, and pinning a name again replaces its note. The agent pins its own with the `vcc_pin` tool (decisions, constraints, facts the task depends on), with a `name` to keep one current. |
 | `/omp-vcc-unpin <N>` | `/pi-vcc-unpin <N>` | Unpin note `N`, or a note by its name. |
+
+A named note carries into the project's next session (a restart, `/new`); an unnamed one stays with its session. The agent cannot change or unpin a note the user pinned.
 | `/omp-vcc-recall …` | `/pi-vcc-recall …` | Search the history, as `vcc_recall` does (see [Recall](#recall)). |
 | `/omp-vcc-evict …` | `/pi-vcc-evict …` | Take old turns out of the context whole, bring them back, or list what is in and out (see [Turns out of the context, whole](#turns-out-of-the-context-whole)). |
 

@@ -15,6 +15,7 @@
 import { PIN_ENTRY_TYPE } from "../names";
 import { core } from "./lisp-core";
 import { hostSnapshot, type HostCtx } from "./host-snapshot";
+import { projectFiles, sessionDirOf } from "./sessions";
 
 /** Where a pin or unpin is written: the host's appendEntry. */
 export interface PinHost {
@@ -37,4 +38,21 @@ export const pin = (host: PinHost, binding: Parameters<typeof hostSnapshot>[0], 
   const { op, ...answer } = core({ op: "pin", host: hostSnapshot(binding, ctx), call }).pin as PinAnswer & { op?: unknown };
   if (op) host.appendEntry(PIN_ENTRY_TYPE, op);
   return answer;
+};
+
+/**
+ * A session starting: the named notes of the project's last session are pinned
+ * in it too (lisp/src/pins.lisp, carried-pins), so what the agent or the user
+ * kept under a name carries on. Only into a session with nothing in it yet.
+ * What was carried, for the user, or undefined.
+ */
+export const carryPins = (host: PinHost, binding: Parameters<typeof hostSnapshot>[0], ctx: HostCtx): string | undefined => {
+  const sm = ctx.sessionManager as any;
+  const file: string | undefined = sm?.getSessionFile?.();
+  if (!file) return undefined;
+  const files = projectFiles(sessionDirOf(sm, file), file);
+  if (files.length === 0) return undefined;
+  const reply = core({ op: "pin", host: hostSnapshot(binding, ctx), call: { surface: "carry", files } }).pin as { text?: string; op?: unknown[] };
+  for (const op of reply.op ?? []) host.appendEntry(PIN_ENTRY_TYPE, op);
+  return reply.op?.length ? reply.text : undefined;
 };

@@ -191,13 +191,15 @@ what an eviction of them records, so a range never overlaps one already out."
                                     (and cut (format nil "older steps of the turn at #~d" (turn-from cut)))))
                   " and ")))
 
-(defun stub-text (from to turns outs messages-by-n originals pins)
+(defun stub-text (from to turns outs messages-by-n originals pins &optional first)
   "The line the span FROM–TO of what is out leaves in the request: what it was,
 what it did (as [History Index] says it: files changed, commits, failed calls,
 read from the originals omp-vcc kept, ORIGINALS by #N), the notes pinned there
 that still hold (PINS, as they read now: a note travels with the turn it was
 pinned in, so it stays in view when that turn leaves, and the line changes only
-when one is unpinned or defined again), and how to read it back.
+when one is unpinned or defined again; the FIRST line in a request also carries
+the notes pinned before any turn, carried from the last session), and how to
+read it back.
 It names no size, and reads only what omp leaves as it is or the originals: the
 line must read the same on every request for the provider's cache."
   (let* ((covering (remove-if-not (lambda (o) (overlaps-p (out-from o) (out-to o) from to)) outs))
@@ -210,7 +212,7 @@ line must read the same on every request for the provider's cache."
          (range (and ns (range-of-window (map 'vector (lambda (n) (gethash n originals)) ns) (coerce ns 'vector))))
          (work (and range (range-work range)))
          (notes (remove nil (mapcar #'out-note covering)))
-         (pinned (remove-if-not (lambda (p) (let ((at (json-get p "at"))) (and (realp at) (<= from at to)))) pins)))
+         (pinned (remove-if-not (lambda (p) (let ((at (json-get p "at"))) (if (realp at) (<= from at to) first))) pins)))
     (format nil "[~a out of context: ~a, by ~a.~@[ Requests: ~a.~]~@[ It ~a.~]~@[ The agent's note: ~a~]~@[ Pinned there, still held: ~a.~] Each entry reads back word for word with ~a; vcc_recall query searches them.]"
             (range-text from to) (span-what from to turns) (by-words (mapcar #'out-by covering))
             (and shown (format nil "~{\"~a\"~^; ~}~@[ (+~d more)~]" shown (and (> (length requests) (length shown)) (- (length requests) (length shown)))))
@@ -308,7 +310,7 @@ never changes, so the mark reads the same on every request."
                          (loop while (and (< i (length messages)) (aref v i))
                                do (let ((n (aref n-of i))) (when n (setf lo (min (or lo n) n) hi (max (or hi n) n))))
                                   (push i drop) (incf i))
-                         (when lo (push (cons (stub-place messages v start (1- i)) (stub-text lo hi turns outs by-n originals pins)) stubs)))))
+                         (when lo (push (cons (stub-place messages v start (1- i)) (stub-text lo hi turns outs by-n originals pins (null stubs))) stubs)))))
           (when mark
             (let ((starts (make-hash-table)))
               (dolist (tr turns) (setf (gethash (turn-from tr) starts) t))

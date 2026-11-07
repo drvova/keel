@@ -10,6 +10,7 @@ import { registerRawCapture } from "./hooks/raw-capture";
 import { registerOmpVccCommand } from "./commands/omp-vcc";
 import { registerVccRecallCommand } from "./commands/vcc-recall";
 import { registerPinCommands } from "./commands/pin";
+import { registerPinCarry } from "./hooks/pin-carry";
 import { registerRecallTool } from "./tools/recall";
 import { registerPinTool } from "./tools/pin";
 import { coreStatus } from "./core/lisp-core";
@@ -33,6 +34,7 @@ export const register = (pi: ExtensionAPI, host: Host): void => {
   registerRecallTool(pi, binding);
   registerPinTool(pi, binding);
   registerPinCommands(pi, binding);
+  registerPinCarry(pi, binding);
   // Old turns out of the context whole, instead of a summary: what the evict command or vcc_context took, and with the evict setting on, what omp-vcc takes as the context fills.
   // The setting is read through the core, which may not be built yet: then the tool comes with the next session.
   const contextTool = { registered: whenCore(() => binding.config.load().evict) === true };
