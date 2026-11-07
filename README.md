@@ -1,6 +1,6 @@
 # omp-vcc
 
-Algorithmic conversation compactor for [omp](https://github.com/can1357/oh-my-pi) (oh-my-pi) and [Pi](https://github.com/earendil-works/pi). No LLM calls: it builds the summary by extraction and formatting, keeps the raw history searchable with `vcc_recall`, and keeps pinned notes at the top of every summary.
+Algorithmic conversation compactor for [omp](https://github.com/can1357/oh-my-pi) (oh-my-pi) and [Pi](https://github.com/earendil-works/pi). No LLM calls: it builds the summary by extraction and formatting, keeps the raw history searchable with `vcc_recall`, and keeps pinned notes at the top of every summary. Or, instead of a summary, old turns can leave the context whole and be read back word for word ([Turns out of the context, whole](#turns-out-of-the-context-whole)).
 
 A fork of [pi-vcc](https://github.com/sting8k/pi-vcc) by [@sting8k](https://github.com/sting8k), native to both hosts: each gets its own entry, written against that host's own extension API, types and session format (`index.ts` for omp, `pi.ts` for Pi), over one shared core. Inspired by [VCC](https://github.com/lllyasviel/VCC) (View-oriented Conversation Compiler).
 
@@ -52,6 +52,7 @@ omp-vcc runs whenever the host compacts, or on demand. The commands carry the ho
 | `/omp-vcc-pin <note>` | `/pi-vcc-pin <note>` | Pin a note that stays at the top of every summary; with no note, list them. The agent pins its own with the `vcc_pin` tool (decisions, constraints, facts the task depends on). |
 | `/omp-vcc-unpin <N>` | `/pi-vcc-unpin <N>` | Unpin note `N`. |
 | `/omp-vcc-recall …` | `/pi-vcc-recall …` | Search the history, as `vcc_recall` does (see [Recall](#recall)). |
+| `/omp-vcc-evict …` | `/pi-vcc-evict …` | Take old turns out of the context whole, bring them back, or list what is in and out (see [Turns out of the context, whole](#turns-out-of-the-context-whole)). |
 
 With the default `keep:1`, a small tail is grown automatically (see `smartKeepTail`). To leave `/compact` and automatic compactions to the host, set `overrideDefaultCompaction: false`. Nothing needs setting in either host.
 
@@ -65,7 +66,7 @@ In print mode (`omp -p "/omp-vcc"`, `pi --print "/pi-vcc"`) the commands report 
 - While omp-vcc is installed, omp skips its background (speculative) compaction, as it does for any extension that handles compaction. omp-vcc's summary takes milliseconds, so there is no latency to hide.
 - After `/clear`, the summary, the history index and the pinned notes cover only what follows it.
 - Between compactions, omp keeps the live context small by rewriting messages in place: it shakes tool output and large fenced blocks into `artifact://` files (on an overflow, before omp-vcc is asked), and blanks old, superseded or useless tool output in the session file. omp-vcc keeps the original of every message omp may rewrite, in `<session>.jsonl.vcc-raw` beside the session, as it lands, so `vcc_recall` searches and expands what was there (`keepOriginals`). omp's placeholder then says where the original is (`[Output truncated - 1200 tokens] (the original: vcc_recall expand:[12])`), so the agent does not run the tool again to get it back; the summary is written from the originals; and a fork reads what its parent kept.
-- `vcc_recall` and `vcc_pin` are top-level tools with read-only approval: the summary tells the agent to call `vcc_recall` by name.
+- `vcc_recall`, `vcc_pin` and `vcc_context` (with `evict` on) are top-level tools with read-only approval: the summary tells the agent to call `vcc_recall` by name.
 
 ### On Pi
 
@@ -255,7 +256,7 @@ Config lives at `omp-vcc-config.json` in the host's agent directory (omp: `~/.om
 
 ## Coming from pi-vcc
 
-- On Pi, the commands keep their names (`/pi-vcc`, `/pi-vcc-recall`, `/pi-vcc-pin`, `/pi-vcc-unpin`); on omp they are `/omp-vcc`, `/omp-vcc-recall`, `/omp-vcc-pin`, `/omp-vcc-unpin`. The tools keep their names (`vcc_recall`, `vcc_pin`).
+- On Pi, the commands keep their names (`/pi-vcc`, `/pi-vcc-recall`, `/pi-vcc-pin`, `/pi-vcc-unpin`, and the new `/pi-vcc-evict`); on omp they are `/omp-vcc`, `/omp-vcc-recall`, `/omp-vcc-pin`, `/omp-vcc-unpin`, `/omp-vcc-evict`. The tools keep their names (`vcc_recall`, `vcc_pin`).
 - Summaries pi-vcc stored in a session (`compactor: "pi-vcc"`) are still read as this extension's: their history index carries on and their toasts and follow-ups still fire.
 - The config moves to `omp-vcc-config.json` (copied from `pi-vcc-config.json` on first load), and `continueAfterThresholdCompact` is gone: both hosts resume the run on their own.
 
@@ -270,6 +271,8 @@ DeepSeek V4.1 Flash working in omp (and, for Cybench, GLM 5.3 Flash too), with o
 ![Cybench, three compactors: answers right, asked again and right, and tool calls to answer again](./benchmarks/images/cybench-runs.png)
 
 All 17 of [Cybench](https://arxiv.org/abs/2408.08926)'s file-only capture-the-flag tasks (binaries to reverse, a pcap, emails, crypto) in one session on a 64K window, answering each task's own questions with at most 15 model requests per question (Cybench's own cap), and earlier answers asked again tasks later (`scripts/benchmark-cybench.ts`). Answered right: 53 of 62 with omp-vcc, 55 without `[Working Set]`, 55 with omp's own compaction. Asked again, all three got every one right, but not with the same work: omp's own compaction, which writes its summary with the model, answered 22 of 28 from what its context held, 8 tool calls in all; omp-vcc answered 10 of 27 that way and looked the rest up again, 39 calls. One run each.
+
+Turns out whole instead of a summary (`"evict": true`), on the same Cybench session on DeepSeek V4.1 Flash: 54 of 62 answered right (53 with the summary), 28 of 28 asked again right (27 of 27), with 4 compactions to the summary's 8 and 56 tool calls to answer again (41). On the long-horizon session (7 facts planted in 60 or 120 coding turns), a 128K window with eviction never compacted and still held all 7 facts word for word in the request after 60 turns, and 4 after 120, where the summary held 1; on a 32K window one turn fills much of it, eviction often has nothing to take, and the summary carries the session as before. One run each.
 
 ![Cybench on GLM 5.3 Flash, three compactors: answers right, asked again and right, and tool calls to answer again](./benchmarks/images/cybench-runs-glm.png)
 
