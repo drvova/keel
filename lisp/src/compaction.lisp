@@ -596,7 +596,7 @@ and what it was sized from (for debugging a compaction that kept too much or too
     (multiple-value-bind (keep adjusted)
         (resolve-smart-keep branch notes requested (eq (json-get settings "smartKeepTail") :true) skip
                             (budget budgets "minTailTokens") max-tail per-token)
-      (let ((cut (build-own-cut branch notes keep skip)) (running nil))
+      (let ((cut (build-own-cut branch notes keep skip)))
         (when (and (cut-p cut) (null requested)) (setf cut (apply-tail-budget branch notes cut max-tail per-token skip)))
         ;; An automatic pass on a turn still running (its last message is a tool
         ;; result: omp compacts between the tool calls of one turn) whose live
@@ -609,7 +609,7 @@ and what it was sized from (for debugging a compaction that kept too much or too
                    (not (equal (json-get input "reason") "manual")))
           (unless recovering
             (return-from plan-sized (json-object "kind" "cancel" "why" "running_turn" "summarized" (length (cut-items cut)))))
-          (setf cut (or (running-turn-cut branch notes max-tail per-token skip) cut) running t))
+          (setf cut (or (running-turn-cut branch notes max-tail per-token skip) cut)))
         ;; One or two messages too big for the window: summarized whole on a recovery
         ;; pass. Nothing live to summarize: no method of the host's can shrink it
         ;; either, so a recovery pass is left to it.
@@ -655,6 +655,5 @@ and what it was sized from (for debugging a compaction that kept too much or too
                                                 "smartKeepAdjusted" (if adjusted :true :false)
                                                 "budgetCut" (cut-budget-cut cut))
                            "budgetCut" (cut-budget-cut cut)
-                           "compactAll" (if (cut-compact-all cut) :true :false)
-                           "writtenForRescue" (and grows (json-object "growth" (growth-json growth) "summarized" n))
-                           "runningTurnRecovery" (and running :true))))))))
+                           ;; A recovery writes a summary that grows when it keeps part of the window.
+                           "growth" (growth-json growth))))))))

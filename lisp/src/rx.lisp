@@ -124,7 +124,7 @@ An integral value is an integer, as JSON.parse gives one; any other a double."
                  (loop while (and (< i n) (digit-char-p (char s i) radix)) do (incf i))
                  (and (> i start) (parse-integer s :start start :end i :radix radix))))
              (finish (r)
-               (cond ((integerp r) (if (< (abs r) (expt 2 53)) r (finish-double r)))
+               (cond ((integerp r) (if (< (abs r) +double-exact+) r (finish-double r)))
                      (t (finish-double r))))
              (finish-double (r)
                (and (< (abs r) most-positive-double-float) (coerce r 'double-float))))

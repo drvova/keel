@@ -26,7 +26,7 @@ export interface VccSettings {
    * `keep:N` from the user is always respected and never adjusted.
    */
   smartKeepTail: boolean;
-  /** Write debug snapshot to /tmp/omp-vcc-debug.json on each compaction. */
+  /** Write each compaction's decisions to omp-vcc-debug.json beside the config. */
   debug: boolean;
   /**
    * Providers for which omp-vcc defers compaction entirely (issue #27), e.g.
@@ -58,7 +58,7 @@ export interface VccSettings {
    * When true (default), keep the original of every message omp may rewrite in
    * the session file (tool output it blanks or shakes into artifact:// files,
    * long text blocks it shakes) in `<session>.jsonl.vcc-raw`, so vcc_recall
-   * reads what was there (core/raw-store.ts, hooks/raw-capture.ts).
+   * reads what was there (hooks/raw-capture.ts, lisp/src/raw-capture.lisp).
    */
   keepOriginals: boolean;
   /**
@@ -85,7 +85,7 @@ export interface Config {
    * - valid: missing keys added, existing values kept.
    */
   scaffold(): void;
-  /** Where omp-vcc keeps what it learns next to the config (core/model-limits.ts). */
+  /** Where omp-vcc keeps what it learns next to the config (omp-vcc-models.json, lisp/src/limits.lisp). */
   dir(): string;
 }
 
@@ -107,8 +107,10 @@ export const openConfig = (agentDir: () => string): Config => {
       try {
         core({ op: "settings", path: path(), legacy, scaffold: true });
       } catch (err) {
-        // Loading the extension must not fail on its config file; while the core is not there, the next load does it.
-        if (err instanceof CoreUnavailable) scaffoldPending = true;
+        // The core leaves a file it cannot write as it is; while the core is not there, the next load does it.
+        // A core that fails throws, as everywhere.
+        if (!(err instanceof CoreUnavailable)) throw err;
+        scaffoldPending = true;
       }
     },
   };

@@ -10,11 +10,9 @@
 
 (in-package #:omp-vcc)
 
-(defparameter +max-safe-integer+ 9007199254740992)
-
 (defun js-id (n)
   "An id as JavaScript holds it: an integer past 2^53 is the nearest double."
-  (if (and (integerp n) (> (abs n) +max-safe-integer+)) (coerce n 'double-float) n))
+  (if (and (integerp n) (> (abs n) +double-exact+)) (coerce n 'double-float) n))
 
 (defun format-pin (n)
   "A note as it is shown: [ID] TEXT (BY, #AT)."
@@ -58,7 +56,7 @@ pin and unpin replayed along it, so a branch keeps the pins made on it."
             do (setf max (max max (json-get (json-get e "data") "id"))))
     ;; Math.max(...) + 1 on doubles: exact below 2^53.
     (let ((next (+ (coerce max 'double-float) 1d0)))
-      (if (< (abs next) +max-safe-integer+) (truncate next) next))))
+      (if (< (abs next) +double-exact+) (truncate next) next))))
 
 (defun pin-text (raw)
   "One line, clipped: (values TEXT CLIPPED)."
@@ -107,14 +105,11 @@ pin and unpin replayed along it, so a branch keeps the pins made on it."
          (entries (coerce (json-get input "entries" branch) 'vector)))
     (if (equal (json-get call "surface") "tool")
         ;; The tool: a note, an unpin, or the list; both at once is refused.
-        (let* ((params (json-get call "params"))
-               (raw-note (json-get params "note"))
-               (note (and (stringp raw-note) (not (unset-p raw-note)) raw-note))
-               (unpin (let ((u (json-get params "unpin"))) (and (not (unset-p u)) u))))
-          (cond ((and note unpin) (values nil "Send note or unpin, not both, in one call."))
-                (note (add-pin branch entries note "agent"))
-                (unpin (remove-pin branch unpin))
-                (t (values nil (format-pin-list (read-pins branch))))))
+        (let ((pin (pin-call-of (json-get call "params"))))
+          (cond ((eq pin :both) (values nil "Send note or unpin, not both, in one call."))
+                ((eq pin :list) (values nil (format-pin-list (read-pins branch))))
+                ((eq (first pin) :note) (add-pin branch entries (second pin) "agent"))
+                (t (remove-pin branch (second pin)))))
         ;; The commands: /…-unpin ID, /…-pin TEXT, or the list.
         (let ((args (let ((a (json-get call "args"))) (if (stringp a) a ""))))
           (if (equal (json-get call "name") "unpin")

@@ -9,12 +9,11 @@
 
 (in-package #:omp-vcc)
 
-(defparameter +max-safe-keep+ 9007199254740991 "Number.MAX_SAFE_INTEGER.")
 
 (defun keep-of (text)
   "keep:N's N when TEXT is keep:N, else NIL; more digits than a safe integer keep as many turns as any session has."
   (let ((m (rx-exec (rx "^keep:(\\d+)$") text)))
-    (and m (min (parse-integer (rx-group m 1)) +max-safe-keep+))))
+    (and m (min (parse-integer (rx-group m 1)) +max-safe-integer+))))
 
 (defun parse-keep-and-prompt (args)
   "ARGS as (values FOLLOW-UP-PROMPT KEEP), keep:N its first word or its last."

@@ -12,6 +12,8 @@ export interface HostCtx {
   sessionManager?: SessionManagerLike;
   model?: { provider?: string; id?: string; contextWindow?: number | null } | null;
   getContextUsage?: () => { tokens?: number | null } | undefined;
+  /** The session's working directory, as both hosts' ctx carry it. */
+  cwd?: string;
 }
 
 /**
@@ -31,7 +33,7 @@ const skeleton = (e: any): Record<string, unknown> => ({
     : {}),
 });
 
-export const hostSnapshot = (host: Pick<HostProfile, "name" | "displayName" | "command" | "modelsFile"> & { config: Pick<Config, "path"> }, ctx: HostCtx | undefined) => {
+export const hostSnapshot = (host: Pick<HostProfile, "name" | "displayName" | "modelsFile"> & { config: Pick<Config, "path"> }, ctx: HostCtx | undefined) => {
   const sm = ctx?.sessionManager;
   const branch = hostBranch(sm) ?? [];
   const tree = hostEntries(sm) ?? branch;
@@ -41,11 +43,10 @@ export const hostSnapshot = (host: Pick<HostProfile, "name" | "displayName" | "c
   return {
     name: host.name,
     displayName: host.displayName,
-    command: host.command,
     modelsFile: host.modelsFile,
     configPath: host.config.path(),
     sessionFile: sm?.getSessionFile?.() ?? null,
-    cwd: process.cwd(),
+    cwd: ctx?.cwd ?? process.cwd(),
     model: m ? { provider: m.provider, id: m.id, contextWindow: m.contextWindow } : null,
     contextTokens: tokens,
     tree: tree.map(skeleton),

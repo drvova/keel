@@ -15,6 +15,9 @@
 
 (in-package #:omp-vcc)
 
+(defconstant +double-exact+ (expt 2 53) "Integers up to this a double holds exactly: past it JavaScript's numbers skip.")
+(defconstant +max-safe-integer+ (1- (expt 2 53)) "Number.MAX_SAFE_INTEGER.")
+
 (declaim (inline astral-p))
 (defun astral-p (char)
   "True when CHAR takes two UTF-16 code units (a surrogate pair)."
@@ -186,7 +189,7 @@ never between the halves of a pair."
   "The number X as JavaScript's String() writes it (Number::toString): the
 shortest digits that read back as the double, in plain notation from 1e-6 up to
 1e21 and in exponent notation outside it."
-  (if (and (integerp x) (<= (abs x) 9007199254740992))
+  (if (and (integerp x) (<= (abs x) +double-exact+))
       (format nil "~d" x)
       (let ((d (coerce x 'double-float)))
         (if (zerop d)

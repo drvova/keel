@@ -39,7 +39,7 @@
 was told already; omp's TUI shows its own \"Compaction cancelled\" or
 \"Compaction failed\", so there only the hint for a session still too short is added."
   (let ((message (let ((m (json-get input "message"))) (if (stringp m) m (js-string-of m))))
-        (host (json-get input "hostName"))
+        (host (json-get input "displayName"))
         (compacted (>= (last-compaction-index (coerce (json-get input "branch" #()) 'vector)) 0)))
     (cond ((and (equal (json-get input "mode") "tui") (not (starts-with "Nothing to compact" message))) nil)
           ((and (string= message "Compaction cancelled") (truthy-p (json-get input "cancelNotice"))) nil)

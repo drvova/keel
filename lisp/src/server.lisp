@@ -7,15 +7,10 @@
 ;;;; code that calls it stays synchronous, and nothing outlives a request. A
 ;;;; start costs ~5 ms (the dumped image is mapped, not loaded).
 ;;;;
-;;;; search-sessions: session files the core reads itself, for the search tests (tests/support/pairs.ts)
-;;;;   {"op":"search-sessions","query":Q,
-;;;;    "sources":[{"file":F,"ids":[ID...]|"active"|null,"skip":[N...],"session":S|null,"bytes":B}...],
-;;;;    "maxBytes":B?,"maxEntries":N?}
-;;;;   -> {"ok":true,"hits":[{"index":I,"role":R,"summary":S,"files":[F...]?,"session":S?,"snippet":S|null}...],
-;;;;       "totalBeforeCap":N,"truncated":B,"searched":N}
-;;;;   The first source is always read; each later one while the corpus stays
-;;;;   within maxBytes and maxEntries (a later one is a project's earlier
-;;;;   session, and `searched` counts those read).
+;;;; search: recall's search over one session file, for the search tests (tests/support/pairs.ts)
+;;;;   {"op":"search","file":F,"query":Q,"floor":X?,"cap":N?}
+;;;;   -> {"ok":true,"hits":[{"index":I,"role":R,"summary":S,"files":[F...]?,"snippet":S|null}...],
+;;;;       "totalBeforeCap":N,"truncated":B} or {"ok":true,"hits":[],"aborted":MESSAGE}
 ;;;;
 ;;;; load: one source's entries as the core reads them, for the tests of reading a session
 ;;;;   {"op":"load","source":SOURCE} -> {"ok":true,"entries":[{"index","role","summary","files"?,"text"}...]}
@@ -37,9 +32,10 @@
 ;;;;
 ;;;; cut: the cut alone (compaction.lisp), for the tests of where a compaction cuts
 ;;;;   {"op":"cut","action":"own"|"tail-budget"|"smart-keep"|"running-turn"|"whole-window",
-;;;;    branch, notes, keep?, skip?, cut?, maxTokens?, minTokens?, charsPerToken?, requested?, smart?}
-;;;;   -> {"ok":true,"cut":CUT}, CUT as cut-json writes it ({ok:false, reason} when there is none,
-;;;;   null from running-turn and whole-window), or "keep" and "adjusted" for smart-keep.
+;;;;    branchEntries, converted?, keep?, skip?, cut?, maxTokens?, minTokens?, charsPerToken?, requested?, smart?}
+;;;;   -> like op compact, first {"ok":true,"kind":"convert","messages":[M...]} without CONVERTED;
+;;;;   then {"ok":true,"cut":CUT}, CUT as cut-json writes it ({ok:false, reason} when there is
+;;;;   none, null from running-turn and whole-window), or "keep" and "adjusted" for smart-keep.
 ;;;;
 ;;;; working-set: [Working Set] alone (working-set.lisp), for its tests
 ;;;;   {"op":"working-set","history":[MESSAGE...],"indices":[N...],"kept":[MESSAGE...],"maxChars":C}
@@ -75,8 +71,7 @@
 ;;;;   reads the ids the file's and its parents' stores hold.
 ;;;;
 ;;;; placeholders: pointers on omp's placeholders (src/hooks/raw-capture.ts)
-;;;;   {"op":"placeholders","input":{candidates:[{i, callId, text}], branch:[{id, toolCallId}],
-;;;;    entries:[{type, id, message?}], kept:[ID...]}}
+;;;;   {"op":"placeholders","host":SNAPSHOT,"candidates":[{i, callId, text}...],"kept":[ID...]}
 ;;;;   -> {"ok":true,"replace":[{i, text}...]}
 ;;;;
 ;;;; args: a compaction command's text and the instructions the hook reads (src/core/compact-args.ts)
@@ -111,16 +106,10 @@
 ;;;;    "projectFiles":[F...] (newest first)}
 ;;;;   -> {"ok":true,"recall":{"ok":B,"text":T,"severity":S?}}
 ;;;;
-;;;; Any failure answers {"ok":false,"error":MESSAGE}.
-;;;;
-;;;; Any error is answered, never thrown past MAIN: src/core/lisp-core.ts
-;;;; throws it as the core's failure, with the message.
+;;;; Any error is answered {"ok":false,"error":MESSAGE}, never thrown past MAIN:
+;;;; src/core/lisp-core.ts throws it as the core's failure, with the message.
 
 (in-package #:omp-vcc)
-
-(defun aborted-reply (message &optional (searched 0))
-  "A search past its time budget: no hits, and why."
-  (json-object "ok" :true "hits" #() "totalBeforeCap" 0 "truncated" :false "aborted" message "searched" searched))
 
 (defun source-entries (source)
   "The entries a source names, as (INDEX ROLE SUMMARY FILES TEXT): its file's
@@ -142,48 +131,23 @@ less the indices it skips."
                           (not (member index skip)))
                   collect (list* index (append (render-entry message) (list (search-text message) id message)))))))))
 
-(defun handle-search-sessions (request)
-  (let* ((sources (let ((s (json-get request "sources" #()))) (if (vectorp s) (coerce s 'list) '())))
-         (max-bytes (let ((b (json-get request "maxBytes"))) (if (realp b) b most-positive-fixnum)))
-         (max-entries (let ((n (json-get request "maxEntries"))) (if (integerp n) n most-positive-fixnum)))
-         (corpus '()) (count 0) (bytes 0) (searched 0))
-    (loop for source in sources
-          for first = t then nil
-          do (let ((size (let ((b (json-get source "bytes"))) (if (realp b) b 0))))
-               (when (and (not first) (> (+ bytes size) max-bytes) (plusp searched)) (return))
-               (let* ((session (let ((s (json-get source "session"))) (and (stringp s) s)))
-                      (entries (mapcar (lambda (e) (append e (list session))) (source-entries source))))
-                 (when (and (not first) (> (+ count (length entries)) max-entries) (plusp searched)) (return))
-                 (setf corpus (append corpus entries))
-                 (incf count (length entries))
-                 (unless first (incf bytes size) (incf searched)))))
-    (let ((entries (coerce corpus 'vector))
-          (floor (json-get request "floor"))
-          (cap (json-get request "cap")))
-      (multiple-value-bind (hits total truncated)
-          (search-docs (let ((q (json-get request "query"))) (if (stringp q) q ""))
-                       (map 'vector (lambda (e) (destructuring-bind (index role summary files text id message session) e
-                                                  (declare (ignore index summary id message session))
-                                                  (list role text files)))
-                            entries)
+(defun handle-search (request)
+  "Recall's search, as a vcc_recall query runs it, over one session file's entries."
+  (let ((floor (json-get request "floor")) (cap (json-get request "cap"))
+        (loaded (view-load (open-view (json-get request "file") "all" nil) nil)))
+    (multiple-value-bind (hits total truncated)
+        (search-loaded loaded (let ((q (json-get request "query"))) (if (stringp q) q ""))
                        :floor (if (realp floor) (coerce floor 'double-float) +relative-floor+)
                        :cap (if (integerp cap) cap +result-cap+))
-        (cond
-            ((eq hits :aborted) (aborted-reply total searched))
-          (t
-            (json-object "ok" :true
-                         "hits" (map 'vector
-                                     (lambda (h)
-                                       (destructuring-bind (index role summary files text id message session) (aref entries (car h))
-                                         (declare (ignore text id message))
-                                         (json-object "index" index "role" role "summary" summary
-                                                      "files" (and files (coerce files 'vector))
-                                                      "session" session
-                                                      "snippet" (or (cdr h) :null))))
-                                     hits)
-                         "totalBeforeCap" total
-                         "truncated" (bool truncated)
-                         "searched" searched)))))))
+      (if (eq hits :aborted)
+          (json-object "ok" :true "hits" #() "aborted" total)
+          (json-object "ok" :true
+                       "hits" (map 'vector (lambda (h) (json-object "index" (getf h :index) "role" (getf h :role) "summary" (getf h :summary)
+                                                                    "files" (and (getf h :files) (coerce (getf h :files) 'vector))
+                                                                    "snippet" (or (getf h :snippet) :null)))
+                                   hits)
+                       "totalBeforeCap" total
+                       "truncated" (bool truncated))))))
 
 (defun handle-load (request)
   "A source's entries as recall renders them and search reads them (tests/session-read.test.ts)."
@@ -392,7 +356,7 @@ compact, it first asks for what the host's convertToLlm makes of the messages."
 (defun handle-request (request)
   "The response object to the parsed REQUEST."
   (let ((op (json-get request "op")))
-    (cond ((equal op "search-sessions") (handle-search-sessions request))
+    (cond ((equal op "search") (handle-search request))
           ((equal op "load") (handle-load request))
           ((equal op "regex") (handle-regex request))
           ((equal op "summarize") (handle-summarize request))

@@ -24,13 +24,13 @@ export const sessionFileOf = (messages: readonly unknown[]): string => {
 /** The search, with recall's floor and cap unless a test sets its own. */
 export const search = (messages: readonly unknown[], query: string, tuning: { relativeFloor?: number; cap?: number } = {}): SearchResult => {
   const reply = core({
-    op: "search-sessions", query, sources: [{ file: sessionFileOf(messages), ids: null }],
+    op: "search", query, file: sessionFileOf(messages),
     ...(tuning.relativeFloor !== undefined ? { floor: tuning.relativeFloor } : {}),
     ...(tuning.cap !== undefined ? { cap: Math.min(tuning.cap, 2 ** 31) } : {}),
   });
   return {
     hits: (reply.hits as any[]).map((h) => ({ ...h, snippet: h.snippet ?? undefined })),
-    totalBeforeCap: reply.totalBeforeCap as number,
+    totalBeforeCap: (reply.totalBeforeCap as number | undefined) ?? 0,
     truncated: reply.truncated === true,
     ...(typeof reply.aborted === "string" ? { aborted: reply.aborted } : {}),
   };

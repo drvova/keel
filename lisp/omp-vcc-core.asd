@@ -15,7 +15,7 @@
 ;;;; out fails the load instead of being skipped.
 
 (defsystem "omp-vcc-core"
-  :description "omp-vcc's core: recall search, run as a JSON request/response process."
+  :description "omp-vcc's core: everything omp-vcc decides (compaction, the summary, recall, pins, settings), run as one JSON request and response per process."
   :license "MIT"
   :version "0.1.0"
   :serial t

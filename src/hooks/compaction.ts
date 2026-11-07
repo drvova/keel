@@ -14,7 +14,7 @@ import { whenCore } from "../core/core-wait";
 import { hostSnapshot } from "../core/host-snapshot";
 
 /** What the compaction hook needs of its host. */
-export type CompactionHost = Pick<Binding, "name" | "displayName" | "command" | "modelsFile" | "convertToLlm" | "triggerOf" | "config">;
+export type CompactionHost = Pick<Binding, "name" | "displayName" | "modelsFile" | "convertToLlm" | "triggerOf" | "config">;
 
 /** The compaction omp-vcc wrote on the last pass, until the host has applied it. */
 export interface WrittenCompaction {
@@ -102,7 +102,7 @@ export const registerCompactionHook = (pi: ExtensionAPI, host: CompactionHost, s
       summary: compaction.summary,
       statsLine: reply.statsLine as string,
       fromCommand: reply.fromCommand === true,
-      willRetry: reply.willRetry === true,
+      willRetry,
       followUpPrompt: (reply.followUpPrompt as string | undefined) ?? null,
     };
     return { compaction: compaction as any };

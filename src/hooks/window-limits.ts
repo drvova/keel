@@ -26,7 +26,7 @@ export const createWindowState = (): WindowState => ({
  * own trigger on a model whose window the host overestimates (the host would
  * only notice at the overflow).
  */
-export const registerWindowTracking = (pi: ExtensionAPI, state: WindowState, host: Pick<Binding, "name" | "displayName" | "command" | "modelsFile" | "settledEvent" | "config">): void => {
+export const registerWindowTracking = (pi: ExtensionAPI, state: WindowState, host: Pick<Binding, "name" | "displayName" | "modelsFile" | "settledEvent" | "config">): void => {
   // One compaction of omp-vcc's own at a time, per binding.
   let scheduled = false;
 

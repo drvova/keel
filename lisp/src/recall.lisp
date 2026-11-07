@@ -216,11 +216,12 @@
 
 ;;; --- search through a view ------------------------------------------------------------------
 
-(defun search-loaded (loaded query)
+(defun search-loaded (loaded query &key (floor +relative-floor+) (cap +result-cap+))
   "Search the entries LOADED for QUERY: (values HITS TOTAL TRUNCATED) with HITS entry plists with :snippet, or (values :aborted MESSAGE)."
   (let ((v (coerce loaded 'vector)))
     (multiple-value-bind (hits total truncated)
-        (search-docs query (map 'vector (lambda (e) (list (getf e :role) (search-text (getf e :message)) (getf e :files))) v))
+        (search-docs query (map 'vector (lambda (e) (list (getf e :role) (search-text (getf e :message)) (getf e :files))) v)
+                     :floor floor :cap cap)
       (cond ((eq hits :aborted) (values :aborted total))
             (t (values (mapcar (lambda (h) (append (list :snippet (cdr h)) (aref v (car h)))) hits) total truncated))))))
 

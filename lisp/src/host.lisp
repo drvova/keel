@@ -19,12 +19,12 @@
 (in-package #:omp-vcc)
 
 (defstruct (snapshot (:constructor %make-snapshot))
-  name display-name command models-file config-path session-file cwd model context-tokens tree branch-ids)
+  name display-name models-file config-path session-file cwd model context-tokens tree branch-ids)
 
 (defun read-snapshot (json)
   "The snapshot an op carries in \"host\"."
   (flet ((str (key) (let ((v (json-get json key))) (and (stringp v) v))))
-    (%make-snapshot :name (str "name") :display-name (str "displayName") :command (str "command")
+    (%make-snapshot :name (str "name") :display-name (str "displayName")
                     :models-file (str "modelsFile") :config-path (str "configPath")
                     :session-file (let ((f (str "sessionFile"))) (and f (plusp (length f)) f))
                     :cwd (or (str "cwd") "")
@@ -86,10 +86,9 @@ host's window (or the host knows none); T when it was recorded."
 (defun settled-check (s)
   "Once a run settles, whether omp-vcc compacts in the host's stead, and the note that says so."
   (when (snapshot-handles-p s (snapshot-settings s))
-    (settled-compaction (json-object "model" (snapshot-model s) "dir" (snapshot-config-dir s)
-                                     "ruleName" (snapshot-name s) "hostName" (snapshot-name s)
-                                     "displayName" (snapshot-display-name s) "modelsFile" (snapshot-models-file s)
-                                     "usedTokens" (snapshot-context-tokens s)))))
+    (settled-compaction :model (snapshot-model s) :dir (snapshot-config-dir s) :host (snapshot-name s)
+                        :display-name (snapshot-display-name s) :models-file (snapshot-models-file s)
+                        :used-tokens (snapshot-context-tokens s))))
 
 (defun recall-input (s call project-files)
   "What a recall call reads: the session file, the project's other files (newest first), the path, the window."
@@ -123,7 +122,7 @@ host's window (or the host knows none); T when it was recorded."
 (defun compact-error-input (s error)
   "What /omp-vcc tells when the host's compaction it asked for did not happen."
   (let ((input (copy-object error)))
-    (setf (gethash "hostName" input) (snapshot-display-name s)
+    (setf (gethash "displayName" input) (snapshot-display-name s)
           (gethash "branch" input) (snapshot-branch s))
     input))
 
@@ -134,7 +133,7 @@ host's window (or the host knows none); T when it was recorded."
   (let ((raw (coerce (json-get event "branchEntries" #()) 'vector)))
     (values (apply-context-edits raw (make-array (length raw) :initial-element nil)))))
 
-(defun compaction-reply (plan from-command follow-up will-retry tokens-before)
+(defun compaction-reply (plan from-command follow-up tokens-before)
   "The plan as the hook acts on it: pass to the host, cancel (with what to tell), or the compaction in the host's own shape."
   (let ((kind (json-get plan "kind")))
     (cond ((equal kind "step_aside") (json-object "kind" "pass"))
@@ -144,8 +143,7 @@ host's window (or the host knows none); T when it was recorded."
                                                     "tokensBefore" tokens-before "firstKeptEntryId" (json-get plan "firstKeptEntryId"))
                           "statsLine" (format-compaction-stats (json-get plan "stats"))
                           "fromCommand" (bool from-command)
-                          "followUpPrompt" follow-up
-                          "willRetry" (bool (eq will-retry :true)))))))
+                          "followUpPrompt" follow-up)))))
 
 (defun debug-record (plan event from-command)
   "What omp-vcc-debug.json holds of the last pass when the debug setting is on."
@@ -197,7 +195,7 @@ pass is not omp-vcc's to answer; with it, what the hook returns."
                    (plan (plan-compaction input branch (host-notes branch live originals (or converted #()) (snapshot-index s)))))
               ;; Kept beside a learned window, for the compaction omp-vcc starts in the host's stead.
               (record-host-policy (snapshot-config-dir s) (model-key (snapshot-model s)) (json-get (json-get plan "sizing") "policy"))
-              (let ((reply (compaction-reply plan from-command follow-up will-retry (json-get event "tokensBefore"))))
+              (let ((reply (compaction-reply plan from-command follow-up (json-get event "tokensBefore"))))
                 (when (eq (json-get settings "debug") :true)
                   (setf (gethash "debug" reply) (debug-record plan event from-command)))
                 reply))))))))

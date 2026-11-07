@@ -95,24 +95,20 @@ only (where it is read); written when it changed."
                                 ((and learned (= effective learned) (not (and host (= learned host)))) "overflow-error")
                                 (t host-name)))))
 
-(defun settled-compaction (input)
+(defun settled-compaction (&key model dir host display-name models-file used-tokens)
   "Once a run settles (src/hooks/window-limits.ts): whether omp-vcc compacts in the host's
 stead (the host's window is above the real one, its last recorded policy
 compacts, the context is past the trigger), at what trigger, and the note
 that says so."
-  (let* ((model (json-get input "model"))
-         (dir (json-get input "dir"))
-         (rule (json-get input "ruleName"))
-         (w (window-of model (json-get input "hostName") dir))
-         (host (json-get w "host")) (effective (json-get w "effective")))
-    (when (and host effective (< effective host))
+  (let* ((w (window-of model host dir))
+         (host-window (json-get w "host")) (effective (json-get w "effective")))
+    (when (and host-window effective (< effective host-window))
       (let ((policy (learned-host-policy dir (model-key model))))
-        (when (and policy (rule-auto-compacts-p rule policy))
-          (let ((trigger (trigger-for effective nil nil policy rule))
-                (used (json-get input "usedTokens")))
-            (when (and trigger (realp used) (>= used trigger))
-              (let ((display (json-get input "displayName")))
-                (json-object "trigger" trigger
-                             "notice" (format nil "omp-vcc: ~a holds ~a tokens (an overflow error said so), not the ~a ~a uses; omp-vcc compacts at ~a. Set its contextWindow in ~a to make ~a do the same."
-                                              (js-string-of (model-key model)) (js-string-of effective) (js-string-of host) display
-                                              (js-string-of trigger) (json-get input "modelsFile") display))))))))))
+        ;; The host's name is its trigger rule.
+        (when (and policy (rule-auto-compacts-p host policy))
+          (let ((trigger (trigger-for effective nil nil policy host)))
+            (when (and trigger (realp used-tokens) (>= used-tokens trigger))
+              (json-object "trigger" trigger
+                           "notice" (format nil "omp-vcc: ~a holds ~a tokens (an overflow error said so), not the ~a ~a uses; omp-vcc compacts at ~a. Set its contextWindow in ~a to make ~a do the same."
+                                            (js-string-of (model-key model)) (js-string-of effective) (js-string-of host-window) display-name
+                                            (js-string-of trigger) models-file display-name)))))))))
