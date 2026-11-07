@@ -1,0 +1,4 @@
+[test]
+# A test run is deterministic: without OMP_VCC_CORE, the core is off (no build
+# on first use), and withCore turns it on where a test compares it.
+preload = ["./tests/support/core-off.ts"]

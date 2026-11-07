@@ -1,4 +1,8 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync } from "node:fs";
+import { join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { SearchHit, SearchResult } from "./search-entries";
 
 /**
@@ -6,16 +10,21 @@ import type { SearchHit, SearchResult } from "./search-entries";
  * stdout, then it exits (lisp/src/server.lisp). spawnSync keeps the callers
  * synchronous; a start costs ~5 ms.
  *
- * It is found through OMP_VCC_CORE, the executable's path, while the port is
- * under way. Every failure (no core, a crash, a refusal, a reply that does not
- * parse) is undefined, and the caller runs the TypeScript code instead: a
- * broken core costs speed, never an answer. With OMP_VCC_CORE_STRICT set, a
- * failure other than a refusal throws, so a test cannot pass on the fallback.
+ * Which executable: OMP_VCC_CORE when it names one, else the build of this
+ * copy's lisp/ sources, lisp/build/omp-vcc-core-<hash of the sources>, which
+ * omp-vcc builds itself with the user's SBCL the first time it is needed (a
+ * minute or so, in the background; an update of the sources builds again).
+ * OMP_VCC_CORE=off turns the core off (the tests' TypeScript runs).
+ *
+ * While the core is not there yet, and on a refusal (a query it leaves to the
+ * TypeScript), the answer is undefined and the caller runs the TypeScript code.
+ * Any other failure is undefined too, unless OMP_VCC_CORE_STRICT is set (the
+ * tests, CI), which makes it throw, so a test cannot pass on the fallback.
  */
 export const callCore = (request: object): Record<string, unknown> | undefined => {
-  const core = process.env.OMP_VCC_CORE;
-  if (!core) return undefined;
-  const run = spawnSync(core, [], { input: JSON.stringify(request), encoding: "utf8", maxBuffer: 1 << 30 });
+  const status = coreStatus();
+  if (status.state !== "ready") return undefined;
+  const run = spawnSync(status.path, [], { input: JSON.stringify(request), encoding: "utf8", maxBuffer: 1 << 30 });
   let reply: any;
   try { reply = run.error || run.status !== 0 ? undefined : JSON.parse(run.stdout); } catch {}
   if (reply?.ok === true) return reply;
@@ -25,6 +34,94 @@ export const callCore = (request: object): Record<string, unknown> | undefined =
     throw new Error(`omp-vcc's Lisp core failed: ${reply?.error ?? run.error?.message ?? run.stderr ?? `exit ${run.status}`}`);
   }
   return undefined;
+};
+
+/** Where the core stands: ready at a path, being built, or not buildable here (and why). */
+export type CoreStatus =
+  | { state: "ready"; path: string }
+  | { state: "off" }
+  | { state: "building" }
+  | { state: "no-sbcl"; sbcl: string }
+  | { state: "failed"; why: string };
+
+const LISP_DIR = fileURLToPath(new URL("../../lisp/", import.meta.url));
+const BUILD_DIR = join(LISP_DIR, "build");
+/** A lock older than this is a build that died with its process: built again. */
+const STALE_LOCK_MS = 15 * 60_000;
+
+/** The sources the core is built from, every .lisp and .asd under lisp/ but the build. */
+const sourceFiles = (dir: string): string[] =>
+  readdirSync(dir, { withFileTypes: true }).flatMap((d) => {
+    const p = join(dir, d.name);
+    if (d.isDirectory()) return d.name === "build" ? [] : sourceFiles(p);
+    return /\.(lisp|asd)$/.test(d.name) ? [p] : [];
+  }).sort();
+
+let built: { hash: string; path: string } | undefined;
+/** The build of these sources: its path is named by their hash, so an update builds again. */
+const buildOfSources = (): { hash: string; path: string } => {
+  if (built) return built;
+  const h = createHash("sha256");
+  for (const f of sourceFiles(LISP_DIR)) h.update(relative(LISP_DIR, f)).update("\0").update(readFileSync(f)).update("\0");
+  const hash = h.digest("hex").slice(0, 16);
+  return (built = { hash, path: join(BUILD_DIR, `omp-vcc-core-${hash}`) });
+};
+
+/** One build per installed copy, shared by every binding of this process. */
+let building: CoreStatus | undefined;
+
+/** The core's state now; starts the build when it is neither there nor being built. */
+export const coreStatus = (): CoreStatus => {
+  const named = process.env.OMP_VCC_CORE;
+  if (named === "off") return { state: "off" };
+  if (named) return { state: "ready", path: named };
+  const { path } = buildOfSources();
+  if (existsSync(path)) return { state: "ready", path };
+  if (building && building.state !== "building") return building;
+  return (building = startBuild(path));
+};
+
+const startBuild = (path: string): CoreStatus => {
+  const sbcl = process.env.SBCL ?? "sbcl";
+  if (spawnSync(sbcl, ["--version"], { stdio: "ignore" }).status !== 0) return { state: "no-sbcl", sbcl };
+  mkdirSync(BUILD_DIR, { recursive: true });
+  // Another process (another omp or Pi session) may be building it already.
+  const lock = `${path}.lock`;
+  try {
+    if (existsSync(lock) && Date.now() - statSync(lock).mtimeMs > STALE_LOCK_MS) rmSync(lock, { force: true });
+    closeSync(openSync(lock, "wx"));
+  } catch {
+    return { state: "building" };
+  }
+  const out = `${path}.tmp-${process.pid}`;
+  let stderr = "";
+  const child = spawn(sbcl, ["--noinform", "--non-interactive", "--load", join(LISP_DIR, "build.lisp")], {
+    env: { ...process.env, OMP_VCC_CORE_OUT: out },
+    stdio: ["ignore", "ignore", "pipe"],
+    detached: true,
+  });
+  child.stderr?.on("data", (d) => { stderr = (stderr + String(d)).slice(-2_000); });
+  child.on("exit", (code) => {
+    try {
+      if (code === 0 && existsSync(out)) {
+        renameSync(out, path);
+        // Builds of older sources are of no use now.
+        for (const f of readdirSync(BUILD_DIR)) if (/^omp-vcc-core-[0-9a-f]+$/.test(f) && join(BUILD_DIR, f) !== path) rmSync(join(BUILD_DIR, f), { force: true });
+        building = undefined;
+      } else {
+        rmSync(out, { force: true });
+        building = { state: "failed", why: stderr.trim().split("\n").slice(-5).join("\n") || `sbcl exited with ${code}` };
+      }
+    } finally {
+      rmSync(lock, { force: true });
+    }
+  });
+  child.on("error", (err) => {
+    rmSync(lock, { force: true });
+    building = { state: "failed", why: err.message };
+  });
+  child.unref();
+  return { state: "building" };
 };
 
 /** A session file for the core to read and search: the entries on `ids` (the file's own active branch for "active", all for null), less `skip`. */

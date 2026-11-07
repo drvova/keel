@@ -12,8 +12,11 @@ import { registerVccRecallCommand } from "./commands/vcc-recall";
 import { registerPinCommands } from "./commands/pin";
 import { registerRecallTool } from "./tools/recall";
 import { registerPinTool } from "./tools/pin";
+import { coreStatus } from "./core/lisp-core";
 
 export const register = (pi: ExtensionAPI, host: Host): void => {
+  // The core is built with the user's SBCL the first time this copy runs (lisp-core.ts): start it now.
+  coreStatus();
   const binding = bind(host, openConfig(host.agentDir));
   binding.config.scaffold();
   const state = createCompactionState();

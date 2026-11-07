@@ -34,7 +34,8 @@ export const lispCore = (): string | undefined => {
 const setCore = (core: string | undefined): (() => void) => {
   const was = { core: process.env.OMP_VCC_CORE, strict: process.env.OMP_VCC_CORE_STRICT };
   const set = (k: string, v: string | undefined) => (v === undefined ? delete process.env[k] : (process.env[k] = v));
-  set("OMP_VCC_CORE", core);
+  // Unset would build the core on first use; off keeps a TypeScript run TypeScript.
+  set("OMP_VCC_CORE", core ?? "off");
   set("OMP_VCC_CORE_STRICT", core ? "1" : undefined);
   return () => { set("OMP_VCC_CORE", was.core); set("OMP_VCC_CORE_STRICT", was.strict); };
 };
