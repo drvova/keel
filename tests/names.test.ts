@@ -22,6 +22,7 @@ describe("src/names.ts", () => {
       rangePageSize: names.RANGE_PAGE_SIZE,
       recallOutputChars: names.RECALL_OUTPUT_CHARS,
       pinChars: names.PIN_CHARS,
+      evictAtPercent: names.EVICT_AT_PERCENT,
       sessionRefMinChars: names.SESSION_REF_MIN_CHARS,
     });
   });

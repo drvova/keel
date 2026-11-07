@@ -28,7 +28,7 @@
 
 (in-package #:omp-vcc)
 
-(defparameter +evict-at-share+ 0.85d0 "Past this share of the host's trigger, the oldest finished turns leave.")
+(defparameter +evict-at-share+ (/ +evict-at-percent+ 100d0) "Past this share of the host's trigger, the oldest finished turns leave.")
 (defparameter +evict-to-share+ 0.5d0 "They leave until the context is estimated at this share of the trigger.")
 (defparameter +stub-requests-shown+ 3 "Requests a stub names of the turns it stands for.")
 (defparameter +turns-listed+ 40 "Turns a listing shows, newest last.")
@@ -191,11 +191,10 @@ before and after: (values DROP STUBS OPS BEFORE AFTER)."
              (after before))
         (when (and auto (realp trigger) (> trigger 0) (> before (* +evict-at-share+ trigger)))
           (let ((leaving '()))
-            (dolist (tr (finished-turns turns))
+            (dolist (tr (turns-in turns outs))
               (when (<= after (* +evict-to-share+ trigger)) (return))
-              (unless (turn-out-p tr outs)
-                (push tr leaving)
-                (decf after (tokens-from-chars (turn-chars tr chars) per-token))))
+              (push tr leaving)
+              (decf after (tokens-from-chars (turn-chars tr chars) per-token)))
             (dolist (run (runs-of (nreverse leaving)))
               (let ((op (evict-op "evict" (turn-from (first run)) (turn-to (car (last run))) "auto" count)))
                 (push op ops)

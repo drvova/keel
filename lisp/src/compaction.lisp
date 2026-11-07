@@ -168,14 +168,6 @@ MESSAGES-TO-CONVERT, in that order."
                note))
            branch live originals))))
 
-(defun notes-index (branch notes)
-  "#N by entry id, as the notes beside BRANCH carry it."
-  (let ((index (make-hash-table :test 'equal)))
-    (loop for e across branch for note across notes
-          for n = (json-get note "n")
-          when (and n (stringp (json-get e "id"))) do (setf (gethash (json-get e "id") index) n))
-    index))
-
 (defun recovery-p (reason will-retry)
   "A pass that must shrink the context: an overflow, a reply cut off at the limit, one the host retries."
   (or (member reason '("overflow" "incomplete") :test #'equal) (eq will-retry :true)))
@@ -594,7 +586,7 @@ and what it was sized from (for debugging a compaction that kept too much or too
     ;; gets its summary, and so does a compaction the user asked for.
     (when (and (eq (json-get settings "evict") :true) (not recovering) (not (eq (json-get input "fromCommand") :true))
                (member (json-get input "reason") '("threshold" "idle") :test #'equal)
-               (room-to-evict-p branch (notes-index branch notes)))
+               (eq (json-get input "evictRoom") :true))
       (return-from plan-sized (json-object "kind" "cancel" "why" "evict")))
     (multiple-value-bind (keep adjusted)
         (resolve-smart-keep branch notes requested (eq (json-get settings "smartKeepTail") :true) skip

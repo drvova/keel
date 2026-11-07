@@ -6,7 +6,7 @@ import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { untilCore } from "../core/core-wait";
 import type { Binding } from "../host";
 import { evict } from "../core/evict";
-import { CONTEXT_PARAMS, CONTEXT_TOOL, RECALL_TOOL } from "../names";
+import { CONTEXT_PARAMS, CONTEXT_TOOL, EVICT_AT_PERCENT, RECALL_TOOL } from "../names";
 
 const description = (command: string): string => [
   "Decide what stays in your context. Old turns can leave it whole: nothing is summarized or rewritten,",
@@ -20,7 +20,7 @@ const description = (command: string): string => [
   "- note: with drop or oldest, one line kept where the turns were (what they settled, what to look up).",
   "",
   "Drop rarely and in large runs from the oldest end: each edit makes the provider read again all that",
-  `follows it. Past 85% of the window the oldest turns leave by themselves; the user evicts with /${command}-evict.`,
+  `follows it. Past ${EVICT_AT_PERCENT}% of where the host compacts, the oldest turns leave by themselves; the user evicts with /${command}-evict.`,
 ].join("\n");
 
 const PARAM_DESCRIPTIONS: Record<(typeof CONTEXT_PARAMS)[number], string> = {

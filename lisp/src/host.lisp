@@ -221,6 +221,8 @@ pass is not omp-vcc's to answer; with it, what the hook returns."
                                        "hostSettings" (json-get event "hostSettings")
                                        "selfStarted" (and (eq (json-get event "selfStarted") :true)
                                                           (json-object "usedTokens" (or (snapshot-context-tokens s) :null)))
+                                       ;; Whether a finished turn is left to take out (evict.lisp), for the evict setting's policy.
+                                       "evictRoom" (bool (room-to-evict-p (snapshot-branch s) (snapshot-index s)))
                                        "sessionFile" file
                                        "previousSummary" (json-get event "previousSummary")
                                        "fileOps" (json-get event "fileOps")))

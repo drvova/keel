@@ -10,11 +10,12 @@ import { tell, type Binding } from "../host";
 import { whenCore } from "../core/core-wait";
 import { evictRequest } from "../core/evict";
 import { EVICT_ENTRY_TYPE } from "../names";
+import { hostBranch } from "../core/session-file";
 
 export const registerEviction = (pi: ExtensionAPI, host: Pick<Binding, "name" | "displayName" | "modelsFile" | "config">): void => {
   pi.on("context", (event, ctx) =>
     whenCore(() => {
-      const recorded = (ctx as any)?.sessionManager?.getBranch?.()?.some?.((e: any) => e?.type === "custom" && e.customType === EVICT_ENTRY_TYPE);
+      const recorded = hostBranch((ctx as any)?.sessionManager)?.some((e: any) => e?.type === "custom" && e.customType === EVICT_ENTRY_TYPE);
       if (!recorded && !host.config.load().evict) return undefined;
       const { messages, notice } = evictRequest({ appendEntry: (type, data) => pi.appendEntry(type, data) }, host, ctx as any, event.messages as unknown[]);
       if (notice) tell(ctx as any, notice, "info");

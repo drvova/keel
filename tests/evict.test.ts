@@ -140,12 +140,20 @@ describe("the request hook", () => {
     expect(texts(result.messages)[0]).toStartWith("[#0–#5 out of context: 2 turns, by the user.");
   });
 
-  it("does nothing, and asks the core nothing, with the setting off and nothing recorded", async () => {
+  it("leaves the request alone without reading the session for it, with the setting off and nothing recorded", async () => {
     setEvict(false);
     const s = session(4);
     let handler: any;
     registerEviction({ on: (name: string, fn: any) => { if (name === "context") handler = fn; }, appendEntry: s.host.appendEntry } as any, ompBinding as any);
-    expect(await handler({ type: "context", messages: s.request() }, s.ctx())).toBeUndefined();
+    // The request's snapshot reads the session file; here nothing may need it.
+    let read = 0;
+    const ctx = () => ({ ...s.ctx(), sessionManager: { ...s.ctx().sessionManager, getSessionFile: () => { read++; return undefined; } } });
+    expect(await handler({ type: "context", messages: s.request() }, ctx())).toBeUndefined();
+    expect(read).toBe(0);
+    // Once an eviction is recorded, every request is read for it.
+    call(s, { surface: "command", args: "1" });
+    expect(await handler({ type: "context", messages: s.request() }, ctx())).toBeDefined();
+    expect(read).toBeGreaterThan(0);
   });
 });
 
@@ -168,6 +176,19 @@ describe("as the context fills", () => {
     s.appended.length = 0;
     sent(s, 100_000);
     expect(s.appended).toEqual([]);
+  });
+
+  it("estimates from the ledger as the last request saw it: a turn brought back since was not sent then", () => {
+    setEvict(true);
+    // Turn 0 was out when the request that reported 80,000 tokens was made, and has been brought back since.
+    const s = session(10, 30_000, 80_000);
+    s.host.appendEntry(EVICT_ENTRY_TYPE, { v: 1, op: "evict", from: 0, to: 2, by: "user", at: 3 });
+    s.host.appendEntry(EVICT_ENTRY_TYPE, { v: 1, op: "restore", from: 0, to: 2, by: "user", at: 30 });
+    const restored = Number(sent(s, 100_000).notice!.match(/Context ~(\d+)/)![1]);
+    // The same session with nothing ever out: the 80,000 counted every turn.
+    const plain = Number(sent(session(10, 30_000, 80_000), 100_000).notice!.match(/Context ~(\d+)/)![1]);
+    // Turn 0 (about 7,500 tokens) was not in the 80,000, so the context now holds that much more.
+    expect(restored - plain).toBeGreaterThan(7_000);
   });
 
   it("does nothing below 85% of the trigger, or with the setting off", () => {
