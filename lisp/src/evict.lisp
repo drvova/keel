@@ -214,12 +214,32 @@ line must read the same on every request for the provider's cache."
             (and notes (join-strings (mapcar (lambda (n) (if (find (char n (1- (length n))) ".!?") n (concatenate 'string n "."))) notes) " "))
             (recall-expand-call from))))
 
-(defun notes-block (pins)
-  "The pinned notes as they read now, one block at the start of the request: the
+(defun notes-as-of (branch index edited)
+  "The pinned notes the block at the start of the request shows, and the #N they
+are as of: as they read at the last edit of the context (the last evict or
+restore on BRANCH; EDITED, one made for this request: all of BRANCH), and those
+carried in before the first message. An edit at the start of the request makes
+the provider read all of it again (Context Language Models measures 7.7 times
+an appended turn's cost), so the block changes only when the context is being
+edited anyway: a note pinned since stands in the conversation, in its vcc_pin
+call, until its turn leaves, which is an edit, and the block takes it up then.
+(values NOTES AS-OF), AS-OF the #N of the last message before the cut, or NIL."
+  (let* ((last-edit (loop for i from (1- (length branch)) downto 0
+                          for e = (aref branch i)
+                          when (and (evict-entry-p e) (member (json-get (json-get e "data") "op") '("evict" "restore") :test #'equal))
+                            return i))
+         (first-message (position-if #'counted-entry-p branch :start (live-window-start branch)))
+         (cut (cond (edited (length branch)) (last-edit (1+ last-edit)) (first-message first-message) (t (length branch))))
+         (last-message (position-if #'counted-entry-p branch :end cut :from-end t)))
+    (values (read-pins (subseq branch 0 cut))
+            (and last-message (gethash (json-get (aref branch last-message) "id") index)))))
+
+(defun notes-block (pins as-of)
+  "The pinned notes as of AS-OF, one block at the start of the request: the
 context's notes, kept by the agent and the user (vcc_pin, /…-pin), in view
-whatever has left the context, and changed only when a note is."
-  (format nil "[Pinned notes, as they read now (vcc_pin; a name pinned again replaces its note):~{~%- ~a~}]"
-          (mapcar #'format-pin pins)))
+whatever has left the context."
+  (format nil "[Pinned notes~:[ carried from the last session~;, as of #~:*~d~] (vcc_pin; a name pinned again replaces its note; any pinned since are in the conversation):~{~%- ~a~}]"
+          as-of (mapcar #'format-pin pins)))
 
 ;;; --- a request, with what is out left out -----------------------------------------------
 
@@ -246,8 +266,7 @@ out) the pinned notes stand first, in one block (NOTES-BLOCK)."
          (outs (read-evictions branch))
          (n-of (make-array (length messages) :initial-element nil))
          (chars (make-hash-table)) (by-n (make-hash-table))
-         (per-token +default-chars-per-token+) (ops '())
-         (pins (read-pins branch)))
+         (per-token +default-chars-per-token+) (ops '()))
     (loop for i from (live-window-start branch) below (length branch)
           for e = (aref branch i)
           when (counted-entry-p e)
@@ -304,9 +323,10 @@ out) the pinned notes stand first, in one block (NOTES-BLOCK)."
                                       do (setf (gethash n h) m))
                                 h)))
           ;; The pinned notes first, in view whatever has left (with vcc_context there, or anything out).
-          (when (and pins (or mark outs))
-            (let ((place (notes-place messages v)))
-              (when place (push (cons place (notes-block pins)) stubs))))
+          (when (or mark outs)
+            (multiple-value-bind (shown as-of) (notes-as-of branch index ops)
+              (let ((place (and shown (notes-place messages v))))
+                (when place (push (cons place (notes-block shown as-of)) stubs)))))
           (loop with i = 0
                 while (< i (length messages))
                 do (if (not (aref v i))

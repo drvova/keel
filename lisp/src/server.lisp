@@ -297,9 +297,10 @@ compact, it first asks for what the host's convertToLlm makes of the messages."
 
 (defun handle-recall (request)
   "One recall call (recall.lisp run-recall) in the session REQUEST's snapshot names."
-  (multiple-value-bind (ok text severity)
-      (run-recall (recall-input (read-snapshot (json-get request "host")) (json-get request "call") (json-get request "projectFiles" #())))
-    (json-object "ok" :true "recall" (json-object "ok" (bool ok) "text" text "severity" severity))))
+  (let ((s (read-snapshot (json-get request "host"))) (call (json-get request "call")))
+    (multiple-value-bind (ok text severity) (run-recall (recall-input s call (json-get request "projectFiles" #())))
+      (json-object "ok" :true "recall" (json-object "ok" (bool ok) "text" (if (equal (json-get call "surface") "tool") (with-readout s text) text)
+                                                    "severity" severity)))))
 
 (defun handle-context-edits (request)
   "The branch REQUEST carries, Pi's context edits applied (context-edits.lisp)."
@@ -316,8 +317,10 @@ compact, it first asks for what the host's convertToLlm makes of the messages."
 
 (defun handle-pin (request)
   "A pin call (pins.lisp run-pin): what to tell, and the op the host appends."
-  (multiple-value-bind (done text op severity note) (run-pin (pin-input (read-snapshot (json-get request "host")) (json-get request "call")))
-    (json-object "ok" :true "pin" (json-object "done" (bool done) "text" text "op" op "severity" severity "agentNote" note))))
+  (let* ((s (read-snapshot (json-get request "host"))) (call (json-get request "call")))
+    (multiple-value-bind (done text op severity note) (run-pin (pin-input s call))
+      (json-object "ok" :true "pin" (json-object "done" (bool done) "text" (if (equal (json-get call "surface") "tool") (with-readout s text) text)
+                                                 "op" op "severity" severity "agentNote" note)))))
 
 (defun handle-raw-capture (request)
   "Copy the entries REQUEST carries that omp may rewrite into the store (raw-capture.lisp)."

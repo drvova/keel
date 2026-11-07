@@ -18,6 +18,8 @@ All notable changes to `@drvova/omp-vcc` are documented in this file. Entries fr
 
 ### Added
 
+- **The context's size on omp-vcc's own results, and notes that cost no cache** — with eviction on, each `vcc_context`, `vcc_recall` and `vcc_pin` result ends with the context's size and its share of where the host compacts, as Context Language Models' tools report it (models misjudge their own context's length). The pinned-notes block at the start of the request is brought up to date only when turns leave or come back, which edits the request anyway, instead of at every pin: an edit at the start makes the provider read the whole request again.
+
 - **Undo the last context edit** — `/omp-vcc-evict undo` and `vcc_context {undo: true}` reverse the last eviction or restore, every run it made; an undo again does it again. The benchmarks also report the prompt tokens the provider read uncached, the cost every edit of the context adds.
 
 - **Named notes carry into the next session, and the user's stay the user's** — a new session (a restart, `/new`) starts with the named notes of the project's last session, marked with the session they came from (`(agent, from session 01a194d8)`), and is told so; unnamed notes stay with their session. The agent can no longer define again or unpin a note the user pinned: it is told the note is the user's and to ask, or to pin its own under another name.

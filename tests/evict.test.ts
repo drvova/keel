@@ -9,7 +9,7 @@ import { join } from "path";
 import { evict, evictRequest, type EvictCall } from "../src/core/evict";
 import { registerEviction } from "../src/hooks/eviction";
 import { EVICT_ENTRY_TYPE, PIN_ENTRY_TYPE } from "../src/names";
-import { ompBinding } from "./support/binding";
+import { executePin, ompBinding } from "./support/binding";
 import { writeJsonl, freshDir } from "./support/session-files";
 
 let dir: string;
@@ -292,6 +292,20 @@ describe("undo", () => {
   });
 });
 
+describe("the context's size on omp-vcc's own results", () => {
+  it("ends the agent's vcc_context, vcc_recall and vcc_pin results while eviction is on, not the user's commands", () => {
+    const s = session(3);
+    const ctx = { ...s.ctx(100_000), getContextUsage: () => ({ tokens: 41_808 }) } as any;
+    const readout = "[context: ~41808 tokens, 50% of where the host compacts (~83616)]";
+    setEvict(true);
+    expect(evict(s.host, ompBinding, ctx, { surface: "tool", params: null })).toEndWith(`\n${readout}`);
+    expect(evict(s.host, ompBinding, ctx, { surface: "command", args: "list" })).not.toContain("[context:");
+    expect(executePin({ note: "a note" }, s.host, ctx.sessionManager, ctx)).toEndWith(`\n${readout}`);
+    setEvict(false);
+    expect(executePin({ note: "another note" }, s.host, ctx.sessionManager, ctx)).not.toContain("[context:");
+  });
+});
+
 describe("turn numbers in view", () => {
   it("each request in the context starts with its turn's #N while vcc_context is there, the same on every request", () => {
     setEvict(true);
@@ -310,27 +324,32 @@ describe("turn numbers in view", () => {
 });
 
 describe("pinned notes when turns leave", () => {
-  it("stand first in the request, in one block, as they read now, whatever has left", () => {
+  it("stand first in the request, in one block, as of the last edit of the context", () => {
     setEvict(true);
     const s = session(4);
-    // Carried from the last session, pinned in turn 0, and one pinned in turn 1 then defined again in turn 3.
-    s.host.appendEntry(PIN_ENTRY_TYPE, { v: 1, op: "add", id: 9, name: "plan", text: "ship v2", by: "agent", at: null, from: "aaaa1111" });
-    s.host.appendEntry(PIN_ENTRY_TYPE, { v: 1, op: "add", id: 1, text: "sessions live in SQLite", by: "agent", at: 1 });
-    s.host.appendEntry(PIN_ENTRY_TYPE, { v: 1, op: "add", id: 2, name: "test-cmd", text: "bun test", by: "agent", at: 5 });
-    s.host.appendEntry(PIN_ENTRY_TYPE, { v: 1, op: "add", id: 3, name: "test-cmd", text: "bun test --isolate", by: "agent", at: 13 });
-    const block = "[Pinned notes, as they read now (vcc_pin; a name pinned again replaces its note):\n- [1] sessions live in SQLite (agent, #1)\n- [3] test-cmd: bun test --isolate (agent, #13)\n- [9] plan: ship v2 (agent, from session aaaa1111)]";
-    // With vcc_context there and nothing out: first, before the first request's mark.
+    const pinAt = (after: number, data: Record<string, unknown>) =>
+      s.entries.splice(after + 1, 0, { type: "custom", id: `p${String(data.id)}`, parentId: null, customType: PIN_ENTRY_TYPE, data: { v: 1, op: "add", by: "agent", ...data } });
+    // Pinned in turn 3, turn 1 and turn 0 (inserted from the end so the positions hold), and one carried from the last session.
+    pinAt(13, { id: 3, name: "test-cmd", text: "bun test --isolate", at: 13 });
+    pinAt(5, { id: 2, name: "test-cmd", text: "bun test", at: 5 });
+    pinAt(1, { id: 1, text: "sessions live in SQLite", at: 1 });
+    pinAt(-1, { id: 9, name: "plan", text: "ship v2", at: null, from: "aaaa1111" });
     const first = (sent(s, undefined, true).messages as any[])[0].content.map((p: any) => p.text);
-    expect(first).toEqual([block, "[#0]", "request number 0 please read f0.ts"]);
-    // With turns out: still first, then the line for them; the same on every request.
+    // Nothing out: the notes pinned in the conversation are in it, in their calls; the block holds what was carried in.
+    expect(first).toEqual([
+      "[Pinned notes carried from the last session (vcc_pin; a name pinned again replaces its note; any pinned since are in the conversation):\n- [9] plan: ship v2 (agent, from session aaaa1111)]",
+      "[#0]", "request number 0 please read f0.ts",
+    ]);
+    // Turns out: the edit takes up every note as it reads then, and the block stands first, the same on every request.
     record(s, { op: "evict", from: 0, to: 7 });
     const out = (sent(s, undefined, true).messages as any[])[0].content.map((p: any) => p.text);
-    expect(out[0]).toBe(block);
+    expect(out[0]).toBe("[Pinned notes, as of #15 (vcc_pin; a name pinned again replaces its note; any pinned since are in the conversation):\n- [1] sessions live in SQLite (agent, #1)\n- [3] test-cmd: bun test --isolate (agent, #13)\n- [9] plan: ship v2 (agent, from session aaaa1111)]");
     expect(out[1]).toStartWith("[#0–#7 out of context: 2 turns");
-    expect(out[1]).not.toContain("Pinned");
     expect((sent(s, undefined, true).messages as any[])[0].content.map((p: any) => p.text)).toEqual(out);
-    const listing = tool(s, null);
-    expect(listing).toContain("Pinned (vcc_pin; a name pinned again replaces its note):\n  [1] sessions live in SQLite (agent, #1)\n  [3] test-cmd: bun test --isolate (agent, #13)\n  [9] plan: ship v2 (agent, from session aaaa1111)");
+    // A note pinned after the edit leaves the block as it is: it is in the conversation.
+    s.host.appendEntry(PIN_ENTRY_TYPE, { v: 1, op: "add", id: 4, text: "a later note", by: "agent", at: 15 });
+    expect((sent(s, undefined, true).messages as any[])[0].content.map((p: any) => p.text)).toEqual(out);
+    expect(tool(s, null)).toContain("Pinned (vcc_pin; a name pinned again replaces its note):\n  [1] sessions live in SQLite (agent, #1)\n  [3] test-cmd: bun test --isolate (agent, #13)\n  [4] a later note (agent, #15)\n  [9] plan: ship v2 (agent, from session aaaa1111)");
   });
 
   it("are not added with eviction off and nothing out: the summary carries them", () => {

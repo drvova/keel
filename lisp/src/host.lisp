@@ -132,6 +132,22 @@ host's window (or the host knows none); T when it was recorded."
 
 ;;; --- turns out of the context (evict.lisp) -----------------------------------------
 
+(defun context-readout (s)
+  "How full the context is, for the end of an omp-vcc tool's result while eviction
+is on: models judge their own context's length poorly past a few thousand tokens
+(Context Language Models, appendix G), so each result says it, as that paper's
+tools do. Written once into the result, it reads the same on every later
+request. NIL when the host has not counted the context, or the trigger is unknown."
+  (let ((tokens (snapshot-context-tokens s)) (trigger (snapshot-trigger s)))
+    (and (realp tokens) (realp trigger) (> trigger 0)
+         (format nil "[context: ~~~a tokens, ~d% of where the host compacts (~~~a)]"
+                 (js-string-of (round tokens)) (round (* 100 tokens) trigger) (js-string-of (round trigger))))))
+
+(defun with-readout (s text)
+  "TEXT with the context readout after it, when eviction is on and there is one."
+  (let ((readout (and (eq (json-get (snapshot-settings s) "evict") :true) (context-readout s))))
+    (if (and readout (stringp text)) (format nil "~a~%~a" text readout) text)))
+
 (defun snapshot-count (s) "How many entries #N counts now: the next one's #N." (count-if #'counted-entry-p (snapshot-tree s)))
 
 (defun snapshot-trigger (s)
@@ -174,7 +190,7 @@ registered), and what to tell the user."
       (loop for (index nil message) in (read-session file)
             do (setf (gethash index chars) (message-chars message) (gethash index by-n) message)))
     (multiple-value-bind (text ops) (run-evict call (snapshot-branch s) (snapshot-index s) chars by-n (snapshot-count s))
-      (json-object "text" text "ops" (coerce ops 'vector)))))
+      (json-object "text" (if (equal (json-get call "surface") "tool") (with-readout s text) text) "ops" (coerce ops 'vector)))))
 
 ;;; --- a compaction, in two calls --------------------------------------------------
 
