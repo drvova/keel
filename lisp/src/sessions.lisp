@@ -2,20 +2,19 @@
 ;;;;
 ;;;; SPDX-License-Identifier: MIT
 ;;;;
-;;;; A port of src/core/sessions.ts. The files themselves, newest first by last
-;;;; write and the current one left out, come from the TS side: listing a
+;;;; The files themselves, newest first by last write and the current one left
+;;;; out, come from the TS side (src/core/sessions.ts): listing a
 ;;;; directory by modification time to the millisecond is the host's, and SBCL
 ;;;; reads it to the second. Everything else (headers, ids and their short forms,
 ;;;; each file's scan by line heads, its pins on its active branch) is here.
 
 (in-package #:omp-vcc)
 
-(defparameter +session-ref-min-chars+ 4)
 (defparameter +max-listed-sessions+ 50)
 (defparameter +short-id-chars+ 8)
 
-(defstruct (session-info (:constructor make-session-info (file id short started bytes messages title first-request pins)))
-  file id short started bytes messages title first-request pins)
+(defstruct (session-info (:constructor make-session-info (file short started bytes messages title first-request pins)))
+  file short started bytes messages title first-request pins)
 
 (defun short-ids (ids)
   "The shortest prefix (dashes left out) of 8 characters or more that names each id alone."
@@ -47,7 +46,7 @@
                      (t (when (< bytes limit) (write-char #\REPLACEMENT_CHARACTER out)) (return)))))))
 
 (defun entry-head (line)
-  "session-file.ts entryHead: (values TYPE ID PARENT PARENT-PRESENT) read from the line's head."
+  "(values TYPE ID PARENT PARENT-PRESENT) read from the line's head, without parsing the line."
   (let* ((head (utf-8-head line 400))
          (type (let ((m (rx-exec (rx "^\\{\"type\":\"([^\"]+)\"") head))) (and m (rx-group m 1))))
          (id (let ((m (rx-exec (rx "\"id\":\"([^\"]+)\"") head))) (and m (rx-group m 1))))
@@ -58,8 +57,6 @@
   (let ((name (cond ((member (json-get e "type") '("title" "title_change") :test #'equal) (json-get e "title"))
                     ((equal (json-get e "type") "session_info") (json-get e "name")))))
     (and (stringp name) (plusp (length (js-trim name))) (js-trim name))))
-
-(defun extension-user-p (m) (and (json-object-p m) (equal (json-get m "role") "user") (equal (json-get m "attribution") "agent")))
 
 (defun scan-session (file short)
   "One pass over a session file: header, messages, first request, title, pins on its active branch."
@@ -72,29 +69,23 @@
             (multiple-value-bind (type id parent) (entry-head line)
               (when (and (in-tree-p type) id) (setf (gethash id parent-of) parent last id))
               (cond ((equal type "message")
-                     (incf messages)
+                     (when (line-holds-message-p line) (incf messages))
                      (when (and (null first-request) (search "\"role\":\"user\"" line))
-                       (let ((m (json-get (ignore-errors (parse-json line)) "message")))
+                       (let ((m (json-get (parse-json-or-nil line) "message")))
                          (when (and (equal (json-get m "role") "user") (not (extension-user-p m)))
                            (let ((words (values (user-words (text-of (or (json-get m "content") ""))))))
                              (when (plusp (length words)) (setf first-request (js-clip words 100))))))))
                     ((equal type "compaction"))
-                    (t (let ((e (ignore-errors (parse-json line))))
-                         (if (or (and (equal (json-get e "type") "custom") (equal (json-get e "customType") "omp-vcc.pin")
-                                      ;; `typeof data === "object"`: an array is one too.
-                                      (let ((d (json-get e "data"))) (or (json-object-p d) (and (vectorp d) (not (stringp d))))))
-                                 (equal (json-get e "type") "reset_boundary"))
+                    (t (let ((e (parse-json-or-nil line)))
+                         (if (or (pin-entry-p e) (equal (json-get e "type") +reset-entry-type+))
                              (push e pin-entries)
                              (setf title (or (name-of e) title)))))))))
-        (let* ((branch (let ((ids (make-hash-table :test 'equal)))
-                         (loop for id = last then (gethash id parent-of)
-                               while (and id (not (gethash id ids))) do (setf (gethash id ids) t))
-                         ids))
+        (let* ((branch (walk-to-root parent-of last))
                (pins (reverse pin-entries))
                (on-branch (if (plusp (hash-table-count branch))
                               (remove-if-not (lambda (e) (and (stringp (json-get e "id")) (gethash (json-get e "id") branch))) pins)
                               pins)))
-          (make-session-info file (json-get header "id") short
+          (make-session-info file short
                              (let ((ts (json-get header "timestamp"))) (and (stringp ts) ts))
                              (length bytes) messages
                              (and title (js-clip title 80)) first-request

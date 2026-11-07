@@ -1,7 +1,9 @@
 import { describe, it, expect } from "bun:test";
-import { compileBrief } from "../src/core/brief";
-import { normalize } from "../src/core/normalize";
-import type { NormalizedBlock } from "../src/types";
+import { summarize, UNCAPPED } from "./support/summary";
+
+/** The brief a summary of these blocks shows, as it stores it. */
+const compileBrief = (blocks: NormalizedBlock[]): string => summarize(blocks, { limits: UNCAPPED }).state.brief;
+import type { NormalizedBlock } from "./support/compile";
 
 describe("compileBrief", () => {
   it("returns empty string for no blocks", () => {
@@ -372,13 +374,12 @@ describe("compileBrief", () => {
 
 describe("failed tool calls", () => {
   it("a call whose result is an error says so, before its ref", () => {
-    const blocks = normalize([
+    const r = summarize({ messages: [
       { role: "assistant", content: [{ type: "toolCall", id: "t1", name: "bash", arguments: { command: "bun test tests/billing.test.ts" } }] },
       { role: "toolResult", toolCallId: "t1", toolName: "bash", content: [{ type: "text", text: "1 fail" }], isError: true },
       { role: "assistant", content: [{ type: "toolCall", id: "t2", name: "bash", arguments: { command: "bun test tests/billing.test.ts" } }] },
       { role: "toolResult", toolCallId: "t2", toolName: "bash", content: [{ type: "text", text: "12 pass" }], isError: false },
-    ] as any, [10, 11, 12, 13]);
-    const r = compileBrief(blocks);
+    ] }, { sourceIndices: [10, 11, 12, 13] }).state.brief;
     expect(r).toContain('* bash "bun test tests/billing.test.ts" [failed] (#10)');
     expect(r).toContain('* bash "bun test tests/billing.test.ts" (#12)');
   });

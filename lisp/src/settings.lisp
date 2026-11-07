@@ -2,19 +2,20 @@
 ;;;;
 ;;;; SPDX-License-Identifier: MIT
 ;;;;
-;;;; A port of src/core/settings.ts parseSettings and Config.scaffold. The TS
-;;;; side resolves where the file is (the host's agent directory, or
+;;;; The settings are each value of the file in its default's type; the
+;;;; scaffold writes the file whole. The TS side (src/core/settings.ts)
+;;;; resolves where the file is (the host's agent directory, or
 ;;;; OMP_VCC_CONFIG_PATH) and whether the pre-rename pi-vcc-config.json may be
 ;;;; copied; the core reads and writes the file itself. What it writes is what
 ;;;; JSON.stringify(value, null, 2) writes, with a newline after.
 
 (in-package #:omp-vcc)
 
-;; VccSettings' keys in DEFAULT_SETTINGS' order, with their defaults.
+;; The settings' keys in the order the scaffold writes them, with their defaults.
 (defparameter +default-settings+
   '(("overrideDefaultCompaction" . :true) ("smartKeepTail" . :true) ("debug" . :false)
     ("skipForProviders" . :list) ("skipCustomTypes" . :list) ("trackCommands" . :list)
-    ("keepOriginals" . :true) ("workingSet" . :true)))
+    ("keepOriginals" . :true) ("workingSet" . :true) ("evict" . :false)))
 
 (defun default-setting (value) (if (eq value :list) (vector) value))
 
@@ -47,21 +48,18 @@
            (when (every (lambda (c) (< (char-code c) 128)) s)
              (cond ((string-equal s "true") :true) ((string-equal s "false") :false)))))))
 
-(defun string-list (v)
-  (if (and (vectorp v) (not (stringp v))) (remove-if-not #'stringp (coerce v 'list)) '()))
-
 (defun parse-settings (parsed)
-  "settings.ts parseSettings: each value only in its default's type."
+  "The settings PARSED (the file's JSON) gives: each value only in its default's type."
   (let ((settings (default-settings)))
     (when (hash-table-p parsed)
       (loop for (key . value) in +default-settings+
             when (member value '(:true :false))
               do (let ((on (switch-of (json-get parsed key)))) (when on (setf (gethash key settings) on))))
-      (setf (gethash "skipForProviders" settings) (coerce (string-list (json-get parsed "skipForProviders")) 'vector)
-            (gethash "skipCustomTypes" settings) (coerce (string-list (json-get parsed "skipCustomTypes")) 'vector)
+      (setf (gethash "skipForProviders" settings) (coerce (strings-of (json-get parsed "skipForProviders")) 'vector)
+            (gethash "skipCustomTypes" settings) (coerce (strings-of (json-get parsed "skipCustomTypes")) 'vector)
             ;; Blank names would match every command; duplicates would repeat lines.
             (gethash "trackCommands" settings)
-            (coerce (remove-duplicates (remove "" (mapcar #'js-trim (string-list (json-get parsed "trackCommands"))) :test #'string=)
+            (coerce (remove-duplicates (remove "" (mapcar #'js-trim (strings-of (json-get parsed "trackCommands"))) :test #'string=)
                                        :test #'string= :from-end t)
                     'vector)))
     settings))
@@ -71,7 +69,7 @@
 (defun spread-object (value)
   "`{...VALUE}` for an object or an array (its indices as keys)."
   (if (hash-table-p value)
-      (copy-json-object value)
+      (copy-object value)
       (let ((object (make-hash-table :test 'equal)))
         (loop for v across value for i from 0 do (setf (gethash (format nil "~d" i) object) v))
         object)))
@@ -93,7 +91,7 @@ keys added, existing values kept. Nothing here fails the caller."
          (progn (write-text-file path (format nil "~a~%" (json-pretty-string (default-settings))))
                 (return-from scaffold-settings))))
    (let ((parsed (read-json-file path)))
-     (when (or (hash-table-p parsed) (and (vectorp parsed) (not (stringp parsed))))
+     (when (or (hash-table-p parsed) (json-array-p parsed))
        (let ((next (spread-object parsed)) (changed nil))
          (loop for (key . value) in +default-settings+
                unless (nth-value 1 (gethash key next))

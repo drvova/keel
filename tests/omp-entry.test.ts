@@ -6,7 +6,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import registerOmp from "../index";
 import { ompConvertToLlm } from "./support/host";
-import { OMP_VCC_COMPACT_INSTRUCTION } from "../src/core/compact-args";
+import { COMPACT_INSTRUCTION } from "./support/names";
 
 let dir: string;
 let previousConfig: string | undefined;
@@ -108,7 +108,7 @@ describe("omp entry: registration", () => {
     expect([...omp.handlers.keys()].sort()).toEqual(
       ["agent_end", "auto_compaction_end", "auto_compaction_start", "context", "message_end", "session_before_compact", "session_compact", "session_start", "turn_end"],
     );
-    expect([...omp.commands.keys()].sort()).toEqual(["omp-vcc", "omp-vcc-pin", "omp-vcc-recall", "omp-vcc-unpin"]);
+    expect([...omp.commands.keys()].sort()).toEqual(["omp-vcc", "omp-vcc-evict", "omp-vcc-pin", "omp-vcc-recall", "omp-vcc-unpin"]);
     expect(omp.tools.map((t: any) => t.name)).toEqual(["vcc_recall", "vcc_pin"]);
   });
 
@@ -229,7 +229,7 @@ describe("omp entry: what the summary reads", () => {
   const summarize = (entries: any[]) => {
     const omp = createOmp();
     omp.setEntries(entries);
-    return omp.beforeCompact(`${OMP_VCC_COMPACT_INSTRUCTION} keep:1`).compaction.summary as string;
+    return omp.beforeCompact(`${COMPACT_INSTRUCTION} keep:1`).compaction.summary as string;
   };
 
   test("a custom message (omp: developer) is read as injected user content", () => {
@@ -316,7 +316,7 @@ describe("omp entry: a turn still running", () => {
   test("/omp-vcc still compacts a running turn when asked", () => {
     const omp = createOmp();
     omp.setEntries(running());
-    expect(omp.beforeCompact(OMP_VCC_COMPACT_INSTRUCTION).compaction.firstKeptEntryId).toBe("");
+    expect(omp.beforeCompact(COMPACT_INSTRUCTION).compaction.firstKeptEntryId).toBe("");
   });
 });
 

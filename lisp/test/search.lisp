@@ -2,8 +2,8 @@
 ;;;;
 ;;;; SPDX-License-Identifier: MIT
 ;;;;
-;;;; Hit-for-hit agreement with search-entries.ts is tests/lisp-core.test.ts's;
-;;;; these pin what that comparison would only show as a mismatch.
+;;;; The TypeScript tests drive the same search through recall
+;;;; (tests/search.test.ts); these pin its parts.
 
 (in-package #:omp-vcc.test)
 
@@ -14,13 +14,30 @@
   (is (equal (stem-of "stopping") "stop"))
   (is (equal (stem-of "rounding") "round"))
   (is (null (stem-of "test")) "too short to stem")
-  (is (null (stem-of "café")) "only plain ASCII words are stemmed"))
+  (is (null (stem-of "café")) "only plain ASCII words are stemmed")
+  (is (equal (stem-of "failure") "fail"))
+  (is (equal (stem-of "retries") "retr"))
+  ;; A doubled final consonant is undone only while the stem stays 4+ letters.
+  (is (equal (stem-of "running") "runn"))
+  (is (equal (stem-of "committed") "commit"))
+  (is (null (stem-of "缓存失败")))
+  (is (null (stem-of "auth.*token"))))
+
+(deftest the-recall-cap-is-a-tenth-of-the-window-between-8-and-50-kb
+  (is (= (recall-output-chars nil) (* 50 1024)))
+  (is (= (recall-output-chars 200000) (* 50 1024)))
+  (is (= (recall-output-chars 32000) 12800))
+  (is (= (recall-output-chars 8000) (* 8 1024))))
 
 (deftest regex-queries-run-in-entry-order
   (is (equal (mapcar #'car (search-docs "mon.y" (docs "honey" "money" "MONEY" "monkey"))) '(1 2))))
 
-(deftest refused-constructs-are-handed-back
-  (is (eq :regex (search-docs "(?<n>a)" (docs "a")))))
+(deftest a-named-group-is-searched-as-javascript-reads-it
+  (is (equal (mapcar #'car (search-docs "(?<n>ab)c" (docs "xx" "abc"))) '(1))))
+
+(deftest a-back-reference-into-a-look-behind-is-searched-as-text
+  ;; The one construct the regex engine refuses: the query is read literally.
+  (is (equal (mapcar #'car (search-docs "(?<=(a)\\1)b" (docs "aab" "x (?<=(a)\\1)b y"))) '(1))))
 
 (deftest an-empty-regex-result-falls-back-to-terms
   ;; "zz.z fix" finds nothing as one regex, so its terms are searched instead.

@@ -1,10 +1,10 @@
 // /omp-vcc's argument handling and what it reports, against a fake omp API.
 // tests/omp-entry.test.ts covers the command wired to the hook through index.ts.
-import { OMP_HOST } from "../src/host";
+import { ompBinding } from "./support/binding";
 import { describe, expect, test } from "bun:test";
 import { registerOmpVccCommand } from "../src/commands/omp-vcc";
 import { createCompactionState } from "../src/hooks/compaction";
-import { OMP_VCC_COMPACT_INSTRUCTION } from "../src/core/compact-args";
+import { COMPACT_INSTRUCTION } from "./support/names";
 
 type CompactOptions = {
   suppressContinuation?: boolean;
@@ -46,7 +46,7 @@ function createHarness(sendUserMessage?: (content: string | unknown[]) => unknow
     },
   };
 
-  registerOmpVccCommand(pi, state, OMP_HOST);
+  registerOmpVccCommand(pi, state, ompBinding);
 
   return {
     invoke: async (args = "") => handler!(args, ctx),
@@ -64,7 +64,7 @@ describe("/omp-vcc", () => {
     await invoke();
 
     expect(compactCalls).toHaveLength(1);
-    expect(compactCalls[0].instructions).toBe(OMP_VCC_COMPACT_INSTRUCTION);
+    expect(compactCalls[0].instructions).toBe(COMPACT_INSTRUCTION);
     expect(state.pendingManualInstructions).toBeNull();
   });
 
@@ -73,7 +73,7 @@ describe("/omp-vcc", () => {
 
     await invoke("keep:3   continue  ");
 
-    expect(compactCalls[0].instructions).toBe(`${OMP_VCC_COMPACT_INSTRUCTION} keep:3`);
+    expect(compactCalls[0].instructions).toBe(`${COMPACT_INSTRUCTION} keep:3`);
     compactCalls[0].onComplete?.();
     expect(userMessages).toEqual(["continue"]);
   });
@@ -83,7 +83,7 @@ describe("/omp-vcc", () => {
 
     await invoke("  continue   keep:2");
 
-    expect(compactCalls[0].instructions).toBe(`${OMP_VCC_COMPACT_INSTRUCTION} keep:2`);
+    expect(compactCalls[0].instructions).toBe(`${COMPACT_INSTRUCTION} keep:2`);
     compactCalls[0].onComplete?.();
     expect(userMessages).toEqual(["continue"]);
   });
@@ -93,7 +93,7 @@ describe("/omp-vcc", () => {
 
     await invoke("keep:4");
 
-    expect(compactCalls[0].instructions).toBe(`${OMP_VCC_COMPACT_INSTRUCTION} keep:4`);
+    expect(compactCalls[0].instructions).toBe(`${COMPACT_INSTRUCTION} keep:4`);
     expect(compactCalls[0].suppressContinuation).toBeUndefined();
     compactCalls[0].onComplete?.();
     expect(userMessages).toHaveLength(0);
@@ -170,7 +170,8 @@ describe("/omp-vcc", () => {
       await invoke();
       compactCalls[0].onError?.(new Error("Nothing to compact (session too small)"));
       await invoke();
-      state.lastStats = { summarized: 4, keptUserTurns: 1, totalUserTurns: 2, keptTokensEst: 120 };
+      // The compaction the hook wrote for this pass.
+      state.written = { summary: "s", statsLine: "omp-vcc: kept 1/2 turns, ~120 tok (summarized 4).", fromCommand: true, willRetry: false, followUpPrompt: null };
       compactCalls[1].onComplete?.();
       expect(notifyCalls).toEqual([]);
       expect(written[0]).toStartWith("Nothing to compact yet:");
@@ -182,7 +183,7 @@ describe("/omp-vcc", () => {
 
   // Seen with a real model: right after an automatic compaction, /omp-vcc blamed a short session.
   test("after a compaction, 'nothing to compact' says what is left is what came after it", async () => {
-    const { invoke, compactCalls, notifyCalls } = createHarness(undefined, "rpc", [{ type: "message" }, { type: "compaction" }, { type: "message" }]);
+    const { invoke, compactCalls, notifyCalls } = createHarness(undefined, "rpc", [{ type: "message", id: "m1" }, { type: "compaction", id: "c1" }, { type: "message", id: "m2" }]);
     await invoke();
     compactCalls[0].onError?.(new Error("Nothing to compact (session too small)"));
     expect(notifyCalls[0].msg).toStartWith("Nothing to compact yet: what came after the last compaction still fits");
@@ -218,6 +219,6 @@ describe("/omp-vcc", () => {
 
     await invoke("keep:999999999999999999999 continue");
 
-    expect(compactCalls[0].instructions).toBe(`${OMP_VCC_COMPACT_INSTRUCTION} keep:${Number.MAX_SAFE_INTEGER}`);
+    expect(compactCalls[0].instructions).toBe(`${COMPACT_INSTRUCTION} keep:${Number.MAX_SAFE_INTEGER}`);
   });
 });

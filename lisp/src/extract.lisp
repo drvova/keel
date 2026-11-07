@@ -2,27 +2,21 @@
 ;;;;
 ;;;; SPDX-License-Identifier: MIT
 ;;;;
-;;;; A port of src/extract/: user-messages.ts (what the user wrote, and the
-;;;; session's first requests), files.ts (files read, modified, created),
-;;;; commits.ts (git commits and their hashes) and tracked-commands.ts (the
-;;;; invocations of the commands settings name). Each is held to the TS output
-;;;; by tests/lisp-summary.test.ts.
+;;;; What the user wrote and the session's first requests, files read, modified
+;;;; and created, git commits and their hashes, and the invocations of the
+;;;; commands settings name. tests/extract-*.test.ts hold them to what they read.
 
 (in-package #:omp-vcc)
 
 ;;; --- words -------------------------------------------------------------------
 ;;;
-;;; The TS counts words with Intl.Segmenter, here SBCL's UAX #29 segmentation:
-;;; the two agree on scripts written with spaces, and not on those ICU segments
-;;; by dictionary (Chinese, Japanese, Thai, Lao, Khmer, Myanmar), whose text is
-;;; left to the TS code.
-
-(defparameter +dictionary-scripts+ '(:han :hiragana :katakana :thai :lao :khmer :myanmar))
+;;; Words are SBCL's UAX #29 segments. They are Intl.Segmenter's in scripts
+;;; written with spaces; in those ICU segments by dictionary (Chinese,
+;;; Japanese, Thai, Lao, Khmer, Myanmar), UAX #29 makes each ideograph a word
+;;; and a run of Thai one, where ICU finds the dictionary's words.
 
 (defun word-segments (text)
   "TEXT's segments as (SEGMENT START END), START and END in code units."
-  (when (some (lambda (c) (member (sb-unicode:script c) +dictionary-scripts+)) text)
-    (error 'left-to-ts :detail "text in a script segmented by dictionary"))
   (let ((at 0))
     (mapcar (lambda (seg) (prog1 (list seg at (+ at (js-length seg))) (incf at (js-length seg))))
             (sb-unicode:words text))))
@@ -45,8 +39,8 @@ which settles most text without segmenting it."
 
 ;;; --- [User Messages] and [Early Session Requests] ---------------------------------
 
-(defparameter +user-message-chars+ 300 "Each user message is clipped to this: user-messages.ts USER_MESSAGE_CHARS.")
-(defparameter +early-requests-kept+ 3 "user-messages.ts EARLY_REQUESTS_KEPT.")
+(defparameter +user-message-chars+ 300 "Each user message is clipped to this many characters.")
+(defparameter +early-requests-kept+ 3 "[Early Session Requests] keeps this many of the first messages.")
 
 (defun collapse-whitespace (text)
   "TEXT with each run of whitespace one space: replace(/\\s+/g, \" \")."
@@ -54,7 +48,9 @@ which settles most text without segmenting it."
 
 (defun user-words (text)
   "The user's own words in a message on one line, and the skills it expanded:
-(values WORDS SKILLS), WORDS \"\" when there are none."
+(values WORDS SKILLS), WORDS \"\" when there are none. An expanded skill alone is
+not the user's words; text that opens with a tag (`<peer_message …>`) was put
+there by a tool, and one-word replies (\"ok\") say little: both are none."
   (let* ((skills '())
          (rest (js-trim (collapse-whitespace
                          (rx-replace (skill-block-regex) text
@@ -64,6 +60,9 @@ which settles most text without segmenting it."
             (nreverse skills))))
 
 (defun user-line (text index)
+  "A user message as the summary lists it, behind a `[skill: name]` tag when it
+expanded one, clipped. A cut request reads as complete without a mark, and the
+cut part can be the constraint that matters, so a clipped one ends `… (#N)`."
   (multiple-value-bind (rest skills) (user-words text)
     (when (plusp (length rest))
       (let* ((line (if skills (format nil "[skill: ~a] ~a" (join-strings skills ", ") rest) rest))
@@ -86,8 +85,11 @@ which settles most text without segmenting it."
 (defun oset-list (set) (coerce (oset-items set) 'list))
 
 (defun extract-files (blocks file-ops)
-  "Files read, modified and created, in order, as (values READ MODIFIED CREATED):
-extract/files.ts extractFiles."
+  "Files read, modified and created, in order, as (values READ MODIFIED CREATED).
+A write to a path not seen before creates it, one after rewrites it; a file
+created here stays created when edited after. A failed read, write or edit did
+nothing. The host's FILE-OPS fill in only paths the blocks do not show: they
+come from the same calls with no result read, and say a write without its kind."
   (let ((read (make-oset)) (modified (make-oset)) (created (make-oset))
         (seen (make-hash-table :test 'equal)) (shown (make-hash-table :test 'equal)))
     (flet ((change (p) (unless (oset-has created p) (oset-add modified p))))
@@ -162,8 +164,11 @@ first; the same message hashless and hashed is one commit, kept hashed."
                (message (or heredoc (first-line-of (clean-message (or (rx-group m 1) (rx-group m 2) (rx-group m 3) ""))))))
           (if (and (null heredoc) (rx-test (rx "^\\$\\(cat\\s+<<") message)) "" message)))))
 
+(defparameter +git-commit-head+ "\\[[^\\]\\s]+(?:\\s+\\([^)]*\\))?\\s+([0-9a-f]{7,12})\\]"
+  "What git commit prints first: `[branch (root-commit) hash]`, the hash its one group.")
+
 (defun hash-subject-regex ()
-  (rx "(?:\\[[^\\]\\s]+(?:\\s+\\([^)]*\\))?\\s+([0-9a-f]{7,12})\\]|^\\s*([0-9a-f]{7,12})(?:\\s+\\([^)]*\\))?)\\s+(.*)"))
+  (rx (format nil "(?:~a|^\\s*([0-9a-f]{7,12})(?:\\s+\\([^)]*\\))?)\\s+(.*)" +git-commit-head+)))
 
 (defun result-lines (results) (mapcan (lambda (text) (split-string text #\Newline)) results))
 
@@ -174,12 +179,12 @@ first; the same message hashless and hashed is one commit, kept hashed."
 
 (defun committed-line (results message)
   (dolist (line (result-lines results))
-    (let ((m (rx-exec (rx "\\[[^\\]\\s]+(?:\\s+\\([^)]*\\))?\\s+([0-9a-f]{7,12})\\]\\s+(.*)") line)))
+    (let ((m (rx-exec (rx (format nil "~a\\s+(.*)" +git-commit-head+)) line)))
       (when (and m (string= (js-trim (rx-group m 2)) message)) (return (rx-group m 1))))))
 
 (defun hash-from-results (results message)
   (or (dolist (text results)
-        (let ((m (rx-exec (rx "\\[[^\\]\\s]+(?:\\s+\\([^)]*\\))?\\s+([0-9a-f]{7,12})\\]") text)))
+        (let ((m (rx-exec (rx +git-commit-head+) text)))
           (when m (return (rx-group m 1)))))
       (hash-for-subject results message)
       (dolist (text results)
@@ -200,11 +205,7 @@ first; the same message hashless and hashed is one commit, kept hashed."
   (let ((b (nth i blocks)))
     (if (eq (block-kind b) :bash)
         (values (list (block-output b)) (nonzero-exit-p (block-exit-code b)))
-        (values (when (and (eq (block-kind b) :tool-call) (block-id b))
-                  (loop for r in (nthcdr (1+ i) blocks)
-                        until (eq (block-kind r) :user)
-                        when (and (eq (block-kind r) :tool-result) (equal (block-call-id r) (block-id b)))
-                          collect (block-text r)))
+        (values (and (eq (block-kind b) :tool-call) (block-results b))
                 (and (eq (block-kind b) :tool-call) (block-failed b))))))
 
 (defun extract-commits (blocks)
@@ -243,7 +244,7 @@ first; the same message hashless and hashed is one commit, kept hashed."
 
 ;;; --- [Tracked Commands] ----------------------------------------------------------------
 ;;;
-;;; Commands are scanned by code unit, as the TS indexes them.
+;;; Commands are scanned by UTF-16 code unit, as JavaScript indexes strings.
 
 (defun units-slice (units start &optional end)
   "The string of UNITS from START below END, a pair cut in half left as its surrogate."

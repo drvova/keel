@@ -6,8 +6,7 @@
 // Runs only where @oh-my-pi/pi-coding-agent is installed (it needs Bun >= 1.4.4):
 //   V=18.14.2; npm install --no-save --ignore-scripts --no-audit --no-fund @oh-my-pi/pi-coding-agent@$V
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { lispCore, tracedCore, withCoreAsync } from "./support/lisp-core";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join, resolve } from "path";
 
@@ -184,14 +183,6 @@ describe.skipIf(!ompInstalled)("omp host", () => {
     expect(listed).toContain('"Rotate the staging API key"');
     const found = (await recall.execute("q", { query: "vault staging key revoked", scope: "project" }, undefined, undefined)).content[0].text;
     expect(found).toContain(`[session ${short}] #1 [assistant]`);
-    // The same search through the Lisp core answers the same text.
-    const core = lispCore();
-    if (core) {
-      const traced = tracedCore(core, work);
-      const viaCore = await withCoreAsync(traced.path, () => recall.execute("q", { query: "vault staging key revoked", scope: "project" }, undefined, undefined));
-      expect(viaCore.content[0].text).toBe(found);
-      expect(traced.starts()).toBeGreaterThan(0);
-    }
     await other.close?.();
   });
 
@@ -216,4 +207,35 @@ describe.skipIf(!ompInstalled)("omp host", () => {
     const [pointed] = await session.extensionRunner.emitContext([structuredClone(read.message)]);
     expect(pointed.content).toEqual([{ type: "text", text: `[Output truncated - 400 tokens] (the original: vcc_recall expand:[${index}])` }]);
   });
+
+  test("/omp-vcc-evict takes old turns out of the next request whole, and vcc_recall still reads them", async () => {
+    user("Write the release notes for 2.0");
+    assistant([{ type: "text", text: "Done." }]);
+    user("Tag the release");
+    assistant([{ type: "text", text: "Done." }]);
+    const config = process.env.OMP_VCC_CONFIG_PATH!;
+    const saved = readFileSync(config, "utf8");
+    writeFileSync(config, JSON.stringify({ ...JSON.parse(saved), evict: true }));
+    try {
+      notices.length = 0;
+      await session.prompt("/omp-vcc-evict 1");
+      expect(notices.join("\n")).toContain("Out of context from the next request: #");
+      // The request the host builds next, through its own context hook.
+      const messages = sessionManager.buildSessionContext().messages;
+      const sent = await session.extensionRunner.emitContext(structuredClone(messages));
+      const text = (m: any) => (typeof m.content === "string" ? m.content : Array.isArray(m.content) ? m.content.map((p: any) => p.text ?? "").join("") : "");
+      const stub = sent.find((m: any) => text(m).includes("out of context:"));
+      expect(text(stub)).toMatch(/^\[#(\d+)–#\d+ out of context: 1 turn, by the user\./);
+      expect(sent.length).toBeLessThan(messages.length + 1);
+      expect(sent.some((m: any) => text(m) === "Tag the release")).toBe(true);
+      // What left the request is in the session, word for word.
+      const n = Number(text(stub).match(/^\[#(\d+)/)![1]);
+      const recall = session.getToolByName("vcc_recall");
+      const expanded = (await recall.execute("x", { expand: [n] }, undefined, undefined)).content[0].text;
+      expect(expanded).toContain(`Expanded #${n}:`);
+    } finally {
+      writeFileSync(config, saved);
+    }
+  });
+
 });

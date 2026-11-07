@@ -1,17 +1,13 @@
-import { pairs, searchHits } from "./support/pairs";
-import { ompBinding } from "./support/binding";
-import { describe, it, expect, beforeAll, afterAll } from "bun:test";
-import { mkdtempSync, writeFileSync, rmSync } from "fs";
+import { searchHits } from "./support/pairs";
+import { callRecallTool, recallTool } from "./support/binding";
+import { sessionFileOfEntries } from "./support/session-files";
+import { describe, it, expect, beforeAll } from "bun:test";
 import { createHash } from "crypto";
-import { tmpdir } from "os";
-import { join } from "path";
-import { registerRecallTool } from "../src/tools/recall";
-import { RECALL_OUTPUT_CHARS } from "../src/core/recall-run";
+import { RECALL_OUTPUT_CHARS } from "../src/names";
 
 // One tool result is a ~600 KB base64 image on a single line (issue #63).
 const blob = Buffer.concat(Array.from({ length: 14_000 }, (_, i) => createHash("sha256").update(String(i)).digest())).toString("base64");
 
-let dir: string;
 let file: string;
 const ids: string[] = [];
 let blobIndex = -1;
@@ -20,12 +16,10 @@ let longLineIndex = -1;
 const longLine = `${"a1,".repeat(100_000)}needle_mark${"b2,".repeat(100_000)}`;
 
 beforeAll(() => {
-  dir = mkdtempSync(join(tmpdir(), "omp-vcc-recall-cap-"));
-  file = join(dir, "session.jsonl");
-  const lines: string[] = [];
+  const lines: unknown[] = [];
   const add = (message: unknown) => {
     const id = `e${ids.length}`;
-    lines.push(JSON.stringify({ type: "message", id, parentId: ids.at(-1) ?? null, message }));
+    lines.push({ type: "message", id, parentId: ids.at(-1) ?? null, message });
     ids.push(id);
   };
   for (let i = 0; i < 60; i++) {
@@ -43,19 +37,10 @@ beforeAll(() => {
     add({ role: "user", content: i % 10 === 0 ? `Step ${i}: set max retries to 3` : `Step ${i}: run the tests` });
     add({ role: "assistant", content: [{ type: "text", text: `Done with step ${i}.` }] });
   }
-  writeFileSync(file, lines.join("\n") + "\n", "utf8");
+  file = sessionFileOfEntries(lines).file;
 });
 
-afterAll(() => rmSync(dir, { recursive: true, force: true }));
-
-const recall = async (params: Record<string, unknown>) => {
-  let tool: any;
-  registerRecallTool({ registerTool: (t: any) => { tool = t; } } as any, ompBinding);
-  const result = await tool.execute("call", params, undefined, undefined, {
-    sessionManager: { getSessionFile: () => file, getBranch: () => ids.map((id) => ({ id })), getEntries: () => ids.map((id) => ({ id })) },
-  });
-  return result.content[0].text as string;
-};
+const recall = (params: Record<string, unknown>) => callRecallTool(recallTool(), file, params, ids);
 
 describe("vcc_recall output size (issue #63)", () => {
   it("keeps a search snippet of a long single-line entry small", async () => {
@@ -92,15 +77,15 @@ describe("search ranking with a long unbroken entry", () => {
       `${"note ".repeat(20)} max max`,
     ];
     const plain = texts.map((t, i) => ({ entry: { index: i, role: "user", summary: t }, msg: { role: "user", content: t } }));
-    const blobDoc = { entry: { index: 9, role: "tool_result", summary: "[other_tool]" }, msg: { role: "toolResult", toolName: "other_tool", content: [{ type: "text", text: `max ${blob}` }] } };
+    const blobDoc = { entry: { index: 4, role: "tool_result", summary: "[other_tool]" }, msg: { role: "toolResult", toolName: "other_tool", content: [{ type: "text", text: `max ${blob}` }] } };
     const order = (docs: typeof plain) =>
-      searchHits(pairs(docs.map((d) => d.entry) as any, docs.map((d) => d.msg) as any), "max").map((h) => h.index).filter((i) => i !== 9);
+      searchHits(docs.map((d) => d.msg), "max").map((h) => h.index).filter((i) => i !== 4);
     expect(order([...plain, blobDoc as any])).toEqual(order(plain));
   });
 
   it("keeps long joined identifiers searchable", () => {
     const joined = "capturedNormalCompletionRecordOrdinaryObjectCreateDataProperty".repeat(30);
-    const hits = searchHits(pairs([{ index: 0, role: "tool_result", summary: "" }] as any, [{ role: "toolResult", toolName: "bash", content: [{ type: "text", text: joined }] }] as any), "OrdinaryObjectCreate");
+    const hits = searchHits([{ role: "toolResult", toolName: "bash", content: [{ type: "text", text: joined }] }], "OrdinaryObjectCreate");
     expect(hits.map((h) => h.index)).toEqual([0]);
   });
 });

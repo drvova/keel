@@ -3,8 +3,8 @@
 ;;;; SPDX-License-Identifier: MIT
 ;;;;
 ;;;; The summary pipeline's own regular expressions (commit messages, heredocs,
-;;;; shell commands, the legacy reader) are ported as the TS writes them: the
-;;;; same pattern text in RX, run on the same engine recall's search uses, with
+;;;; shell commands, the legacy reader) are JavaScript regexes: the pattern
+;;;; text in RX, run on the same engine recall's search uses, with
 ;;;; exec, test, replace, matchAll and split behaving as JavaScript's do.
 ;;;; Positions are code units, as there; JS-SLICE cuts a string at them.
 
@@ -77,22 +77,6 @@ the match. String.replace and replaceAll; no $ patterns are read."
           (push (js-slice string p) parts)
           (nreverse parts)))))
 
-(defun js-trim-end (string)
-  (let ((end (position-if-not #'js-whitespace-p string :from-end t)))
-    (if end (subseq string 0 (1+ end)) "")))
-
-(defun js-trim-start (string)
-  (let ((start (position-if-not #'js-whitespace-p string)))
-    (if start (subseq string start) "")))
-
-(defun starts-with (prefix string &key (start 0))
-  (and (<= (+ start (length prefix)) (length string))
-       (string= prefix string :start2 start :end2 (+ start (length prefix)))))
-
-(defun ends-with (suffix string)
-  (and (<= (length suffix) (length string))
-       (string= suffix string :start2 (- (length string) (length suffix)))))
-
 (defun js-index-of (needle string &optional (start 0))
   "The code unit where NEEDLE first occurs in STRING at or after unit START, or -1."
   (let* ((units (string-units string)) (n (string-units needle)) (m (length n)))
@@ -109,22 +93,3 @@ the match. String.replace and replaceAll; no $ patterns are read."
             return p
           finally (return -1))))
 
-(defun js-round (x)
-  "Math.round of the double X: the nearest integer, halves up."
-  (let* ((x (coerce x 'double-float)) (f (ffloor x)))
-    (truncate (if (>= (- x f) 0.5d0) (+ f 1) f))))
-
-(defun js-number-of (value)
-  "Number(VALUE) for a JSON value, NIL for NaN."
-  (cond ((realp value) value)
-        ((eq value :true) 1) ((or (eq value :false) (eq value :null)) 0)
-        ((stringp value)
-         (let ((s (js-trim value)))
-           (if (zerop (length s))
-               0
-               (and (every (lambda (c) (or (digit-char-p c) (find c "+-.eE"))) s)
-                    (let ((*read-eval* nil) (*read-default-float-format* 'double-float))
-                      (let ((v (ignore-errors (read-from-string s))))
-                        (and (realp v) v)))))))
-        ((and (vectorp value) (not (stringp value))) (js-number-of (js-string-of value)))
-        (t nil)))

@@ -2,7 +2,6 @@
 // so nothing here imports an omp package at runtime.
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { MANUAL_TRIGGER, OMP_HOST, type CompactionTrigger, type Host } from "../host";
-import { isRecoveryReason } from "../types";
 
 /**
  * omp's session_before_compact carries no trigger. Every automatic pass emits
@@ -18,7 +17,8 @@ const trackOmpCompactionTrigger = (pi: ExtensionAPI): (() => CompactionTrigger) 
     const reason = event?.reason;
     pending = {
       reason: reason === "overflow" || reason === "idle" || reason === "incomplete" ? reason : "threshold",
-      willRetry: isRecoveryReason(reason),
+      // omp retries the turn after an overflow or a cut-off reply, never after threshold or idle maintenance.
+      willRetry: reason === "overflow" || reason === "incomplete",
     };
   });
   pi.on("auto_compaction_end", () => {

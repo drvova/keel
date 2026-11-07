@@ -1,10 +1,8 @@
-import { ompBinding } from "./support/binding";
+import { callRecallTool, recallTool } from "./support/binding";
 import { describe, it, expect } from "bun:test";
-import { mkdtempSync, writeFileSync, rmSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
-import { registerRecallTool } from "../src/tools/recall";
-import { parseDrillDown } from "../src/core/drill-down";
+import { rmSync } from "fs";
+import { sessionFileOfEntries } from "./support/session-files";
+import { core } from "../src/core/lisp-core";
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -23,36 +21,13 @@ const userMsg = (id: string, content: string) => ({
   message: { role: "user", content },
 });
 
-let dirCount = 0;
-const makeSession = (entries: any[]) => {
-  const dir = mkdtempSync(join(tmpdir(), `omp-vcc-touched-${dirCount++}-`));
-  const file = join(dir, "session.jsonl");
-  writeFileSync(file, entries.map((e) => JSON.stringify(e)).join("\n") + "\n", "utf8");
-  return { dir, file, ids: entries.filter((e) => e.type === "message" && e.message).map((e) => e.id) };
-};
+const makeSession = (entries: any[]) => ({
+  ...sessionFileOfEntries(entries),
+  ids: entries.filter((e) => e.type === "message" && e.message).map((e) => e.id),
+});
 
-const register = () => {
-  let tool: any;
-  registerRecallTool({ registerTool: (t: any) => { tool = t; } } as any, ompBinding);
-  return tool;
-};
-
-const invoke = async (
-  tool: any,
-  file: string,
-  ids: string[],
-  params: Record<string, unknown>,
-  branch?: string[],
-) => {
-  const result = await tool.execute("tool-call", params, undefined, undefined, {
-    sessionManager: {
-      getSessionFile: () => file,
-      getBranch: () => (branch ?? ids).map((id) => ({ id })),
-      getEntries: () => ids.map((id) => ({ id })),
-    },
-  });
-  return result.content[0].text as string;
-};
+const register = recallTool;
+const invoke = (tool: any, file: string, ids: string[], params: Record<string, unknown>, branch?: string[]) => callRecallTool(tool, file, params, ids, branch);
 
 // ── mode:touched ─────────────────────────────────────────────────────────
 
@@ -280,9 +255,15 @@ describe("vcc_recall drill-down", () => {
   });
 });
 
-// ── Unit: parseDrillDown anchoring ────────────────────────────────────────
+// ── #N:path anchoring ────────────────────────────────────────
 
-describe("parseDrillDown", () => {
+/** A #N:path query as the core reads it (op request): its target, or null for a plain search. */
+const parseDrillDown = (query: string) => {
+  const { action } = core({ op: "request", params: { query } }).request as { action: { kind: string; target?: object } };
+  return action.kind === "drill" ? action.target! : null;
+};
+
+describe("a #N:path query", () => {
   it("anchors on ^ so inline mentions are not drill-down", () => {
     expect(parseDrillDown("#42:auth.ts")).not.toBeNull();
     expect(parseDrillDown("#42:auth.ts:full")).not.toBeNull();

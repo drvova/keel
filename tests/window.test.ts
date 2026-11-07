@@ -1,40 +1,36 @@
-// Limits that follow the model's context window (src/core/window.ts, model-limits.ts, hooks/window-limits.ts).
+// Limits that follow the model's context window (lisp/src/window.lisp, limits.lisp), held to each host's own.
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test";
 import { assertRealPi, piInstalled } from "./support/pi";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { mkdtempSync, readFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join, dirname } from "path";
 import {
   compactionBudgets,
   DEFAULT_BUDGETS,
   DEFAULT_SUMMARY_LIMITS,
-  effectiveWindow,
+  autoCompacts,
+  hostTrigger,
   limitFromOverflowError,
   ompDefaultTrigger,
-  ompPolicyOf,
-  ompTrigger,
+  policyOf,
   RECOVERY_BAND,
-  piPolicyOf,
-  piTrigger,
-  OMP_TRIGGER_RULE,
-  PI_TRIGGER_RULE,
   triggerFor as triggerForRule,
-  type TriggerRule,
-} from "../src/core/window";
+} from "./support/window";
+import type { TriggerRule } from "./support/window-shapes";
 // omp's own function, which omp-vcc ports since omp does not export it to extensions.
 import { resolveThresholdTokens } from "@oh-my-pi/pi-agent-core/compaction";
-import { learnedWindow, recordLearnedWindow } from "../src/core/model-limits";
-import type { CompactionReason } from "../src/types";
-import { windowOf as windowOfHost } from "../src/core/model-limits";
-import { isRecovery, type HostName } from "../src/host";
+import { learnedWindow, recordLearnedWindow, windowOf as windowOfHost } from "./support/window";
+import type { CompactionReason } from "../src/host";
+import type { HostName } from "../src/host";
 
 /** The learned limits sit next to the test's config. */
 const configDir = () => dirname(process.env.OMP_VCC_CONFIG_PATH!);
 /** omp's unless a test names Pi's. */
 const windowOf = (model: Parameters<typeof windowOfHost>[0], host: HostName = "omp") => windowOfHost(model, host, configDir());
 /** As the hook calls it, for a pass the host does not retry: omp's rule unless a test names another. */
-const triggerFor = (w: ReturnType<typeof windowOfHost>, reason: CompactionReason, before: number, policy?: object, rule: TriggerRule = OMP_TRIGGER_RULE) =>
-  triggerForRule(w.effective, isRecovery({ reason, willRetry: false }), before, policy, rule);
+const triggerFor = (w: ReturnType<typeof windowOfHost>, reason: CompactionReason, before: number, policy?: object, rule: TriggerRule = "omp") =>
+  // A pass the host does not retry is a recovery only for an overflow or a cut-off reply.
+  triggerForRule(w.effective, reason === "overflow" || reason === "incomplete", before, policy, rule);
 
 let dir: string;
 const prev = process.env.OMP_VCC_CONFIG_PATH;
@@ -78,7 +74,7 @@ describe("ompDefaultTrigger", () => {
   });
 });
 
-describe("ompTrigger", () => {
+describe("omp's trigger", () => {
   it("is where omp compacts: the same as omp's resolveThresholdTokens for every policy and window", () => {
     const policies: Record<string, unknown>[] = [
       {},
@@ -98,22 +94,27 @@ describe("ompTrigger", () => {
     for (const window of [4_096, 16_384, 32_768, 65_536, 128_000, 200_000, 1_000_000]) {
       for (const p of policies) {
         const settings = { enabled: true, keepRecentTokens: 20_000, ...p } as any;
-        expect({ window, p, trigger: ompTrigger(window, ompPolicyOf(settings)) }).toEqual({ window, p, trigger: resolveThresholdTokens(window, settings) });
+        expect({ window, p, trigger: hostTrigger(window, settings) }).toEqual({ window, p, trigger: resolveThresholdTokens(window, settings) });
       }
     }
   });
 
   it("reads only the policy fields from omp's settings", () => {
-    expect(ompPolicyOf({ enabled: false, strategy: "off", thresholdPercent: 80, reserveTokens: 20_000, keepRecentTokens: 9, remoteEndpoint: "x" }))
+    expect(policyOf({ enabled: false, strategy: "off", thresholdPercent: 80, reserveTokens: 20_000, keepRecentTokens: 9, remoteEndpoint: "x" }))
       .toEqual({ enabled: false, strategy: "off", thresholdPercent: 80, reserveTokens: 20_000 });
-    expect(ompPolicyOf(undefined)).toBeUndefined();
-    expect(ompPolicyOf({ thresholdTokens: Number.NaN })).toEqual({});
+    expect(policyOf(null)).toBeUndefined();
+    // NaN reaches the core as JSON null: no threshold.
+    expect(policyOf({ thresholdTokens: Number.NaN })).toEqual({});
   });
 });
 
 describe("compactionBudgets", () => {
   it("keeps the old fixed numbers on a typical window and when nothing is known", () => {
-    expect(compactionBudgets(undefined)).toEqual(DEFAULT_BUDGETS);
+    expect(DEFAULT_BUDGETS).toEqual({
+      maxTailTokens: 25_000, minTailTokens: 5_000, briefTokens: 1_100, briefCeilingTokens: 2_000,
+      briefTokensPerBlock: 15, briefMaxBlocks: 80, growthMarginChars: 500, summaryScale: 1, workingSetTokens: 3_800,
+      summary: { userMessages: 15, filesPerCategory: 10, commits: 8, historyRanges: 8, briefLines: 120, commandsPerName: 10 },
+    });
     expect(compactionBudgets(ompDefaultTrigger(128_000), 8_000)).toEqual(DEFAULT_BUDGETS);
     expect(compactionBudgets(ompDefaultTrigger(200_000), 8_000)).toEqual(DEFAULT_BUDGETS);
   });
@@ -155,11 +156,12 @@ describe("compactionBudgets", () => {
   });
 });
 
-describe("effectiveWindow", () => {
-  it("is the smallest known window", () => {
-    expect(effectiveWindow(128_000, 1_000_000, undefined)).toBe(128_000);
-    expect(effectiveWindow(128_000, undefined, 32_768)).toBe(32_768);
-    expect(effectiveWindow(undefined, undefined)).toBeUndefined();
+describe("the effective window", () => {
+  it("is the smallest known: the host's, or a smaller one an overflow stated", () => {
+    expect(windowOf({ provider: "p", id: "big", contextWindow: 128_000 }).effective).toBe(128_000);
+    recordLearnedWindow(configDir(), "p/small", 32_768);
+    expect(windowOf({ provider: "p", id: "small", contextWindow: 128_000 }).effective).toBe(32_768);
+    expect(windowOf(undefined as any).effective).toBeUndefined();
   });
 });
 
@@ -202,32 +204,32 @@ describe("triggerFor", () => {
 
 describe("Pi's trigger rule", () => {
   it("is Pi's shouldCompact: the window less reserveTokens, 16,384 by default", () => {
-    expect(piTrigger(200_000)).toBe(183_616);
-    expect(piTrigger(128_000, { reserveTokens: 20_000 })).toBe(108_000);
+    expect(hostTrigger(200_000, undefined, "pi")).toBe(183_616);
+    expect(hostTrigger(128_000, { reserveTokens: 20_000 }, "pi")).toBe(108_000);
     // A reserve at or past the window compacts every turn in Pi; the trigger floors at 1.
-    expect(piTrigger(16_000, { reserveTokens: 16_384 })).toBe(1);
+    expect(hostTrigger(16_000, { reserveTokens: 16_384 }, "pi")).toBe(1);
   });
 
   it("reads Pi's preparation.settings, and Pi's auto-compaction follows its enabled flag", () => {
-    expect(piPolicyOf({ enabled: true, reserveTokens: 8_000, keepRecentTokens: 20_000 })).toEqual({ enabled: true, reserveTokens: 8_000 });
-    expect(piPolicyOf(undefined)).toBeUndefined();
-    expect(PI_TRIGGER_RULE.autoCompacts({ enabled: false })).toBe(false);
-    expect(PI_TRIGGER_RULE.autoCompacts(undefined)).toBe(true);
+    expect(policyOf({ enabled: true, reserveTokens: 8_000, keepRecentTokens: 20_000 }, "pi")).toEqual({ enabled: true, reserveTokens: 8_000 });
+    expect(policyOf(null, "pi")).toBeUndefined();
+    expect(autoCompacts({ enabled: false }, "pi")).toBe(false);
+    expect(autoCompacts(null, "pi")).toBe(true);
   });
 
   it("sizes a compaction for Pi's trigger on the effective window, an overflow bounded by what overflowed", () => {
     const model = { provider: "p", id: "pi-m", contextWindow: 128_000 };
     const w = windowOf(model, "pi");
     expect(w).toMatchObject({ host: 128_000, effective: 128_000, source: "pi" });
-    const policy = PI_TRIGGER_RULE.policyOf({ enabled: true, reserveTokens: 20_000, keepRecentTokens: 20_000 });
-    expect(triggerFor(w, "threshold", 110_000, policy, PI_TRIGGER_RULE)).toBe(108_000);
-    expect(triggerFor(w, "overflow", 90_000, policy, PI_TRIGGER_RULE)).toBe(90_000);
+    const policy = policyOf({ enabled: true, reserveTokens: 20_000, keepRecentTokens: 20_000 }, "pi");
+    expect(triggerFor(w, "threshold", 110_000, policy, "pi")).toBe(108_000);
+    expect(triggerFor(w, "overflow", 90_000, policy, "pi")).toBe(90_000);
   });
 });
 
 
 
-describe.skipIf(!piInstalled())("piTrigger against Pi's own shouldCompact", () => {
+describe.skipIf(!piInstalled())("Pi's trigger against its own shouldCompact", () => {
   it("is the largest context Pi does not compact at", async () => {
     assertRealPi();
     const { shouldCompact }: any = await import("@earendil-works/pi-coding-agent");
@@ -235,7 +237,7 @@ describe.skipIf(!piInstalled())("piTrigger against Pi's own shouldCompact", () =
       for (const reserveTokens of [0, 8_000, 16_384, 50_000]) {
         if (reserveTokens >= window) continue;
         const settings = { enabled: true, reserveTokens, keepRecentTokens: 20_000 };
-        const t = piTrigger(window, settings);
+        const t = hostTrigger(window, settings, "pi");
         expect(shouldCompact(t, window, settings)).toBe(false);
         expect(shouldCompact(t + 1, window, settings)).toBe(true);
       }

@@ -2,16 +2,16 @@
 ;;;;
 ;;;; SPDX-License-Identifier: MIT
 ;;;;
-;;;; A port of src/core/session-file.ts and of what src/core/raw-store.ts and
-;;;; src/core/load-messages.ts read. JSONL, one entry per line; the first
-;;;; `session` entry is the header; every other entry has an `id` and a
-;;;; `parentId`, so the entries form a tree and the active branch is the last
-;;;; entry back to the root. `#N` numbers the message entries in file order,
-;;;; every branch included: it is what summaries cite, and the two sides must
-;;;; count it the same way, so it is counted here exactly as there.
+;;;; Recall's reading of a session file, with the raw store beside it. JSONL,
+;;;; one entry per line; the first `session` entry is the header; every other
+;;;; entry has an `id` and a `parentId`, so the entries form a tree and the
+;;;; active branch is the last entry back to the root. `#N` numbers the message
+;;;; entries in file order, every branch included: it is what summaries cite and
+;;;; recall resolves, so the summary's count (INDEX-BY-ID over the host's
+;;;; snapshot, host.lisp) and recall's (over the file) are the one count here.
 ;;;;
 ;;;; omp rewrites messages in place; omp-vcc keeps their originals in
-;;;; `<session>.jsonl.vcc-raw` (raw-store.ts), and a message omp rewrote is read
+;;;; `<session>.jsonl.vcc-raw` (raw-capture.lisp), and a message omp rewrote is read
 ;;;; with its original content put back, from this session's store or a parent's.
 
 (in-package #:omp-vcc)
@@ -41,7 +41,7 @@ does not exist (a new session's file is written with its first entry)."
                    (handler-case (push (parse-json text :start start :end end) values)
                      (json-parse-error () nil)))
               while (< end (length text)))
-        (values (nreverse values) t)))))
+        (nreverse values)))))
 
 (defun entry-type (entry) (json-get entry "type"))
 
@@ -49,6 +49,14 @@ does not exist (a new session's file is written with its first entry)."
   "An entry `#N` counts: a persisted message."
   (and (equal (entry-type entry) "message")
        (let ((m (json-get entry "message" :null))) (not (eq m :null)))))
+
+(defun line-holds-message-p (line)
+  "COUNTED-ENTRY-P on a message entry's raw LINE, without parsing it: the first
+`\"message\":` is the entry's own key (the hosts write it after the head), and
+it holds an object, not null. Session listings count #N this way."
+  (let ((at (search "\"message\":" line)))
+    (and at (let ((next (position-if-not (lambda (c) (member c '(#\Space #\Tab))) line :start (+ at 10))))
+              (and next (char= (char line next) #\{))))))
 
 (defun indexed-messages (entries)
   "Each message entry as (INDEX ID MESSAGE), INDEX its `#N`."
@@ -59,9 +67,30 @@ does not exist (a new session's file is written with its first entry)."
                           (let ((id (json-get entry "id"))) (and (stringp id) id))
                           (json-get entry "message")))))
 
+(defun index-by-id (entries)
+  "#N by entry id over ENTRIES (a vector, in file order); an id seen twice is left out, so a ref is missing rather than wrong."
+  (let ((by-id (make-hash-table :test 'equal)) (ambiguous (make-hash-table :test 'equal)) (n 0))
+    (loop for e across entries
+          when (counted-entry-p e)
+            do (let ((id (json-get e "id")))
+                 (when (and (stringp id) (plusp (length id)))
+                   (if (or (nth-value 1 (gethash id by-id)) (gethash id ambiguous))
+                       (progn (remhash id by-id) (setf (gethash id ambiguous) t))
+                       (setf (gethash id by-id) n))))
+                 (incf n))
+    by-id))
+
 (defun in-tree-p (type)
   "Entries the tree is made of: everything but the header and omp's title slot."
   (not (member type '("session" "title") :test #'equal)))
+
+(defun walk-to-root (parent-of last)
+  "The ids from LAST back to the root through PARENT-OF (id -> parent id), as an EQUAL hash set."
+  (let ((ids (make-hash-table :test 'equal)))
+    (loop for id = last then (gethash id parent-of)
+          while (and id (not (gethash id ids)))
+          do (setf (gethash id ids) t))
+    ids))
 
 (defun active-branch-ids (entries)
   "The ids on the active branch, the last entry back to the root, as an EQUAL
@@ -72,11 +101,7 @@ hash set; empty for a file without ids (an old format)."
         (when (and (hash-table-p e) (in-tree-p (entry-type e)) (stringp id))
           (setf (gethash id parent-of) (let ((p (json-get e "parentId"))) (and (stringp p) p))
                 last id))))
-    (let ((ids (make-hash-table :test 'equal)))
-      (loop for id = last then (gethash id parent-of)
-            while (and id (not (gethash id ids)))
-            do (setf (gethash id ids) t))
-      ids)))
+    (walk-to-root parent-of last)))
 
 ;;; --- the header and the sessions a fork came from ------------------------------
 
@@ -92,7 +117,7 @@ hash set; empty for a file without ids (an old format)."
               (n (read-sequence bytes in))
               (lines (split-string (decode-utf-8 (subseq bytes 0 n)) #\Newline)))
          (loop for line in (subseq lines 0 (min 8 (length lines)))
-               for record = (ignore-errors (parse-json line))
+               for record = (parse-json-or-nil line)
                when (equal (json-get record "type") "session") return record))))))
 
 (defun parent-session-file (path)
@@ -101,7 +126,9 @@ hash set; empty for a file without ids (an old format)."
 are `<timestamp>_<id>.jsonl`)."
   (let ((parent (json-get (read-header path) "parentSession")))
     (when (and (stringp parent) (plusp (length parent)))
-      (if (char= (char parent 0) #\/)
+      ;; An absolute path, as Node's isAbsolute reads one on either system.
+      (if (or (char= (char parent 0) #\/) (char= (char parent 0) #\\)
+              (rx-test (rx "^[A-Za-z]:[\\\\/]") parent))
           (and (probe-file parent) parent)
           (let ((suffix (format nil "_~a.jsonl" parent)))
             (loop for file in (ignore-errors (directory (merge-pathnames "*.jsonl" (directory-namestring path))))
@@ -120,7 +147,7 @@ are `<timestamp>_<id>.jsonl`)."
 
 ;;; --- the originals omp-vcc kept -------------------------------------------------
 
-(defun raw-store-path (path) (concatenate 'string path ".vcc-raw"))
+(defun raw-store-path (path) (concatenate 'string path +raw-store-suffix+))
 
 (defun line-head-id (line)
   "The id a raw-store line starts with (`{\"id\":\"...\"`), or NIL."
@@ -133,7 +160,7 @@ are `<timestamp>_<id>.jsonl`)."
                             (#\" (return i))
                             (t (incf i))))))
         (when end
-          (ignore-errors (parse-json (subseq line (1- (length prefix)) (1+ end)))))))))
+          (parse-json-or-nil (subseq line (1- (length prefix)) (1+ end))))))))
 
 (defun read-one-store (path wanted found)
   (let ((bytes (ignore-errors (read-file-octets (raw-store-path path)))))
@@ -142,7 +169,7 @@ are `<timestamp>_<id>.jsonl`)."
         (when (= (hash-table-count found) (hash-table-count wanted)) (return))
         (let ((id (and (plusp (length line)) (line-head-id line))))
           (when (and (stringp id) (gethash id wanted) (not (nth-value 1 (gethash id found))))
-            (let ((record (ignore-errors (parse-json line))))
+            (let ((record (parse-json-or-nil line)))
               (when (hash-table-p record)
                 (setf (gethash id found) (json-get record "content"))))))))))
 
@@ -159,9 +186,25 @@ it forked, and their originals are in the parent's store."
           (when (= (hash-table-count found) (hash-table-count wanted)) (return)))))
     found))
 
+
+(defun restore-originals (messages ids file)
+  "MESSAGES with the original content omp-vcc kept in FILE's raw store put back
+where omp rewrote them (IDS parallel to MESSAGES)."
+  (if (not (stringp file))
+      messages
+      (let ((wanted (make-hash-table :test 'equal)))
+        (loop for m in messages for id in ids
+              when (and (stringp id) (was-rewritten-p m)) do (setf (gethash id wanted) t))
+        (if (zerop (hash-table-count wanted))
+            messages
+            (let ((kept (read-raw-store file wanted)))
+              (loop for m in messages for id in ids
+                    collect (multiple-value-bind (content found) (if (stringp id) (gethash id kept) (values nil nil))
+                              (if found (with-original-content m content) m))))))))
+
 (defun object-parts (content)
   "The object parts of a content array, in order."
-  (and (vectorp content) (not (stringp content)) (remove-if-not #'hash-table-p (coerce content 'list))))
+  (and (json-array-p content) (remove-if-not #'hash-table-p (coerce content 'list))))
 
 (defun was-rewritten-p (message)
   "omp rewrote MESSAGE in the session file: a tool result it blanked or shook
@@ -179,12 +222,6 @@ carries `prunedAt`; a text block it shook points at an `artifact://`."
                                            (cond ((stringp tx) tx)
                                                  ((or (null tx) (eq tx :null)) "")
                                                  (t (js-string-of tx))))))))))))
-
-(defun copy-object (table &optional without)
-  "A copy of the JSON object TABLE, its keys in their order, the key WITHOUT left out."
-  (let ((copy (make-hash-table :test 'equal)))
-    (dolist (k (json-keys table) copy)
-      (unless (equal k without) (setf (gethash k copy) (gethash k table))))))
 
 (defun with-original-content (message kept)
   "MESSAGE with what omp rewrote put back: a tool result takes the kept content

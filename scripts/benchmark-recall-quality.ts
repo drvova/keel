@@ -1,12 +1,12 @@
 /**
  * Phase 2 (vcc_recall noise floor + hard cap) constant selection evidence.
  *
- * Runs the REAL production `searchEntries` (via its bench-only
- * `tuning` override) against real session transcripts, comparing candidate
+ * Runs the REAL production search (the core's, op search-sessions, with its
+ * floor and cap overridden) against real session transcripts, comparing candidate
  * relative-floor and hard-cap values. Not a duplicate scoring
  * implementation — this exercises the exact code path that ships.
  *
- * Production policy baked into `searchEntries` itself (not
+ * Production policy baked into the search itself (not
  * controlled by `tuning`): the relative floor only applies when the query
  * has >=2 effective terms after stopword filtering. Single-term runs below
  * therefore show identical counts across every floor candidate — that's the
@@ -14,9 +14,7 @@
  *
  * Usage: bun run scripts/benchmark-recall-quality.ts [sessionCount]
  */
-import { pairs } from "../tests/support/pairs";
-import { renderMessage } from "../src/core/render-entries";
-import { searchEntries, type SearchHit } from "../src/core/search-entries";
+import { search, type SearchHit } from "../tests/support/pairs";
 import { prepareSessionSamples } from "../tests/support/real-sessions";
 import { loadSessionMessages } from "../tests/support/load-session";
 
@@ -81,8 +79,8 @@ interface RunResult {
   top5: number[];
 }
 
-const run = (rendered: any[], messages: any[], q: string, tuning: { relativeFloor?: number; cap?: number }): RunResult => {
-  const r = searchEntries(pairs(rendered, messages), q, tuning);
+const run = (messages: any[], q: string, tuning: { relativeFloor?: number; cap?: number }): RunResult => {
+  const r = search(messages, q, tuning);
   return {
     hits: r.hits,
     totalBeforeCap: r.totalBeforeCap,
@@ -99,7 +97,7 @@ async function main() {
   console.log(`Sampling ${SESSION_COUNT} largest real sessions...`);
   const samples = await prepareSessionSamples(SESSION_COUNT);
 
-  const allQueries: { label: string; rendered: any[]; messages: any[]; q: Query }[] = [];
+  const allQueries: { label: string; messages: any[]; q: Query }[] = [];
   for (const sample of samples) {
     let loaded;
     try {
@@ -108,10 +106,9 @@ async function main() {
       continue;
     }
     if (loaded.messages.length < 20) continue;
-    const rendered = loaded.messages.map((m, i) => renderMessage(m, i));
     const label = sample.source.split("/").slice(-2).join("/");
     for (const q of queriesOf(label, loaded.messages)) {
-      allQueries.push({ label, rendered, messages: loaded.messages, q });
+      allQueries.push({ label, messages: loaded.messages, q });
     }
   }
   console.log(`Sessions usable: ${new Set(allQueries.map((x) => x.label)).size}, queries generated: ${allQueries.length}`);
@@ -129,9 +126,9 @@ async function main() {
     }
     const subset = allQueries.filter((x) => x.q.kind === kind);
     console.log(`  queries: ${subset.length}`);
-    const baseRuns = subset.map((x) => run(x.rendered, x.messages, x.q.text, { relativeFloor: baselineFloor, cap: 1e9 }));
+    const baseRuns = subset.map((x) => run(x.messages, x.q.text, { relativeFloor: baselineFloor, cap: 1e9 }));
     for (const floor of floorCandidates) {
-      const runs = subset.map((x) => run(x.rendered, x.messages, x.q.text, { relativeFloor: floor, cap: 1e9 }));
+      const runs = subset.map((x) => run(x.messages, x.q.text, { relativeFloor: floor, cap: 1e9 }));
       const counts = runs.map((r) => r.hits.length);
       const baseCounts = baseRuns.map((r) => r.hits.length);
       const zeroBefore = baseRuns.filter((r) => r.zero).length;
@@ -153,7 +150,7 @@ async function main() {
   const capCandidates = [1e9, 25, 50];
   console.log(`  queries: ${allQueries.length}`);
   for (const cap of capCandidates) {
-    const runs = allQueries.map((x) => run(x.rendered, x.messages, x.q.text, { relativeFloor: 0, cap }));
+    const runs = allQueries.map((x) => run(x.messages, x.q.text, { relativeFloor: 0, cap }));
     const counts = runs.map((r) => r.hits.length);
     const totalBefore = runs.map((r) => r.totalBeforeCap);
     console.log(
@@ -166,12 +163,12 @@ async function main() {
   // ── Combined PRODUCTION POLICY (floor=0.20 for multi-term only, cap=50)
   //    vs raw baseline (no floor, no cap) ──
   console.log(`\n=== Combined production policy (floor=0.20 multi-term-only, cap=50) vs raw baseline ===`);
-  // No script-side gating needed here: searchEntries itself only
+  // No script-side gating needed here: the search itself only
   // applies relativeFloor when the query has >=2 effective terms, so calling
   // it with {relativeFloor: 0.2, cap: 50} already reflects exactly what
   // ships — including the single-term no-op.
-  const combined = allQueries.map((x) => run(x.rendered, x.messages, x.q.text, { relativeFloor: 0.2, cap: 50 }));
-  const baseline = allQueries.map((x) => run(x.rendered, x.messages, x.q.text, { relativeFloor: 0, cap: 1e9 }));
+  const combined = allQueries.map((x) => run(x.messages, x.q.text, { relativeFloor: 0.2, cap: 50 }));
+  const baseline = allQueries.map((x) => run(x.messages, x.q.text, { relativeFloor: 0, cap: 1e9 }));
   const zeroBefore = baseline.filter((r) => r.zero).length;
   const zeroAfter = combined.filter((r) => r.zero).length;
   const top1Changed = combined.filter((r, i) => baseline[i].top1 !== undefined && r.top1 !== baseline[i].top1).length;

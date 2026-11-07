@@ -2,19 +2,15 @@
 ;;;;
 ;;;; SPDX-License-Identifier: MIT
 ;;;;
-;;;; A port of src/core/search-entries.ts, held to it number for number: the
-;;;; same stopwords and stems, the same BM25 constants and order of operations
-;;;; in double floats, the same relative floor and cap, the same snippets cut at
-;;;; the same code units. tests/lisp-core.test.ts runs both on the same corpus
-;;;; and compares every hit, snippet and count.
+;;;; BM25 in double floats, stems, stopwords, a relative floor and a cap,
+;;;; snippets cut at JavaScript's code units. tests/search.test.ts drives it
+;;;; through recall.
 ;;;;
 ;;;; What reaches it is each entry's role, text and files, the text as recall
-;;;; reads it (search-entries.ts, rawSearchText); deciding what an entry's text
-;;;; is stays with the code that reads the host's messages.
+;;;; reads it (render.lisp); deciding what an entry's text is stays there.
 ;;;;
-;;;; Term queries only, for now. A query with a regex metacharacter is
-;;;; answered :REGEX, and the caller runs it as before: JavaScript's regex
-;;;; dialect is not ported yet.
+;;;; A query with a regex metacharacter is first one regex (regex.lisp, through
+;;;; SAFE-REGEX); when that finds nothing it is searched as terms.
 
 (in-package #:omp-vcc)
 
@@ -32,14 +28,28 @@
                  "this" "what" "which" "who" "whom" "these" "those")
                 table)
       (setf (gethash w table) t)))
-  "Words a term query drops: search-entries.ts's STOPWORDS.")
+  "Words a term query drops.")
 
 (defparameter +bm25-k+ 1.2d0)
 (defparameter +bm25-b+ 0.75d0)
+;;; The floor applies only to a query of two or more distinct terms ("auth auth"
+;;; is one): a single term's score differences are term frequency and document
+;;; length, not the OR-tail noise the floor is for. Measured with
+;;; scripts/benchmark-recall-quality.ts on real sessions (two runs, 161 and 222
+;;; queries): 0.20 cut the multi-term median from 49 to 23 hits and from 60.5 to
+;;; 23.5, with no zero-hit query and no top-1 change, and the top 5 changed in 7%
+;;; and 5% of queries; 0.10 barely thinned the tail (median 49 to 39), and 0.25
+;;; doubled the top-5 changes for little more. The top hit always survives: its
+;;; own score is at least floor times itself.
 (defparameter +relative-floor+ 0.2d0
-  "Multi-term hits scoring below this share of the top one are dropped; why 0.2 is in search-entries.ts.")
+  "Multi-term hits scoring below this share of the top one are dropped.")
+;;; Uncapped, the same queries returned up to 380 hits (median 32 and 29.5, p90
+;;; 119 and 115.9). 50 is above the median and below the p90: 29% and 30% of
+;;; queries were clipped, against 56% at 25, and the worst case shrinks by 87%.
+;;; With the floor: the median went from 32 to 18 and 29.5 to 20, p90 to 50, and
+;;; the top 5 changed in 3% and 2% of queries.
 (defparameter +result-cap+ 50
-  "Most hits a search returns; why 50 is in search-entries.ts.")
+  "Most hits a search returns, by terms or by a regex alike.")
 (defparameter +snippet-line-chars+ 300
   "Longest snippet line, in code units.")
 (defparameter +base64-run+ 1000
@@ -68,7 +78,7 @@
                 (setf stem (subseq stem 0 (1- (length stem)))))
               (return (and (>= (length stem) +min-stem+) stem)))))))))
 
-;;; --- one term, matched as search-entries.ts's `term|(?<![a-z])stem`/i --------
+;;; --- one term, matched as `term|(?<![a-z])stem`/i -------------------------------
 
 ;;; Matching runs on folded text (FOLD): each character replaced by the one
 ;;; /i compares it as, so a case-insensitive match is a plain comparison of
@@ -174,7 +184,7 @@ its stem, as the alternation `term|(?<![a-z])stem` tries them."
 
 (defun first-match (terms line)
   "The first code unit in the hay LINE where any of TERMS matches, or NIL: where
-the terms joined by | match first, as search-entries.ts's snippet regex does."
+the terms joined by | would match first, as one regex."
   (let ((best nil))
     (dolist (term terms best)
       (let ((at (term-position term line)))
@@ -229,7 +239,7 @@ the terms joined by | match first, as search-entries.ts's snippet regex does."
                      (write-string text out :start at)))))))
 
 (defun word-count (text)
-  "TEXT's word count as search-entries.ts counts it: split(/\\s+/).length."
+  "TEXT's word count as BM25's document length: split(/\\s+/).length."
   (declare (text text) (optimize speed))
   (let ((count 1) (in-space nil))
     (declare (fixnum count))
@@ -281,26 +291,27 @@ list of terms, or a regex (the regex path's one pattern)."
       raw))
 
 (defparameter +search-budget-ms+ 3000
-  "A search's time budget: search-entries.ts SEARCH_BUDGET_MS.")
+  "A search's time budget, in milliseconds.")
 
 (defparameter +search-aborted+
   (format nil "Search aborted: query exceeded ~dms. Use fewer or more specific words; for a regex, avoid nested quantifiers such as (a+)+."
           +search-budget-ms+)
-  "What an aborted search says: search-entries.ts SearchAborted.")
+  "What a search past its time budget says.")
+
+(defparameter +search-too-deep+
+  "Search aborted: query too deeply nested to search. Use fewer or more specific words; for a regex, avoid nested quantifiers such as (a+)+."
+  "What a search that ran out of stack says: a regex that recurses that deep is one too costly to search.")
 
 (defun search-docs (query docs &key (floor +relative-floor+) (cap +result-cap+))
-  "Rank DOCS, a vector of (ROLE TEXT FILES), for QUERY, as search-entries.ts
-search does. Returns the hits as a list of (INDEX . SNIPPET) best first, the
-count before the cap, and whether the cap cut it; (values :ABORTED MESSAGE)
-past the time budget; or :REGEX for a query this port leaves to the TS side
-(a construct regex.lisp refuses, or the control stack running out)."
+  "Rank DOCS, a vector of (ROLE TEXT FILES), for QUERY. Returns the hits as a list of (INDEX . SNIPPET) best first, the
+count before the cap, and whether the cap cut it; or (values :ABORTED MESSAGE)
+past the time budget or the stack, MESSAGE saying which."
   (let ((*regex-deadline* (+ (get-internal-real-time)
                              (* +search-budget-ms+ (/ internal-time-units-per-second 1000))))
         (*steps* 0))
     (handler-case (search-docs-within query docs floor cap)
-      (regex-unsupported () :regex)
-      (storage-condition () :regex)
-      (regex-aborted () (values :aborted +search-aborted+)))))
+      (regex-aborted () (values :aborted +search-aborted+))
+      (storage-condition () (values :aborted +search-too-deep+)))))
 
 (defun cap-hits (hits cap)
   (let ((total (length hits)))
@@ -329,16 +340,12 @@ past the time budget; or :REGEX for a query this port leaves to the TS side
   "The term search: BM25 over HAYS for RAW-QUERY's meaningful words."
   (let* ((terms (mapcar #'make-term (meaningful-terms (js-split-whitespace raw-query))))
          (n (length hays)))
-    ;; The snippet regex joins the terms with |, which numbers a later term's
-    ;; groups after the earlier ones': a later back-reference would mean another group.
-    (when (some (lambda (term) (and (term-regex term) (regex-backrefs (term-regex term)))) (rest terms))
-      (error 'regex-unsupported :detail "back-reference in a later term"))
     (let* ((lens (map 'vector (lambda (h) (word-count (hay-folded h))) hays))
            (df (make-hash-table :test 'equal))
            (matched (make-array n))
            (total-length 0))
-      ;; Document frequency counts each term object, as the TS map does: a
-      ;; repeated term counts twice.
+      ;; Document frequency counts each term, not each distinct one: a repeated
+      ;; term counts twice.
       (dotimes (i n)
         (incf total-length (aref lens i))
         (setf (aref matched i)
@@ -368,8 +375,6 @@ past the time budget; or :REGEX for a query this port leaves to the TS side
                (kept (if (and (>= distinct 2) scored (> top 0d0))
                          (remove-if (lambda (s) (< (second s) (* top floor))) scored)
                          scored))
-               (total (length kept))
-               (hits (subseq kept 0 (min cap total))))
-          (values (mapcar (lambda (s) (cons (first s) (third s))) hits)
-                  total
-                  (< (length hits) total)))))))
+)
+          (multiple-value-bind (hits total truncated) (cap-hits kept cap)
+            (values (mapcar (lambda (s) (cons (first s) (third s))) hits) total truncated)))))))

@@ -25,9 +25,8 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { dirname, join } from "path";
-import { indexById } from "../../src/core/session-file";
-import { restoreOriginals } from "../../src/core/raw-store";
-import { openHostSession, realModel, textOf, type Host, type HostSession } from "./host-session";
+import { sessionMessages } from "./pairs";
+import { openHostSession, realModel, runStats, textOf, type Host, type HostSession, type RunStats } from "./host-session";
 
 export { LONG_HORIZON_MODEL, realModel } from "./host-session";
 
@@ -67,6 +66,8 @@ export interface NeedleScore {
   turn: number;
   inSummary: boolean;
   pointed: boolean;
+  /** The fact's text is in the request the host would send next (after a summary, or with turns out of the context, in what is left). */
+  inContext: boolean;
   recallRank: number | null;
 }
 
@@ -75,6 +76,8 @@ export interface LongHorizonResult {
   turns: number;
   /** Compactions the host committed: its periodic passes (omp's idle pass, Pi's /compact), and any threshold pass it decided on. */
   compactions: number;
+  /** Requests, prompt tokens, the cache's share and who evicted what. */
+  stats: RunStats;
   /** Of those, the ones omp-vcc wrote (all of them, when it works). */
   byOmpVcc: number;
   summaryChars: number[];
@@ -220,8 +223,12 @@ export const runLongHorizon = async (options: LongHorizonOptions = {}): Promise<
       await session.prompt(plan.user);
       const pin = options.pins?.[t];
       if (pin) await hostSession.tool("vcc_pin").execute("pin", { note: pin }, undefined, undefined);
-      // omp's idle pass; on Pi, which has none, Pi's /compact.
-      if ((t + 1) % compactEvery === 0) await hostSession.periodicCompaction();
+      // omp's idle pass; on Pi, which has none, Pi's /compact. With turns leaving
+      // the context whole, omp-vcc turns omp's idle pass down while there is a
+      // turn to take out; Pi's /compact is a compaction the user asks for, which
+      // it never turns down, so as a stand-in for an idle pass it is left out.
+      const standIn = hostSession.host === "pi" && options.config?.evict === true;
+      if ((t + 1) % compactEvery === 0 && !standIn) await hostSession.periodicCompaction();
     }
     await sessionManager.flush?.();
 
@@ -237,20 +244,13 @@ export const runLongHorizon = async (options: LongHorizonOptions = {}): Promise<
     const finalSummary: string = compactionEntries.at(-1)?.summary ?? "";
 
     // Where each fact landed, by omp-vcc's own #N, in the originals of what omp rewrote in place.
-    const entries = sessionManager.getEntries();
-    const numberOf = indexById(entries);
-    const stored = entries.filter((e: any) => e.type === "message" && e.message);
-    const originals = restoreOriginals(stored.map((e: any) => e.message), stored.map((e: any) => e.id), sessionManager.getSessionFile());
-    const messages = stored.map((e: any, i: number) => ({ id: e.id, message: originals[i] }));
-    const at = (pred: (m: any) => boolean): number | undefined => {
-      const e = messages.find((x: any) => pred(x.message));
-      return e ? numberOf.get(e.id) : undefined;
-    };
+    const messages = sessionMessages(sessionManager.getSessionFile());
+    const at = (pred: (m: any) => boolean): number | undefined => messages.find((x) => pred(x.message))?.index;
     for (const needle of needles) {
       if (needle.kind === "early_commit") {
         const commit = messages.find((x: any) => x.message.role === "toolResult" && textOf(x.message).includes(`feat(${COMPONENTS[needle.turn % COMPONENTS.length]}):`));
         needle.key = textOf(commit?.message).match(/\[main ([0-9a-f]{7,})\]/)?.[1] ?? "(no commit)";
-        needle.index = commit ? numberOf.get(commit.id) : undefined;
+        needle.index = commit?.index;
         continue;
       }
       needle.index = at((m) => {
@@ -263,6 +263,9 @@ export const runLongHorizon = async (options: LongHorizonOptions = {}): Promise<
       });
     }
 
+    // The request the host would send next, through its own context hooks (omp-vcc's eviction among them).
+    const nextRequest = flat((await hostSession.session.extensionRunner.emitContext(structuredClone(sessionManager.buildSessionContext().messages)))
+      .map((m: any) => textOf(m)).join("\n"));
     const recallTool = hostSession.tool("vcc_recall");
     const recall = async (params: Record<string, unknown>): Promise<string> =>
       (await recallTool.execute("q", params, undefined, undefined)).content.map((p: any) => p.text ?? "").join("\n");
@@ -277,6 +280,7 @@ export const runLongHorizon = async (options: LongHorizonOptions = {}): Promise<
         turn: needle.turn,
         inSummary: flat(finalSummary).includes(flat(needle.key)),
         pointed: pointsAt(finalSummary, needle),
+        inContext: nextRequest.includes(flat(needle.key)),
         recallRank: rank >= 0 ? rank + 1 : null,
       });
     }
@@ -285,6 +289,7 @@ export const runLongHorizon = async (options: LongHorizonOptions = {}): Promise<
       host: hostSession.host,
       turns,
       compactions: compactionEntries.length,
+      stats: runStats(sessionManager.getBranch()),
       byOmpVcc: compactionEntries.filter((e: any) => e.details?.compactor === "omp-vcc").length,
       summaryChars,
       sectionChars,

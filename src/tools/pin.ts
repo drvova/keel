@@ -1,11 +1,11 @@
 // vcc_pin: the text the agent reads, its JSON Schema, and what a call does.
 // unpin also takes "#3"; omp has no prepareArguments, so the schema takes a
-// number or a string and removePin (core/pins.ts) reads either form.
+// number or a string and the core (lisp/src/pins.lisp) reads either form.
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
-import type { HostProfile } from "../host";
-import { addPin, listPins, PIN_CHARS, pinCallOf, pinInCore, removePin, type PinHost } from "../core/pins";
-import type { SessionManagerLike } from "../core/session-file";
-import { PIN_PARAMS, PIN_TOOL } from "../names";
+import { untilCore } from "../core/core-wait";
+import type { Binding } from "../host";
+import { pin } from "../core/pins";
+import { PIN_CHARS, PIN_PARAMS, PIN_TOOL } from "../names";
 
 const PIN_TOOL_LABEL = "VCC Pin";
 
@@ -22,31 +22,21 @@ const pinToolDescription = (command: string): string => [
   `Pin sparingly, what you would need if you lost the conversation; the user pins with /${command}-pin.`,
 ].join("\n");
 
-const PIN_PARAM_DESCRIPTIONS = {
-  [PIN_PARAMS.note]: "Text to pin: one self-contained line, e.g. 'Sessions live in SQLite, not Redis: the deploy host has no Redis.'",
-  [PIN_PARAMS.unpin]: "The [N] of a pinned note to remove.",
-} as const;
-
-/** One vcc_pin call: note pins, unpin removes, neither lists. */
-export const executePin = (params: unknown, host: PinHost, session: SessionManagerLike): string => {
-  const inCore = pinInCore(host, session, { surface: "tool", params: params ?? null });
-  if (inCore) return inCore.text;
-  const call = pinCallOf((params && typeof params === "object" ? params : {}) as Record<string, unknown>);
-  if ("both" in call) return "Send note or unpin, not both, in one call.";
-  if ("note" in call) return addPin(host, session, call.note, "agent").text;
-  if ("unpin" in call) return removePin(host, session, call.unpin).text;
-  return listPins(session);
+const PIN_PARAM_DESCRIPTIONS: Record<(typeof PIN_PARAMS)[number], string> = {
+  note: "Text to pin: one self-contained line, e.g. 'Sessions live in SQLite, not Redis: the deploy host has no Redis.'",
+  unpin: "The [N] of a pinned note to remove.",
 };
+
 
 const PIN_PARAMETERS = {
   type: "object",
   properties: {
-    [PIN_PARAMS.note]: { type: "string", description: PIN_PARAM_DESCRIPTIONS[PIN_PARAMS.note] },
-    [PIN_PARAMS.unpin]: { description: PIN_PARAM_DESCRIPTIONS[PIN_PARAMS.unpin], anyOf: [{ type: "number" }, { type: "string" }] },
+    note: { type: "string", description: PIN_PARAM_DESCRIPTIONS.note },
+    unpin: { description: PIN_PARAM_DESCRIPTIONS.unpin, anyOf: [{ type: "number" }, { type: "string" }] },
   },
 } as const;
 
-export const registerPinTool = (pi: ExtensionAPI, host: Pick<HostProfile, "command">) => {
+export const registerPinTool = (pi: ExtensionAPI, host: Binding) => {
   pi.registerTool({
     name: PIN_TOOL,
     label: PIN_TOOL_LABEL,
@@ -56,7 +46,8 @@ export const registerPinTool = (pi: ExtensionAPI, host: Pick<HostProfile, "comma
     // It writes only omp-vcc's own session entry, not the workspace.
     approval: "read",
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const text = executePin(params, pi, ctx.sessionManager);
+      // One call: note pins, unpin removes, neither lists.
+      const text = untilCore(() => pin(pi, host, ctx, { surface: "tool", params: params ?? null }).text);
       return { content: [{ type: "text", text }], details: undefined };
     },
   });

@@ -1,9 +1,8 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
-import { callCore } from "./lisp-core";
+import { core, CoreUnavailable } from "./lisp-core";
 
 const SETTINGS_FILE = "omp-vcc-config.json";
-/** The file pi-vcc read on omp before the rename; copied to SETTINGS_FILE once. */
+/** The file pi-vcc read on omp before the rename; the core copies it to SETTINGS_FILE once (lisp/src/settings.lisp). */
 const LEGACY_SETTINGS_FILE = "pi-vcc-config.json";
 
 export interface VccSettings {
@@ -27,7 +26,7 @@ export interface VccSettings {
    * `keep:N` from the user is always respected and never adjusted.
    */
   smartKeepTail: boolean;
-  /** Write debug snapshot to /tmp/omp-vcc-debug.json on each compaction. */
+  /** Write each compaction's decisions to omp-vcc-debug.json beside the config. */
   debug: boolean;
   /**
    * Providers for which omp-vcc defers compaction entirely (issue #27), e.g.
@@ -59,73 +58,27 @@ export interface VccSettings {
    * When true (default), keep the original of every message omp may rewrite in
    * the session file (tool output it blanks or shakes into artifact:// files,
    * long text blocks it shakes) in `<session>.jsonl.vcc-raw`, so vcc_recall
-   * reads what was there (core/raw-store.ts, hooks/raw-capture.ts).
+   * reads what was there (hooks/raw-capture.ts, lisp/src/raw-capture.lisp).
    */
   keepOriginals: boolean;
   /**
    * When true (default), each compaction brings back in a [Working Set]
    * section what the next step likely needs, from the originals: the latest
    * version of the files the work is on, the latest unresolved failure, the
-   * results most relevant to the latest request (core/working-set.ts), within
+   * results most relevant to the latest request (lisp/src/working-set.lisp), within
    * a share of the window.
    */
   workingSet: boolean;
+  /**
+   * When true, old turns leave the context whole instead of being summarized
+   * (lisp/src/evict.lisp): the agent takes them out with vcc_context, the user
+   * with /omp-vcc-evict, and past 85% of the host's trigger the oldest finished
+   * turns leave by themselves, down to half of it. Nothing is rewritten: the
+   * session file keeps every word and vcc_recall expand reads it back. Off by
+   * default; the summary stays the safety net either way.
+   */
+  evict: boolean;
 }
-
-export const DEFAULT_SETTINGS: VccSettings = {
-  overrideDefaultCompaction: true,
-  smartKeepTail: true,
-  debug: false,
-  skipForProviders: [],
-  skipCustomTypes: [],
-  trackCommands: [],
-  keepOriginals: true,
-  workingSet: true,
-};
-
-const readJson = (path: string): Record<string, unknown> | null => {
-  try {
-    return JSON.parse(readFileSync(path, "utf-8"));
-  } catch {
-    return null;
-  }
-};
-
-const coerceStringArray = (v: unknown): string[] =>
-  Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
-
-/** A switch as written: a boolean, or "true"/"false" in quotes; anything else is not one. */
-const switchOf = (v: unknown): boolean | undefined =>
-  typeof v === "boolean" ? v : typeof v === "string" && /^(true|false)$/i.test(v.trim()) ? v.trim().toLowerCase() === "true" : undefined;
-
-const parseSettings = (parsed: Record<string, unknown> | null): VccSettings => {
-  const merged: VccSettings = { ...DEFAULT_SETTINGS };
-  if (!parsed || typeof parsed !== "object") return merged;
-  // Each value only in its default's type: a blind spread let "debug": "no"
-  // (truthy) turn debug on, and a bare string where a list goes made .includes
-  // a substring match in the provider check.
-  for (const key of Object.keys(DEFAULT_SETTINGS) as Array<keyof VccSettings>) {
-    const on = typeof DEFAULT_SETTINGS[key] === "boolean" ? switchOf(parsed[key]) : undefined;
-    if (on !== undefined) (merged as unknown as Record<string, unknown>)[key] = on;
-  }
-  merged.skipForProviders = coerceStringArray(parsed.skipForProviders);
-  merged.skipCustomTypes = coerceStringArray(parsed.skipCustomTypes);
-  // Blank names would match every command; duplicates would repeat lines.
-  merged.trackCommands = [
-    ...new Set(coerceStringArray(parsed.trackCommands).map((s) => s.trim()).filter(Boolean)),
-  ];
-  return merged;
-};
-
-/**
- * Whether omp-vcc answers the host's own compactions (automatic ones and
- * /compact) for a model of this provider: unless the user opted out, for every
- * provider or this one (#27). Read at each call: /model changes the provider
- * mid-session, and an unknown one never skips. /omp-vcc is answered regardless.
- */
-export const handlesHostCompactions = (settings: VccSettings, provider: unknown): boolean =>
-  settings.overrideDefaultCompaction &&
-  !(typeof provider === "string" && settings.skipForProviders.some((p) => p.toLowerCase() === provider.toLowerCase()));
 
 /** omp-vcc's config for one binding: its file in the host's agent directory (or OMP_VCC_CONFIG_PATH). */
 export interface Config {
@@ -141,46 +94,34 @@ export interface Config {
    * - valid: missing keys added, existing values kept.
    */
   scaffold(): void;
-  /** Where omp-vcc keeps what it learns next to the config (core/model-limits.ts). */
+  /** Where omp-vcc keeps what it learns next to the config (omp-vcc-models.json, lisp/src/limits.lisp). */
   dir(): string;
 }
 
 export const openConfig = (agentDir: () => string): Config => {
   const path = () => process.env.OMP_VCC_CONFIG_PATH ?? join(agentDir(), SETTINGS_FILE);
-  return {
+  let scaffoldPending = false;
+  const config: Config = {
     path,
     dir: () => dirname(path()),
-    // The Lisp core reads and scaffolds the file itself (lisp/src/settings.lisp, op settings) when there is one.
-    load: () => (callCore({ op: "settings", path: path() })?.settings as VccSettings | undefined) ?? parseSettings(readJson(path())),
+    load: () => {
+      // A scaffold the core could not do yet (it was being built when omp-vcc loaded) is done now.
+      if (scaffoldPending) config.scaffold();
+      return core({ op: "settings", path: path() }).settings as VccSettings;
+    },
     scaffold() {
+      // Copying pi-vcc's file is for the agent directory only: a path the user named is theirs as it is.
       const legacy = process.env.OMP_VCC_CONFIG_PATH == null ? join(dirname(path()), LEGACY_SETTINGS_FILE) : null;
-      if (callCore({ op: "settings", path: path(), legacy, scaffold: true })) return;
+      scaffoldPending = false;
       try {
-        const file = path();
-        const dir = dirname(file);
-        if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-        if (!existsSync(file)) {
-          const legacy = join(dir, LEGACY_SETTINGS_FILE);
-          if (process.env.OMP_VCC_CONFIG_PATH == null && existsSync(legacy)) copyFileSync(legacy, file);
-          else {
-            writeFileSync(file, `${JSON.stringify(DEFAULT_SETTINGS, null, 2)}\n`);
-            return;
-          }
-        }
-        const parsed = readJson(file);
-        if (!parsed || typeof parsed !== "object") return;
-        const next: Record<string, unknown> = { ...parsed };
-        let changed = false;
-        for (const [key, value] of Object.entries(DEFAULT_SETTINGS)) {
-          if (!(key in next)) {
-            next[key] = value;
-            changed = true;
-          }
-        }
-        if (changed) writeFileSync(file, `${JSON.stringify(next, null, 2)}\n`);
-      } catch {
-        // Loading the extension must not fail on its config file.
+        core({ op: "settings", path: path(), legacy, scaffold: true });
+      } catch (err) {
+        // The core leaves a file it cannot write as it is; while the core is not there, the next load does it.
+        // A core that fails throws, as everywhere.
+        if (!(err instanceof CoreUnavailable)) throw err;
+        scaffoldPending = true;
       }
     },
   };
+  return config;
 };

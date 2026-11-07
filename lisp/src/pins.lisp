@@ -2,24 +2,21 @@
 ;;;;
 ;;;; SPDX-License-Identifier: MIT
 ;;;;
-;;;; A port of src/core/pins.ts (pinCallOf, addPin, removePin, listPins) and of
-;;;; what src/tools/pin.ts and src/commands/pin.ts make of a call. The notes are
-;;;; the pin ops replayed along the branch (compaction.lisp read-pins); a pin or
-;;;; unpin is an op the host appends (its appendEntry), so the core answers with
-;;;; the op to append and the text to tell, and the TS side appends and tells.
+;;;; What a vcc_pin call (src/tools/pin.ts) or a pin command (src/commands/pin.ts)
+;;;; does. The notes are the pin ops replayed along the branch (READ-PINS); a pin
+;;;; or unpin is an op the host appends (its appendEntry), so the core answers
+;;;; with the op to append and the text to tell, and the TS side
+;;;; (src/core/pins.ts) appends and tells.
 
 (in-package #:omp-vcc)
 
-(defparameter +pin-chars+ 300)
-(defparameter +max-safe-integer+ 9007199254740992)
-
 (defun js-id (n)
   "An id as JavaScript holds it: an integer past 2^53 is the nearest double."
-  (if (and (integerp n) (> (abs n) +max-safe-integer+)) (coerce n 'double-float) n))
+  (if (and (integerp n) (> (abs n) +double-exact+)) (coerce n 'double-float) n))
 
 (defun format-pin (n)
-  "pins.ts formatPin: [ID] TEXT (BY, #AT)."
-  (let ((at (json-get n "at")))
+  "A note as it is shown, in a listing and in [Pinned Notes]: [ID] TEXT (BY, #AT)."
+  (let ((at (let ((a (json-get n "at"))) (and (not (eq a :null)) a))))
     (format nil "[~a] ~a (~a~a)" (js-string-of (js-id (json-get n "id"))) (json-get n "text") (json-get n "by")
             (if at (format nil ", #~a" (js-string-of (js-id at))) ""))))
 
@@ -30,19 +27,36 @@
               (join-strings (mapcar (lambda (n) (format nil "- ~a" (format-pin n))) notes) (string #\Newline)))))
 
 (defun pin-entry-p (e)
-  "pins.ts isPinEntry: an omp-vcc.pin custom entry whose data is an object (an array is one too)."
-  (and (equal (json-get e "type") "custom") (equal (json-get e "customType") "omp-vcc.pin")
-       (let ((d (json-get e "data"))) (or (json-object-p d) (and (vectorp d) (not (stringp d)))))))
+  "A pin or unpin entry: omp-vcc's custom entry, its data an object (an array is one to JavaScript too)."
+  (and (equal (json-get e "type") "custom") (equal (json-get e "customType") +pin-entry-type+)
+       (let ((d (json-get e "data"))) (or (json-object-p d) (json-array-p d)))))
+
+(defun read-pins (branch)
+  "The notes pinned on BRANCH since its last /clear, oldest first, as JSON: each
+pin and unpin replayed along it, so a branch keeps the pins made on it."
+  (let ((notes (make-hash-table)))
+    (loop for i from (1+ (last-reset-index branch)) below (length branch)
+          for e = (aref branch i)
+          do (let ((op (json-get e "data")))
+               (when (and (pin-entry-p e) (json-object-p op) (js-integer-p (json-get op "id")))
+                 (let ((id (as-integer (json-get op "id"))) (text (json-get op "text")))
+                   (cond ((and (equal (json-get op "op") "add") (stringp text) (plusp (length (js-trim text))))
+                          (setf (gethash id notes)
+                                (json-object "id" id "text" text "by" (if (equal (json-get op "by") "agent") "agent" "user")
+                                             "at" (and (js-integer-p (json-get op "at")) (as-integer (json-get op "at"))))))
+                         ((equal (json-get op "op") "remove") (remhash id notes)))))))
+    (let ((ids (sort (loop for k being the hash-keys of notes collect k) #'<)))
+      (mapcar (lambda (id) (gethash id notes)) ids))))
 
 (defun next-pin-id (branch)
-  "pins.ts nextPinId: one past every id used on this branch, unpinned ones included."
+  "The next note's id: one past every id used on this branch, unpinned ones included."
   (let ((max 0))
     (loop for e across branch
           when (and (pin-entry-p e) (js-integer-p (json-get (json-get e "data") "id")))
             do (setf max (max max (json-get (json-get e "data") "id"))))
     ;; Math.max(...) + 1 on doubles: exact below 2^53.
     (let ((next (+ (coerce max 'double-float) 1d0)))
-      (if (< (abs next) +max-safe-integer+) (truncate next) next))))
+      (if (< (abs next) +double-exact+) (truncate next) next))))
 
 (defun pin-text (raw)
   "One line, clipped: (values TEXT CLIPPED)."
@@ -50,7 +64,7 @@
     (values (js-clip flat +pin-chars+) (> (js-length flat) +pin-chars+))))
 
 (defun pin-id-of (value)
-  "pins.ts toPinId: \"3\", \"#3\", \"[3]\", 3 -> 3; NIL for anything else."
+  "A note id as the agent or the user writes it: \"3\", \"#3\", \"[3]\", 3 -> 3; NIL for anything else."
   (cond ((realp value) (and (js-integer-p value) value))
         ((stringp value)
          (let ((m (rx-exec (rx "^\\[?#?(\\d+)\\]?$") (js-trim value))))
@@ -58,23 +72,19 @@
 
 (defun same-id-p (a b) (and (realp a) (realp b) (= (js-id a) (js-id b))))
 
-(defun counted-messages (entries)
-  (count-if (lambda (e) (and (equal (json-get e "type") "message") (let ((m (json-get e "message" :null))) (not (eq m :null)))))
-            entries))
-
 (defun add-pin (branch entries raw by)
-  "pins.ts addPin: (values DONE TEXT OP)."
+  "Pin RAW by BY, one line and clipped, unless it is empty or pinned already: (values DONE TEXT OP)."
   (multiple-value-bind (text clipped) (pin-text raw)
     (when (zerop (length text)) (return-from add-pin (values nil "Nothing to pin: give the note text." nil)))
     (let ((existing (find text (read-pins branch) :key (lambda (n) (json-get n "text")) :test #'string=)))
       (when existing (return-from add-pin (values nil (format nil "Already pinned: ~a." (format-pin existing)) nil))))
-    (let* ((counted (counted-messages entries))
+    (let* ((counted (count-if #'counted-entry-p entries))
            (at (and (plusp counted) (1- counted)))
            (op (json-object "v" 1 "op" "add" "id" (next-pin-id branch) "text" text "by" by "at" at)))
       (values t (format nil "Pinned ~a~a." (format-pin op) (if clipped (format nil " (clipped to ~d chars)" +pin-chars+) "")) op))))
 
 (defun remove-pin (branch value)
-  "pins.ts removePin: (values DONE TEXT OP)."
+  "Unpin the note VALUE names, or list the notes when none does: (values DONE TEXT OP)."
   (let* ((id (pin-id-of value))
          (notes (read-pins branch))
          (note (and id (find id notes :key (lambda (n) (json-get n "id")) :test #'same-id-p))))
@@ -94,16 +104,13 @@
          (branch (coerce (json-get input "branch" #()) 'vector))
          (entries (coerce (json-get input "entries" branch) 'vector)))
     (if (equal (json-get call "surface") "tool")
-        ;; tools/pin.ts executePin.
-        (let* ((params (json-get call "params"))
-               (raw-note (json-get params "note"))
-               (note (and (stringp raw-note) (not (unset-p raw-note)) raw-note))
-               (unpin (let ((u (json-get params "unpin"))) (and (not (unset-p u)) u))))
-          (cond ((and note unpin) (values nil "Send note or unpin, not both, in one call."))
-                (note (add-pin branch entries note "agent"))
-                (unpin (remove-pin branch unpin))
-                (t (values nil (format-pin-list (read-pins branch))))))
-        ;; commands/pin.ts.
+        ;; The tool: a note, an unpin, or the list; both at once is refused.
+        (let ((pin (pin-call-of (json-get call "params"))))
+          (cond ((eq pin :both) (values nil "Send note or unpin, not both, in one call."))
+                ((eq pin :list) (values nil (format-pin-list (read-pins branch))))
+                ((eq (first pin) :note) (add-pin branch entries (second pin) "agent"))
+                (t (remove-pin branch (second pin)))))
+        ;; The commands: /…-unpin ID, /…-pin TEXT, or the list.
         (let ((args (let ((a (json-get call "args"))) (if (stringp a) a ""))))
           (if (equal (json-get call "name") "unpin")
               (multiple-value-bind (done text op) (remove-pin branch (js-trim args))
@@ -114,3 +121,13 @@
                   (multiple-value-bind (done text op) (add-pin branch entries args "user")
                     (values done text op (if done "info" "warning")
                             (and done (format nil "The user ~a It stays at the top of every summary." (lower-first text)))))))))))
+
+(defun pin-call-of (args)
+  "A vcc_pin call as the tool reads it: (:note TEXT), (:unpin VALUE), :both or :list."
+  (let* ((raw (json-get args "note"))
+         (note (and (stringp raw) (not (unset-p raw)) raw))
+         (unpin (let ((u (json-get args "unpin"))) (if (unset-p u) nil u))))
+    (cond ((and note unpin) :both)
+          (note (list :note note))
+          (unpin (list :unpin unpin))
+          (t :list))))

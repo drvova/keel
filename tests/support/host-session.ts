@@ -231,3 +231,29 @@ const openPiSession = async (options: HostSessionOptions): Promise<HostSession> 
 /** Text of a message's content. */
 export const textOf = (m: any): string =>
   typeof m?.content === "string" ? m.content : Array.isArray(m?.content) ? m.content.map((p: any) => (p?.type === "text" ? p.text : "")).join("\n") : "";
+
+/** What a benchmark session cost and how it made room, read off its branch. */
+export interface RunStats {
+  /** Model requests, and their prompt tokens (input and cache reads, as the benchmarks have always counted them; cache writes are not in it). */
+  requests: number;
+  promptTokens: number;
+  /** The share of all prompt tokens (input, cache reads, cache writes) the provider read from its cache. */
+  cacheShare: number;
+  /** omp-vcc's evict entries on the branch (one per run of turns taken out, restores not counted), by who made them (the agent with vcc_context, the user, omp-vcc as the context filled). */
+  evictions: { agent: number; user: number; auto: number };
+}
+
+export const runStats = (branch: any[]): RunStats => {
+  const usages = branch.filter((e: any) => e.type === "message" && e.message?.role === "assistant" && e.message.usage).map((e: any) => e.message.usage);
+  const sum = (key: string) => usages.reduce((n: number, u: any) => n + (u[key] ?? 0), 0);
+  const all = sum("input") + sum("cacheRead") + sum("cacheWrite");
+  const evictions = { agent: 0, user: 0, auto: 0 };
+  for (const e of branch) {
+    if (e.type === "custom" && e.customType === "omp-vcc.evict" && e.data?.op === "evict" && e.data.by in evictions) evictions[e.data.by as keyof typeof evictions]++;
+  }
+  return { requests: usages.length, promptTokens: sum("input") + sum("cacheRead"), cacheShare: all ? sum("cacheRead") / all : 0, evictions };
+};
+
+/** The stats as the benchmarks print them. */
+export const statsLine = (s: RunStats): string =>
+  `${s.requests} requests, ${Math.round(s.promptTokens / 1000)}K prompt tokens, ${Math.round(s.cacheShare * 100)}% read from cache, evictions by the agent/user/omp-vcc ${s.evictions.agent}/${s.evictions.user}/${s.evictions.auto}`;

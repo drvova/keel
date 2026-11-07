@@ -15,7 +15,7 @@
 ;;;; out fails the load instead of being skipped.
 
 (defsystem "omp-vcc-core"
-  :description "omp-vcc's core: recall search, run as a JSON request/response process."
+  :description "omp-vcc's core: everything omp-vcc decides (compaction, the summary, recall, pins, settings), run as one JSON request and response per process."
   :license "MIT"
   :version "0.1.0"
   :serial t
@@ -29,6 +29,10 @@
      ;; core agree on every number they exchange.
      (:file "js-string")
      (:file "json")
+     ;; js: JavaScript's reading of JSON values (truthiness, arrays, empties), for every module.
+     (:file "js")
+     ;; names: omp-vcc's own names, and the limits its tools state.
+     (:file "names")
      ;; regex: JavaScript's regular expressions, which search compiles a
      ;; query and its terms with.
      (:file "regex")
@@ -39,14 +43,18 @@
      ;; their #N, the branch, the kept originals, and each one rendered.
      (:file "session")
      (:file "render")
+     ;; calls: tool calls and their results, read one way for every section.
+     (:file "calls")
      ;; The summary pipeline: blocks,
      ;; the section extractors, the brief and its ranking, the summary itself.
      (:file "blocks")
      (:file "extract")
      (:file "brief")
+     (:file "history")
      (:file "summary")
      ;; The compaction: its cut, the working set, and the plan the hook acts on.
      (:file "working-set")
+     (:file "task-state")
      ;; context-edits: Pi's context edits, applied before the cut reads the branch.
      (:file "context-edits")
      (:file "compaction")
@@ -59,10 +67,17 @@
      (:file "raw-capture")
      ;; args: what /omp-vcc hands the hook, and the hook reads back.
      (:file "args")
+     ;; limits and outcome: a model's learned window, and what a compaction's outcome is told as.
+     (:file "limits")
+     (:file "outcome")
      ;; The rest of recall: the request, the project's sessions, the call.
      (:file "request")
      (:file "sessions")
      (:file "recall")
+     ;; evict: old turns out of the context whole, and the request without them.
+     (:file "evict")
+     ;; host: the snapshot of what the host knows, which every op for a host event reads.
+     (:file "host")
      (:file "server"))))
   :in-order-to ((test-op (test-op "omp-vcc-core/test"))))
 
@@ -76,7 +91,11 @@
     ((:file "support")
      (:file "js-string")
      (:file "json")
-     (:file "search"))))
+     (:file "search")
+     (:file "estimate")
+     (:file "tools")
+     (:file "store")
+     (:file "numbers"))))
   :perform (test-op (op c)
              (declare (ignore op c))
              (unless (uiop:symbol-call '#:omp-vcc.test '#:run-all)

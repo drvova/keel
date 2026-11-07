@@ -2,8 +2,8 @@
 ;;;;
 ;;;; SPDX-License-Identifier: MIT
 ;;;;
-;;;; A port of src/core/context-edits.ts (itself a port of Pi's
-;;;; buildSessionProjection / projectContextEntry). Pi never rewrites an entry:
+;;;; Pi's buildSessionProjection / projectContextEntry (its
+;;;; dist/core/session-manager.js), ported. Pi never rewrites an entry:
 ;;;; a later `context_edit` entry omits an earlier one from the model's context
 ;;;; (`replacement: null`) or swaps its content, keeping its role and metadata.
 ;;;; A compaction reads the branch as the context holds it; recall reads the raw
@@ -15,17 +15,11 @@
   "The roles whose content a replacement changes (Pi's projectContextEntry).")
 
 (defun context-edit-p (entry)
-  (and (equal (json-get entry "type") "context_edit") (stringp (json-get entry "targetId"))))
-
-(defun copy-json-object (object)
-  "A shallow copy of OBJECT, its keys in the same order (`{...object}`)."
-  (let ((copy (make-hash-table :test 'equal)))
-    (maphash (lambda (k v) (setf (gethash k copy) v)) object)
-    copy))
+  (and (equal (json-get entry "type") +context-edit-type+) (stringp (json-get entry "targetId"))))
 
 (defun with-content (object content)
   "`{...OBJECT, content: CONTENT}`; NIL (undefined) is a key JSON leaves out."
-  (let ((copy (copy-json-object object)))
+  (let ((copy (copy-object object)))
     (if content (setf (gethash "content" copy) content) (remhash "content" copy))
     copy))
 
@@ -43,7 +37,7 @@
                  (message (json-get entry "message")))
              (cond ((and (equal (json-get entry "type") "message") (truthy-p message) (json-object-p message)
                          (member (json-get message "role") +editable-roles+ :test #'equal))
-                    (let ((copy (copy-json-object entry)))
+                    (let ((copy (copy-object entry)))
                       (setf (gethash "message" copy)
                             (with-content message (replaced-content (json-get message "role") content)))
                       copy))
@@ -51,8 +45,8 @@
                    (t entry))))))
 
 (defun apply-context-edits (branch notes)
-  "context-edits.ts applyContextEdits on the vector BRANCH, with NOTES (parallel to
-it) kept beside each entry left: (values BRANCH NOTES), both as they were when
+  "The vector BRANCH as Pi's context holds it, with NOTES (parallel to it) kept
+beside each entry left: (values BRANCH NOTES), both as they were when
 there are no edits."
   (let ((edits (make-hash-table :test 'equal)))
     (loop for e across branch when (context-edit-p e) do (setf (gethash (json-get e "targetId") edits) e))

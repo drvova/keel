@@ -6,8 +6,7 @@ import { assertRealPi, piInstalled } from "./support/pi";
 import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join, dirname } from "path";
-import { recordLearnedWindow } from "../src/core/model-limits";
-import { lispCore, withCore } from "./support/lisp-core";
+import { recordLearnedWindow } from "./support/window";
 
 
 
@@ -105,9 +104,9 @@ describe.skipIf(!piInstalled())("Pi entry", () => {
   beforeAll(assertRealPi);
   test("registers the hook on Pi's events, the /pi-vcc commands and the tools, and nothing of omp's", async () => {
     const pi = await createPi();
-    // No raw capture (Pi rewrites nothing in place) and no omp trigger tracking.
-    expect([...pi.handlers.keys()].sort()).toEqual(["agent_settled", "message_end", "session_before_compact", "session_compact"]);
-    expect([...pi.commands.keys()].sort()).toEqual(["pi-vcc", "pi-vcc-pin", "pi-vcc-recall", "pi-vcc-unpin"]);
+    // No raw capture (Pi rewrites nothing in place) and no omp trigger tracking; the request hook leaves evicted turns out.
+    expect([...pi.handlers.keys()].sort()).toEqual(["agent_settled", "context", "message_end", "session_before_compact", "session_compact"]);
+    expect([...pi.commands.keys()].sort()).toEqual(["pi-vcc", "pi-vcc-evict", "pi-vcc-pin", "pi-vcc-recall", "pi-vcc-unpin"]);
     expect(pi.tools.map((t: any) => t.name)).toEqual(["vcc_recall", "vcc_pin"]);
     // The tools name Pi's commands: vcc_pin told the agent the user pins with /omp-vcc-pin.
     const pin = pi.tools.find((t: any) => t.name === "vcc_pin");
@@ -126,9 +125,8 @@ describe.skipIf(!piInstalled())("Pi entry", () => {
     expect(threshold.compaction.details.limits).toMatchObject({ contextWindow: 200_000, windowSource: "pi", trigger: 183_616 });
   });
 
-  test("the summary reads the branch as Pi's context holds it: an omitted attempt and a redacted result, in TS and in the Lisp core", async () => {
-    const core = lispCore();
-    for (const on of core ? [undefined, core] : [undefined]) {
+  test("the summary reads the branch as Pi's context holds it: an omitted attempt and a redacted result", async () => {
+    {
       const pi = await createPi();
       const attempt = assistant("A first attempt that Pi retried away");
       const call = entry({ role: "assistant", content: [{ type: "toolCall", id: "k1", name: "bash", arguments: { command: "cat .env" } }] });
@@ -139,9 +137,10 @@ describe.skipIf(!piInstalled())("Pi entry", () => {
         { id: `p${++n}`, type: "context_edit", targetId: result.id, replacement: { content: "[redacted by the user]" } },
         ...conversation(),
       ]);
-      const summary: string = withCore(on, () => pi.beforeCompact({ reason: "threshold", willRetry: false })).compaction.summary;
-      expect({ on, has: summary.includes("Zeroth request") }).toEqual({ on, has: true });
-      expect({ on, secret: summary.includes("hunter2"), attempt: summary.includes("Pi retried away") }).toEqual({ on, secret: false, attempt: false });
+      const summary: string = pi.beforeCompact({ reason: "threshold", willRetry: false }).compaction.summary;
+      expect(summary).toContain("Zeroth request");
+      expect(summary).not.toContain("hunter2");
+      expect(summary).not.toContain("Pi retried away");
     }
   });
 

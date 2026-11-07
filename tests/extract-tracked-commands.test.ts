@@ -1,10 +1,12 @@
 import { describe, it, expect } from "bun:test";
-import { extractTrackedCommands } from "../src/extract/tracked-commands";
-import { freshState } from "../src/core/summary-state";
-import { renderSummary } from "../src/core/format";
-import { sectionOf } from "../src/core/legacy-summary";
-import { DEFAULT_SUMMARY_LIMITS } from "../src/core/window";
-import type { NormalizedBlock } from "../src/types";
+import type { NormalizedBlock } from "./support/compile";
+import { summarize, UNCAPPED } from "./support/summary";
+
+/** Each configured command's invocations, as the summary of these blocks stores them. */
+const extractTrackedCommands = (blocks: NormalizedBlock[], track: string[]) => {
+  const { tracked } = summarize(blocks, { limits: UNCAPPED, trackCommands: track }).state;
+  return { byCommand: new Map(track.map((name) => [name, new Set(tracked.find((t) => t.name === name)?.entries ?? [])])) };
+};
 
 const bash = (command: string): NormalizedBlock => ({
   kind: "tool_call",
@@ -16,9 +18,12 @@ const TRACK = ["ssh", "kubectl", "docker", "aws"];
 
 /** The [Tracked Commands] lines a summary of these blocks shows. */
 const trackedLines = (blocks: NormalizedBlock[], track: string[]): string[] => {
-  const { text } = renderSummary({ state: freshState({ blocks, trackCommands: track, earlySlots: 0 }), limits: DEFAULT_SUMMARY_LIMITS });
+  const { text } = summarize(blocks, { trackCommands: track });
+  const head = text.split("\n\n---\n\n")[0];
+  const at = head.indexOf("[Tracked Commands]\n");
+  if (at < 0) return [];
   // Wrapped lines rejoined.
-  return sectionOf(text, "Tracked Commands").replace(/\n[ \t]+(?=\S)/g, " ").split("\n").slice(1).map((l) => l.slice(2));
+  return head.slice(at).split("\n\n")[0].replace(/\n[ \t]+(?=\S)/g, " ").split("\n").slice(1).map((l) => l.slice(2));
 };
 
 describe("extractTrackedCommands", () => {

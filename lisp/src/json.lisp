@@ -148,12 +148,19 @@ whitespace around it."
                          (coerce (let ((*read-eval* nil)) (read-from-string text t nil :start start :end pos)) 'double-float))
                        ;; Past 2^53 JavaScript holds the nearest double, and so does this.
                        (let ((v (parse-integer text :start start :end pos)))
-                         (if (> (abs v) 9007199254740992) (coerce v 'double-float) v)))))))
+                         (if (> (abs v) +double-exact+) (coerce v 'double-float) v)))))))
       (prog1 (value)
         (skip-ws)
         (when (< pos n) (fail "trailing text"))))))
 
 ;;; --- writing -----------------------------------------------------------------
+
+
+(defun parse-json-or-nil (text &key (start 0) end)
+  "TEXT read as JSON, or NIL when it is not JSON: for a line a host or a crash
+may have left half-written. Any other error is a bug, and is raised."
+  (handler-case (parse-json text :start start :end end)
+    (json-parse-error () nil)))
 
 (defun write-json-string (string out)
   (write-char #\" out)
@@ -190,7 +197,7 @@ whitespace around it."
            do (when (plusp i) (write-char #\, out)) (write-json v out))
      (write-char #\] out))
     ;; An integer past 2^53 as the double JavaScript would hold.
-    (integer (if (<= (abs value) 9007199254740992) (format out "~d" value) (write-string (js-number-string value) out)))
+    (integer (if (<= (abs value) +double-exact+) (format out "~d" value) (write-string (js-number-string value) out)))
     (real (write-string (js-number-string value) out))
     ((member :true) (write-string "true" out))
     ((member :false) (write-string "false" out))

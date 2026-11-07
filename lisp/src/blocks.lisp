@@ -2,16 +2,13 @@
 ;;;;
 ;;;; SPDX-License-Identifier: MIT
 ;;;;
-;;;; A port of src/core/sanitize.ts, filter-noise.ts, skill-collapse.ts,
-;;;; normalize.ts and the parts of tools.ts the summary reads (a block's
-;;;; command, a call's files): each message becomes blocks (user, assistant,
-;;;; tool_call, tool_result, bash), the unit every section is built from.
+;;;; Text sanitized (terminal escapes, control characters), host noise left out
+;;;; (omp's reminders), skill bodies collapsed, and each message normalized into
+;;;; blocks (user, assistant, tool_call, tool_result, bash), the unit every
+;;;; section is built from; with what the summary reads of a block (its command,
+;;;; a call's files).
 
 (in-package #:omp-vcc)
-
-(define-condition left-to-ts (error) ((detail :initarg :detail :reader left-to-ts-detail))
-  (:report (lambda (c s) (format s "left to the TS code: ~a" (left-to-ts-detail c))))
-  (:documentation "Input this port would not be sure to read as the TS does; the caller runs the TS code."))
 
 ;;; --- text a host or a terminal put in --------------------------------------
 
@@ -42,12 +39,15 @@
   index           ; the message's #N, or NIL
   injected
   id name args failed
+  results         ; a tool call's: the texts of the results that answer it (calls.lisp pairs them)
   call-id
   command output exit-code lang)
 
 (defun index-or (v) (if (integerp v) v nil))
 
-(defun normalize-one (message index failed-ids)
+(defun call-key (pos id) (format nil "~d:~a" pos id))
+
+(defun normalize-one (message index pairs &optional (pos 0))
   (let ((role (json-get message "role")) (content (json-get message "content")))
     (cond
       ((equal role "user")
@@ -62,10 +62,10 @@
                    do (push (make-block :kind :user :text (format nil "[image: ~a]" (js-string-of (json-get part "mimeType"))) :index index) blocks)))
          (if blocks (nreverse blocks) (list (make-block :kind :user :text "" :index index)))))
       ((equal role "bashExecution")
-       (list (make-block :kind :bash :command (or-empty-raw (json-get message "command")) :output (or-empty-raw (json-get message "output"))
+       (list (make-block :kind :bash :command (or-empty (json-get message "command")) :output (or-empty (json-get message "output"))
                          :exit-code (json-get message "exitCode") :index index)))
       ((equal role "pythonExecution")
-       (list (make-block :kind :bash :command (or-empty-raw (json-get message "code")) :output (or-empty-raw (json-get message "output"))
+       (list (make-block :kind :bash :command (or-empty (json-get message "code")) :output (or-empty (json-get message "output"))
                          :exit-code (json-get message "exitCode") :index index :lang "python")))
       ((equal role "toolResult")
        (list (make-block :kind :tool-result
@@ -73,21 +73,18 @@
                          :name (json-get message "toolName")
                          :text (sanitize (text-of content)) :index index)))
       ((equal role "assistant")
-       (cond ((or (null content) (eq content :null) (equal content "") (eq content :false) (eql content 0)) '())
+       (cond ((not (truthy-p content)) '())
              ((stringp content) (list (make-block :kind :assistant :text (sanitize content) :index index)))
              (t (loop for part across content
                       append (cond ((equal (json-get part "type") "text")
                                     (list (make-block :kind :assistant :text (sanitize (json-get part "text")) :index index)))
                                    ((equal (json-get part "type") "toolCall")
-                                    (let ((id (let ((i (json-get part "id"))) (and (stringp i) i))))
-                                      (list (make-block :kind :tool-call :id id :name (string-or (json-get part "name") "unknown")
-                                                        :args (let ((a (json-get part "arguments"))) (if (json-object-p a) a (make-hash-table :test 'equal)))
-                                                        :index index :failed (and id (gethash id failed-ids) t))))))))))
+                                    (let* ((c (part-call part)) (id (call-id c))
+                                           (answers (and id (gethash (call-key pos id) pairs))))
+                                      (list (make-block :kind :tool-call :id id :name (call-name c) :args (call-args c) :index index
+                                                        :failed (and (some #'result-error answers) t)
+                                                        :results (mapcar #'result-text answers))))))))))
       (t '()))))
-
-(defun or-empty-raw (v)
-  "A text field as `?? \"\"` reads it: \"\" for null or absent, another value as its text."
-  (cond ((or (null v) (eq v :null)) "") ((stringp v) v) (t (js-string-of v))))
 
 (defun nonzero-exit-p (code)
   "`exitCode != null && exitCode !== 0`."
@@ -112,15 +109,15 @@ user message that held only that."
   "The blocks of MESSAGES (JSON objects), each with its #N from INDICES (a
 vector parallel to MESSAGES, or NIL for positions), host noise left out."
   (let* ((readable (map 'list (lambda (m) (and (json-object-p m) (readable-message m))) messages))
-         (failed (make-hash-table :test 'equal)))
-    (dolist (m readable)
-      (when (and m (equal (json-get m "role") "toolResult") (eq (json-get m "isError") :true)
-                 (stringp (json-get m "toolCallId")))
-        (setf (gethash (json-get m "toolCallId") failed) t)))
+         ;; Each call's results, paired as [Task State] and [Working Set] pair them (calls.lisp).
+         (pairs (make-hash-table :test 'equal)))
+    (dolist (r (reverse (nth-value 1 (read-calls readable))))
+      (let ((c (result-call r)))
+        (when c (push r (gethash (call-key (call-pos c) (call-id c)) pairs)))))
     (filter-noise
      (loop for m in readable
            for i from 0
-           when m append (normalize-one m (if indices (and (< i (length indices)) (index-or (aref indices i))) i) failed)))))
+           when m append (normalize-one m (if indices (and (< i (length indices)) (index-or (aref indices i))) i) pairs i)))))
 
 ;;; --- what a block runs and works on --------------------------------------------
 
@@ -136,7 +133,8 @@ vector parallel to MESSAGES, or NIL for positions), host noise left out."
 (defun url-path-p (path) (rx-test (rx "^[a-z][a-z0-9+.-]*:\\/\\/" "i") path))
 
 (defun read-selector-regex ()
-  (rx ":(?:raw|img|conflicts|L?\\d+(?:(?:-|\\.\\.|\\+)L?\\d*)?|-\\d+(?:[-+]\\d+)?)(?:[,:](?:raw|img|conflicts|L?\\d+(?:(?:-|\\.\\.|\\+)L?\\d*)?|-\\d+(?:[-+]\\d+)?))*$" "i"))
+  "A read path's selector: `:raw`, `:img`, `:conflicts` or lines, several joined by `,` or `:`."
+  (rx (format nil ":(?:raw|img|conflicts|~a)(?:[,:](?:raw|img|conflicts|~a))*$" +line-selector+ +line-selector+) "i"))
 
 (defun strip-read-selector (path)
   "A read's path without omp's selector (`:50-100`, `:raw`)."
@@ -145,24 +143,12 @@ vector parallel to MESSAGES, or NIL for positions), host noise left out."
 
 (defun files-of (call)
   "The files a call works on: its named paths less URLs, a read's selector dropped; none for a search or a shell."
-  (let ((kind (call-kind call)))
-    (if (member kind '(:search :shell))
-        '()
-        (let ((paths (remove-if #'url-path-p (named-paths (call-args call)))))
-          (if (eq kind :read) (mapcar #'strip-read-selector paths) paths)))))
+  (when (eq (call-files call) :unset)
+    (setf (call-files call)
+          (let ((kind (call-kind call)))
+            (if (member kind '(:search :shell))
+                '()
+                (let ((paths (remove-if #'url-path-p (named-paths (call-args call)))))
+                  (if (eq kind :read) (mapcar #'strip-read-selector paths) paths))))))
+  (call-files call))
 
-(defun unset-p (v)
-  "A tool argument sent empty: null, a blank string or an empty list."
-  (or (null v) (eq v :null)
-      (and (stringp v) (zerop (length (js-trim v))))
-      (and (vectorp v) (not (stringp v)) (zerop (length v)))))
-
-(defun pin-call-of (args)
-  "A vcc_pin call as the tool reads it: (:note TEXT), (:unpin VALUE), :both or :list."
-  (let* ((raw (json-get args "note"))
-         (note (and (stringp raw) (not (unset-p raw)) raw))
-         (unpin (let ((u (json-get args "unpin"))) (if (unset-p u) nil u))))
-    (cond ((and note unpin) :both)
-          (note (list :note note))
-          (unpin (list :unpin unpin))
-          (t :list))))

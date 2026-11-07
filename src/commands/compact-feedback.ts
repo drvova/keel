@@ -1,25 +1,14 @@
-// What omp-vcc's commands tell the user, and what /omp-vcc says once a
-// compaction it asked for ends.
-import { hostBranch, lastCompactionIndex } from "../core/session-file";
-import { tell, type HostProfile, type NotifyCtx } from "../host";
-import { tellCompactionStats, type CompactionStats } from "../compaction/stats";
+// What /omp-vcc says once a compaction it asked for ends.
+import { deliver, tell, tellLater, type NotifyCtx } from "../host";
+import { core } from "../core/lisp-core";
+import { hostSnapshot, type HostCtx } from "../core/host-snapshot";
 
-/** The branch has a compaction still in effect (none, or one before omp's /clear, does not count). */
-const compactedBefore = (ctx: NotifyCtx): boolean => lastCompactionIndex(hostBranch(ctx.sessionManager) ?? []) >= 0;
-
-export const reportCompactDone = (
-  ctx: NotifyCtx,
-  stats: CompactionStats | null,
-  followUpPrompt: string,
-  sendUserMessage: (content: string) => unknown,
-): void => {
-  if (stats) tellCompactionStats(ctx, stats);
+/** The compaction's outcome line, then the prompt to send after it. */
+export const reportCompactDone = (ctx: NotifyCtx, statsLine: string | null, followUpPrompt: string, sendUserMessage: (content: string) => unknown): void => {
+  // Without a line of omp-vcc's own (another extension's compaction won), the compaction still happened.
+  if (statsLine) tellLater(ctx, statsLine);
   else tell(ctx, "Compacted with omp-vcc");
-  if (followUpPrompt) {
-    try {
-      void Promise.resolve(sendUserMessage(followUpPrompt)).catch(() => {});
-    } catch {}
-  }
+  if (followUpPrompt) void deliver(ctx, "the follow-up prompt", () => sendUserMessage(followUpPrompt));
 };
 
 /**
@@ -28,28 +17,13 @@ export const reportCompactDone = (
  * already. omp's TUI shows its own "Compaction cancelled" / "Compaction
  * failed: …", so there only the hint for a session still too short is added.
  */
-export const reportCompactError = (ctx: NotifyCtx & { mode?: string }, err: Error, cancelNotice: string | null | undefined, hostName: HostProfile["displayName"]): void => {
-  if (ctx.mode === "tui" && !err.message.startsWith("Nothing to compact")) return;
-  if (err.message === "Compaction cancelled" && cancelNotice) {
-    return;
-  } else if (err.message === "Already compacted") {
-    tell(ctx, "Nothing to compact: the session was just compacted.", "warning");
-  } else if (err.message === "Compaction cancelled") {
-    tell(ctx, "Nothing to compact", "warning");
-  } else if (err.message.startsWith("Nothing to compact")) {
-    // omp and Pi throw this before any extension hook runs: everything since the
-    // last compaction (or the start) still fits in the recent part the host always
-    // keeps (compaction.keepRecentTokens in either's settings).
-    tell(
-      ctx,
-      compactedBefore(ctx)
-        ? `Nothing to compact yet: what came after the last compaction still fits in the recent part ${hostName} always keeps ` +
-            `(compaction.keepRecentTokens in ${hostName} settings). Try again after a few more turns.`
-        : `Nothing to compact yet: the whole session still fits in the recent part ${hostName} always keeps ` +
-            `(compaction.keepRecentTokens in ${hostName} settings). Try again once the session is longer.`,
-      "warning",
-    );
-  } else {
-    tell(ctx, `Compaction failed: ${err.message}`, "error");
-  }
+export const reportCompactError = (
+  host: Parameters<typeof hostSnapshot>[0],
+  ctx: NotifyCtx & HostCtx & { mode?: string },
+  err: Error,
+  cancelNotice: string | null,
+): void => {
+  // The core decides what is told (lisp/src/outcome.lisp); a branch with a compaction in effect says "after the last compaction".
+  const reply = core({ op: "outcome", host: hostSnapshot(host, ctx), error: { message: err.message, mode: ctx.mode ?? null, cancelNotice } });
+  if (typeof reply.text === "string") tell(ctx, reply.text, reply.severity as "warning" | "error");
 };

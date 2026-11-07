@@ -2,25 +2,21 @@
 ;;;;
 ;;;; SPDX-License-Identifier: MIT
 ;;;;
-;;;; A port of the parts of src/core/content.ts (readableMessage, textOf),
-;;;; src/core/tools.ts (a call's kind, its paths, its subject, its argument
-;;;; text) and src/core/render-entries.ts (renderMessage's one-line view) that
-;;;; recall's search reads, and of search-entries.ts's fullText. Each is held to
-;;;; the TS output character for character: tests/lisp-core.test.ts compares
-;;;; every entry of generated sessions both sides render.
+;;;; A message made readable whatever it holds, a tool call read (its kind, its
+;;;; paths, its subject, its argument text), the one-line view a range or a
+;;;; search shows, and the full text expand shows and search reads.
+;;;; tests/recall-render.test.ts and the shape tests drive it through recall.
 ;;;;
 ;;;; Messages are the JSON objects the session file holds (json.lisp's
 ;;;; hash tables), read in JavaScript's key order (JSON-KEYS).
 
 (in-package #:omp-vcc)
 
-(defparameter +recall-tool+ "vcc_recall" "omp-vcc's recall tool: src/names.ts RECALL_TOOL.")
-
-(defun json-object-p (v) (hash-table-p v))
-
-(defun string-or (v default) (if (stringp v) v default))
-
 ;;; --- content ---------------------------------------------------------------
+
+(defun part-name (part) "A toolCall part's tool name: \"unknown\" when it has none." (string-or (json-get part "name") "unknown"))
+(defun part-args (part) "A toolCall part's arguments: an empty object when they are not one."
+  (let ((a (json-get part "arguments"))) (if (json-object-p a) a (make-hash-table :test 'equal))))
 
 (defun readable-message (message)
   "MESSAGE as recall can read it: a content that is no list is empty, a null
@@ -36,9 +32,7 @@ a text part's text is a string."
                    (coerce (loop for part in (object-parts content)
                                  collect (cond ((equal (json-get part "type") "toolCall")
                                                 (let ((p (copy-object part)))
-                                                  (setf (gethash "name" p) (string-or (json-get part "name") "unknown")
-                                                        (gethash "arguments" p) (let ((a (json-get part "arguments")))
-                                                                                  (if (json-object-p a) a (make-hash-table :test 'equal))))
+                                                  (setf (gethash "name" p) (part-name part) (gethash "arguments" p) (part-args part))
                                                   p))
                                                ((and (equal (json-get part "type") "text") (not (stringp (json-get part "text"))))
                                                 (let ((p (copy-object part))) (setf (gethash "text" p) "") p))
@@ -47,7 +41,7 @@ a text part's text is a string."
              copy)))))
 
 (defun text-parts (content)
-  (cond ((or (null content) (eq content :null) (eq content :false) (equal content "") (eql content 0)) '())
+  (cond ((not (truthy-p content)) '())
         ((stringp content) (list content))
         ((vectorp content)
          (loop for part across content
@@ -64,16 +58,26 @@ a text part's text is a string."
 
 ;;; --- tool calls --------------------------------------------------------------
 
-(defstruct (call (:constructor make-call (name args))) name args)
+(defstruct (call (:constructor make-call (name args &optional id pos)))
+  "One tool call: its name (\"unknown\" when it has none), its arguments (an
+empty object when they are not one), its id when it has one, the place of the
+message that made it when the reader counts them, and the files it works on,
+read once."
+  name args id pos (files :unset))
 
-(defun tool-calls-of (message)
+(defun part-call (part &optional pos)
+  "A toolCall content part as a call: the one reading of one."
+  (make-call (part-name part) (part-args part)
+             (let ((id (json-get part "id"))) (and (stringp id) id))
+             pos))
+
+(defun tool-calls-of (message &optional pos)
   "MESSAGE's tool calls, in order."
   (let ((content (json-get message "content")))
-    (when (and (vectorp content) (not (stringp content)))
+    (when (json-array-p content)
       (loop for part across content
             when (and (json-object-p part) (equal (json-get part "type") "toolCall"))
-              collect (make-call (string-or (json-get part "name") "unknown")
-                                 (let ((a (json-get part "arguments"))) (if (json-object-p a) a (make-hash-table :test 'equal))))))))
+              collect (part-call part pos)))))
 
 (defun own-tool-p (name tool)
   (and (stringp name) (string= (string-downcase name) tool)))
@@ -82,7 +86,7 @@ a text part's text is a string."
   '(("read" . :read) ("write" . :write) ("edit" . :edit) ("apply_patch" . :edit) ("ast_edit" . :edit)
     ("grep" . :search) ("glob" . :search) ("find" . :search) ("ast_grep" . :search) ("ls" . :search)
     ("bash" . :shell) ("powershell" . :shell))
-  "The kind of the hosts' own tools by name: tools.ts KIND_BY_NAME.")
+  "The kind of the hosts' own tools by name.")
 
 (defparameter +path-keys+ '("path" "file_path" "filePath" "file"))
 
@@ -130,7 +134,7 @@ a text part's text is a string."
   "Every path a call names: its path argument, else `paths`, else the files in an omp edit's `input`."
   (let ((key (path-key-of args)))
     (cond (key (list (json-get args key)))
-          ((let ((paths (json-get args "paths"))) (and (vectorp paths) (not (stringp paths))))
+          ((let ((paths (json-get args "paths"))) (json-array-p paths))
            (loop for p across (json-get args "paths") when (and (stringp p) (plusp (length p))) collect p))
           (t (input-paths (json-get args "input"))))))
 
@@ -142,22 +146,25 @@ a text part's text is a string."
               ((or (stringp (json-get args "oldText")) (stringp (json-get args "old_string"))
                    (stringp (json-get args "newText")) (stringp (json-get args "new_string"))
                    (let ((edits (json-get args "edits")))
-                     (and (vectorp edits) (not (stringp edits)) (some #'json-object-p edits))))
+                     (and (json-array-p edits) (some #'json-object-p edits))))
                :edit)
               (t :other)))))
 
 (defun call-subject (call)
-  "What CALL is about as (LABEL VALUE MORE): a shell call's command, a search's
-pattern, else its file (and how many more it names), command or query."
+  "What CALL is about as (LABEL VALUE MORE KEY): a shell call's command, a search's
+pattern, else its file (and how many more it names), command or query; KEY the
+argument it came from (NIL for the files in an omp edit's `input`)."
   (let* ((args (call-args call))
          (kind (call-kind call)))
     (flet ((one (label key)
              (let ((v (json-get args key)))
-               (and (stringp v) (plusp (length v)) (list label v 0)))))
+               (and (stringp v) (plusp (length v)) (list label v 0 key)))))
       (cond ((eq kind :shell) (one "command" "command"))
             ((and (eq kind :search) (or (one "pattern" "pattern") (one "pattern" "pat"))))
             ((named-paths args)
-             (let ((paths (named-paths args))) (list "path" (first paths) (1- (length paths)))))
+             (let ((paths (named-paths args)))
+               (list "path" (first paths) (1- (length paths))
+                     (or (path-key-of args) (and (json-array-p (json-get args "paths")) "paths")))))
             (t (or (one "command" "command") (one "query" "query")))))))
 
 (defun call-line (call)
@@ -165,7 +172,8 @@ pattern, else its file (and how many more it names), command or query."
   (let ((subject (call-subject call)))
     (format nil "~a(~a)" (call-name call)
             (if subject
-                (destructuring-bind (label value more) subject
+                (destructuring-bind (label value more &optional key) subject
+                  (declare (ignore key))
                   (format nil "~a=~a~:[~; +~d~]" label value (plusp more) more))
                 (join-strings (json-keys (call-args call)) ", ")))))
 
@@ -185,28 +193,17 @@ pattern, else its file (and how many more it names), command or query."
 
 (defun file-mention-paths (message)
   (let ((files (json-get message "files")))
-    (when (and (vectorp files) (not (stringp files)))
+    (when (json-array-p files)
       (loop for f across files
             for p = (json-get f "path")
             when (and (stringp p) (plusp (length p))) collect p))))
 
-(defun or-empty (v)
-  "A field as `${v ?? \"\"}` writes it."
-  (if (or (null v) (eq v :null)) "" (js-string-of v)))
-
 (defun call-subject-keys (call)
-  "The arguments CALL's subject shows (tools.ts callSubject keys), so the full view leaves them out."
-  (let* ((args (call-args call)) (kind (call-kind call)))
-    (flet ((key-if (key) (let ((v (json-get args key))) (and (stringp v) (plusp (length v)) (list key)))))
-      (cond ((eq kind :shell) (key-if "command"))
-            ((and (eq kind :search) (or (key-if "pattern") (key-if "pat"))))
-            ((named-paths args)
-             (let ((key (or (path-key-of args) (and (vectorp (json-get args "paths")) (not (stringp (json-get args "paths"))) "paths"))))
-               (and key (list key))))
-            (t (or (key-if "command") (key-if "query")))))))
+  "The arguments CALL's subject shows, so the full view leaves them out."
+  (let ((key (fourth (call-subject call)))) (and key (list key))))
 
 (defun file-write-of (call)
-  "tools.ts fileWriteOf: what a write or edit puts in its file, as (:path P :content C), (:path P :edits ((OLD . NEW)...)) or (:path P :replace (OLD . NEW)); NIL for another call."
+  "What a write or edit puts in its file, as (:path P :content C), (:path P :edits ((OLD . NEW)...)) or (:path P :replace (OLD . NEW)); NIL for another call."
   (let ((kind (call-kind call)) (args (call-args call)))
     (when (member kind '(:write :edit))
       (let ((key (path-key-of args)))
@@ -214,7 +211,7 @@ pattern, else its file (and how many more it names), command or query."
           (let ((path (json-get args key)) (content (json-get args "content")))
             (flet ((old-of (o) (or (string-or (json-get o "oldText") nil) (string-or (json-get o "old_string") nil)))
                    (new-of (o) (or (string-or (json-get o "newText") nil) (string-or (json-get o "new_string") nil))))
-              (let ((edits (let ((e (json-get args "edits"))) (and (vectorp e) (not (stringp e)) (remove-if-not #'json-object-p (coerce e 'list))))))
+              (let ((edits (let ((e (json-get args "edits"))) (and (json-array-p e) (remove-if-not #'json-object-p (coerce e 'list))))))
                 (cond ((and (stringp content) (plusp (length content))) (list :path path :content content))
                       ((some (lambda (e) (or (old-of e) (new-of e))) edits)
                        (list :path path :edits (loop for e in edits when (or (old-of e) (new-of e)) collect (cons (or (old-of e) "") (or (new-of e) "")))))
@@ -227,7 +224,7 @@ pattern, else its file (and how many more it names), command or query."
   (rx-replace (rx "^(?=.)" "m") text pad :all t))
 
 (defun full-tool-args (calls index chars via)
-  "render-entries.ts fullToolArgs: the arguments the one-line summary leaves out, clipped at CHARS."
+  "The arguments the one-line summary leaves out, clipped at CHARS."
   (let* ((blocks (remove nil
                          (mapcar (lambda (c)
                                    (let* ((shown (call-subject-keys c))
@@ -282,10 +279,10 @@ FULL expand's view, a tool call's other arguments clipped at DETAIL-CHARS."
                      files)))))))
 
 (defparameter +tool-args-budget+ 2000
-  "Characters of a message's tool-call arguments search indexes: search-entries.ts TOOL_ARGS_BUDGET.")
+  "Characters of a message's tool-call arguments search indexes.")
 
 (defun search-text (message)
-  "MESSAGE's text as search reads it: search-entries.ts fullText."
+  "MESSAGE's text as search reads it."
   (let ((role (json-get message "role")))
     (cond ((equal role "bashExecution")
            (format nil "~a ~a" (or-empty (json-get message "command")) (or-empty (json-get message "output"))))
@@ -312,14 +309,8 @@ still taken), and what omp rewrote put back from the kept originals."
   (let* ((entries (jsonl-values path))
          (indexed (remove-if-not (lambda (m) (and (json-object-p (third m))
                                                   (not (equal (json-get (third m) "role") "system"))))
-                                 (indexed-messages entries)))
-         (wanted (make-hash-table :test 'equal)))
-    (dolist (m indexed)
-      (when (and (second m) (was-rewritten-p (third m))) (setf (gethash (second m) wanted) t)))
-    (let ((kept (read-raw-store path wanted)))
-      (values (loop for (index id message) in indexed
-                    for restored = (multiple-value-bind (content found) (if id (gethash id kept) (values nil nil))
-                                     (if found (with-original-content message content) message))
-                    for readable = (ignore-errors (readable-message restored))
-                    when readable collect (list index id readable))
-              (active-branch-ids entries)))))
+                                 (indexed-messages entries))))
+    (values (loop for (index id) in indexed
+                  for restored in (restore-originals (mapcar #'third indexed) (mapcar #'second indexed) path)
+                  collect (list index id (readable-message restored)))
+            (active-branch-ids entries))))

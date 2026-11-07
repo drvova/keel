@@ -12,15 +12,9 @@ import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } fr
 import { existsSync, unlinkSync, writeFileSync, mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import {
-  indexById,
-  isCountedEntry,
-  readEntries,
-} from "../src/core/session-file";
-import { normalize } from "../src/core/normalize";
-import { compile as compileAt, type CompileInput } from "../src/core/summarize";
-import { DEFAULT_SUMMARY_LIMITS } from "../src/core/window";
-import { OMP_VCC_COMPACT_INSTRUCTION } from "../src/core/compact-args";
+import { compile as compileAt, type CompileInput } from "./support/compile";
+import { DEFAULT_SUMMARY_LIMITS } from "./support/window";
+import { COMPACT_INSTRUCTION } from "./support/names";
 import { registerHook } from "./support/host";
 import { userMsg, assistantWithToolCall, toolResult } from "./fixtures";
 /** compile at a ~128K window's section limits unless a test sets its own. */
@@ -51,98 +45,26 @@ function setConfig(cfg: Record<string, unknown>) {
   writeFileSync(CONFIG_PATH, JSON.stringify(cfg));
 }
 
-// ── #N by entry id (src/core/session-file.ts) ──────────────────────────
+// How #N is counted: lisp/test/numbers.lisp; reading it from a session file: tests/session-read.test.ts.
 
-describe("indexById", () => {
-  test("counts only message entries in order", () => {
-    const entries = [
-      { type: "session", id: "header" },
-      { id: "m1", type: "message", message: { role: "user" } },
-      { id: "c1", type: "compaction", firstKeptEntryId: "" },
-      { id: "x1", type: "custom_message", customType: "ext.foo" },
-      { id: "m2", type: "message", message: { role: "assistant" } },
-      { id: "m3", type: "message", message: { role: "toolResult" } },
-    ];
-    const map = indexById(entries);
-    expect(map.get("m1")).toBe(0);
-    expect(map.get("m2")).toBe(1);
-    expect(map.get("m3")).toBe(2);
-    expect(map.has("c1")).toBe(false);
-    expect(map.has("x1")).toBe(false);
-  });
+// ── compile threading ───────────────────────────────────────────────────
 
-  test("drops duplicate ids fail-closed but still advances positions", () => {
-    const entries = [
-      { id: "a", type: "message", message: { role: "user" } },
-      { id: "a", type: "message", message: { role: "assistant" } },
-      { id: "b", type: "message", message: { role: "assistant" } },
-    ];
-    const map = indexById(entries);
-    expect(map.has("a")).toBe(false);
-    expect(map.get("b")).toBe(2);
-  });
+describe("the brief's refs from explicit sourceIndices", () => {
+  const brief = (sourceIndices?: Array<number | undefined>) =>
+    compile({ messages: [userMsg("inspect the fixture"), assistantWithToolCall("edit", { file_path: "beta.txt" })], ...(sourceIndices ? { sourceIndices } : {}) });
 
-  test("entries without ids still occupy an index", () => {
-    const entries = [
-      { type: "message", message: { role: "user" } },
-      { id: "x", type: "message", message: { role: "assistant" } },
-    ];
-    expect(indexById(entries).get("x")).toBe(1);
-  });
-
-  test("isCountedEntry requires a message payload", () => {
-    expect(isCountedEntry({ type: "message", message: {} })).toBe(true);
-    expect(isCountedEntry({ type: "message" })).toBe(false);
-    expect(isCountedEntry({ type: "compaction" })).toBe(false);
-    expect(isCountedEntry(null)).toBe(false);
-  });
-});
-
-describe("#N from the session file (the hook's fallback)", () => {
-  test("counts message entries in file order across non-message lines", () => {
-    const file = join(tmpDir, "session.jsonl");
-    const lines = [
-      { type: "session", id: "h" },
-      { id: "m1", type: "message", message: { role: "user" } },
-      { id: "c1", type: "compaction", firstKeptEntryId: "" },
-      "not-json{{{",
-      { id: "m2", type: "message", message: { role: "assistant" } },
-    ];
-    writeFileSync(file, lines.map((l) => (typeof l === "string" ? l : JSON.stringify(l))).join("\n") + "\n");
-    const map = indexById(readEntries(file)!);
-    expect(map?.get("m1")).toBe(0);
-    expect(map?.get("m2")).toBe(1);
-    expect(map?.has("c1")).toBe(false);
-  });
-
-  test("returns undefined for a missing file", () => {
-    expect(readEntries(join(tmpDir, "does-not-exist.jsonl"))).toBeUndefined();
-  });
-});
-
-// ── normalize / compile threading ───────────────────────────────────────
-
-describe("normalize with explicit sourceIndices", () => {
   test("uses global indices instead of window positions", () => {
-    const blocks = normalize(
-      [userMsg("inspect"), assistantWithToolCall("edit", { file_path: "beta.txt" })],
-      [3, 4],
-    );
-    expect(blocks.map((b) => b.sourceIndex)).toEqual([3, 4]);
+    expect(brief([3, 4])).toContain('* edit "beta.txt" (#4)');
   });
 
-  test("a missing entry yields no sourceIndex (fail-closed, not positional)", () => {
-    const blocks = normalize(
-      [userMsg("inspect"), assistantWithToolCall("edit", { file_path: "beta.txt" })],
-      [3, undefined],
-    );
-    expect(blocks[0].sourceIndex).toBe(3);
-    expect(blocks[1].sourceIndex).toBeUndefined();
+  test("a missing entry yields no ref (fail-closed, not positional)", () => {
+    const out = brief([3, undefined]);
+    expect(out).toContain('* edit "beta.txt"');
+    expect(out).not.toMatch(/\* edit "beta\.txt" \(#/);
   });
 
-  test("omitted indices preserve the legacy positional behavior", () => {
-    const blocks = normalize([userMsg("a"), userMsg("b")]);
-    expect(blocks.map((b) => b.sourceIndex)).toEqual([0, 1]);
+  test("omitted indices are window positions", () => {
+    expect(brief()).toContain('* edit "beta.txt" (#1)');
   });
 });
 
@@ -206,7 +128,7 @@ function hookHarness(allEntries: any[] | undefined) {
           tokensBefore: 1000,
           ...preparation,
         },
-        customInstructions: OMP_VCC_COMPACT_INSTRUCTION,
+        customInstructions: COMPACT_INSTRUCTION,
         signal: new AbortController().signal,
       },
       ctx,
@@ -226,7 +148,8 @@ describe("compaction hook emits session-global refs", () => {
       compactionEntry("c1", ""),
       msgEntry("m4", userMsg("Modify the beta fixture")),
       msgEntry("m5", betaEdit),
-      msgEntry("m6", toolResult("edit", "done")),
+      // A result of a real edit's size: a summary of a few bytes would be bigger than they are.
+      msgEntry("m6", toolResult("edit", `done\n${"beta line changed\n".repeat(40)}`)),
     ];
     const { invoke } = hookHarness(all);
     const result = invoke(all, {

@@ -1,25 +1,29 @@
 // vcc_recall keeps the originals of what omp rewrites in the session file
-// (src/core/raw-store.ts, src/hooks/raw-capture.ts), with no omp setting changed.
-import { ompBinding, testConfig } from "./support/binding";
-import { sessionLineage } from "../src/core/session-file";
+// (<session>.jsonl.vcc-raw: src/hooks/raw-capture.ts, lisp/src/raw-capture.lisp and
+// session.lisp), with no omp setting changed. Putting an original back is held
+// to its rules in lisp/test/store.lisp.
+import { ompBinding } from "./support/binding";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import {
-  appendRawStore,
-  keptContent,
-  MAX_KEPT_CHARS,
-  mayBeRewritten,
-  rawStoreIds,
-  rawStorePath,
-  readRawStore,
-  wasRewritten,
-  withOriginalContent,
-} from "../src/core/raw-store";
+
+/** The store beside a session file. */
+const rawStorePath = (file: string): string => `${file}.vcc-raw`;
+/** What the store keeps, by id: the first copy of each (the store's format: one {id, content} line each). */
+const readRawStore = (file: string, ids: Set<string>): Map<string, unknown> => {
+  const kept = new Map<string, unknown>();
+  if (!existsSync(rawStorePath(file))) return kept;
+  for (const line of readFileSync(rawStorePath(file), "utf8").split("\n")) {
+    try {
+      const r = JSON.parse(line);
+      if (ids.has(r.id) && !kept.has(r.id)) kept.set(r.id, r.content);
+    } catch {}
+  }
+  return kept;
+};
 import { captureNewEntries, createRawCaptureState, pointPlaceholders, registerRawCapture } from "../src/hooks/raw-capture";
 import { registerRecallTool } from "../src/tools/recall";
-import { listProjectSessions } from "../src/core/sessions";
 
 let dir: string;
 const prev = process.env.OMP_VCC_CONFIG_PATH;
@@ -36,32 +40,34 @@ afterAll(() => {
 const text = (t: string) => [{ type: "text", text: t }];
 
 describe("what is kept", () => {
+  /** What one capture of these messages keeps in the store, by id. */
+  const keptOf = (name: string, messages: unknown[]): Map<string, unknown> => {
+    const file = join(dir, `${name}.jsonl`);
+    const entries = messages.map((message, i) => ({ type: "message", id: `k${i}`, message }));
+    captureNewEntries(createRawCaptureState(), { getSessionFile: () => file, getEntries: () => entries });
+    return readRawStore(file, new Set(entries.map((e) => e.id)));
+  };
+
   it("tool output and long text, not short messages or what omp already rewrote", () => {
-    expect(mayBeRewritten({ role: "toolResult", content: text("ok") })).toBe(true);
-    expect(mayBeRewritten({ role: "toolResult", content: [] })).toBe(false);
-    expect(mayBeRewritten({ role: "toolResult", content: text("x"), prunedAt: 1 })).toBe(false);
-    expect(mayBeRewritten({ role: "assistant", content: text("short reply") })).toBe(false);
-    expect(mayBeRewritten({ role: "assistant", content: text("y".repeat(1_500)) })).toBe(true);
-    expect(mayBeRewritten({ role: "user", content: "z".repeat(1_500) })).toBe(true);
-    expect(mayBeRewritten({ role: "bashExecution", command: "ls", output: "a".repeat(5_000) })).toBe(false);
+    const kept = keptOf("which", [
+      { role: "toolResult", content: text("ok") },
+      { role: "toolResult", content: [] },
+      { role: "toolResult", content: text("x"), prunedAt: 1 },
+      { role: "assistant", content: text("short reply") },
+      { role: "assistant", content: text("y".repeat(1_500)) },
+      { role: "user", content: "z".repeat(1_500) },
+      { role: "bashExecution", command: "ls", output: "a".repeat(5_000) },
+    ]);
+    expect([...kept.keys()].sort()).toEqual(["k0", "k4", "k5"]);
   });
 
   it("keeps text (clipped) and drops image data", () => {
-    const kept = keptContent([{ type: "text", text: "a" }, { type: "image", mimeType: "image/png", data: "QUJD".repeat(1000) }]) as any[];
-    expect(kept).toEqual([{ type: "text", text: "a" }, { type: "image", mimeType: "image/png" }]);
-    const huge = keptContent(text("b".repeat(MAX_KEPT_CHARS + 10))) as any[];
-    expect(huge[0].text).toEndWith(`...[omp-vcc kept the first ${MAX_KEPT_CHARS} of ${MAX_KEPT_CHARS + 10} chars]`);
-  });
-
-  it("puts back what omp rewrote: a tool result whole, another message block by block", () => {
-    expect(wasRewritten({ role: "toolResult", content: text("[Output truncated - 900 tokens]"), prunedAt: 5 })).toBe(true);
-    expect(wasRewritten({ role: "assistant", content: text("see [… moved to artifact://3]") })).toBe(true);
-    expect(wasRewritten({ role: "assistant", content: text("plain") })).toBe(false);
-    expect(withOriginalContent({ role: "toolResult", content: text("[Output truncated]"), prunedAt: 5, toolCallId: "c" } as any, text("full output")))
-      .toEqual({ role: "toolResult", content: text("full output"), toolCallId: "c" });
-    const call = { type: "toolCall", id: "t", name: "read", arguments: { path: "a.ts" } };
-    expect(withOriginalContent({ role: "assistant", content: [{ type: "text", text: "[artifact://3]" }, call] }, [{ type: "text", text: "the block" }, call]))
-      .toEqual({ role: "assistant", content: [{ type: "text", text: "the block" }, call] });
+    const kept = keptOf("what", [
+      { role: "toolResult", content: [{ type: "text", text: "a" }, { type: "image", mimeType: "image/png", data: "QUJD".repeat(1000) }] },
+      { role: "toolResult", content: text("b".repeat(1_000_010)) },
+    ]);
+    expect(kept.get("k0")).toEqual([{ type: "text", text: "a" }, { type: "image", mimeType: "image/png" }]);
+    expect((kept.get("k1") as any[])[0].text).toEndWith("...[omp-vcc kept the first 1000000 of 1000010 chars]");
   });
 });
 
@@ -113,7 +119,7 @@ describe("with omp's own session manager", () => {
 
     // The copy is not a session to omp or to recall's project listing.
     expect(existsSync(rawStorePath(file))).toBe(true);
-    expect(listProjectSessions(sessions, "").map((s) => s.file)).toEqual([file]);
+    expect(await recallOn(sm, { mode: "sessions" })).toStartWith("No earlier sessions in this project");
 
     // Without it, the placeholder is all there is.
     rmSync(rawStorePath(file));
@@ -122,7 +128,7 @@ describe("with omp's own session manager", () => {
 
   it("is taken on omp's events, and not when keepOriginals is off", () => {
     const handlers = new Map<string, Array<(e: unknown, c: unknown) => void>>();
-    registerRawCapture({ on: (name: string, h: any) => handlers.set(name, [...(handlers.get(name) ?? []), h]) } as any, testConfig);
+    registerRawCapture({ on: (name: string, h: any) => handlers.set(name, [...(handlers.get(name) ?? []), h]) } as any, ompBinding);
     const file = join(dir, "events.jsonl");
     const entries: any[] = [{ type: "message", id: "r1", message: { role: "toolResult", toolCallId: "c", content: text("out") } }];
     const ctx = { sessionManager: { getSessionFile: () => file, getEntries: () => entries } };
@@ -151,11 +157,31 @@ describe("the summary is written from the originals", () => {
     expect([...readRawStore(file, new Set(["t1"])).values()]).toEqual([text("out")]);
   });
 
-  it("finds a record whatever order its fields were built in", () => {
-    const file = join(dir, "order.jsonl");
-    appendRawStore(file, [{ content: text("kept"), id: "o1" } as any]);
-    expect([...rawStoreIds(file)]).toEqual(["o1"]);
-    expect([...readRawStore(file, new Set(["o1"])).values()]).toEqual([text("kept")]);
+  it("a switch to another session and back copies nothing twice", () => {
+    const a = join(dir, "switch-a.jsonl");
+    const b = join(dir, "switch-b.jsonl");
+    const entries = (p: string) => [{ type: "message", id: `${p}1`, message: { role: "toolResult", toolCallId: "c", content: text(`${p} out`) } }];
+    const state = createRawCaptureState();
+    let file = a;
+    const sm = { getSessionFile: () => file, getEntries: () => entries(file === a ? "a" : "b") };
+    expect(captureNewEntries(state, sm)).toBe(1);
+    file = b;
+    expect(captureNewEntries(state, sm)).toBe(1);
+    file = a;
+    // Back in the first session, its store already keeps what it holds.
+    expect(captureNewEntries(state, sm)).toBe(0);
+    expect(readFileSync(rawStorePath(a), "utf8").trim().split("\n")).toHaveLength(1);
+  });
+
+  it("a fork's capture skips what its parent's store keeps already, and copies what it does not", () => {
+    const parent = join(dir, "parent.jsonl");
+    const child = join(dir, "child.jsonl");
+    writeFileSync(parent, `${JSON.stringify({ type: "session", id: "p" })}\n`);
+    writeFileSync(child, `${JSON.stringify({ type: "session", id: "c", parentSession: parent })}\n`);
+    writeFileSync(rawStorePath(parent), `${JSON.stringify({ id: "f1", content: text("the parent's copy") })}\n`);
+    const entries = ["f1", "f2"].map((id) => ({ type: "message", id, message: { role: "toolResult", toolCallId: id, content: text(`${id} out`) } }));
+    expect(captureNewEntries(createRawCaptureState(), { getSessionFile: () => child, getEntries: () => entries })).toBe(1);
+    expect(readFileSync(rawStorePath(child), "utf8")).toBe(`${JSON.stringify({ id: "f2", content: text("f2 out") })}\n`);
   });
 
   it("a commit whose git output omp blanked before omp-vcc compacted is still in [Commits]", async () => {
@@ -180,7 +206,7 @@ describe("the summary is written from the originals", () => {
     }, { ui: { notify: () => {} }, sessionManager: { getSessionFile: () => file, getEntries: () => entries, getBranch: () => entries } }).compaction.summary as string;
 
     expect(summarize()).not.toContain("4f2a9c1");
-    appendRawStore(file, [{ id: "r1", content: text("[main 4f2a9c1] fix: rounding in totals\n 1 file changed, 2 insertions(+)") }]);
+    writeFileSync(rawStorePath(file), `${JSON.stringify({ id: "r1", content: text("[main 4f2a9c1] fix: rounding in totals\n 1 file changed, 2 insertions(+)") })}\n`);
     const summary = summarize();
     expect(summary).toContain("[Commits]\n- 4f2a9c1: fix: rounding in totals");
     // The live entry is untouched: the context still holds omp's placeholder.
@@ -201,19 +227,19 @@ describe("omp's placeholders point at the original", () => {
   it("names the recall ref when omp-vcc kept the original, the same text every time", () => {
     for (const notice of ["[Output truncated - 1200 tokens]", "[Superseded by a newer read of this file]", "[Uneventful result elided]"]) {
       const messages = [{ role: "user", content: "look at the log" }, placeholder(notice)];
-      const out = pointPlaceholders(messages, kept(["r1"]), sm) as any[];
+      const out = pointPlaceholders(messages, kept(["r1"]), ompBinding, { sessionManager: sm }) as any[];
       expect(out[1].content).toEqual(text(`${notice} (the original: vcc_recall expand:[2])`));
-      expect(pointPlaceholders(messages, kept(["r1"]), sm)).toEqual(out);
+      expect(pointPlaceholders(messages, kept(["r1"]), ompBinding, { sessionManager: sm })).toEqual(out);
       // The request's own messages are not changed in place.
       expect(messages[1].content).toEqual(text(notice));
     }
   });
 
   it("says nothing it cannot back: no original kept, or not omp's placeholder", () => {
-    expect(pointPlaceholders([placeholder("[Output truncated - 1200 tokens]")], kept([]), sm)).toBeUndefined();
-    expect(pointPlaceholders([placeholder("[Output truncated - 1200 tokens]")], kept(["other"]), sm)).toBeUndefined();
-    expect(pointPlaceholders([placeholder("real output that happens to be short")], kept(["r1"]), sm)).toBeUndefined();
-    expect(pointPlaceholders([{ ...placeholder("[Output truncated - 1200 tokens]"), toolCallId: "unknown" }], kept(["r1"]), sm)).toBeUndefined();
+    expect(pointPlaceholders([placeholder("[Output truncated - 1200 tokens]")], kept([]), ompBinding, { sessionManager: sm })).toBeUndefined();
+    expect(pointPlaceholders([placeholder("[Output truncated - 1200 tokens]")], kept(["other"]), ompBinding, { sessionManager: sm })).toBeUndefined();
+    expect(pointPlaceholders([placeholder("real output that happens to be short")], kept(["r1"]), ompBinding, { sessionManager: sm })).toBeUndefined();
+    expect(pointPlaceholders([{ ...placeholder("[Output truncated - 1200 tokens]"), toolCallId: "unknown" }], kept(["r1"]), ompBinding, { sessionManager: sm })).toBeUndefined();
   });
 });
 
@@ -243,7 +269,6 @@ describe("a fork reads its parent's originals", () => {
     await sm.rewriteEntries();
     expect(sm.getSessionFile()).not.toBe(parentFile);
     expect(existsSync(rawStorePath(sm.getSessionFile()))).toBe(false);
-    expect(sessionLineage(sm.getSessionFile())).toEqual([sm.getSessionFile(), parentFile]);
     // Its capture knows the parent's copy, so nothing is copied twice.
     expect(captureNewEntries(state, sm)).toBe(0);
 

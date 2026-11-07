@@ -5,10 +5,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { join } from "path";
 import { homedir } from "os";
 import { applyTailBudget, buildOwnCut, registerHook } from "./support/host";
-import { callKind, fileWriteOf, namedPaths, readsPart, stripReadSelector } from "../src/core/tools";
-import { extractFiles } from "../src/extract/files";
-import { renderMessage } from "../src/core/render-entries";
-import { touchedFiles } from "../src/core/touched";
+import { summarize } from "./support/summary";
+import { recallOn } from "./support/pairs";
 
 const msg = (id: string, role: "user" | "assistant", content = `text of ${id}`) => ({
   id,
@@ -18,6 +16,10 @@ const msg = (id: string, role: "user" | "assistant", content = `text of ${id}`) 
 const comp = (id: string, firstKeptEntryId: string, extra: Record<string, unknown> = {}) =>
   ({ id, type: "compaction", firstKeptEntryId, summary: "s", tokensBefore: 1, ...extra });
 const reset = (id: string) => ({ id, type: "reset_boundary" });
+const call = (args: Record<string, unknown>, name = "edit") => ({ role: "assistant", content: [{ type: "toolCall", id: "t", name, arguments: args }] });
+/** The line a range shows of each message, by #N. */
+const lines = (messages: unknown[]): string[] =>
+  recallOn(messages, { range: [0, messages.length - 1] }).split("\n\n").slice(1).map((l) => l.replace(/^#\d+ /, ""));
 
 const selectedIds = (entries: any[], keep = 0) => {
   const cut = buildOwnCut(entries, keep);
@@ -66,35 +68,24 @@ describe("live window: omp native-replay compaction", () => {
 describe("omp tool shapes", () => {
   const hashline = "*** Begin Patch\n[src/auth/session.ts#1A2B]\nPUT 4.=4:\n+x\n[lib/util.py#3c4d]\nCUT 1.=2\n*** End Patch";
 
-  test("a hashline edit names the files of its [PATH#TAG] sections", () => {
-    expect(namedPaths({ input: hashline })).toEqual(["src/auth/session.ts", "lib/util.py"]);
-    expect(namedPaths({ input: "[not a header] text" })).toEqual([]);
-    // A path argument still wins.
-    expect(namedPaths({ path: "a.ts", input: hashline })).toEqual(["a.ts"]);
+  test("a hashline edit names the files of its [PATH#TAG] sections; a path argument still wins", () => {
+    expect(lines([call({ input: hashline }), call({ input: "[not a header] text" }), call({ path: "a.ts", input: hashline })])).toEqual([
+      "[assistant] files:[src/auth/session.ts, lib/util.py] edit(path=src/auth/session.ts +1)",
+      "[assistant] edit(input)",
+      "[assistant] files:[a.ts] edit(path=a.ts)",
+    ]);
   });
 
-  test("an apply_patch edit names the files of its headers", () => {
+  test("an apply_patch edit names the files of its headers, under either name", () => {
     const patch = "*** Begin Patch\n*** Add File: hello.txt\n+Hello\n*** Update File: src/app.py\n*** Move to: src/main.py\n@@\n-a\n+b\n*** Delete File: old.txt\n*** End Patch\n";
-    expect(namedPaths({ input: patch })).toEqual(["hello.txt", "src/app.py", "src/main.py", "old.txt"]);
-    expect(callKind({ name: "edit", args: { input: patch } })).toBe("edit");
     // On GPT-5 omp's edit goes on the wire, and into the session, as apply_patch.
-    expect(callKind({ name: "apply_patch", args: { input: patch } })).toBe("edit");
+    for (const name of ["edit", "apply_patch"]) {
+      const { files } = summarize([{ kind: "tool_call", name, args: { input: patch } } as any]).state;
+      expect([...files.modified, ...files.created].sort()).toEqual(["hello.txt", "old.txt", "src/app.py", "src/main.py"]);
+    }
   });
 
-  test("a read of lines is a read of part of the file; :raw and a whole read are not", () => {
-    const read = (path: string) => readsPart({ name: "read", args: { path } });
-    for (const p of ["src/a.ts:50-100", "src/a.ts:L50-L60", "src/a.ts:-20", "src/a.ts:1-12,-15", "src/a.ts:raw:50-100", "src/a.ts:50+10"]) expect(read(p)).toBe(true);
-    for (const p of ["src/a.ts", "src/a.ts:raw", "src/a.ts:img", "db.sqlite:table"]) expect(read(p)).toBe(false);
-  });
-
-  test("read selectors are dropped, other colons kept", () => {
-    expect(stripReadSelector("src/a.ts:50-100")).toBe("src/a.ts");
-    expect(stripReadSelector("src/a.ts:raw")).toBe("src/a.ts");
-    expect(stripReadSelector("src/a.ts:-20")).toBe("src/a.ts");
-    expect(stripReadSelector("src/a.ts:1-12,-15")).toBe("src/a.ts");
-    expect(stripReadSelector("db.sqlite:table")).toBe("db.sqlite:table");
-    expect(stripReadSelector("src/a.ts")).toBe("src/a.ts");
-  });
+  // A read of lines, and its selectors: lisp/test/tools.lisp.
 
   test("[Files And Changes] lists a file read with a selector once, and an edited file", () => {
     const blocks: any[] = [
@@ -102,44 +93,38 @@ describe("omp tool shapes", () => {
       { kind: "tool_call", name: "read", args: { path: "src/auth/session.ts:81-160" } },
       { kind: "tool_call", name: "edit", args: { input: hashline } },
     ];
-    const files = extractFiles(blocks);
-    expect([...files.read]).toEqual(["src/auth/session.ts"]);
+    const { files } = summarize(blocks).state;
+    expect(files.read).toEqual(["src/auth/session.ts"]);
     expect([...files.modified].sort()).toEqual(["lib/util.py", "src/auth/session.ts"]);
   });
 
   test("mode:'touched' lists a hashline edit's files, not drillable", () => {
-    const edit: any = { role: "assistant", content: [{ type: "toolCall", id: "t", name: "edit", arguments: { input: hashline } }] };
-    const touched = touchedFiles([{ entry: { index: 7, role: "assistant", summary: "" }, message: edit }]);
-    expect(touched.map((t) => t.path).sort()).toEqual(["lib/util.py", "src/auth/session.ts"]);
-    expect(touched[0].entries).toEqual([{ index: 7, toolName: "edit", drillable: false }]);
+    const out = recallOn([call({ input: hashline })], { mode: "touched" });
+    expect(out).toContain("  src/auth/session.ts    #0 (edit)");
+    expect(out).toContain("  lib/util.py    #0 (edit)");
+    expect(out).not.toContain("File content at an entry");
   });
 });
 
 describe("omp's replace edit (old_string/new_string)", () => {
   const edit: any = { role: "assistant", content: [{ type: "toolCall", id: "t", name: "edit", arguments: { path: "src/money.ts", old_string: "floor + 1 : floor", new_string: "floor : floor + 1" } }] };
 
-  test("is a change: listed and drillable in mode:'touched'", () => {
-    const call = { name: "edit", args: edit.content[0].arguments };
-    expect(fileWriteOf(call)).toEqual({ path: "src/money.ts", replace: { oldText: "floor + 1 : floor", newText: "floor : floor + 1" } });
-    const touched = touchedFiles([{ entry: { index: 4, role: "assistant", summary: "" }, message: edit }]);
-    expect(touched[0].entries).toEqual([{ index: 4, toolName: "edit" }]);
+  test("is a change: listed and drillable in mode:'touched', its file content what it put in", () => {
+    const out = recallOn([edit], { mode: "touched" });
+    expect(out).toContain("  src/money.ts    #0 (edit)");
+    expect(out).toContain("query:'#0:money.ts'");
+    expect(recallOn([edit], { query: "#0:src/money.ts" })).toContain("floor : floor + 1");
   });
 });
 
 describe("recall rendering of omp roles", () => {
-  test("a python cell renders like a user-run command", () => {
-    const r = renderMessage({ role: "pythonExecution", code: "print(1)", output: "1" } as any, 3);
-    expect(r).toEqual({ index: 3, role: "python", summary: ">>> print(1)\n1" });
-  });
-
-  test("an @file mention renders its paths, not the file bodies", () => {
-    const r = renderMessage({ role: "fileMention", files: [{ path: "notes.md", content: "BODY" }] } as any, 4);
-    expect(r).toEqual({ index: 4, role: "file", summary: "@notes.md", files: ["notes.md"] });
+  test("a python cell renders like a user-run command, an @file mention by its paths, not the file bodies", () => {
+    expect(lines([{ role: "pythonExecution", code: "print(1)", output: "1" }, { role: "fileMention", files: [{ path: "notes.md", content: "BODY" }] }]))
+      .toEqual(["[python] >>> print(1)\n1", "[file] files:[notes.md] @notes.md"]);
   });
 
   test("developer and custom messages keep their role", () => {
-    expect(renderMessage({ role: "developer", content: "reminder" } as any, 5).role).toBe("developer");
-    expect(renderMessage({ role: "custom", content: "card" } as any, 6).role).toBe("custom");
+    expect(lines([{ role: "developer", content: "reminder" }, { role: "custom", content: "card" }])).toEqual(["[developer] reminder", "[custom] card"]);
   });
 });
 

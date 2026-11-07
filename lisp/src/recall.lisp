@@ -2,19 +2,17 @@
 ;;;;
 ;;;; SPDX-License-Identifier: MIT
 ;;;;
-;;;; A port of src/core/recall-run.ts recall(), with drill-down.ts (#N:path),
-;;;; touched.ts (mode:'touched') and the views they read through. The host's
-;;;; part comes in with the call: the session file and its directory, the
+;;;; Every action (a range, expand, search, #N:path, mode:'touched', the
+;;;; project's sessions) and the views they read through, for the tool and the
+;;;; command alike (src/core/recall-run.ts asks). The host's part comes in with
+;;;; the call: the session file and its directory, the
 ;;;; project's other session files newest first, the working directory, and the
 ;;;; session manager's current branch (its ids, and its entries' types and roles
 ;;;; for the turn in progress). Agents act on the output: it is an interface.
 
 (in-package #:omp-vcc)
 
-(defparameter +search-page-size+ 5)
-(defparameter +range-page-size+ 20)
 (defparameter +recent-count+ 25)
-(defparameter +recall-output-chars+ (* 50 1024))
 (defparameter +min-recall-output-chars+ (* 8 1024))
 (defparameter +expand-detail-chars+ 4000)
 (defparameter +sessions-page-size+ 10)
@@ -61,8 +59,8 @@
             (let ((lineage (view-lineage v)))
               (loop for (index id message) in (first (view-read v))
                     when (or (null lineage) (and id (gethash id lineage)))
-                      append (let ((r (ignore-errors (render-entry message full index (view-detail-chars v) (via v)))))
-                               (and r (list (list :index index :id id :message message :role (first r) :summary (second r) :files (third r))))))))))
+                      collect (destructuring-bind (role summary files) (render-entry message full index (view-detail-chars v) (via v))
+                                (list :index index :id id :message message :role role :summary summary :files files)))))))
 
 (defun view-message (v index)
   (third (find index (first (view-read v)) :key #'first)))
@@ -111,7 +109,7 @@
                 do (return-from turn (if (< i (1- (length on-path))) (map 'list #'first (subseq on-path i)) '())))
         '()))))
 
-;;; --- #N:path (drill-down.ts) ------------------------------------------------------------------
+;;; --- #N:path --------------------------------------------------------------------------------
 
 (defun file-writes-of (message)
   (loop for c in (tool-calls-of message)
@@ -173,7 +171,7 @@
                                index (length matched) pattern (listing matched) index via))
                       (t (file-write-content (first matched) index full offset limit max-chars via)))))))))
 
-;;; --- mode:'touched' (touched.ts) --------------------------------------------------------------
+;;; --- mode:'touched' ----------------------------------------------------------------------------
 
 (defun touched-files (loaded)
   "Every file the entries' writes and edits change, first changed first: (PATH . TOUCHES), a touch (INDEX TOOL DRILLABLE)."
@@ -218,13 +216,13 @@
 
 ;;; --- search through a view ------------------------------------------------------------------
 
-(defun search-loaded (loaded query)
-  "search-entries.ts searchEntries over LOADED: (values HITS TOTAL TRUNCATED) with HITS entry plists with :snippet, or (values :aborted MESSAGE)."
+(defun search-loaded (loaded query &key (floor +relative-floor+) (cap +result-cap+))
+  "Search the entries LOADED for QUERY: (values HITS TOTAL TRUNCATED) with HITS entry plists with :snippet, or (values :aborted MESSAGE)."
   (let ((v (coerce loaded 'vector)))
     (multiple-value-bind (hits total truncated)
-        (search-docs query (map 'vector (lambda (e) (list (getf e :role) (search-text (getf e :message)) (getf e :files))) v))
-      (cond ((eq hits :regex) (error 'left-to-ts :detail "a query the core leaves to TS"))
-            ((eq hits :aborted) (values :aborted total))
+        (search-docs query (map 'vector (lambda (e) (list (getf e :role) (search-text (getf e :message)) (getf e :files))) v)
+                     :floor floor :cap cap)
+      (cond ((eq hits :aborted) (values :aborted total))
             (t (values (mapcar (lambda (h) (append (list :snippet (cdr h)) (aref v (car h)))) hits) total truncated))))))
 
 (defun search-before (v query skip)
@@ -298,8 +296,6 @@
 
 ;;; --- the other actions -----------------------------------------------------------------------
 
-(defun entry-plist (e) e)
-
 (defun run-expand (indices v)
   (let* ((pools (if (equal (view-scope v) "all") (list v) (list v (view-widen v))))
          (found (mapcar (lambda (i) (cons i (and (integerp i)
@@ -316,9 +312,7 @@
           (dolist (f found)
             (destructuring-bind (entry pool pos) (cdr f)
               (push entry out)
-              (let ((ids (remove-duplicates (loop for part across (let ((c (json-get (getf entry :message) "content"))) (if (and (vectorp c) (not (stringp c))) c #()))
-                                                  when (and (json-object-p part) (equal (json-get part "type") "toolCall") (stringp (json-get part "id")))
-                                                    collect (json-get part "id"))
+              (let ((ids (remove-duplicates (remove nil (mapcar #'call-id (tool-calls-of (getf entry :message))))
                                             :test #'string=)))
                 (when ids
                   (let ((loaded (view-load pool t)))
@@ -413,7 +407,7 @@
                             (format-recall-output (last-n (view-load v nil) +recent-count+)))))))
 
 (defun run-recall (input)
-  "recall-run.ts recall(): (values OK TEXT SEVERITY). INPUT carries the call (the tool's params or the command's text) and the host's part."
+  "One recall: (values OK TEXT SEVERITY). INPUT carries the call (the tool's params or the command's text) and the host's part."
   (let* ((call (json-get input "call"))
          (surface (if (equal (json-get call "surface") "command") (list :command (json-get call "name")) (list :tool)))
          (request (if (eq (first surface) :tool) (parse-tool-request (json-get call "params")) (parse-command-request (string-or (json-get call "args") ""))))

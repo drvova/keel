@@ -15,6 +15,9 @@
 
 (in-package #:omp-vcc)
 
+(defconstant +double-exact+ (expt 2 53) "Integers up to this a double holds exactly: past it JavaScript's numbers skip.")
+(defconstant +max-safe-integer+ (1- (expt 2 53)) "Number.MAX_SAFE_INTEGER.")
+
 (declaim (inline astral-p))
 (defun astral-p (char)
   "True when CHAR takes two UTF-16 code units (a surrogate pair)."
@@ -128,10 +131,6 @@ leaves an empty string at that edge, and \"\" splits into (\"\")."
 the BMP are compared as their code units, which no case maps."
   (if (astral-p char) char (code-char (canon (char-code char)))))
 
-(defun js-char-equal (a b)
-  "True when A and B are the same character under a non-unicode /i regex."
-  (char= (js-canonical a) (js-canonical b)))
-
 (defun split-string (string char)
   "STRING split at every CHAR, empty parts kept: JavaScript's split(CHAR)."
   (loop with start = 0
@@ -171,7 +170,7 @@ the BMP are compared as their code units, which no case maps."
 
 (defun js-clip (text &optional (max 200))
   "TEXT cut to MAX code units at a space past 60% of MAX when there is one,
-never between the halves of a pair: content.ts's clip."
+never between the halves of a pair."
   (let ((length (js-length text)))
     (if (<= length max)
         text
@@ -186,7 +185,7 @@ never between the halves of a pair: content.ts's clip."
   "The number X as JavaScript's String() writes it (Number::toString): the
 shortest digits that read back as the double, in plain notation from 1e-6 up to
 1e21 and in exponent notation outside it."
-  (if (and (integerp x) (<= (abs x) 9007199254740992))
+  (if (and (integerp x) (<= (abs x) +double-exact+))
       (format nil "~d" x)
       (let ((d (coerce x 'double-float)))
         (if (zerop d)
@@ -217,3 +216,24 @@ template literal writes it."
         ((vectorp value)
          (join-strings (map 'list (lambda (v) (if (or (null v) (eq v :null)) "" (js-string-of v))) value) ","))
         (t (princ-to-string value))))
+
+(defun js-trim-end (string)
+  (let ((end (position-if-not #'js-whitespace-p string :from-end t)))
+    (if end (subseq string 0 (1+ end)) "")))
+
+(defun js-trim-start (string)
+  (let ((start (position-if-not #'js-whitespace-p string)))
+    (if start (subseq string start) "")))
+
+(defun starts-with (prefix string &key (start 0))
+  (and (<= (+ start (length prefix)) (length string))
+       (string= prefix string :start2 start :end2 (+ start (length prefix)))))
+
+(defun ends-with (suffix string)
+  (and (<= (length suffix) (length string))
+       (string= suffix string :start2 (- (length string) (length suffix)))))
+
+(defun js-round (x)
+  "Math.round of the double X: the nearest integer, halves up."
+  (let* ((x (coerce x 'double-float)) (f (ffloor x)))
+    (truncate (if (>= (- x f) 0.5d0) (+ f 1) f))))

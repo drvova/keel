@@ -8,6 +8,7 @@
     "index.ts",
     "pi.ts",
     "src/",
+    "lisp/",
     "CHANGELOG.md"
   ],
   "keywords": [

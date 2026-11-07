@@ -1,6 +1,6 @@
 import { describe, it, expect } from "bun:test";
-import { compile as compileAt, compileSummary, type CompileInput } from "../src/core/summarize";
-import { DEFAULT_SUMMARY_LIMITS } from "../src/core/window";
+import { compile as compileAt, compileSummary, type CompileInput } from "./support/compile";
+import { DEFAULT_SUMMARY_LIMITS } from "./support/window";
 import {
   userMsg,
   assistantText,
@@ -9,7 +9,7 @@ import {
 } from "./fixtures";
 /**
  * compile at a ~128K window's section limits unless a test sets its own. A
- * `previousSummary` is read from its text (core/legacy-summary.ts), as one an
+ * `previousSummary` is read from its text (lisp/src/summary.lisp, the legacy reader), as one an
  * older version wrote; the hook merges into the state the previous compaction
  * stored (`previous`, tests/summary-state.test.ts).
  */

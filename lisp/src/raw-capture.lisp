@@ -2,12 +2,18 @@
 ;;;;
 ;;;; SPDX-License-Identifier: MIT
 ;;;;
-;;;; A port of src/hooks/raw-capture.ts (captureNewEntries, pointPlaceholders)
-;;;; and of the writing half of src/core/raw-store.ts (mayBeRewritten,
-;;;; keptContent, appendRawStore, rawStoreIds); session.lisp reads the store.
-;;;; What a binding has seen and kept is its own state, in the TS binding: the
-;;;; core gets the entries that arrived since, appends the store itself, and on
-;;;; a new session file reads the ids the file's lineage already keeps.
+;;;; Between compactions omp keeps the live context small by rewriting messages
+;;;; in place and persisting the rewrite: it blanks old tool output, supersedes
+;;;; older reads, elides results their tool flagged useless, and shakes tool
+;;;; output and large fenced blocks out into `artifact://` files. vcc_recall
+;;;; reads the session file as the raw history, so each rewrite would lose what
+;;;; it replaced. omp-vcc copies every message omp may rewrite as it lands into
+;;;; `<session>.jsonl.vcc-raw` beside it (not a `.jsonl`: omp lists those as
+;;;; sessions), and points omp's placeholders at the copy; session.lisp reads
+;;;; the store. What a binding has seen and kept is its own state, in
+;;;; src/hooks/raw-capture.ts: the core gets the entries that arrived since,
+;;;; appends the store itself, and on a new session file reads the ids the
+;;;; file's lineage already keeps.
 
 (in-package #:omp-vcc)
 
@@ -16,28 +22,24 @@
 (defparameter +max-kept-chars+ 1000000
   "One message's kept text is clipped here, so a stray multi-megabyte result cannot double the session's size alone.")
 
-(defun content-parts (content)
-  "raw-store.ts parts: the object parts of a content array (not arrays, not null)."
-  (and (vectorp content) (not (stringp content)) (remove-if-not #'json-object-p (coerce content 'list))))
-
 (defun text-part-p (p) (and (equal (json-get p "type") "text") (stringp (json-get p "text"))))
 
 (defun may-be-rewritten-p (m)
-  "raw-store.ts mayBeRewritten: tool output, or text long enough to hold a block omp shakes."
+  "Whether omp may rewrite M: tool output, or text long enough to hold a block omp shakes."
   (when (and (truthy-p m) (not (and (hash-table-p m) (nth-value 1 (gethash "prunedAt" m)))))
     (let ((role (json-get m "role")) (content (json-get m "content")))
       (cond ((equal role "toolResult")
              (plusp (if (stringp content)
                         (js-length content)
-                        (loop for p in (content-parts content) when (text-part-p p) sum (js-length (json-get p "text"))))))
+                        (loop for p in (object-parts content) when (text-part-p p) sum (js-length (json-get p "text"))))))
             ((member role '("assistant" "user" "developer") :test #'equal)
              (if (stringp content)
                  (>= (js-length content) +shakeable-text-chars+)
                  (some (lambda (p) (and (text-part-p p) (>= (js-length (json-get p "text")) +shakeable-text-chars+)))
-                       (content-parts content))))))))
+                       (object-parts content))))))))
 
 (defun kept-content (content)
-  "raw-store.ts keptContent: the text (clipped), other parts as they are, images without their data."
+  "What the store keeps of CONTENT: the text (clipped), other parts as they are, images without their data."
   (let ((budget +max-kept-chars+))
     (flet ((clip (text)
              (let ((n (js-length text)))
@@ -47,7 +49,7 @@
                      (setf budget 0))))))
       (if (stringp content)
           (clip content)
-          (coerce (loop for p in (content-parts content)
+          (coerce (loop for p in (object-parts content)
                         collect (cond ((text-part-p p)
                                        (let ((copy (copy-object p))) (setf (gethash "text" copy) (clip (json-get p "text"))) copy))
                                       ((equal (json-get p "type") "image") (copy-object p "data"))
@@ -55,23 +57,12 @@
                   'vector)))))
 
 (defun store-ids (path ids)
-  "raw-store.ts rawStoreIds of PATH, into the set IDS: the id at each line's
-start, read from its first 512 bytes; a head that does not read stops the scan."
+  "The ids PATH's store keeps, into the set IDS: the id at each line's head (a line that does not read is passed over)."
   (let ((bytes (ignore-errors (read-file-octets (raw-store-path path)))))
     (when bytes
-      ;; The lines between newlines, and a final one without its newline (forEachJsonlLine).
-      (let ((lines (loop for start = 0 then (1+ end)
-                         for end = (or (position 10 bytes :start start) (length bytes))
-                         collect (cons start end)
-                         while (< end (length bytes)))))
-        (when (and lines (= (car (car (last lines))) (length bytes))) (setf lines (butlast lines)))
-        (loop for (start . end) in lines
-              do (let* ((head (decode-utf-8 (subseq bytes start (min end (+ start 512)))))
-                        (m (rx-exec (rx "^\\{\"id\":\"((?:[^\"\\\\]|\\\\.)*)\"") head)))
-                   (when m
-                     (let ((id (handler-case (parse-json (format nil "\"~a\"" (rx-group m 1)))
-                                 (error () (return)))))
-                       (setf (gethash id ids) t)))))))
+      (dolist (line (split-string (decode-utf-8 bytes) #\Newline))
+        (let ((id (and (plusp (length line)) (line-head-id line))))
+          (when (stringp id) (setf (gethash id ids) t)))))
     ids))
 
 (defun lineage-kept-ids (file)
@@ -80,7 +71,7 @@ start, read from its first 512 bytes; a head that does not read stops the scan."
     (dolist (f (session-lineage file) ids) (store-ids f ids))))
 
 (defun append-raw-store (file records)
-  "raw-store.ts appendRawStore: one line per record, `id` first. NIL when the write fails."
+  "Append RECORDS to FILE's store, one line per record, `id` first. NIL when the write fails."
   (or (null records)
       (ignore-errors
        (with-open-file (out (sb-ext:parse-native-namestring (raw-store-path file)) :direction :output :if-exists :append
@@ -89,7 +80,7 @@ start, read from its first 512 bytes; a head that does not read stops the scan."
          t))))
 
 (defun capture-entries (input)
-  "raw-capture.ts captureNewEntries on the entries that arrived since the last call:
+  "Keep the originals of the entries that arrived since the last call:
 (values WRITTEN-IDS OK LINEAGE-IDS). KEPT are those of them the binding keeps
 already; with LINEAGE, the store ids of the file's lineage are read too (a new
 session file) and returned."
@@ -109,21 +100,8 @@ session file) and returned."
 
 ;;; --- pointers on omp's placeholders --------------------------------------------------
 
-(defun index-by-id (entries)
-  "session-file.ts indexById: #N by entry id; an id seen twice is left out."
-  (let ((by-id (make-hash-table :test 'equal)) (ambiguous (make-hash-table :test 'equal)) (n 0))
-    (loop for e across entries
-          when (counted-entry-p e)
-            do (let ((id (json-get e "id")))
-                 (when (and (stringp id) (plusp (length id)))
-                   (if (or (nth-value 1 (gethash id by-id)) (gethash id ambiguous))
-                       (progn (remhash id by-id) (setf (gethash id ambiguous) t))
-                       (setf (gethash id by-id) n))))
-                 (incf n))
-    by-id))
-
 (defun point-placeholders (input)
-  "raw-capture.ts pointPlaceholders: for each candidate tool result whose text is
+  "For each candidate tool result whose text is
 one of omp's placeholders and whose original is kept, its new text, as (I TEXT)."
   (let ((hits (loop for c across (json-get input "candidates" #())
                     when (rx-test (rx "^\\[(?:Output truncated - \\d+ tokens|Superseded by a newer read of this file|Uneventful result elided)\\]$")
@@ -142,4 +120,4 @@ one of omp's placeholders and whose original is kept, its new text, as (I TEXT).
               for n = (and (stringp id) (plusp (length id)) (gethash id index))
               when (and n (gethash id kept))
                 collect (json-object "i" (json-get h "i")
-                                     "text" (format nil "~a (the original: vcc_recall expand:[~d])" (json-get h "text") n)))))))
+                                     "text" (format nil "~a (the original: ~a)" (json-get h "text") (recall-expand-call n))))))))

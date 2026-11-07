@@ -1,31 +1,38 @@
 // The compaction hook, shared by both hosts: the event in, the compaction (or
-// a cancel) out. Where to cut is src/compaction/cut.ts, what is written
-// src/compaction/assemble.ts. It imports no host package at runtime: the
-// host's own functions and rules arrive through a CompactionHost (omp:
-// src/hooks/omp-host.ts; Pi: pi.ts), so `bun build --packages external` stays
-// on node builtins.
+// a cancel) out. The core decides all of it (op compact, lisp/src/host.lisp and
+// compaction.lisp) from the event and the host's snapshot; what it cannot do is
+// the host's convertToLlm, so it first lists the messages to convert, and this
+// converts them. The host's own functions arrive through the binding (omp:
+// src/hooks/omp-host.ts; Pi: pi.ts), so nothing here imports a host package.
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { writeFileSync } from "fs";
-import { indexById, readEntries } from "../core/session-file";
-import { parseInstructions } from "../core/compact-args";
-import { handlesHostCompactions, type VccSettings } from "../core/settings";
-import { isRecovery, tell, type Binding } from "../host";
-import { modelKey, recordHostPolicy } from "../core/model-limits";
+import { join } from "path";
+import { deliver, tell, tellLater, type Binding, type ConvertToLlm } from "../host";
 import type { WindowState } from "./window-limits";
-import { vccDetailsOf, type VccCompactionDetails } from "../details";
-import { COMPACTOR } from "../names";
-import { planCompaction } from "../compaction/plan";
-import { tellCompactionStats, type CompactionStats } from "../compaction/stats";
+import { core } from "../core/lisp-core";
+import { whenCore } from "../core/core-wait";
+import { hostSnapshot } from "../core/host-snapshot";
 
 /** What the compaction hook needs of its host. */
-export type CompactionHost = Pick<Binding, "rule" | "convertToLlm" | "triggerOf" | "config" | "window">;
+export type CompactionHost = Pick<Binding, "name" | "displayName" | "modelsFile" | "convertToLlm" | "triggerOf" | "config">;
 
-/** Per-registration state. omp binds the factory again for every subagent, so it gets one per binding. */
+/** The compaction omp-vcc wrote on the last pass, until the host has applied it. */
+export interface WrittenCompaction {
+  summary: string;
+  /** The outcome line, told once the host has applied it. */
+  statsLine: string;
+  /** /omp-vcc's: the command tells the outcome itself. */
+  fromCommand: boolean;
+  /** The host retries the turn after it (an overflow, a cut-off reply): nothing to tell. */
+  willRetry: boolean;
+  /** /compact's prompt to send once it is done. */
+  followUpPrompt: string | null;
+}
+
+/** Per-binding state. omp binds the factory again for every subagent, so it gets one per binding. */
 export interface CompactionState {
-  lastStats: CompactionStats | null;
-  /** The last compaction came from /omp-vcc, which reports its own outcome. */
-  lastCompactFromCommand: boolean;
-  pendingFollowUpPrompt: string | null;
+  /** Set by a pass that wrote a compaction, cleared at the start of every pass: matched to what the host applies by its summary. */
+  written: WrittenCompaction | null;
   /**
    * The /omp-vcc marker for the manual compaction the command is starting:
    * omp's ctx.compact() cannot carry instructions together with callbacks. The
@@ -34,195 +41,93 @@ export interface CompactionState {
   pendingManualInstructions: string | null;
   /** Why the hook last cancelled a compaction, for /omp-vcc to report where omp shows no notifications. */
   lastCancelNotice: string | null;
+  /** The user was told the core is not there yet (src/core/lisp-core.ts). */
+  coreNoticeShown: boolean;
 }
 
 export const createCompactionState = (): CompactionState => ({
-  lastStats: null,
-  lastCompactFromCommand: false,
-  pendingFollowUpPrompt: null,
+  written: null,
   pendingManualInstructions: null,
   lastCancelNotice: null,
+  coreNoticeShown: false,
 });
 
-
-/** With the `debug` setting on, each compaction's decisions are written here. */
-const DEBUG_PATH = "/tmp/omp-vcc-debug.json";
-
-const dbg = (settings: VccSettings, data: Record<string, unknown>) => {
-  if (!settings.debug) return;
-  // A debug write must never break a compaction.
-  try { writeFileSync(DEBUG_PATH, JSON.stringify(data, null, 2)); } catch {}
+/** The host's convertToLlm of one message; a message it rejects converts to nothing. */
+const convertOne = (convert: ConvertToLlm, message: unknown): unknown[] => {
+  try {
+    return convert([message]);
+  } catch {
+    return [];
+  }
 };
 
-/**
- * omp binds the factory once per session (subagents too), so each binding
- * passes its own `state`.
- */
-export const registerCompactionHook = (
-  pi: ExtensionAPI,
-  host: CompactionHost,
-  state: CompactionState,
-  windows: WindowState,
-) => {
-  const convert = host.convertToLlm;
-  const notify = (ctx: any, message: string) => {
-    // /omp-vcc reads it to know the user was told why.
-    state.lastCancelNotice = message;
-    // The UI may be gone (a closed session).
-    try { tell(ctx, message, "warning"); } catch {}
-  };
-
-  pi.on("session_before_compact", (event, ctx) => {
-    const { preparation } = event;
-    // As the host has it: the plan reads it through Pi's context edits (core/context-edits.ts).
-    const branchEntries = event.branchEntries as any[];
-    const { rule } = host;
+export const registerCompactionHook = (pi: ExtensionAPI, host: CompactionHost, state: CompactionState, windows: WindowState) => {
+  const beforeCompact = (event: any, ctx: any): { cancel: true } | { compaction: any } | undefined => {
+    state.written = null;
     // Read on every run: omp's tracker forgets its trigger once read.
     const hostTrigger = host.triggerOf(event);
     const { reason, willRetry } = windows.selfTrigger ?? hostTrigger;
-    const customInstructions = event.customInstructions
-      ?? (reason === "manual" ? state.pendingManualInstructions ?? undefined : undefined);
-    const settings = host.config.load();
-    const previousSummary = typeof preparation.previousSummary === "string" ? preparation.previousSummary : undefined;
-
-    const { fromCommand, keepUserTurns, followUpPrompt } = parseInstructions(customInstructions);
-    state.pendingFollowUpPrompt = null;
-    if (!fromCommand && !handlesHostCompactions(settings, ctx?.model?.provider)) return;
-
-    const window = host.window(ctx?.model);
-    // A pass that must shrink the context: an overflow, a cut-off reply, one the host retries.
-    const recovering = !fromCommand && isRecovery({ reason, willRetry });
-    let globalIndexById: Map<string, number> | undefined;
-    // Recall numbers messages across the whole session file (all windows, all
-    // branches): the host's in-memory tree, else the file.
-    try {
-      const sm = (ctx as any)?.sessionManager;
-      const all = sm?.getEntries?.();
-      const sf = sm?.getSessionFile?.();
-      const entries = Array.isArray(all) ? all : typeof sf === "string" && sf ? readEntries(sf) : undefined;
-      if (entries) globalIndexById = indexById(entries);
-    } catch {
-      globalIndexById = undefined;
-    }
-
-    const plan = planCompaction({
-      branchEntries,
-      convert,
-      keepUserTurns,
-      fromCommand,
-      reason,
-      recovering,
-      settings,
-      rule,
-      window: window.effective,
-      tokensBefore: preparation.tokensBefore,
-      hostSettings: (preparation as { settings?: unknown }).settings,
-      // A pass omp-vcc started itself went by the policy as last recorded; this
-      // one carries the current policy, which may since say no.
-      ...(windows.selfTrigger ? { selfStarted: { usedTokens: ctx?.getContextUsage?.()?.tokens } } : {}),
-      sessionFile: (ctx as any)?.sessionManager?.getSessionFile?.(),
-      indexById: globalIndexById,
-      previousSummary,
-      fileOps: { read: [...preparation.fileOps.read], changed: [...preparation.fileOps.edited, ...preparation.fileOps.written] },
+    const { preparation } = event;
+    const ask = (converted?: unknown[][]) => core({
+      op: "compact",
+      host: hostSnapshot(host, ctx),
+      event: {
+        branchEntries: event.branchEntries,
+        customInstructions: event.customInstructions ?? (reason === "manual" ? state.pendingManualInstructions : null) ?? null,
+        reason,
+        willRetry,
+        tokensBefore: preparation.tokensBefore,
+        hostSettings: preparation.settings ?? null,
+        previousSummary: typeof preparation.previousSummary === "string" ? preparation.previousSummary : null,
+        fileOps: { read: [...preparation.fileOps.read], changed: [...preparation.fileOps.edited, ...preparation.fileOps.written] },
+        // A pass omp-vcc started itself went by the policy as last recorded; this one carries the current policy, which may since say no.
+        selfStarted: windows.selfTrigger !== null,
+      },
+      ...(converted ? { converted } : {}),
     });
-
-    const { policy, trigger, overheadTokens, tokenEstimate, budgets } = plan.sizing;
-    // Kept beside the learned window, for the compaction omp-vcc starts in the host's stead (window-limits.ts).
-    recordHostPolicy(host.config.dir(), modelKey(ctx?.model), policy);
-    if (plan.kind === "step_aside") {
-      dbg(settings, { cancelled: false, reason: plan.cutReason, compaction: { reason, willRetry }, fromCommand, entries: branchEntries.length, liveRoles: plan.liveRoles });
-      return;
-    }
-    if (plan.kind === "cancel") {
-      if (plan.why === "policy") return { cancel: true };
-      if (plan.why === "running_turn") dbg(settings, { deferredRunningTurn: true, compaction: { reason, willRetry }, liveMessages: plan.summarized });
-      else if (plan.why === "no_cut") dbg(settings, { cancelled: true, reason: plan.cutReason, compaction: { reason, willRetry }, fromCommand, entries: branchEntries.length, liveRoles: plan.liveRoles });
-      else {
-        dbg(settings, { growthGuard: plan.growth, writtenForRescue: false, compaction: { reason, willRetry }, summarized: plan.summarized });
-        state.lastStats = null;
+    let reply = ask();
+    if (reply.kind === "convert") reply = ask((reply.messages as unknown[]).map((m) => convertOne(host.convertToLlm, m)));
+    // With the `debug` setting on, the pass's decisions, beside the config; a debug write never breaks a compaction.
+    if (reply.debug) try { writeFileSync(join(host.config.dir(), "omp-vcc-debug.json"), JSON.stringify(reply.debug, null, 2)); } catch {}
+    if (reply.kind === "pass") return undefined;
+    if (reply.kind === "cancel") {
+      if (typeof reply.notice === "string") {
+        state.lastCancelNotice = reply.notice;
+        tell(ctx, reply.notice, "warning");
       }
-      if (plan.notice) notify(ctx, plan.notice);
       return { cancel: true };
     }
-
-    const summary = plan.summary;
-    const { firstKeptEntryId } = plan;
-    if (plan.runningTurnRecovery) dbg(settings, { runningTurnRecovery: true, compaction: { reason, willRetry }, budgetCut: plan.budgetCut });
-    if (plan.writtenForRescue) dbg(settings, { growthGuard: plan.writtenForRescue.growth, writtenForRescue: true, compaction: { reason, willRetry }, summarized: plan.writtenForRescue.summarized });
-    state.lastStats = plan.stats;
-    state.pendingFollowUpPrompt = followUpPrompt;
-    state.lastCompactFromCommand = fromCommand;
-
-    dbg(settings, {
-      compaction: { reason, willRetry },
-      budgetCut: plan.budgetCut,
-      summarized: plan.summarized,
-      firstKeptEntryId,
-      tokensBefore: preparation.tokensBefore,
-      tokenEstimate,
-      summaryLength: summary.length,
-      summaryPreview: summary.slice(0, 500),
-      sections: plan.sections,
-    });
-
-    const details: VccCompactionDetails = {
-      compactor: COMPACTOR,
-      // version 2 = refs are session-global (recall index space); version 1
-      // summaries carried window-relative refs (issue #28).
-      version: 2,
-      sections: plan.sections,
-      summaryState: plan.summaryState as VccCompactionDetails["summaryState"],
-      sourceMessageCount: plan.summarized,
-      previousSummaryUsed: Boolean(previousSummary),
-      reason,
+    const compaction = reply.compaction as { summary: string };
+    state.written = {
+      summary: compaction.summary,
+      statsLine: reply.statsLine as string,
+      fromCommand: reply.fromCommand === true,
       willRetry,
-      ...(plan.historyIndex ? { historyIndex: plan.historyIndex as VccCompactionDetails["historyIndex"] } : {}),
-      ...(plan.workingSet ? { workingSet: plan.workingSet } : {}),
-      // What the budgets were sized from, for debugging a compaction that kept too much or too little.
-      limits: {
-        ...(window.effective ? { contextWindow: window.effective, windowSource: window.source } : {}),
-        ...(trigger ? { trigger } : {}),
-        ...(overheadTokens ? { overheadTokens } : {}),
-        maxTailTokens: budgets.maxTailTokens,
-        briefCeilingTokens: budgets.briefCeilingTokens,
-        ...(budgets.summaryScale !== 1 ? { summaryScale: budgets.summaryScale } : {}),
-        workingSetTokens: budgets.workingSetTokens,
-      },
+      followUpPrompt: (reply.followUpPrompt as string | undefined) ?? null,
     };
+    return { compaction: compaction as any };
+  };
 
-    return {
-      compaction: {
-        summary,
-        details,
-        tokensBefore: preparation.tokensBefore,
-        firstKeptEntryId,
-      },
-    };
-  });
+  pi.on("session_before_compact", (event, ctx): any =>
+    // While the core is not there, the host compacts as it would without omp-vcc; the user hears why once.
+    whenCore(() => beforeCompact(event, ctx), (why) => {
+      if (state.coreNoticeShown) return;
+      state.coreNoticeShown = true;
+      tell(ctx, why, "warning");
+    }));
 
-  // Fire success toast for /compact and automatic compactions (delayed to let the
-  // UI settle). /omp-vcc reports through its own onComplete callback.
+  // The outcome of a compaction omp-vcc wrote, once the host applied that one (another extension's can win).
   pi.on("session_compact", async (event, ctx) => {
-    if (!event.fromExtension) return;
-    // Another compaction extension can win even when omp-vcc also returned a
-    // result, so read the persisted entry rather than lifecycle state: omp-vcc
-    // stamps its compactor, reason and willRetry on its own details.
-    const details = vccDetailsOf(event.compactionEntry?.details);
-    if (!details) return;
-    const followUpPrompt = state.pendingFollowUpPrompt;
-    state.pendingFollowUpPrompt = null;
-    if (state.lastCompactFromCommand) return;
-    // omp retries the turn itself after an overflow or a cut-off reply.
-    if (details.willRetry) return;
-    const stats = state.lastStats;
-    if (!stats) return;
-    tellCompactionStats(ctx, stats);
+    const written = state.written;
+    if (!event.fromExtension || !written || event.compactionEntry?.summary !== written.summary) return;
+    // /omp-vcc tells its own outcome, from the same record.
+    if (written.fromCommand) return;
+    // The host retries the turn itself after an overflow or a cut-off reply.
+    if (written.willRetry) return;
+    tellLater(ctx, written.statsLine);
     // omp resumes an interrupted run by itself after automatic maintenance
     // (compaction.autoContinue); only a /compact follow-up prompt is sent here.
-    if (followUpPrompt) {
-      try {
-        await pi.sendUserMessage(followUpPrompt);
-      } catch {}
-    }
+    const prompt = written.followUpPrompt;
+    if (prompt) await deliver(ctx, "the follow-up prompt", () => pi.sendUserMessage(prompt));
   });
 };

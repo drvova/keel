@@ -2,13 +2,10 @@
 // by a real model in omp (or Pi, with OMP_VCC_LH_HOST=pi) with omp-vcc loaded,
 // omp's idle pass (Pi's /compact) every 6 turns (tests/support/long-horizon.ts).
 // Numbers for the current code: bun run scripts/benchmark-long-horizon.ts
-import { pairs, searchHits } from "./support/pairs";
+import { searchHits } from "./support/pairs";
 import { beforeAll, describe, expect, it } from "bun:test";
 import { realModel, runLongHorizon, type LongHorizonResult } from "./support/long-horizon";
 import { sessionHost } from "./support/host-session";
-import { stemOf } from "../src/core/search-entries";
-import { renderMessage } from "../src/core/render-entries";
-import { recallOutputChars, RECALL_OUTPUT_CHARS } from "../src/core/recall-run";
 
 // Each run is a real model working in omp, a turn at a time: minutes per run. Without a
 // model in the environment (see tests/support/long-horizon.ts) these are skipped.
@@ -64,7 +61,7 @@ describe.skipIf(!realModel())(`long-horizon session, on a real model in ${sessio
   });
 
   // The same 60-turn session on a 32K and a 1M window: budgets and section sizes
-  // follow omp's trigger (core/window.ts), recall and pointers do not.
+  // follow omp's trigger (lisp/src/window.lisp), recall and pointers do not.
   it("a 32K window gets about half the summary's sections, and keeps every pointer and recall", () => {
     const { small, r60: typical } = runs;
     expect(small.byOmpVcc).toBe(small.compactions);
@@ -85,33 +82,13 @@ describe.skipIf(!realModel())(`long-horizon session, on a real model in ${sessio
 });
 
 describe("recall search: inflected forms", () => {
-  it("stems plain ASCII words, leaves short, non-ASCII and regex terms alone", () => {
-    expect(stemOf("rounding")).toBe("round");
-    expect(stemOf("failure")).toBe("fail");
-    expect(stemOf("retries")).toBe("retr");
-    // A doubled final consonant is undone only while the stem stays 4+ letters.
-    expect(stemOf("running")).toBe("runn");
-    expect(stemOf("committed")).toBe("commit");
-    expect(stemOf("test")).toBeUndefined();
-    expect(stemOf("缓存失败")).toBeUndefined();
-    expect(stemOf("auth.*token")).toBeUndefined();
-  });
-
+  // The stems themselves: lisp/test/search.lisp.
   it("a query in another form of the word still finds the entry", () => {
     const msgs: any[] = [
       { role: "toolResult", toolName: "bash", content: [{ type: "text", text: "FAIL tests/billing.test.ts > rounds totals" }] },
       { role: "user", content: "unrelated message about the docs" },
     ];
-    const rendered = msgs.map((m, i) => renderMessage(m, i));
-    expect(searchHits(pairs(rendered, msgs), "rounding failure").map((h) => h.index)).toEqual([0]);
+    expect(searchHits(msgs, "rounding failure").map((h) => h.index)).toEqual([0]);
   });
 });
 
-describe("recall output ceiling", () => {
-  it("is a tenth of the context window, between 8 KB and 50 KB", () => {
-    expect(recallOutputChars(undefined)).toBe(RECALL_OUTPUT_CHARS);
-    expect(recallOutputChars(200_000)).toBe(RECALL_OUTPUT_CHARS);
-    expect(recallOutputChars(32_000)).toBe(12_800);
-    expect(recallOutputChars(8_000)).toBe(8 * 1024);
-  });
-});

@@ -1,6 +1,6 @@
 import { basename } from "node:path";
-import { compile } from "../src/core/summarize";
-import { DEFAULT_SUMMARY_LIMITS } from "../src/core/window";
+import { compile } from "../tests/support/compile";
+import { DEFAULT_SUMMARY_LIMITS } from "../tests/support/window";
 import { prepareSessionSamples } from "../tests/support/real-sessions";
 import { loadSessionMessages } from "../tests/support/load-session";
 import { writeFileSync, mkdirSync } from "node:fs";

@@ -1,0 +1,3 @@
+[test]
+# Every test runs on the core (tests/support/core-on.ts builds it once).
+preload = ["./tests/support/core-on.ts"]
