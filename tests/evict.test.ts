@@ -270,8 +270,10 @@ describe("an eviction that does not pay", () => {
     const s = session(10);
     // One turn of ten from the oldest end: the provider would read the other nine again for it.
     // No prices yet (too few requests): a cache at a tenth of the price, 20 requests ahead.
-    expect(tool(s, { drop: [0] })).toBe("Not worth it: that frees ~67 tokens but makes the provider read the ~597 after it again; assuming a cache at 10% of the input price, over 20 more requests, a drop must free 45% of what it makes it read again. Take out more in one go, from the oldest end: oldest:4.");
+    expect(tool(s, { drop: [0] })).toBe("Not worth it: that frees ~67 tokens but makes the provider read the ~597 after it again; assuming a cache at 10% of the input price, over 20 more requests, a drop must free 45% of what it makes it read again. Take out more in one go, from the oldest end (oldest:4), or send force: true to take these out anyway (when you were asked to, or what they hold is done with).");
     expect(s.appended).toEqual([]);
+    expect(tool(s, { drop: [0], force: true })).toStartWith("Out of context from the next request: #0–#3");
+    expect(tool(s, { undo: true })).toStartWith("Undone: #0–#3 back in context");
     expect(tool(s, { oldest: 3 })).toStartWith("Not worth it:");
     expect(tool(s, { oldest: 4 })).toStartWith("Out of context from the next request: #0–#15 (4 turns");
     // The last finished turn: only the running one follows it.
@@ -396,7 +398,7 @@ describe("when an eviction pays, by the session's own prices", () => {
     setEvict(true);
     // An input token at 1e-6, a cached one at a quarter of that, 20 requests: a drop must free (1 - 0.25) / (0.25 x 20) = 15%.
     const s = priced({ input: 1000, cacheRead: 5000, cacheWrite: 0, output: 10, cost: { input: 0.001, cacheRead: 0.00125, cacheWrite: 0, output: 0 } });
-    expect(tool(s, { drop: [0] })).toBe("Not worth it: that frees ~67 tokens but makes the provider read the ~597 after it again; at this session's prices, a cached token 25% of an input token's, over 20 more requests, a drop must free 15% of what it makes it read again. Take out more in one go, from the oldest end: oldest:2.");
+    expect(tool(s, { drop: [0] })).toBe("Not worth it: that frees ~67 tokens but makes the provider read the ~597 after it again; at this session's prices, a cached token 25% of an input token's, over 20 more requests, a drop must free 15% of what it makes it read again. Take out more in one go, from the oldest end (oldest:2), or send force: true to take these out anyway (when you were asked to, or what they hold is done with).");
     expect(tool(s, { oldest: 2 })).toStartWith("Out of context from the next request: #0–#7");
   });
 

@@ -25,7 +25,8 @@ const description = (command: string): string => [
   "- undo: true reverses the last edit (what it took out comes back, or what it brought back leaves).",
   "",
   "Drop rarely and in large runs from the oldest end: each edit makes the provider read again all that",
-  "follows it, so a drop that frees too little for that is refused, with the run that would pay;",
+  "follows it, so a drop that frees too little for that is held back, with the run that would pay (force: true",
+  "takes it out anyway: when the user asked for it, or what it holds is done with);",
   `past ${EVICT_AT_PERCENT}% of where the host compacts, the oldest turns leave by themselves; the user evicts with /${command}-evict.`,
 ].join("\n");
 
@@ -35,6 +36,7 @@ const PARAM_DESCRIPTIONS: Record<(typeof CONTEXT_PARAMS)[number], string> = {
   restore: "#N refs or ranges of turns to bring back into context.",
   note: `One line kept in place of the turns taken out (clipped at ${CONTEXT_NOTE_CHARS} chars).`,
   undo: "true: reverse the last edit of the context.",
+  force: "true, with drop or oldest: take them out even where it does not pay back what the provider reads again.",
 };
 
 const refs = { anyOf: [{ type: "array", items: { anyOf: [{ type: "number" }, { type: "string" }] } }, { type: "number" }, { type: "string" }] };
@@ -47,6 +49,7 @@ const PARAMETERS = {
     restore: { description: PARAM_DESCRIPTIONS.restore, ...refs },
     note: { type: "string", description: PARAM_DESCRIPTIONS.note },
     undo: { type: "boolean", description: PARAM_DESCRIPTIONS.undo },
+    force: { type: "boolean", description: PARAM_DESCRIPTIONS.force },
   },
 } as const;
 

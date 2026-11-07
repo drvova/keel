@@ -14,7 +14,7 @@ export const PIN_PARAMS = ["note", "name", "unpin"] as const;
 export const PIN_ENTRY_TYPE = "omp-vcc.pin";
 /** vcc_context, the agent's say over what stays in its context, and what it takes. */
 export const CONTEXT_TOOL = "vcc_context";
-export const CONTEXT_PARAMS = ["drop", "oldest", "restore", "note", "undo"] as const;
+export const CONTEXT_PARAMS = ["drop", "oldest", "restore", "note", "undo", "force"] as const;
 /** The custom entries that take turns out of the context or bring them back. */
 export const EVICT_ENTRY_TYPE = "omp-vcc.evict";
 /** The custom message telling the agent of a pin the user made; a summary leaves it out. */

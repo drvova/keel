@@ -545,7 +545,7 @@ context after its first #N that stays), in chars: (values FREED READ-AGAIN)."
     (let* ((in (turns-in turns outs))
            (k (loop for k from 1 to (length in) when (pays-p (subseq in 0 k) turns outs chars payback) return k))
            (tok (lambda (c) (js-string-of (tokens-from-chars c +default-chars-per-token+)))))
-      (format nil "Not worth it: that frees ~~~a tokens but makes the provider read the ~~~a after it again; ~a, a drop must free ~d% of what it makes it read again. ~:[Nothing taken out would pay yet; wait until more of the context is old.~;Take out more in one go, from the oldest end: oldest:~:*~d.~]"
+      (format nil "Not worth it: that frees ~~~a tokens but makes the provider read the ~~~a after it again; ~a, a drop must free ~d% of what it makes it read again. ~:[Nothing taken out would pay yet: wait until more of the context is old~;Take out more in one go, from the oldest end (oldest:~:*~d)~], or send force: true to take these out anyway (when you were asked to, or what they hold is done with)."
               (funcall tok freed) (funcall tok again) (payback-words payback) (round (* 100 (payback-share payback))) k))))
 
 (defun evict-turns (leaving turns outs chars by note count &optional payback)
@@ -652,12 +652,14 @@ evictions must pay, by the session's own prices (EVICTION-PAYBACK over BY-N)."
         (let* ((params (json-get call "params")) (drop (refs-of (json-get params "drop")))
                (restore (refs-of (json-get params "restore")))
                (oldest (let ((k (json-get params "oldest"))) (and (js-integer-p k) (> k 0) (as-integer k))))
-               (note (let ((n (json-get params "note"))) (and (stringp n) (plusp (length (js-trim n))) (js-clip (js-trim n) +context-note-chars+)))))
+               (note (let ((n (json-get params "note"))) (and (stringp n) (plusp (length (js-trim n))) (js-clip (js-trim n) +context-note-chars+))))
+               ;; The agent was told the drop does not pay, and takes it out anyway.
+               (force (eq (json-get params "force") :true)))
           (cond ((eq (json-get params "undo") :true) (undo-last branch by count))
                 (restore (restore-turns restore outs by count))
-                (drop (evict-turns (turns-touching drop turns) turns outs chars by note count (payback-of by-n)))
+                (drop (evict-turns (turns-touching drop turns) turns outs chars by note count (and (not force) (payback-of by-n))))
                 (oldest (let ((in (turns-in turns outs)))
-                          (evict-turns (subseq in 0 (min oldest (length in))) turns outs chars by note count (payback-of by-n))))
+                          (evict-turns (subseq in 0 (min oldest (length in))) turns outs chars by note count (and (not force) (payback-of by-n)))))
                 (t (values (list-context turns outs chars by-n (read-pins branch)) '()))))
         (let* ((args (js-trim (let ((a (json-get call "args"))) (if (stringp a) a ""))))
                (words (remove "" (rx-split (rx "\\s+") args) :test #'string=)))
