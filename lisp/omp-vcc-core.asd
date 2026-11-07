@@ -50,6 +50,7 @@
      (:file "brief")
      (:file "summary")
      ;; The compaction: its cut, the working set, and the plan the hook acts on.
+     (:file "calls")
      (:file "working-set")
      (:file "task-state")
      ;; context-edits: Pi's context edits, applied before the cut reads the branch.

@@ -58,8 +58,6 @@
                     ((equal (json-get e "type") "session_info") (json-get e "name")))))
     (and (stringp name) (plusp (length (js-trim name))) (js-trim name))))
 
-(defun extension-user-p (m) (and (json-object-p m) (equal (json-get m "role") "user") (equal (json-get m "attribution") "agent")))
-
 (defun scan-session (file short)
   "One pass over a session file: header, messages, first request, title, pins on its active branch."
   (let ((bytes (ignore-errors (read-file-octets file))) (header (read-header file)))

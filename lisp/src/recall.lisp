@@ -310,9 +310,7 @@
           (dolist (f found)
             (destructuring-bind (entry pool pos) (cdr f)
               (push entry out)
-              (let ((ids (remove-duplicates (loop for part across (let ((c (json-get (getf entry :message) "content"))) (if (json-array-p c) c #()))
-                                                  when (and (json-object-p part) (equal (json-get part "type") "toolCall") (stringp (json-get part "id")))
-                                                    collect (json-get part "id"))
+              (let ((ids (remove-duplicates (remove nil (mapcar #'call-id (tool-calls-of (getf entry :message))))
                                             :test #'string=)))
                 (when ids
                   (let ((loaded (view-load pool t)))

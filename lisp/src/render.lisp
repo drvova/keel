@@ -60,16 +60,27 @@ a text part's text is a string."
 
 ;;; --- tool calls --------------------------------------------------------------
 
-(defstruct (call (:constructor make-call (name args))) name args)
+(defstruct (call (:constructor make-call (name args &optional id pos)))
+  "One tool call: its name (\"unknown\" when it has none), its arguments (an
+empty object when they are not one), its id when it has one, the place of the
+message that made it when the reader counts them, and the files it works on,
+read once."
+  name args id pos (files :unset))
 
-(defun tool-calls-of (message)
+(defun part-call (part &optional pos)
+  "A toolCall content part as a call: the one reading of one."
+  (make-call (string-or (json-get part "name") "unknown")
+             (let ((a (json-get part "arguments"))) (if (json-object-p a) a (make-hash-table :test 'equal)))
+             (let ((id (json-get part "id"))) (and (stringp id) id))
+             pos))
+
+(defun tool-calls-of (message &optional pos)
   "MESSAGE's tool calls, in order."
   (let ((content (json-get message "content")))
     (when (json-array-p content)
       (loop for part across content
             when (and (json-object-p part) (equal (json-get part "type") "toolCall"))
-              collect (make-call (string-or (json-get part "name") "unknown")
-                                 (let ((a (json-get part "arguments"))) (if (json-object-p a) a (make-hash-table :test 'equal))))))))
+              collect (part-call part pos)))))
 
 (defun own-tool-p (name tool)
   (and (stringp name) (string= (string-downcase name) tool)))

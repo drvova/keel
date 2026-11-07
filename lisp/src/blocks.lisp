@@ -75,9 +75,8 @@
                       append (cond ((equal (json-get part "type") "text")
                                     (list (make-block :kind :assistant :text (sanitize (json-get part "text")) :index index)))
                                    ((equal (json-get part "type") "toolCall")
-                                    (let ((id (let ((i (json-get part "id"))) (and (stringp i) i))))
-                                      (list (make-block :kind :tool-call :id id :name (string-or (json-get part "name") "unknown")
-                                                        :args (let ((a (json-get part "arguments"))) (if (json-object-p a) a (make-hash-table :test 'equal)))
+                                    (let* ((c (part-call part)) (id (call-id c)))
+                                      (list (make-block :kind :tool-call :id id :name (call-name c) :args (call-args c)
                                                         :index index :failed (and id (gethash id failed-ids) t))))))))))
       (t '()))))
 
@@ -137,11 +136,14 @@ vector parallel to MESSAGES, or NIL for positions), host noise left out."
 
 (defun files-of (call)
   "The files a call works on: its named paths less URLs, a read's selector dropped; none for a search or a shell."
-  (let ((kind (call-kind call)))
-    (if (member kind '(:search :shell))
-        '()
-        (let ((paths (remove-if #'url-path-p (named-paths (call-args call)))))
-          (if (eq kind :read) (mapcar #'strip-read-selector paths) paths)))))
+  (when (eq (call-files call) :unset)
+    (setf (call-files call)
+          (let ((kind (call-kind call)))
+            (if (member kind '(:search :shell))
+                '()
+                (let ((paths (remove-if #'url-path-p (named-paths (call-args call)))))
+                  (if (eq kind :read) (mapcar #'strip-read-selector paths) paths))))))
+  (call-files call))
 
 (defun pin-call-of (args)
   "A vcc_pin call as the tool reads it: (:note TEXT), (:unpin VALUE), :both or :list."
