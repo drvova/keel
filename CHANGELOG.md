@@ -18,6 +18,8 @@ All notable changes to `@drvova/omp-vcc` are documented in this file. Entries fr
 
 ### Added
 
+- **Your context as a file you edit** — the design of Context Language Models (arXiv 2609.37725): with eviction on, every request is mirrored beside the session (`<session>.jsonl.vcc-context.md`), one block per turn under a `[[CTX_TURN #12–#19]]` line, and its path is the first line of the context. The agent edits it with its own tools: a deleted block's turn leaves, a rewritten one is replaced by what it wrote (`[#4–#7, as you rewrote it …]`), text between blocks becomes a note after the turn before (the paper's `role=notes` turn); the next request sends what the file says. The running turn stays as it is; every edit is an op in the evict ledger, the session keeps every word, and `vcc_recall expand` reads any original back. The user is told what the edit did.
+
 - **The context's size on omp-vcc's own results, and notes that cost no cache** — with eviction on, each `vcc_context`, `vcc_recall` and `vcc_pin` result ends with the context's size and its share of where the host compacts, as Context Language Models' tools report it (models misjudge their own context's length). The pinned-notes block at the start of the request is brought up to date only when turns leave or come back, which edits the request anyway, instead of at every pin: an edit at the start makes the provider read the whole request again.
 
 - **Undo the last context edit** — `/omp-vcc-evict undo` and `vcc_context {undo: true}` reverse the last eviction or restore, every run it made; an undo again does it again. The benchmarks also report the prompt tokens the provider read uncached, the cost every edit of the context adds.

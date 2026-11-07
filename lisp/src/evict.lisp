@@ -54,11 +54,12 @@ that would change at the end of every request.")
   (and (equal (json-get e "type") "custom") (equal (json-get e "customType") +evict-entry-type+)
        (json-object-p (json-get e "data"))))
 
-(defstruct (out (:constructor make-out (from to by note at)))
+(defstruct (out (:constructor make-out (from to by note at &optional text)))
   "A run of #N out of the context: FROM to TO inclusive, by \"agent\", \"user\" or
-\"auto\", the agent's NOTE, and AT the #N count when it was recorded (requests
-made after that left it out)."
-  from to by note at)
+\"auto\", the agent's NOTE, AT the #N count when it was recorded (requests
+made after that left it out), and TEXT, what the agent rewrote it as in its
+context's file (mirror.lisp), which stands in its place instead of the line."
+  from to by note at text)
 
 (defun op-at (op) (let ((at (json-get op "at"))) (if (js-integer-p at) (as-integer at) 0)))
 
@@ -80,11 +81,24 @@ recorded by then (when the #N count was at most AS-OF), as a request made then s
                      (cond ((equal (json-get op "op") "evict")
                             (push (make-out from to (let ((b (json-get op "by"))) (if (member b '("agent" "user" "auto") :test #'equal) b "agent"))
                                             (let ((n (json-get op "note"))) (and (stringp n) (plusp (length (js-trim n))) n))
-                                            (op-at op))
+                                            (op-at op)
+                                            (let ((x (json-get op "text"))) (and (stringp x) (plusp (length (js-trim x))) x)))
                                   outs))
                            ((equal (json-get op "op") "restore")
                             (setf outs (remove-if (lambda (o) (overlaps-p (out-from o) (out-to o) from to)) outs))))))))
     (sort outs #'< :key #'out-from)))
+
+(defun read-inserts (branch)
+  "The agent's notes put after an entry in its context's file (mirror.lisp), by
+#N: each insert replayed along BRANCH since its last /clear, the last one for
+an #N standing, an empty one taking it away. An alist (N . TEXT)."
+  (let ((at (make-hash-table)))
+    (loop for i from (1+ (last-reset-index branch)) below (length branch)
+          for e = (aref branch i)
+          when (and (evict-entry-p e) (equal (json-get (json-get e "data") "op") "insert") (js-integer-p (json-get (json-get e "data") "after")))
+            do (let ((text (json-get (json-get e "data") "text")) (n (as-integer (json-get (json-get e "data") "after"))))
+                 (if (and (stringp text) (plusp (length (js-trim text)))) (setf (gethash n at) text) (remhash n at))))
+    (sort (loop for n being the hash-keys of at using (hash-value text) collect (cons n text)) #'< :key #'car)))
 
 (defun out-of (n outs) (find-if (lambda (o) (<= (out-from o) n (out-to o))) outs))
 
@@ -197,8 +211,20 @@ what it did (as [History Index] says it: files changed, commits, failed calls,
 read from the originals omp-vcc kept, ORIGINALS by #N), and how to read it back.
 It names no size, and reads only what omp leaves as it is or the originals: the
 line must read the same on every request for the provider's cache."
-  (let* ((covering (remove-if-not (lambda (o) (overlaps-p (out-from o) (out-to o) from to)) outs))
-         (requests (loop for n from from to to
+  (let ((covering (remove-if-not (lambda (o) (overlaps-p (out-from o) (out-to o) from to)) outs)))
+    (if (some #'out-text covering)
+        (rewrite-text from to covering)
+        (plain-stub-text from to turns covering messages-by-n originals))))
+
+(defun rewrite-text (from to covering)
+  "What stands in place of FROM–TO when the agent rewrote some of it in its
+context's file: its text, under a line saying what it stands for."
+  (format nil "[~a, as you rewrote ~:[it~;them~] in your context's file (each original reads back word for word with ~a)]~{~%~a~}"
+          (range-text from to) (> (length covering) 1) (recall-expand-call from)
+          (mapcar (lambda (o) (or (out-text o) (format nil "(~a out of context)" (range-text (out-from o) (out-to o))))) covering)))
+
+(defun plain-stub-text (from to turns covering messages-by-n originals)
+  (let* ((requests (loop for n from from to to
                          for m = (gethash n messages-by-n)
                          for w = (and m (equal (json-get m "role") "user") (not (extension-user-p m)) (request-words m))
                          when w collect w))
@@ -247,7 +273,7 @@ whatever has left the context."
   "What ties a request's message to its session entry: role, time and call id."
   (format nil "~a|~a|~a" (json-get m "role") (js-string-of (json-get m "timestamp")) (or (json-get m "toolCallId") "")))
 
-(defun evict-request (branch index messages &key trigger auto (count 0) file mark)
+(defun evict-request (branch index messages &key trigger auto (count 0) file mark mirror)
   "What leaves REQUEST MESSAGES (a vector, the host's next request): the indices
 to drop, the stubs (index . text) to put before them, the evict ops omp-vcc
 records itself (AUTO and past +EVICT-AT-SHARE+ of TRIGGER), and the estimate
@@ -323,10 +349,14 @@ out) the pinned notes stand first, in one block (NOTES-BLOCK)."
                                       do (setf (gethash n h) m))
                                 h)))
           ;; The pinned notes first, in view whatever has left (with vcc_context there, or anything out).
+          ;; First in the request: where the context's file is (MIRROR, its path), and the pinned notes.
           (when (or mark outs)
             (multiple-value-bind (shown as-of) (notes-as-of branch index ops)
-              (let ((place (and shown (notes-place messages v))))
-                (when place (push (cons place (notes-block shown as-of)) stubs)))))
+              (let ((text (cond ((and mirror shown) (format nil "~a~%~a" (mirror-header mirror) (notes-block shown as-of)))
+                                (mirror (mirror-header mirror))
+                                (shown (notes-block shown as-of))))
+                    (place (notes-place messages v)))
+                (when (and text place) (push (cons place text) stubs)))))
           (loop with i = 0
                 while (< i (length messages))
                 do (if (not (aref v i))
@@ -336,6 +366,10 @@ out) the pinned notes stand first, in one block (NOTES-BLOCK)."
                                do (let ((n (aref n-of i))) (when n (setf lo (min (or lo n) n) hi (max (or hi n) n))))
                                   (push i drop) (incf i))
                          (when lo (push (cons (stub-place messages v start (1- i)) (stub-text lo hi turns outs by-n originals)) stubs)))))
+          ;; The agent's notes put after an entry in its context's file, after that entry's message.
+          (loop for (n . text) in (read-inserts branch)
+                for i = (position n n-of)
+                when (and i (not (aref v i))) do (push (cons (cons i "append") text) stubs))
           (when mark
             (let ((starts (make-hash-table)))
               (dolist (tr turns) (setf (gethash (turn-from tr) starts) t))
@@ -343,7 +377,7 @@ out) the pinned notes stand first, in one block (NOTES-BLOCK)."
                     for n = (aref n-of i)
                     when (and n (not (aref v i)) (gethash n starts) (equal (json-get (aref messages i) "role") "user"))
                       do (push (cons (cons i "prepend") (turn-mark n)) stubs))))
-          (values (nreverse drop) (nreverse stubs) (nreverse ops) before after))))))
+          (values (nreverse drop) (nreverse stubs) (nreverse ops) before after n-of v outs turns))))))
 
 (defun turn-mark (n) (format nil "[#~d]" n))
 

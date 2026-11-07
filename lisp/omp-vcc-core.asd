@@ -76,6 +76,8 @@
      (:file "recall")
      ;; evict: old turns out of the context whole, and the request without them.
      (:file "evict")
+     ;; mirror: the context as a file the agent edits (Context Language Models).
+     (:file "mirror")
      ;; host: the snapshot of what the host knows, which every op for a host event reads.
      (:file "host")
      (:file "server")

@@ -163,10 +163,22 @@ evictions omp-vcc records itself as the context fills (the evict setting), the
 note telling the model how full its context is (TOOL: vcc_context is
 registered), and what to tell the user."
   (let* ((auto (eq (json-get (snapshot-settings s) "evict") :true))
-         (trigger (and auto (snapshot-trigger s))) (count (snapshot-count s)) (branch (snapshot-branch s)))
-    (multiple-value-bind (drop stubs ops before after)
-        (evict-request branch (snapshot-index s) (coerce messages 'vector) :file (snapshot-session-file s)
-                       :trigger trigger :auto auto :count count :mark tool)
+         (trigger (and auto (snapshot-trigger s))) (count (snapshot-count s)) (branch (snapshot-branch s))
+         (file (snapshot-session-file s))
+         ;; The context's file (mirror.lisp): with vcc_context there and a session file to put it beside.
+         (mirror (and tool (stringp file) (mirror-path file)))
+         (edit-ops '()) (ignored nil))
+    ;; The agent's edit of the file since the last request: ops of the ledger, seen by this request already.
+    (when mirror
+      (multiple-value-setq (edit-ops ignored) (mirror-edits file branch (snapshot-index s) count))
+      (when edit-ops
+        (setf branch (concatenate 'vector branch
+                                  (mapcar (lambda (op) (json-object "type" "custom" "customType" +evict-entry-type+ "data" op)) edit-ops)))))
+    (multiple-value-bind (drop stubs ops before after n-of dropped outs turns)
+        (evict-request branch (snapshot-index s) (coerce messages 'vector) :file file
+                       :trigger trigger :auto auto :count count :mark tool :mirror mirror)
+      (when mirror
+        (write-mirror file (render-mirror (coerce messages 'vector) n-of dropped outs turns (read-inserts branch))))
       (multiple-value-bind (note note-op)
           ;; After an eviction this request, the context just shrank: no note.
           (and auto (null ops) (budget-note branch (snapshot-index s) after trigger tool count))
@@ -179,9 +191,11 @@ registered), and what to tell the user."
                                                                           (json-object "role" "user" "content" (vector (json-object "type" "text" "text" text))
                                                                                        "timestamp" (json-get (aref (coerce messages 'vector) at) "timestamp"))))))
                                   stubs)
-                     "ops" (coerce (append ops (and note-op (list note-op))) 'vector)
+                     "ops" (coerce (append edit-ops ops (and note-op (list note-op))) 'vector)
                      "note" note
-                     "notice" (and ops (auto-notice ops before after)))))))
+                     "notice" (let ((lines (remove nil (list (and (or edit-ops ignored) (mirror-notice edit-ops ignored))
+                                                             (and ops (auto-notice ops before after))))))
+                                (and lines (join-strings lines (string #\Newline)))))))))
 
 (defun evict-for-host (s call)
   "One vcc_context call or evict command: what to tell, and the entries to append. Turn sizes come from the session file."

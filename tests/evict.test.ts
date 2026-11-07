@@ -3,7 +3,7 @@
 // trigger, left out of every later request with one line in their place, and
 // brought back; the session file keeps them, and vcc_recall reads them back.
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { evict, evictRequest, type EvictCall } from "../src/core/evict";
@@ -61,13 +61,15 @@ const sessionOf = (messages: any[]) => {
   const ctx = (window?: number) => ({ sessionManager, model: window ? { provider: "p", id: "m", contextWindow: window } : null });
   /** The request the host would send now: every message on the branch. */
   const request = () => entries.filter((e) => e.type === "message").map((e) => structuredClone(e.message));
-  return { entries, appended, host, ctx, request };
+  return { entries, appended, host, ctx, request, file };
 };
 
 const call = (s: ReturnType<typeof session>, c: EvictCall) => evict(s.host, ompBinding, s.ctx() as any, c);
 const tool = (s: ReturnType<typeof session>, params: unknown) => call(s, { surface: "tool", params });
 const sent = (s: ReturnType<typeof session>, window?: number, tool = false) => evictRequest(s.host, ompBinding, s.ctx(window) as any, s.request(), tool);
 const record = (s: ReturnType<typeof session>, op: Record<string, unknown>) => s.host.appendEntry(EVICT_ENTRY_TYPE, { v: 1, by: "agent", at: 99, ...op });
+/** The line the request starts with while vcc_context is there: where the context's file is. */
+const header = (s: { file: string }) => `[Your context is mirrored in ${s.file}.vcc-context.md, block by block as this request sends it. Edit that file to change what you hold: delete a [[CTX_TURN]] block to take its turn out, replace its text with what to keep of it, or write notes of your own between blocks. The next request sends what the file says. The session keeps every word (vcc_recall expand:[N] reads any original back); the running turn stays as it is.]`;
 const texts = (messages: unknown[] | undefined) => (messages ?? []).map((m: any) => (typeof m.content === "string" ? m.content : m.content?.[0]?.text ?? m.content?.[0]?.type ?? ""));
 
 describe("vcc_context", () => {
@@ -278,6 +280,52 @@ describe("an eviction that does not pay", () => {
   });
 });
 
+describe("the context's file", () => {
+  const mirror = (s: { file: string }) => `${s.file}.vcc-context.md`;
+  const edit = (s: { file: string }, f: (text: string) => string) => writeFileSync(mirror(s), f(readFileSync(mirror(s), "utf8")));
+
+  it("holds the request block by block, and what the agent deletes or rewrites leaves the next request", () => {
+    setEvict(true);
+    const s = session(4);
+    sent(s, undefined, true);
+    const text = readFileSync(mirror(s), "utf8");
+    expect(text).toContain("[[CTX_TURN #0–#3]]\n[user #0] request number 0 please read f0.ts\n[assistant #1]");
+    expect(text).toContain("[[CTX_TURN #12–#15 running, stays as it is]]");
+    // The agent deletes turn 0 and rewrites turn 1 as what it keeps of it.
+    edit(s, (t) => t.replace(/\[\[CTX_TURN #0–#3\]\][\s\S]*?(?=\n\[\[CTX_)/, "").replace(/(\[\[CTX_TURN #4–#7\]\]\n)[\s\S]*?(?=\n\[\[CTX_)/, "$1f1.ts exports totals(); nothing else in it matters."));
+    const r = sent(s, undefined, true);
+    expect(s.appended.map((e) => [e.data.op, e.data.from, e.data.to, e.data.text])).toEqual([["evict", 0, 3, undefined], ["evict", 4, 7, "f1.ts exports totals(); nothing else in it matters."]]);
+    expect(r.notice).toBe("omp-vcc: the agent edited its context's file: #0–#3 out; #4–#7 rewritten.");
+    const first = (r.messages as any[])[0].content.map((p: any) => p.text);
+    expect(first[1]).toBe("[#0–#7, as you rewrote them in your context's file (each original reads back word for word with vcc_recall expand:[0])]\n(#0–#3 out of context)\nf1.ts exports totals(); nothing else in it matters.");
+    // The file now says so, and reading it back as it is changes nothing.
+    expect(readFileSync(mirror(s), "utf8")).toContain("[[CTX_OUT #4–#7]]\nf1.ts exports totals(); nothing else in it matters.");
+    s.appended.length = 0;
+    sent(s, undefined, true);
+    expect(s.appended).toEqual([]);
+  });
+
+  it("takes the agent's notes between blocks as notes after the turn before, and leaves the running turn as it is", () => {
+    setEvict(true);
+    const s = session(4);
+    sent(s, undefined, true);
+    edit(s, (t) => t.replace("\n[[CTX_TURN #12–#15", "\n[[CTX_TURN 9 role=notes]]\nremember: totals() rounds down\n\n[[CTX_TURN #12–#15").replace("[user #12] request number 3", "[user #12] something else"));
+    const r = sent(s, undefined, true);
+    expect(s.appended.map((e) => [e.data.op, e.data.after, e.data.text])).toEqual([["insert", 11, "remember: totals() rounds down"]]);
+    expect(r.notice).toBe("omp-vcc: the agent edited its context's file: 1 note; its edit of the running turn is left out.");
+    const reply = (r.messages as any[]).find((m) => m.role === "assistant" && m.content.some((p: any) => p.text === "Read f2.ts."));
+    expect(reply.content.map((p: any) => p.text)).toEqual(["Read f2.ts.", "remember: totals() rounds down"]);
+    expect(readFileSync(mirror(s), "utf8")).toContain("[[CTX_NOTE after #11]]\nremember: totals() rounds down");
+  });
+
+  it("is not written without vcc_context", () => {
+    setEvict(false);
+    const s = session(2);
+    sent(s, undefined, false);
+    expect(existsSync(mirror(s))).toBe(false);
+  });
+});
+
 describe("undo", () => {
   it("reverses the last edit, all of its runs, and an undo again does it again", () => {
     setEvict(false);
@@ -314,8 +362,9 @@ describe("turn numbers in view", () => {
     const out = sent(s, undefined, true).messages as any[];
     const requests = out.filter((m) => m.role === "user").map((m) => m.content.map((p: any) => p.text));
     // The line for turn 0 rides on turn 1's request, before its mark.
-    expect(requests[0][0]).toStartWith("[#0–#3 out of context");
-    expect(requests[0].slice(1)).toEqual(["[#4]", "request number 1 please read f1.ts"]);
+    expect(requests[0][0]).toBe(header(s));
+    expect(requests[0][1]).toStartWith("[#0–#3 out of context");
+    expect(requests[0].slice(2)).toEqual(["[#4]", "request number 1 please read f1.ts"]);
     expect(requests[1]).toEqual(["[#8]", "request number 2 please read f2.ts"]);
     expect(sent(s, undefined, true).messages).toEqual(out);
     // Without the tool, nothing is marked.
@@ -337,13 +386,13 @@ describe("pinned notes when turns leave", () => {
     const first = (sent(s, undefined, true).messages as any[])[0].content.map((p: any) => p.text);
     // Nothing out: the notes pinned in the conversation are in it, in their calls; the block holds what was carried in.
     expect(first).toEqual([
-      "[Pinned notes carried from the last session (vcc_pin; a name pinned again replaces its note; any pinned since are in the conversation):\n- [9] plan: ship v2 (agent, from session aaaa1111)]",
+      header(s) + "\n[Pinned notes carried from the last session (vcc_pin; a name pinned again replaces its note; any pinned since are in the conversation):\n- [9] plan: ship v2 (agent, from session aaaa1111)]",
       "[#0]", "request number 0 please read f0.ts",
     ]);
     // Turns out: the edit takes up every note as it reads then, and the block stands first, the same on every request.
     record(s, { op: "evict", from: 0, to: 7 });
     const out = (sent(s, undefined, true).messages as any[])[0].content.map((p: any) => p.text);
-    expect(out[0]).toBe("[Pinned notes, as of #15 (vcc_pin; a name pinned again replaces its note; any pinned since are in the conversation):\n- [1] sessions live in SQLite (agent, #1)\n- [3] test-cmd: bun test --isolate (agent, #13)\n- [9] plan: ship v2 (agent, from session aaaa1111)]");
+    expect(out[0]).toBe(`${header(s)}\n` + "[Pinned notes, as of #15 (vcc_pin; a name pinned again replaces its note; any pinned since are in the conversation):\n- [1] sessions live in SQLite (agent, #1)\n- [3] test-cmd: bun test --isolate (agent, #13)\n- [9] plan: ship v2 (agent, from session aaaa1111)]");
     expect(out[1]).toStartWith("[#0–#7 out of context: 2 turns");
     expect((sent(s, undefined, true).messages as any[])[0].content.map((p: any) => p.text)).toEqual(out);
     // A note pinned after the edit leaves the block as it is: it is in the conversation.
