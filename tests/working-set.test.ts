@@ -9,15 +9,15 @@ import { compactionBudgets, ompDefaultTrigger } from "./support/window";
 import { registerHook } from "./support/host";
 
 let dir: string;
-const prev = process.env.OMP_VCC_CONFIG_PATH;
+const prev = process.env.KEEL_CONFIG_PATH;
 beforeAll(() => {
-  dir = mkdtempSync(join(tmpdir(), "omp-vcc-working-set-"));
-  process.env.OMP_VCC_CONFIG_PATH = join(dir, "omp-vcc-config.json");
-  writeFileSync(process.env.OMP_VCC_CONFIG_PATH, JSON.stringify({ overrideDefaultCompaction: true }));
+  dir = mkdtempSync(join(tmpdir(), "keel-working-set-"));
+  process.env.KEEL_CONFIG_PATH = join(dir, "keel-config.json");
+  writeFileSync(process.env.KEEL_CONFIG_PATH, JSON.stringify({ overrideDefaultCompaction: true }));
 });
 afterAll(() => {
-  if (prev === undefined) delete process.env.OMP_VCC_CONFIG_PATH;
-  else process.env.OMP_VCC_CONFIG_PATH = prev;
+  if (prev === undefined) delete process.env.KEEL_CONFIG_PATH;
+  else process.env.KEEL_CONFIG_PATH = prev;
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -151,7 +151,7 @@ describe("the section's lines", () => {
     const roomy = workingSetLines({ history: work(), indices: all(8), kept: [user("go on")], maxChars: 20_000 });
     shape(roomy, 20_000);
     expect(roomy).toContain("    export const roundTotal = (x: number) => Math.floor(x * 100) / 100;");
-    expect(roomy.some((l) => l.includes("vcc_recall expand:[2]"))).toBe(false);
+    expect(roomy.some((l) => l.includes("keel_recall expand:[2]"))).toBe(false);
   });
 
   it("quotes a long failure by its end, after where the earlier lines are", () => {
@@ -159,7 +159,7 @@ describe("the section's lines", () => {
     const lines = workingSetLines({ history, indices: all(3), kept: [user("fix it")], maxChars: 2_000 });
     shape(lines, 2_000);
     expect(lines[0]).toBe('- #2 bash "bun test" [failed], its end:');
-    expect(lines[1]).toMatch(/^    …\[\d+ earlier lines: vcc_recall expand:\[2\]\]$/);
+    expect(lines[1]).toMatch(/^    …\[\d+ earlier lines: keel_recall expand:\[2\]\]$/);
     expect(lines.at(-1)).toBe("    expected 1, received 2");
   });
 });
@@ -250,14 +250,14 @@ describe("in the compaction hook", () => {
   });
 
   it("is left out with workingSet off", () => {
-    writeFileSync(process.env.OMP_VCC_CONFIG_PATH!, JSON.stringify({ overrideDefaultCompaction: true, workingSet: false }));
+    writeFileSync(process.env.KEEL_CONFIG_PATH!, JSON.stringify({ overrideDefaultCompaction: true, workingSet: false }));
     try {
       const branch = entries([user("Set up the build"), call("c0", "bash", { command: "cat build.log" }), result("c0", "bash", "compiling module\n".repeat(600)), say("Built."), ...work(), user("still failing"), call("c4", "edit", { path: "src/billing/totals.ts", oldText: "a", newText: "b" })]);
       const out = compact(branch);
       expect(out.summary).not.toContain("[Working Set]");
       expect(out.details.workingSet).toBeUndefined();
     } finally {
-      writeFileSync(process.env.OMP_VCC_CONFIG_PATH!, JSON.stringify({ overrideDefaultCompaction: true }));
+      writeFileSync(process.env.KEEL_CONFIG_PATH!, JSON.stringify({ overrideDefaultCompaction: true }));
     }
   });
 });

@@ -1,4 +1,4 @@
-// vcc_recall: the text the agent reads, its JSON Schema, and what a call does.
+// keel_recall: the text the agent reads, its JSON Schema, and what a call does.
 //
 // omp validates arguments before any extension code runs and has no
 // prepareArguments hook, so the schema also accepts the loose forms
@@ -10,7 +10,7 @@ import type { Binding } from "../host";
 import { recall } from "../core/recall-run";
 import { RANGE_PAGE_SIZE, RECALL_OUTPUT_CHARS, RECALL_PARAMS, RECALL_TOOL, SEARCH_PAGE_SIZE, SESSION_REF_MIN_CHARS } from "../names";
 
-const RECALL_TOOL_LABEL = "VCC Recall";
+const RECALL_TOOL_LABEL = "Keel Recall";
 
 const RECALL_TOOL_DESCRIPTION = [
   "Recall earlier parts of this session, including anything dropped by compaction.",
@@ -69,7 +69,7 @@ export const registerRecallTool = (pi: ExtensionAPI, host: Binding) => {
     label: RECALL_TOOL_LABEL,
     description: RECALL_TOOL_DESCRIPTION,
     parameters: RECALL_PARAMETERS as any,
-    // The summary tells the agent to call vcc_recall by name, so keep it top-level
+    // The summary tells the agent to call keel_recall by name, so keep it top-level
     // rather than behind omp's tool discovery; it only reads the session file.
     loadMode: "essential",
     approval: "read",

@@ -2,7 +2,7 @@
 ;;;;
 ;;;; SPDX-License-Identifier: MIT
 
-(in-package #:omp-vcc.test)
+(in-package #:keel.test)
 
 (deftest emoji-is-two-code-units
   (is (= 2 (js-length (string (code-char #x1F389)))))

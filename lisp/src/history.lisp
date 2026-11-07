@@ -9,7 +9,7 @@
 ;;;; budget allows, so the index stays bounded however long the session runs
 ;;;; and still points recall at every stretch of it.
 
-(in-package #:omp-vcc)
+(in-package #:keel)
 
 (defparameter +range-asks+ 4 "The longest requests a range keeps.")
 (defparameter +range-files+ 24 "The changed files a range keeps; a range at the cap says `24+`.")
@@ -136,7 +136,7 @@ merged, never the newest range, which stays on its own as the latest work."
 (defun history-line (r)
   "One [History Index] line: `#FROM–#TO: what happened in it`."
   (let ((parts '()) (requests (range-requests r)))
-    (cond ((null requests) (push "earlier, not indexed; search it with vcc_recall" parts))
+    (cond ((null requests) (push "earlier, not indexed; search it with keel_recall" parts))
           ((> requests 0)
            (push (format nil "~a: ~a" (plural requests "request")
                          (join-strings (mapcar (lambda (a) (format nil "\"~a\"" a)) (first-n (range-asks r) 1)) ", "))

@@ -5,9 +5,9 @@
 // stay true all along: a constraint, a decision and why, a fact the work depends
 // on. A pinned note is kept verbatim at the top of every summary until it is
 // unpinned (MemGPT's always-in-context "core memory", arXiv:2310.08560). The
-// user pins with /omp-vcc-pin, the agent with the vcc_pin tool.
+// user pins with /keel-pin, the agent with the keel_pin tool.
 //
-// Each pin or unpin is an omp-vcc `custom` session entry (in the session file, not
+// Each pin or unpin is a keel `custom` session entry (in the session file, not
 // in the model's context; not counted in #N). The notes are the ops replayed
 // along the current branch, so a branch keeps the pins made on it and an edited
 // or retried turn drops the ones made after the edit point. omp's /clear (a
@@ -22,7 +22,7 @@ export interface PinHost {
   appendEntry: (customType: string, data?: unknown) => void;
 }
 
-/** A vcc_pin call, or the text of /…-pin or /…-unpin. */
+/** A keel_pin call, or the text of /…-pin or /…-unpin. */
 export type PinCall = { surface: "tool"; params: unknown } | { surface: "command"; name: "pin" | "unpin"; args: string };
 
 /** What the core made of a pin call: `done` when the note changed, what to tell, and for a command, how and what the agent hears. */

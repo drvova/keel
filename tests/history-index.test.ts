@@ -15,19 +15,19 @@ const range = (from: number, to: number, extra: Partial<HistoryRange> = {}): His
   ({ from, to, requests: 1, asks: [`ask ${from}`], files: [], commits: [], commitCount: 0, failed: 0, ...extra });
 
 let dir: string;
-const prev = process.env.OMP_VCC_CONFIG_PATH;
+const prev = process.env.KEEL_CONFIG_PATH;
 beforeAll(() => {
-  dir = mkdtempSync(join(tmpdir(), "omp-vcc-index-"));
-  process.env.OMP_VCC_CONFIG_PATH = join(dir, "c.json");
-  writeFileSync(process.env.OMP_VCC_CONFIG_PATH, JSON.stringify({ overrideDefaultCompaction: true, smartKeepTail: false }));
+  dir = mkdtempSync(join(tmpdir(), "keel-index-"));
+  process.env.KEEL_CONFIG_PATH = join(dir, "c.json");
+  writeFileSync(process.env.KEEL_CONFIG_PATH, JSON.stringify({ overrideDefaultCompaction: true, smartKeepTail: false }));
 });
 afterAll(() => {
-  if (prev === undefined) delete process.env.OMP_VCC_CONFIG_PATH;
-  else process.env.OMP_VCC_CONFIG_PATH = prev;
+  if (prev === undefined) delete process.env.KEEL_CONFIG_PATH;
+  else process.env.KEEL_CONFIG_PATH = prev;
   rmSync(dir, { recursive: true, force: true });
 });
 
-/** The compaction the hook writes of this branch: an automatic one, or /omp-vcc keep:N. */
+/** The compaction the hook writes of this branch: an automatic one, or /keel keep:N. */
 const compact = (branchEntries: any[], opts: { previousSummary?: string; keep?: number } = {}) => {
   let handler: any;
   const hook = registerHook({ on: (name: string, fn: any) => { if (name === "session_before_compact") handler = fn; } });
@@ -44,7 +44,7 @@ const entry = (id: string, message: any) => ({ id, type: "message", message });
 const say = (id: string, role: "user" | "assistant", text: string) =>
   entry(id, role === "user" ? { role, content: text } : { role, content: [{ type: "text", text }] });
 /** Ten exchanges' worth of #N already behind a compaction, which stored INDEX. */
-const behind = (index: unknown, compactor = "omp-vcc", wrap = false) => {
+const behind = (index: unknown, compactor = "keel", wrap = false) => {
   const done = Array.from({ length: 10 }, (_, i) => say(`old${i}`, i % 2 ? "assistant" : "user", `old request ${i}`));
   const details = { compactor, version: 2, historyIndex: index };
   return [...done, { id: "k0", type: "compaction", firstKeptEntryId: "", summary: "[user]\nold", details: wrap ? { kind: "experimental-context-rollover", hookDetails: details } : details }];
@@ -108,17 +108,18 @@ describe("the index across compactions", () => {
   // Seen with a real model: a compaction kept a turn's final reply, and the next one
   // summarized that reply alone, which rendered as an empty "#10–#10" line.
   it("a range that names nothing extends the one before it instead of adding a line", () => {
-    const branch = [...behind([range(0, 9)]).slice(0, 10), { id: "k0", type: "compaction", firstKeptEntryId: "r", summary: "[user]\nold", details: { compactor: "omp-vcc", version: 2, historyIndex: [range(0, 9)] } },
+    const branch = [...behind([range(0, 9)]).slice(0, 10), { id: "k0", type: "compaction", firstKeptEntryId: "r", summary: "[user]\nold", details: { compactor: "keel", version: 2, historyIndex: [range(0, 9)] } },
       say("r", "assistant", "the reply that was kept"), say("u", "user", "next request"), long("v")];
     expect(compact(branch, { keep: 1 }).details.historyIndex).toEqual([{ ...range(0, 9), to: 10 }]);
   });
 
-  it("reads omp-vcc details (and pre-rename pi-vcc ones), including omp's notes-backed wrapper, and rejects anything else", () => {
+  it("reads keel details (and pre-rename pi-vcc ones), including omp's notes-backed wrapper, and rejects anything else", () => {
     const stored = [range(0, 9)];
     const first = (branch: any[]) => (compact(branch, { keep: 1 }).details.historyIndex as HistoryRange[])[0];
     expect(first([...behind(stored), ...fresh()])).toEqual(range(0, 9));
     expect(first([...behind(stored, "pi-vcc"), ...fresh()])).toEqual(range(0, 9));
-    expect(first([...behind(stored, "omp-vcc", true), ...fresh()])).toEqual(range(0, 9));
+    expect(first([...behind(stored, "omp-vcc"), ...fresh()])).toEqual(range(0, 9));
+    expect(first([...behind(stored, "keel", true), ...fresh()])).toEqual(range(0, 9));
     // Another compactor's, or one malformed: the history behind it is not indexed.
     const unindexed = { from: 0, to: 9, asks: [], files: [], commits: [], commitCount: 0, failed: 0 };
     expect(first([...behind(stored, "other"), ...fresh()])).toEqual(unindexed);
@@ -139,7 +140,7 @@ describe("[History Index] lines", () => {
   });
 
   it("marks history from before the index", () => {
-    expect(lines([{ from: 0, to: 99, asks: [], files: [], commits: [], commitCount: 0, failed: 0 }])).toEqual(["#0–#99: earlier, not indexed; search it with vcc_recall"]);
+    expect(lines([{ from: 0, to: 99, asks: [], files: [], commits: [], commitCount: 0, failed: 0 }])).toEqual(["#0–#99: earlier, not indexed; search it with keel_recall"]);
   });
 });
 
@@ -165,7 +166,7 @@ describe("history index across compactions (the hook)", () => {
 
   it("indexes history a compaction without an index left behind as one range", () => {
     const first = turns(2);
-    const old = { id: "k0", type: "compaction", firstKeptEntryId: "", summary: "[user]\nold", details: { compactor: "omp-vcc", version: 2 } };
+    const old = { id: "k0", type: "compaction", firstKeptEntryId: "", summary: "[user]\nold", details: { compactor: "keel", version: 2 } };
     const c = compact([...first, old, ...turns(3)], { previousSummary: "[user]\nold" });
     expect(c.details.historyIndex[0]).toEqual({ from: 0, to: 3, asks: [], files: [], commits: [], commitCount: 0, failed: 0 });
     expect(c.summary).toContain("#0–#3: earlier, not indexed");

@@ -1,7 +1,7 @@
-// omp-vcc inside a real Pi session: loaded from this package's "pi.extensions"
+// keel inside a real Pi session: loaded from this package's "pi.extensions"
 // by Pi's own loader (pi.ts, with Pi's own package resolved by Pi), driven
 // through Pi's command routing, compaction pipeline and tool validator. No model
-// is called: omp-vcc's summary is local, and Pi only needs a catalog model to
+// is called: keel's summary is local, and Pi only needs a catalog model to
 // build the session.
 //
 // Runs only where @earendil-works/pi-coding-agent is installed (`bun run setup:pi`).
@@ -40,10 +40,10 @@ describe.skipIf(!piInstalled())("Pi host", () => {
 
   beforeAll(async () => {
     assertRealPi();
-    work = mkdtempSync(join(tmpdir(), "omp-vcc-pi-host-"));
-    for (const key of ["PI_CODING_AGENT_DIR", "OMP_VCC_CONFIG_PATH"]) savedEnv[key] = process.env[key];
+    work = mkdtempSync(join(tmpdir(), "keel-pi-host-"));
+    for (const key of ["PI_CODING_AGENT_DIR", "KEEL_CONFIG_PATH"]) savedEnv[key] = process.env[key];
     process.env.PI_CODING_AGENT_DIR = join(work, "agent");
-    process.env.OMP_VCC_CONFIG_PATH = join(work, "omp-vcc-config.json");
+    process.env.KEEL_CONFIG_PATH = join(work, "keel-config.json");
 
     pi = await import("@earendil-works/pi-coding-agent");
     modelRuntime = await pi.ModelRuntime.create({ authPath: join(work, "auth.json"), modelsPath: join(work, "models.json") });
@@ -93,40 +93,40 @@ describe.skipIf(!piInstalled())("Pi host", () => {
     rmSync(work, { recursive: true, force: true });
   });
 
-  test("Pi loads the pi.extensions entry and registers the tools and the /pi-vcc commands", () => {
+  test("Pi loads the pi.extensions entry and registers the tools, the /keel commands and their /pi-vcc names", () => {
     expect(extensionsResult.errors ?? []).toEqual([]);
     expect(extensionsResult.extensions.map((e: any) => e.path)).toContain(join(REPO, "pi.ts"));
-    expect(session.getActiveToolNames()).toEqual(expect.arrayContaining(["vcc_recall", "vcc_pin"]));
+    expect(session.getActiveToolNames()).toEqual(expect.arrayContaining(["keel_recall", "keel_pin"]));
     const commands = session.extensionRunner.getRegisteredCommands().map((c: any) => c.name).sort();
-    expect(commands).toEqual(expect.arrayContaining(["pi-vcc", "pi-vcc-pin", "pi-vcc-recall", "pi-vcc-unpin"]));
+    expect(commands).toEqual(expect.arrayContaining(["keel", "keel-pin", "keel-recall", "keel-unpin", "keel-evict", "pi-vcc", "pi-vcc-pin", "pi-vcc-recall", "pi-vcc-unpin", "pi-vcc-evict"]));
     expect(commands.some((c: string) => c.startsWith("omp-vcc"))).toBe(false);
   });
 
-  test("/pi-vcc keep:1 compacts with omp-vcc through Pi's command routing, sized by Pi's own trigger", async () => {
+  test("/pi-vcc keep:1 compacts with keel through Pi's command routing, sized by Pi's own trigger", async () => {
     await session.prompt("/pi-vcc keep:1");
     const compaction = latestCompaction();
     expect(compaction.fromHook).toBe(true);
-    expect(compaction.details).toMatchObject({ compactor: "omp-vcc", reason: "manual", willRetry: false });
+    expect(compaction.details).toMatchObject({ compactor: "keel", reason: "manual", willRetry: false });
     // Pi's own trigger for this model under that setting (window less reserveTokens), not omp's rule.
     expect(compaction.details.limits).toMatchObject({ contextWindow: model.contextWindow, windowSource: "pi", trigger: model.contextWindow - RESERVE });
     expect(compaction.summary).toContain("- Modified: src/auth/session.ts");
     expect(compaction.summary).toContain("- Read: src/auth/session.ts\n");
     expect(compaction.summary).toMatch(/\$ bun test auth \(#\d+\)/);
     await Bun.sleep(600);
-    expect(notices.some((n) => n.startsWith("info: omp-vcc: kept 1/3 turns"))).toBe(true);
+    expect(notices.some((n) => n.startsWith("info: keel: kept 1/3 turns"))).toBe(true);
   });
 
-  test("Pi's validator accepts vcc_recall's arguments, and vcc_recall resolves #N refs", async () => {
+  test("Pi's validator accepts keel_recall's arguments, and keel_recall resolves #N refs", async () => {
     // Pi's own copy of its validator: npm may nest pi-ai under Pi's package instead of hoisting it.
     const piDir = dirname(Bun.resolveSync("@earendil-works/pi-coding-agent/package.json", import.meta.dir));
     const { validateToolArguments }: any = await import(Bun.resolveSync("@earendil-works/pi-ai/utils/validation", piDir));
-    const definition = session.getToolDefinition("vcc_recall");
+    const definition = session.getToolDefinition("keel_recall");
     for (const args of [{ expand: "#3" }, { range: "0-2" }, { range: [5] }, { mode: "all" }, { scope: "ALL" }]) {
-      expect(validateToolArguments(definition, { type: "toolCall", id: "v", name: "vcc_recall", arguments: args })).toEqual(args);
+      expect(validateToolArguments(definition, { type: "toolCall", id: "v", name: "keel_recall", arguments: args })).toEqual(args);
     }
     // Pi passes a page given as text through as it is (the schema takes either); the core reads it as a number.
-    expect(validateToolArguments(definition, { type: "toolCall", id: "v", name: "vcc_recall", arguments: { page: "2" } }).page).toBe("2");
-    const tool = agentTool("vcc_recall");
+    expect(validateToolArguments(definition, { type: "toolCall", id: "v", name: "keel_recall", arguments: { page: "2" } }).page).toBe("2");
+    const tool = agentTool("keel_recall");
     const result = await tool.execute("t", { expand: "#3" }, undefined, undefined);
     expect(result.content[0].text).toContain("Expanded #3:");
     const touched = await tool.execute("t", { mode: "touched" }, undefined, undefined);
@@ -144,14 +144,14 @@ describe.skipIf(!piInstalled())("Pi host", () => {
     await session._runAutoCompaction("threshold", false);
     const threshold = latestCompaction();
     expect(threshold.id).not.toBe(before.id);
-    expect(threshold.details).toMatchObject({ compactor: "omp-vcc", reason: "threshold", willRetry: false, previousSummaryUsed: true });
+    expect(threshold.details).toMatchObject({ compactor: "keel", reason: "threshold", willRetry: false, previousSummaryUsed: true });
     expect(threshold.details.limits).toMatchObject({ windowSource: "pi", trigger: model.contextWindow - RESERVE });
     user("Ship it");
     assistant([{ type: "text", text: "Shipped." }], "stop");
     await session._runAutoCompaction("overflow", true);
     const overflow = latestCompaction();
     expect(overflow.id).not.toBe(threshold.id);
-    expect(overflow.details).toMatchObject({ compactor: "omp-vcc", reason: "overflow", willRetry: true });
+    expect(overflow.details).toMatchObject({ compactor: "keel", reason: "overflow", willRetry: true });
   });
 
   test("what Pi's context edits omit or replace, the summary leaves out", async () => {
@@ -166,7 +166,7 @@ describe.skipIf(!piInstalled())("Pi host", () => {
     assistant([{ type: "text", text: "Migrated with a backup first." }], "stop");
     user("Add a changelog entry");
     assistant([{ type: "text", text: "Added." }], "stop");
-    await session.prompt("/pi-vcc keep:1");
+    await session.prompt("/keel keep:1");
     const summary = latestCompaction().summary;
     expect(summary).toContain("Try the migration");
     expect(summary).toContain("Migrated with a backup first.");
@@ -174,23 +174,23 @@ describe.skipIf(!piInstalled())("Pi host", () => {
     expect(summary).not.toContain("sk-live-do-not-keep");
   });
 
-  test("a vcc_pin note is stored by Pi and leads the next summary", async () => {
-    const result = await agentTool("vcc_pin").execute("p", { note: "Never edit anything under migrations/." }, undefined, undefined);
+  test("a keel_pin note is stored by Pi and leads the next summary", async () => {
+    const result = await agentTool("keel_pin").execute("p", { note: "Never edit anything under migrations/." }, undefined, undefined);
     expect(result.content[0].text).toMatch(/^Pinned \[1\] Never edit anything under migrations\/\. \(agent, #\d+\)\.$/);
-    expect(sessionManager.getBranch().some((e: any) => e.type === "custom" && e.customType === "omp-vcc.pin")).toBe(true);
+    expect(sessionManager.getBranch().some((e: any) => e.type === "custom" && e.customType === "keel.pin")).toBe(true);
     user("Add an index to orders");
     assistant([{ type: "text", text: "Added." }], "stop");
-    await session.prompt("/pi-vcc");
+    await session.prompt("/keel");
     expect(latestCompaction().summary.startsWith("[Pinned Notes]\n- [1] Never edit anything under migrations/. (agent")).toBe(true);
   });
 
-  test("vcc_recall lists and searches the project's other Pi sessions", async () => {
+  test("keel_recall lists and searches the project's other Pi sessions", async () => {
     const other = pi.SessionManager.create(work, join(work, "sessions"));
     other.appendMessage({ role: "user", content: "Rotate the staging API key", timestamp: now() });
     other.appendMessage({ role: "assistant", content: [{ type: "text", text: "Rotated the staging key and updated the vault." }], api: model.api, provider: model.provider, model: model.id, stopReason: "stop", timestamp: now(), usage });
     await other.flush?.();
     const short = other.getSessionId().replace(/-/g, "").slice(0, 8);
-    const tool = agentTool("vcc_recall");
+    const tool = agentTool("keel_recall");
     const listed = (await tool.execute("s", { mode: "sessions" }, undefined, undefined)).content[0].text;
     expect(listed).toContain(`${short} · `);
     expect(listed).toContain('"Rotate the staging API key"');
@@ -198,17 +198,17 @@ describe.skipIf(!piInstalled())("Pi host", () => {
     expect(found).toContain(`[session ${short}] #1 [assistant]`);
   });
 
-  test("/pi-vcc-evict takes old turns out of the next request whole, and vcc_recall still reads them", async () => {
+  test("/pi-vcc-evict takes old turns out of the next request whole, and keel_recall still reads them", async () => {
     user("Write the release notes for 2.0");
     assistant([{ type: "text", text: "Done." }], "stop");
     user("Tag the release");
     assistant([{ type: "text", text: "Done." }], "stop");
-    const config = process.env.OMP_VCC_CONFIG_PATH!;
+    const config = process.env.KEEL_CONFIG_PATH!;
     const saved = readFileSync(config, "utf8");
     writeFileSync(config, JSON.stringify({ ...JSON.parse(saved), evict: true }));
     try {
       notices.length = 0;
-      await session.prompt("/pi-vcc-evict 1");
+      await session.prompt("/keel-evict 1");
       expect(notices.join("\n")).toContain("Out of context from the next request: #");
       // The request the host builds next, through its own context hook.
       const messages = sessionManager.buildSessionContext().messages;
@@ -220,7 +220,7 @@ describe.skipIf(!piInstalled())("Pi host", () => {
       expect(sent.some((m: any) => text(m) === "Tag the release")).toBe(true);
       // What left the request is in the session, word for word.
       const n = Number(text(stub).match(/^\[#(\d+)/)![1]);
-      const recall = agentTool("vcc_recall");
+      const recall = agentTool("keel_recall");
       const expanded = (await recall.execute("x", { expand: [n] }, undefined, undefined)).content[0].text;
       expect(expanded).toContain(`Expanded #${n}:`);
     } finally {

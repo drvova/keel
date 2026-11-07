@@ -12,7 +12,7 @@ const register = recallTool;
 // The path holds m1; m2 is on another branch.
 const invoke = (tool: any, file: string, params: Record<string, unknown>) => callRecallTool(tool, file, params, ["m1", "m2"], ["m1"]);
 
-describe("vcc_recall scope", () => {
+describe("keel_recall scope", () => {
   it("defaults to active lineage, falls back to other branches with a note, and opts into all explicitly", async () => {
     const { dir, file } = makeSession();
     try {

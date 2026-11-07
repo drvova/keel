@@ -1,14 +1,14 @@
-;;;; pins.lisp --- pinning and unpinning notes, for vcc_pin and the pin commands.
+;;;; pins.lisp --- pinning and unpinning notes, for keel_pin and the pin commands.
 ;;;;
 ;;;; SPDX-License-Identifier: MIT
 ;;;;
-;;;; What a vcc_pin call (src/tools/pin.ts) or a pin command (src/commands/pin.ts)
+;;;; What a keel_pin call (src/tools/pin.ts) or a pin command (src/commands/pin.ts)
 ;;;; does. The notes are the pin ops replayed along the branch (READ-PINS); a pin
 ;;;; or unpin is an op the host appends (its appendEntry), so the core answers
 ;;;; with the op to append and the text to tell, and the TS side
 ;;;; (src/core/pins.ts) appends and tells.
 
-(in-package #:omp-vcc)
+(in-package #:keel)
 
 (defun js-id (n)
   "An id as JavaScript holds it: an integer past 2^53 is the nearest double."
@@ -40,8 +40,8 @@ starting with a letter or digit, up to +PIN-NAME-CHARS+; NIL for anything else."
               (join-strings (mapcar (lambda (n) (format nil "- ~a" (format-pin n))) notes) (string #\Newline)))))
 
 (defun pin-entry-p (e)
-  "A pin or unpin entry: omp-vcc's custom entry, its data an object (an array is one to JavaScript too)."
-  (and (equal (json-get e "type") "custom") (equal (json-get e "customType") +pin-entry-type+)
+  "A pin or unpin entry: keel's custom entry, its data an object (an array is one to JavaScript too)."
+  (and (equal (json-get e "type") "custom") (pin-entry-type-p (json-get e "customType"))
        (let ((d (json-get e "data"))) (or (json-object-p d) (json-array-p d)))))
 
 (defun read-pins (branch)
@@ -153,7 +153,7 @@ the session they came from. A note is named to be kept; an unnamed one stays
 with its session. The agent's stay with theirs too: a note the agent pinned
 may hold what a page or a file told it, and an instruction carried into every
 later session is how an injection persists (Context Language Models, section
-6); the agent finds them with vcc_recall sessions and pins again what still
+6); the agent finds them with keel_recall sessions and pins again what still
 holds. Nothing for a session that has a message or a pin already (resumed,
 forked, or carried into once)."
   (unless (or (some #'counted-entry-p entries) (some #'pin-entry-p entries) (null files))
@@ -168,7 +168,7 @@ forked, or carried into once)."
                         op)))))
 
 (defun run-pin (input)
-  "One vcc_pin call or /…-pin, /…-unpin command: (values DONE TEXT OP SEVERITY AGENT-NOTE).
+  "One keel_pin call or /…-pin, /…-unpin command: (values DONE TEXT OP SEVERITY AGENT-NOTE).
 A carry (a session starting) answers with the ops instead: (values T TEXT OPS)."
   (let* ((call (json-get input "call"))
          (branch (coerce (json-get input "branch" #()) 'vector))
@@ -207,7 +207,7 @@ A carry (a session starting) answers with the ops instead: (values T TEXT OPS)."
         (values nil args))))
 
 (defun pin-call-of (args)
-  "A vcc_pin call as the tool reads it: (:note TEXT NAME), (:unpin VALUE), :both or :list."
+  "A keel_pin call as the tool reads it: (:note TEXT NAME), (:unpin VALUE), :both or :list."
   (let* ((raw (json-get args "note"))
          (note (and (stringp raw) (not (unset-p raw)) raw))
          (name (let ((n (json-get args "name"))) (and (stringp n) (plusp (length (js-trim n))) n)))

@@ -1,4 +1,4 @@
-// vcc_pin: the text the agent reads, its JSON Schema, and what a call does.
+// keel_pin: the text the agent reads, its JSON Schema, and what a call does.
 // unpin also takes "#3"; omp has no prepareArguments, so the schema takes a
 // number or a string and the core (lisp/src/pins.lisp) reads either form.
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
@@ -7,9 +7,9 @@ import type { Binding } from "../host";
 import { pin } from "../core/pins";
 import { PIN_CHARS, PIN_NAME_CHARS, PIN_PARAMS, PIN_TOOL } from "../names";
 
-const PIN_TOOL_LABEL = "VCC Pin";
+const PIN_TOOL_LABEL = "Keel Pin";
 
-/** What the agent reads about vcc_pin; `command` is omp-vcc's command prefix on the host. */
+/** What the agent reads about keel_pin; `command` is keel's command prefix on the host. */
 const pinToolDescription = (command: string): string => [
   "Pin a short note that must survive every compaction: a decision and its reason, a constraint, a fact",
   "the rest of the task depends on. Pinned notes are kept verbatim at the top of every summary until",
@@ -47,7 +47,7 @@ export const registerPinTool = (pi: ExtensionAPI, host: Binding) => {
     description: pinToolDescription(host.command),
     parameters: PIN_PARAMETERS,
     loadMode: "essential",
-    // It writes only omp-vcc's own session entry, not the workspace.
+    // It writes only keel's own session entry, not the workspace.
     approval: "read",
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       // One call: note pins, unpin removes, neither lists.

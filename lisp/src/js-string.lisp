@@ -5,7 +5,7 @@
 ;;;; A Lisp string holds code points; a JavaScript string holds UTF-16 code
 ;;;; units, and an emoji is one character here and two there. Every number the
 ;;;; TS side and this core exchange (a budget, a clip, an offset into a line)
-;;;; and every size limit omp-vcc states is in code units, and a limit must
+;;;; and every size limit keel states is in code units, and a limit must
 ;;;; stay the same number on a ~128K window whichever side computes it. So
 ;;;; text is measured and cut here only through JS-LENGTH and JS-SLICE.
 ;;;;
@@ -13,7 +13,7 @@
 ;;;; how /i compares characters: each is JavaScript's definition, written out,
 ;;;; not the nearest Lisp predicate.
 
-(in-package #:omp-vcc)
+(in-package #:keel)
 
 (defconstant +double-exact+ (expt 2 53) "Integers up to this a double holds exactly: past it JavaScript's numbers skip.")
 (defconstant +max-safe-integer+ (1- (expt 2 53)) "Number.MAX_SAFE_INTEGER.")

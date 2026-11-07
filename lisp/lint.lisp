@@ -9,7 +9,7 @@
 ;;;; variable, a redefinition, a call with the wrong arguments, a type that
 ;;;; cannot hold), with the file it came from; then each function defined in
 ;;;; lisp/src that nothing else in lisp/src or build.lisp names: one only the Lisp
-;;;; tests call is dead to omp-vcc. Exits 1 on any.
+;;;; tests call is dead to keel. Exits 1 on any.
 ;;;; It needs nothing but SBCL, so it runs where the core is built.
 
 (require :asdf)
@@ -33,8 +33,8 @@
 
 ;;; --- the compiler's warnings ---------------------------------------------------------
 
-(let ((system (asdf:find-system "omp-vcc-core"))
-      (out (merge-pathnames (format nil "omp-vcc-lint-~d/" (random 1000000 (make-random-state t))) (uiop:temporary-directory))))
+(let ((system (asdf:find-system "keel-core"))
+      (out (merge-pathnames (format nil "keel-lint-~d/" (random 1000000 (make-random-state t))) (uiop:temporary-directory))))
   (ensure-directories-exist out)
   (handler-bind ((sb-kernel:redefinition-with-defmacro
                    ;; compile-file defines a macro for the rest of its file, and loading

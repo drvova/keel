@@ -31,7 +31,7 @@ const invoke = (tool: any, file: string, ids: string[], params: Record<string, u
 
 // ── mode:touched ─────────────────────────────────────────────────────────
 
-describe("vcc_recall mode:touched", () => {
+describe("keel_recall mode:touched", () => {
   it("aggregates multiple edits on the same file into one line with chronological indices", async () => {
     const entries = [
       toolMsg("m0", "edit", { path: "src/a.ts", oldText: "x", newText: "y" }),
@@ -151,7 +151,7 @@ describe("vcc_recall mode:touched", () => {
 
 // ── #N:path drill-down ────────────────────────────────────────────────────
 
-describe("vcc_recall drill-down", () => {
+describe("keel_recall drill-down", () => {
   const bigContent = Array.from({ length: 40 }, (_, i) => `line ${i}`).join("\n");
 
   it("expands an entry index from touched output", async () => {

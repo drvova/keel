@@ -1,16 +1,17 @@
-// The host omp-vcc runs on, omp (oh-my-pi) or Pi, as each entry binds it:
+// The host keel runs on, omp (oh-my-pi) or Pi, as each entry binds it:
 // index.ts builds omp's from what omp hands an extension (src/hooks/omp-host.ts),
 // pi.ts builds Pi's from Pi's own package. Each piece comes from that host's
 // code; shared code reads what differs from here, never from the host's name.
+import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import type { Config } from "./core/settings";
 import type { SessionManagerLike } from "./core/session-file";
 
-/** What started a compaction: omp's auto_compaction_start reason or Pi's session_before_compact reason, or manual (/compact, /omp-vcc, /pi-vcc). Pi's are manual, threshold and overflow. */
+/** What started a compaction: omp's auto_compaction_start reason or Pi's session_before_compact reason, or manual (/compact, /keel). Pi's are manual, threshold and overflow. */
 export type CompactionReason = "manual" | "threshold" | "overflow" | "idle" | "incomplete";
 
 export type HostName = "omp" | "pi";
 
-/** The host's convertToLlm (omp's from `pi.pi`, Pi's from its package); omp-vcc calls it with one message at a time. */
+/** The host's convertToLlm (omp's from `pi.pi`, Pi's from its package); keel calls it with one message at a time. */
 export type ConvertToLlm = (messages: any[]) => any[];
 
 /** What started a compaction, and whether the host retries the turn after it. */
@@ -24,10 +25,12 @@ export const MANUAL_TRIGGER: CompactionTrigger = { reason: "manual", willRetry: 
 /** What differs between the hosts and is the same for every session of one. */
 export interface HostProfile {
   name: HostName;
-  /** The host's name in what omp-vcc tells the user. */
+  /** The host's name in what keel tells the user. */
   displayName: "omp" | "Pi";
-  /** omp-vcc's command prefix: /omp-vcc… on omp; /pi-vcc… on Pi, the names pi-vcc users know. */
-  command: "omp-vcc" | "pi-vcc";
+  /** keel's command prefix, /keel… on both hosts. */
+  command: "keel";
+  /** The prefix keel's commands had before, kept as an alias of each: /omp-vcc… on omp, /pi-vcc… on Pi. */
+  oldCommand: "omp-vcc" | "pi-vcc";
   /**
    * The event after which the host will not continue on its own: omp's
    * agent_end without `willContinue`; Pi's agent_settled (its agent_end comes
@@ -38,22 +41,22 @@ export interface HostProfile {
   modelsFile: string;
   /**
    * The host rewrites messages in the session file (omp: shake, supersedeReads,
-   * pruning), so omp-vcc keeps their originals (src/hooks/raw-capture.ts). Pi
+   * pruning), so keel keeps their originals (src/hooks/raw-capture.ts). Pi
    * never rewrites an entry.
    */
   rewritesInPlace: boolean;
 }
 
-/** A host as a binding of omp-vcc uses it. */
+/** A host as a binding of keel uses it. */
 export interface Host extends HostProfile {
   convertToLlm: ConvertToLlm;
-  /** The host's agent directory: where omp-vcc's config and learned limits live. */
+  /** The host's agent directory: where keel's config and learned limits live. */
   agentDir: () => string;
   /** The trigger of the compaction a session_before_compact event is for. */
   triggerOf: (event: unknown) => CompactionTrigger;
 }
 
-/** A host as one binding of omp-vcc sees it: with its own config file. */
+/** A host as one binding of keel sees it: with its own config file. */
 export interface Binding extends Host {
   config: Config;
 }
@@ -64,7 +67,8 @@ export const bind = <H extends HostProfile>(host: H, config: Config): H & Pick<B
 export const OMP_HOST: HostProfile = {
   name: "omp",
   displayName: "omp",
-  command: "omp-vcc",
+  command: "keel",
+  oldCommand: "omp-vcc",
   settledEvent: "agent_end",
   modelsFile: "omp's models.yml",
   rewritesInPlace: true,
@@ -73,7 +77,8 @@ export const OMP_HOST: HostProfile = {
 export const PI_HOST: HostProfile = {
   name: "pi",
   displayName: "Pi",
-  command: "pi-vcc",
+  command: "keel",
+  oldCommand: "pi-vcc",
   settledEvent: "agent_settled",
   modelsFile: "Pi's models.json",
   rewritesInPlace: false,
@@ -130,7 +135,7 @@ export const tell = (ctx: NotifyCtx, message: string, type: "info" | "warning" |
  * if the host refuses it, the user hears what was not sent instead of nothing.
  */
 export const deliver = (ctx: NotifyCtx, what: string, send: () => unknown): Promise<void> => {
-  const refused = (err: unknown) => tell(ctx, `omp-vcc: could not send ${what}: ${err instanceof Error ? err.message : String(err)}`, "warning");
+  const refused = (err: unknown) => tell(ctx, `keel: could not send ${what}: ${err instanceof Error ? err.message : String(err)}`, "warning");
   try {
     // Sent now, as the host expects it; only its answer is waited for.
     return Promise.resolve(send()).then(() => {}, refused);
@@ -147,4 +152,20 @@ const AFTER_HOST_STATUS_MS = 500;
 export const tellLater = (ctx: NotifyCtx, message: string): void => {
   if (ctx.hasUI === false) return tell(ctx, message);
   setTimeout(() => tell(ctx, message), AFTER_HOST_STATUS_MS);
+};
+
+/**
+ * Register one of keel's commands, `/keel` or `/keel-SUFFIX`, and the same
+ * command under the name it had before (`/omp-vcc-SUFFIX` on omp,
+ * `/pi-vcc-SUFFIX` on Pi), so what users type still works.
+ */
+export const registerCommand = (
+  pi: Pick<ExtensionAPI, "registerCommand">,
+  host: HostProfile,
+  suffix: string,
+  options: Parameters<ExtensionAPI["registerCommand"]>[1] & { description: string },
+): void => {
+  const name = suffix ? `${host.command}-${suffix}` : host.command;
+  pi.registerCommand(name, options);
+  pi.registerCommand(suffix ? `${host.oldCommand}-${suffix}` : host.oldCommand, { ...options, description: `The old name of /${name}. ${options.description}` });
 };

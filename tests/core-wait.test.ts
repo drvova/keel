@@ -1,4 +1,4 @@
-// While omp-vcc's core cannot run yet (no SBCL to build it here, or the build
+// While keel's core cannot run yet (no SBCL to build it here, or the build
 // still going), every surface says why and steps aside: the compaction hook
 // leaves the pass to the host and tells the user once, the tools answer with
 // the reason. tests/lisp-build.test.ts covers the build itself.
@@ -11,17 +11,17 @@ import { registerRecallTool } from "../src/tools/recall";
 import { registerPinTool } from "../src/tools/pin";
 import { ompBinding } from "./support/binding";
 
-const saved = { core: process.env.OMP_VCC_CORE, sbcl: process.env.SBCL, dir: process.env.OMP_VCC_CORE_BUILD_DIR };
+const saved = { core: process.env.KEEL_CORE, sbcl: process.env.SBCL, dir: process.env.KEEL_CORE_BUILD_DIR };
 let dir: string;
 beforeAll(() => {
-  dir = mkdtempSync(join(tmpdir(), "omp-vcc-core-wait-"));
+  dir = mkdtempSync(join(tmpdir(), "keel-core-wait-"));
   // No core named, no build of these sources where builds go, and no SBCL to make one.
-  delete process.env.OMP_VCC_CORE;
-  process.env.OMP_VCC_CORE_BUILD_DIR = dir;
+  delete process.env.KEEL_CORE;
+  process.env.KEEL_CORE_BUILD_DIR = dir;
   process.env.SBCL = "/nonexistent/sbcl";
 });
 afterAll(() => {
-  for (const [k, v] of [["OMP_VCC_CORE", saved.core], ["SBCL", saved.sbcl], ["OMP_VCC_CORE_BUILD_DIR", saved.dir]] as const) {
+  for (const [k, v] of [["KEEL_CORE", saved.core], ["SBCL", saved.sbcl], ["KEEL_CORE_BUILD_DIR", saved.dir]] as const) {
     if (v === undefined) delete process.env[k];
     else process.env[k] = v;
   }
@@ -42,7 +42,7 @@ describe("while the core cannot run", () => {
     expect(handler(event, ctx)).toBeUndefined();
     expect(handler(event, ctx)).toBeUndefined();
     expect(told).toHaveLength(1);
-    expect(told[0]).toContain("omp-vcc needs SBCL to build its core");
+    expect(told[0]).toContain("keel needs SBCL to build its core");
   });
 
   it("the extension still loads, every command and tool but the one the core's settings decide", () => {
@@ -52,18 +52,18 @@ describe("while the core cannot run", () => {
     const pi: any = { on: () => {}, registerCommand: (name: string) => commands.push(name), registerTool: (t: any) => tools.push(t.name), appendEntry: () => {} };
     const host: any = { ...require("../src/host").OMP_HOST, agentDir: () => dir, convertToLlm: (m: unknown[]) => m, triggerOf: () => ({ reason: "manual", willRetry: false }) };
     expect(() => register(pi, host)).not.toThrow();
-    expect(commands).toContain("omp-vcc-evict");
-    expect(tools).toEqual(expect.arrayContaining(["vcc_recall", "vcc_pin"]));
+    expect(commands).toContain("keel-evict");
+    expect(tools).toEqual(expect.arrayContaining(["keel_recall", "keel_pin"]));
   });
 
-  it("vcc_recall and vcc_pin answer with the reason", async () => {
+  it("keel_recall and keel_pin answer with the reason", async () => {
     const tools: any[] = [];
     const pi: any = { registerTool: (t: any) => tools.push(t), appendEntry: () => {} };
     registerRecallTool(pi, ompBinding);
     registerPinTool(pi, ompBinding);
     const ctx = { sessionManager: { getEntries: () => [], getBranch: () => [] }, model: undefined };
     for (const t of tools) {
-      const out = await t.execute("x", t.name === "vcc_pin" ? { note: "keep this" } : { query: "anything" }, undefined, undefined, ctx);
+      const out = await t.execute("x", t.name === "keel_pin" ? { note: "keep this" } : { query: "anything" }, undefined, undefined, ctx);
       expect({ tool: t.name, text: out.content[0].text }).toEqual({ tool: t.name, text: expect.stringContaining("install SBCL") });
     }
   });

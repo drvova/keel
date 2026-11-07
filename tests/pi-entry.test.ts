@@ -14,9 +14,9 @@ let dir: string;
 const saved: Record<string, string | undefined> = {};
 
 beforeAll(() => {
-  dir = mkdtempSync(join(tmpdir(), "omp-vcc-pi-entry-"));
-  for (const key of ["OMP_VCC_CONFIG_PATH", "PI_CODING_AGENT_DIR"]) saved[key] = process.env[key];
-  process.env.OMP_VCC_CONFIG_PATH = join(dir, "omp-vcc-config.json");
+  dir = mkdtempSync(join(tmpdir(), "keel-pi-entry-"));
+  for (const key of ["KEEL_CONFIG_PATH", "PI_CODING_AGENT_DIR"]) saved[key] = process.env[key];
+  process.env.KEEL_CONFIG_PATH = join(dir, "keel-config.json");
   // Pi's getAgentDir reads this: the learned-limits file lands here, never in ~/.pi.
   process.env.PI_CODING_AGENT_DIR = join(dir, "agent");
 });
@@ -30,7 +30,7 @@ afterAll(() => {
 });
 
 beforeEach(() => {
-  writeFileSync(process.env.OMP_VCC_CONFIG_PATH!, JSON.stringify({ overrideDefaultCompaction: true, smartKeepTail: false }));
+  writeFileSync(process.env.KEEL_CONFIG_PATH!, JSON.stringify({ overrideDefaultCompaction: true, smartKeepTail: false }));
 });
 
 async function createPi(model: Record<string, unknown> = { provider: "anthropic", id: "claude-sonnet-4-5", contextWindow: 200_000 }) {
@@ -102,16 +102,16 @@ const conversation = () => [
 
 describe.skipIf(!piInstalled())("Pi entry", () => {
   beforeAll(assertRealPi);
-  test("registers the hook on Pi's events, the /pi-vcc commands and the tools, and nothing of omp's", async () => {
+  test("registers the hook on Pi's events, the /keel commands (and their /pi-vcc names) and the tools, and nothing of omp's", async () => {
     const pi = await createPi();
     // No raw capture (Pi rewrites nothing in place) and no omp trigger tracking; the request hook leaves evicted turns out; a session starting carries the last one's named notes.
     expect([...pi.handlers.keys()].sort()).toEqual(["agent_settled", "context", "message_end", "session_before_compact", "session_compact", "session_start"]);
-    expect([...pi.commands.keys()].sort()).toEqual(["pi-vcc", "pi-vcc-evict", "pi-vcc-pin", "pi-vcc-recall", "pi-vcc-unpin"]);
-    expect(pi.tools.map((t: any) => t.name)).toEqual(["vcc_recall", "vcc_pin"]);
-    // The tools name Pi's commands: vcc_pin told the agent the user pins with /omp-vcc-pin.
-    const pin = pi.tools.find((t: any) => t.name === "vcc_pin");
-    expect(pin.description).toContain("/pi-vcc-pin");
-    expect(pin.description).not.toContain("omp-vcc");
+    expect([...pi.commands.keys()].sort()).toEqual(["keel", "keel-evict", "keel-pin", "keel-recall", "keel-unpin", "pi-vcc", "pi-vcc-evict", "pi-vcc-pin", "pi-vcc-recall", "pi-vcc-unpin"]);
+    expect(pi.commands.get("pi-vcc")).toBe(pi.commands.get("keel"));
+    expect(pi.tools.map((t: any) => t.name)).toEqual(["keel_recall", "keel_pin"]);
+    // The tools name Pi's commands: keel_pin told the agent the user pins with /keel-pin.
+    const pin = pi.tools.find((t: any) => t.name === "keel_pin");
+    expect(pin.description).toContain("/keel-pin");
   });
 
   test("the trigger is the one Pi's event carries, and the budgets are sized for Pi's own threshold", async () => {
@@ -133,6 +133,8 @@ describe.skipIf(!piInstalled())("Pi entry", () => {
       const result = entry({ role: "toolResult", toolCallId: "k1", toolName: "bash", content: [{ type: "text", text: "API_KEY=hunter2" }], isError: false });
       pi.setEntries([
         user("Zeroth request: read the env file"), attempt, call, result,
+        entry({ role: "assistant", content: [{ type: "toolCall", id: "k2", name: "bash", arguments: { command: "ls -la" } }] }),
+        entry({ role: "toolResult", toolCallId: "k2", toolName: "bash", content: [{ type: "text", text: "-rw-r--r-- 1 user user 120 notes.txt\n".repeat(30) }], isError: false }),
         { id: `p${++n}`, type: "context_edit", targetId: attempt.id, replacement: null },
         { id: `p${++n}`, type: "context_edit", targetId: result.id, replacement: { content: "[redacted by the user]" } },
         ...conversation(),
@@ -151,16 +153,16 @@ describe.skipIf(!piInstalled())("Pi entry", () => {
     expect(pi.compactCalls).toHaveLength(1);
     expect(pi.compactCalls[0].customInstructions).toContain("keep:1");
     // Pi's compact() returned at once; the command came back only after Pi's onComplete, which reports the outcome.
-    expect(pi.notices).toEqual(["Compacted with omp-vcc"]);
-    // The hook gets the marker from Pi's event, so it compacts with omp-vcc even when overriding is off.
-    writeFileSync(process.env.OMP_VCC_CONFIG_PATH!, JSON.stringify({ overrideDefaultCompaction: false }));
+    expect(pi.notices).toEqual(["Compacted with keel"]);
+    // The hook gets the marker from Pi's event, so it compacts with keel even when overriding is off.
+    writeFileSync(process.env.KEEL_CONFIG_PATH!, JSON.stringify({ overrideDefaultCompaction: false }));
     const result = pi.beforeCompact({ reason: "manual", willRetry: false, customInstructions: pi.compactCalls[0].customInstructions });
-    expect(result?.compaction?.details?.compactor).toBe("omp-vcc");
+    expect(result?.compaction?.details?.compactor).toBe("keel");
   });
 
-  test("past its own trigger on a model whose window Pi overestimates, omp-vcc compacts once Pi settles", async () => {
+  test("past its own trigger on a model whose window Pi overestimates, keel compacts once Pi settles", async () => {
     const model = { provider: "local", id: "small-model", contextWindow: 128_000 };
-    recordLearnedWindow(dirname(process.env.OMP_VCC_CONFIG_PATH!), "local/small-model", 32_768);
+    recordLearnedWindow(dirname(process.env.KEEL_CONFIG_PATH!), "local/small-model", 32_768);
     const pi = await createPi(model);
     pi.setEntries(conversation());
     // Pi's reserve, once a compaction has carried it.

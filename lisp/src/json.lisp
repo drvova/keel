@@ -17,7 +17,7 @@
 ;;;; surrogate (SBCL characters can hold one), and one is written back as its
 ;;;; escape, so text the TS side sends survives the round trip unit for unit.
 
-(in-package #:omp-vcc)
+(in-package #:keel)
 
 (define-condition json-parse-error (error)
   ((position :initarg :position :reader json-parse-error-position)

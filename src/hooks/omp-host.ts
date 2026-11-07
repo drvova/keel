@@ -1,4 +1,4 @@
-// omp as a host of omp-vcc, built from what omp hands an extension (`pi.pi`),
+// omp as a host of keel, built from what omp hands an extension (`pi.pi`),
 // so nothing here imports an omp package at runtime.
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { MANUAL_TRIGGER, OMP_HOST, type CompactionTrigger, type Host } from "../host";
@@ -7,7 +7,7 @@ import { MANUAL_TRIGGER, OMP_HOST, type CompactionTrigger, type Host } from "../
  * omp's session_before_compact carries no trigger. Every automatic pass emits
  * auto_compaction_start (and awaits its handlers) right before the hook, so
  * remember its reason for the next hook run. A hook run with none pending is a
- * manual one (/compact, /omp-vcc, ctx.compact()). omp retries the failed turn
+ * manual one (/compact, /keel, ctx.compact()). omp retries the failed turn
  * after an overflow or a cut-off ("incomplete") reply, never after threshold or
  * idle maintenance.
  */
@@ -35,7 +35,7 @@ const trackOmpCompactionTrigger = (pi: ExtensionAPI): (() => CompactionTrigger) 
 
 /**
  * omp: its own convertToLlm and agent directory from `pi.pi`. No continue of
- * omp-vcc's own: omp resumes the run itself after automatic maintenance
+ * keel's own: omp resumes the run itself after automatic maintenance
  * (`compaction.autoContinue`).
  */
 export const ompHost = (pi: ExtensionAPI): Host => {

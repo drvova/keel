@@ -25,7 +25,7 @@ const recall = async (file: string, params: Record<string, unknown>, branch?: st
 
 const linear = (n: number) => Array.from({ length: n }, (_, i) => msg(`m${i}`, i % 2 ? "assistant" : "user", `entry ${i} body`));
 
-describe("vcc_recall range", () => {
+describe("keel_recall range", () => {
   it("returns the inclusive range in order", async () => {
     const entries = linear(10);
     const file = writeSession(entries);
@@ -145,7 +145,7 @@ const call = (id: string, callId: string, cmd: string) =>
 const result = (id: string, callId: string, text: string) =>
   msg(id, "toolResult", [{ type: "text", text }], { toolCallId: callId, toolName: "bash" });
 
-describe("vcc_recall expand pairs a tool call with its result", () => {
+describe("keel_recall expand pairs a tool call with its result", () => {
   it("brings the result along, clipped, without repeating requested entries", async () => {
     const entries = [
       msg("u0", "user", "check the logs"),
@@ -178,14 +178,14 @@ describe("vcc_recall expand pairs a tool call with its result", () => {
   });
 });
 
-describe("vcc_recall next-step hints", () => {
+describe("keel_recall next-step hints", () => {
   it("search points at its first hit; touched points at a written file", async () => {
     const entries = [
       msg("u0", "user", "fix the redis cache"),
       msg("a1", "assistant", [{ type: "toolCall", id: "w1", name: "write", arguments: { path: "/repo/src/cache.ts", content: "x" } }]),
       msg("r2", "toolResult", [{ type: "text", text: "ok" }], { toolCallId: "w1", toolName: "write" }),
       msg("u3", "user", "what did we do earlier?"),
-      msg("a4", "assistant", [{ type: "toolCall", id: "q1", name: "vcc_recall", arguments: {} }]),
+      msg("a4", "assistant", [{ type: "toolCall", id: "q1", name: "keel_recall", arguments: {} }]),
     ];
     const file = writeSession(entries);
     const ids = entries.map((e) => e.id);
@@ -200,7 +200,7 @@ describe("vcc_recall next-step hints", () => {
 
 // Live test P5: the agent searched with words from the question itself, the
 // question matched, and the fact on an abandoned branch was never reached.
-describe("vcc_recall search skips the current turn", () => {
+describe("keel_recall search skips the current turn", () => {
   const entries = [
     msg("u0", "user", "fix the bucket"),
     msg("a1", "assistant", "fixed"),
@@ -210,7 +210,7 @@ describe("vcc_recall search skips the current turn", () => {
     msg("a5", "assistant", "done"),
     msg("u6", "user", "what was the staging code I gave you?"),
     // the agent message making this recall call, written before the tool runs
-    msg("a7", "assistant", [{ type: "toolCall", id: "r1", name: "vcc_recall", arguments: { query: "staging code" } }]),
+    msg("a7", "assistant", [{ type: "toolCall", id: "r1", name: "keel_recall", arguments: { query: "staging code" } }]),
   ];
   const live = ["u0", "a1", "u4", "a5", "u6", "a7"];
 
@@ -271,13 +271,13 @@ describe("vcc_recall search skips the current turn", () => {
 
 // ibis review: filtering the turn after ranking let the question win the regex
 // path (a "?" makes the query a regex), so the term search never ran.
-describe("vcc_recall search leaves the current turn out before ranking", () => {
+describe("keel_recall search leaves the current turn out before ranking", () => {
   it("finds the earlier answer when the agent searches with the question itself", async () => {
     const entries = [
       msg("u0", "user", "note this"),
       msg("a1", "assistant", "The staging code is TEAL-ORCHID-42."),
       msg("u2", "user", "What was the staging code?"),
-      msg("a3", "assistant", [{ type: "toolCall", id: "q1", name: "vcc_recall", arguments: { query: "What was the staging code?" } }]),
+      msg("a3", "assistant", [{ type: "toolCall", id: "q1", name: "keel_recall", arguments: { query: "What was the staging code?" } }]),
     ];
     const file = writeSession(entries);
     const out = await recall(file, { query: "What was the staging code?" }, entries.map((e) => e.id));
@@ -291,7 +291,7 @@ describe("vcc_recall search leaves the current turn out before ranking", () => {
       msg("u0", "user", "first"),
       msg("a1", "assistant", "retry loop was decided here"),
       msg("u2", "user", "again"),
-      msg("a3", "assistant", [{ type: "toolCall", id: "q", name: "vcc_recall", arguments: {} }]),
+      msg("a3", "assistant", [{ type: "toolCall", id: "q", name: "keel_recall", arguments: {} }]),
       ...turn,
     ];
     const file = writeSession(entries);
@@ -301,7 +301,7 @@ describe("vcc_recall search leaves the current turn out before ranking", () => {
 });
 
 // ibis review: an interrupted call left no result, and a later call reused its id.
-describe("vcc_recall expand pairs only the call's own result", () => {
+describe("keel_recall expand pairs only the call's own result", () => {
   it("does not take a later call's result through a reused id", async () => {
     const entries = [
       msg("u0", "user", "run it"),
@@ -320,8 +320,8 @@ describe("vcc_recall expand pairs only the call's own result", () => {
 });
 
 // From a sibling omp port's audit: one malformed entry threw out of search and
-// every vcc_recall query failed for the whole session.
-describe("vcc_recall with malformed entries", () => {
+// every keel_recall query failed for the whole session.
+describe("keel_recall with malformed entries", () => {
   const entries = [
     msg("m0", "user", "set up the deploy key rotation"),
     msg("m1", "assistant", [null, { type: "toolCall", id: "t1", name: null, arguments: null }, { type: "text", text: "rotation scheduled weekly" }]),
@@ -344,7 +344,7 @@ describe("vcc_recall with malformed entries", () => {
   });
 });
 
-describe("vcc_recall expand on a small window", () => {
+describe("keel_recall expand on a small window", () => {
   it("clips a call's arguments at the window's share and points a write at the file drill-down", async () => {
     const entries = [
       msg("u0", "user", "write the fixture"),

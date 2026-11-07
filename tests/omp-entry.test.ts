@@ -12,19 +12,19 @@ let dir: string;
 let previousConfig: string | undefined;
 
 beforeAll(() => {
-  dir = mkdtempSync(join(tmpdir(), "omp-vcc-omp-entry-"));
-  previousConfig = process.env.OMP_VCC_CONFIG_PATH;
-  process.env.OMP_VCC_CONFIG_PATH = join(dir, "omp-vcc-config.json");
+  dir = mkdtempSync(join(tmpdir(), "keel-omp-entry-"));
+  previousConfig = process.env.KEEL_CONFIG_PATH;
+  process.env.KEEL_CONFIG_PATH = join(dir, "keel-config.json");
 });
 
 afterAll(() => {
-  if (previousConfig === undefined) delete process.env.OMP_VCC_CONFIG_PATH;
-  else process.env.OMP_VCC_CONFIG_PATH = previousConfig;
+  if (previousConfig === undefined) delete process.env.KEEL_CONFIG_PATH;
+  else process.env.KEEL_CONFIG_PATH = previousConfig;
   rmSync(dir, { recursive: true, force: true });
 });
 
 beforeEach(() => {
-  writeFileSync(process.env.OMP_VCC_CONFIG_PATH!, JSON.stringify({ overrideDefaultCompaction: true, smartKeepTail: false }));
+  writeFileSync(process.env.KEEL_CONFIG_PATH!, JSON.stringify({ overrideDefaultCompaction: true, smartKeepTail: false }));
 });
 
 function createOmp(mode: "tui" | "rpc" = "rpc") {
@@ -108,13 +108,15 @@ describe("omp entry: registration", () => {
     expect([...omp.handlers.keys()].sort()).toEqual(
       ["agent_end", "auto_compaction_end", "auto_compaction_start", "context", "message_end", "session_before_compact", "session_compact", "session_start", "turn_end"],
     );
-    expect([...omp.commands.keys()].sort()).toEqual(["omp-vcc", "omp-vcc-evict", "omp-vcc-pin", "omp-vcc-recall", "omp-vcc-unpin"]);
-    expect(omp.tools.map((t: any) => t.name)).toEqual(["vcc_recall", "vcc_pin"]);
+    expect([...omp.commands.keys()].sort()).toEqual(["keel", "keel-evict", "keel-pin", "keel-recall", "keel-unpin", "omp-vcc", "omp-vcc-evict", "omp-vcc-pin", "omp-vcc-recall", "omp-vcc-unpin"]);
+    // The old names run the same commands.
+    expect(omp.commands.get("omp-vcc-recall")).toBe(omp.commands.get("keel-recall"));
+    expect(omp.tools.map((t: any) => t.name)).toEqual(["keel_recall", "keel_pin"]);
   });
 
-  test("vcc_recall is a top-level read-only tool with a plain JSON Schema", () => {
+  test("keel_recall is a top-level read-only tool with a plain JSON Schema", () => {
     const [tool] = createOmp().tools;
-    expect(tool.name).toBe("vcc_recall");
+    expect(tool.name).toBe("keel_recall");
     expect(tool.loadMode).toBe("essential");
     expect(tool.approval).toBe("read");
     expect(tool.parameters.type).toBe("object");
@@ -122,7 +124,7 @@ describe("omp entry: registration", () => {
     expect(Object.getOwnPropertySymbols(tool.parameters)).toEqual([]);
   });
 
-  test("vcc_recall repairs its own arguments, since omp has no prepareArguments", async () => {
+  test("keel_recall repairs its own arguments, since omp has no prepareArguments", async () => {
     const [tool] = createOmp().tools;
     const sessionManager = { getSessionFile: () => join(dir, "missing.jsonl"), getBranch: () => [] };
     const result = await tool.execute("t", { expand: "#3", bogus: 1 }, undefined, undefined, { sessionManager });
@@ -130,7 +132,7 @@ describe("omp entry: registration", () => {
   });
 });
 
-describe("omp entry: /omp-vcc", () => {
+describe("omp entry: /keel", () => {
   test("passes callbacks to ctx.compact and the marker to the hook through state", async () => {
     const omp = createOmp();
     const entries = conversation();
@@ -146,17 +148,17 @@ describe("omp entry: /omp-vcc", () => {
     // The stats toast waits 500 ms; fake timers fire it at once.
     jest.useFakeTimers();
     try {
-      await omp.run("omp-vcc", "keep:2");
+      await omp.run("keel", "keep:2");
       jest.runAllTimers();
     } finally {
       jest.useRealTimers();
     }
 
     expect(typeof omp.compactCalls[0]).toBe("object");
-    expect(hookResult.compaction.details.compactor).toBe("omp-vcc");
+    expect(hookResult.compaction.details.compactor).toBe("keel");
     // keep:2 reached the hook: the tail starts at the second user turn.
     expect(hookResult.compaction.firstKeptEntryId).toBe(entries[2].id);
-    expect(omp.notices.some((x) => x.msg.startsWith("omp-vcc: kept 2/3 turns"))).toBe(true);
+    expect(omp.notices.some((x) => x.msg.startsWith("keel: kept 2/3 turns"))).toBe(true);
     // The marker is only for the pass the command started.
     expect(omp.beforeCompact(undefined)?.compaction.details.reason).toBe("manual");
   });
@@ -168,7 +170,7 @@ describe("omp entry: /omp-vcc", () => {
       omp.beforeCompact(undefined);
       arg.onComplete();
     });
-    await omp.run("omp-vcc", "keep:1 carry on");
+    await omp.run("keel", "keep:1 carry on");
     expect((omp.compactCalls[0] as any).suppressContinuation).toBe(true);
     expect(omp.userMessages).toEqual(["carry on"]);
   });
@@ -180,17 +182,17 @@ describe("omp entry: /omp-vcc", () => {
       arg.onError(err);
       throw err;
     });
-    await omp.run("omp-vcc");
+    await omp.run("keel");
     expect(omp.notices).toHaveLength(1);
     expect(omp.notices[0].msg).toContain("compaction.keepRecentTokens in omp settings");
   });
 
-  test("TUI: omp shows the failure itself, so omp-vcc adds nothing for a generic error", async () => {
+  test("TUI: omp shows the failure itself, so keel adds nothing for a generic error", async () => {
     const omp = createOmp("tui");
     omp.setCompact(async (arg: any) => {
       arg.onError(new Error("Compaction cancelled"));
     });
-    await omp.run("omp-vcc");
+    await omp.run("keel");
     expect(omp.notices).toEqual([]);
   });
 });
@@ -204,11 +206,11 @@ describe("omp entry: automatic compactions", () => {
     expect(omp.beforeCompact().compaction.details).toMatchObject({ reason: "manual", willRetry: false });
   });
 
-  test("an overflow with one message is summarized by omp-vcc, not handed to snapcompact", () => {
+  test("an overflow with one message is summarized by keel, not handed to snapcompact", () => {
     const omp = createOmp();
     omp.setEntries([user("only one message")]);
     omp.fire("auto_compaction_start", { reason: "overflow", action: "snapcompact" });
-    expect(omp.beforeCompact().compaction).toMatchObject({ firstKeptEntryId: "", details: { compactor: "omp-vcc", reason: "overflow" } });
+    expect(omp.beforeCompact().compaction).toMatchObject({ firstKeptEntryId: "", details: { compactor: "keel", reason: "overflow" } });
     // A manual pass in the same state is cancelled instead.
     expect(omp.beforeCompact()).toEqual({ cancel: true });
   });
@@ -288,14 +290,14 @@ describe("omp entry: a turn still running", () => {
     expect(omp.notices).toEqual([]);
   });
 
-  test("an overflow pass on a running turn is answered by omp-vcc, whatever method omp picked", () => {
+  test("an overflow pass on a running turn is answered by keel, whatever method omp picked", () => {
     for (const action of ["snapcompact", "context-full", "remote"]) {
       const omp = createOmp();
       const entries = running();
       omp.setEntries(entries);
       omp.fire("auto_compaction_start", { reason: "overflow", action });
       const { compaction } = omp.beforeCompact();
-      expect(compaction.details).toMatchObject({ compactor: "omp-vcc", reason: "overflow", willRetry: true });
+      expect(compaction.details).toMatchObject({ compactor: "keel", reason: "overflow", willRetry: true });
       // Its latest step is kept, the request summarized.
       expect(compaction.firstKeptEntryId).toBe(entries[1].id);
       expect(compaction.summary).toContain("Run seq 1 2000");
@@ -308,12 +310,12 @@ describe("omp entry: a turn still running", () => {
     omp.setEntries(entries);
     omp.fire("auto_compaction_start", { reason: "threshold", action: "context-full" });
     const { compaction } = omp.beforeCompact();
-    expect(compaction.details).toMatchObject({ compactor: "omp-vcc", reason: "threshold" });
+    expect(compaction.details).toMatchObject({ compactor: "keel", reason: "threshold" });
     // The final answer stays in context (omp's print mode prints it from there).
     expect(compaction.firstKeptEntryId).toBe(entries[3].id);
   });
 
-  test("/omp-vcc still compacts a running turn when asked", () => {
+  test("/keel still compacts a running turn when asked", () => {
     const omp = createOmp();
     omp.setEntries(running());
     expect(omp.beforeCompact(COMPACT_INSTRUCTION).compaction.firstKeptEntryId).toBe("");
@@ -321,7 +323,7 @@ describe("omp entry: a turn still running", () => {
 });
 
 describe("omp entry: the model's real window", () => {
-  const limitsFile = () => join(dir, "omp-vcc-models.json");
+  const limitsFile = () => join(dir, "keel-models.json");
   const model = { provider: "electronhub", id: "small-model", api: "openai-completions", contextWindow: 128_000 };
   const big = () => Array.from({ length: 12 }, (_, i) => [user(`request ${i}: ${"word ".repeat(400)}`), assistant(`done ${i}: ${"word ".repeat(400)}`)]).flat();
   const overflow = (omp: ReturnType<typeof createOmp>, text: string) =>
@@ -337,6 +339,21 @@ describe("omp entry: the model's real window", () => {
     const details = omp.beforeCompact().compaction.details;
     expect(details.limits).toMatchObject({ contextWindow: 32_768, windowSource: "overflow-error", trigger: 16_384 });
     expect(details.limits.maxTailTokens).toBeLessThan(25_000);
+    rmSync(limitsFile(), { force: true });
+  });
+
+  test("what keel learned as omp-vcc (omp-vcc-models.json) is read, and carried into keel-models.json", () => {
+    rmSync(limitsFile(), { force: true });
+    const old = join(dir, "omp-vcc-models.json");
+    writeFileSync(old, JSON.stringify({ "electronhub/small-model": { contextWindow: 32_768 } }));
+    const omp = createOmp();
+    omp.ctx.model = model;
+    omp.setEntries(big());
+    expect(omp.beforeCompact().compaction.details.limits).toMatchObject({ contextWindow: 32_768, windowSource: "overflow-error" });
+    // The next thing learned is written to keel's own file, with what the old one held.
+    omp.fire("message_end", { message: { role: "assistant", stopReason: "stop", content: [], usage: { input: 20_000, cacheRead: 0, cacheWrite: 0, output: 10 } } });
+    expect(JSON.parse(readFileSync(limitsFile(), "utf8"))["electronhub/small-model"]).toMatchObject({ contextWindow: 32_768, maxPromptTokens: 20_000 });
+    rmSync(old, { force: true });
     rmSync(limitsFile(), { force: true });
   });
 
@@ -369,7 +386,7 @@ describe("omp entry: the model's real window", () => {
     expect(omp.beforeCompact().compaction.details.limits).toMatchObject({ contextWindow: 128_000, windowSource: "omp", maxTailTokens: 25_000, briefCeilingTokens: 2_000 });
   });
 
-  test("past omp-vcc's trigger on a model omp overestimates, a finished run is compacted, once noticed", async () => {
+  test("past keel's trigger on a model omp overestimates, a finished run is compacted, once noticed", async () => {
     recordLimit(32_768);
     const omp = createOmp();
     omp.ctx.model = model;
@@ -390,7 +407,7 @@ describe("omp entry: the model's real window", () => {
     omp.fire("agent_end", { messages: [] });
     await new Promise((r) => setTimeout(r, 5));
     expect(omp.compactCalls).toHaveLength(1); // two run ends, one compaction
-    expect(details).toMatchObject({ compactor: "omp-vcc", reason: "threshold" });
+    expect(details).toMatchObject({ compactor: "keel", reason: "threshold" });
     expect(omp.notices.filter((n) => n.msg.includes("holds 32768 tokens (an overflow error said so), not the 128000 omp uses"))).toHaveLength(1);
     rmSync(limitsFile(), { force: true });
   });
@@ -402,7 +419,7 @@ describe("omp entry: the model's real window", () => {
     omp.ctx.isIdle = () => true;
     omp.ctx.getContextUsage = () => ({ tokens: 14_000, contextWindow: 128_000, percent: 11 });
     omp.setEntries(big());
-    // The user compacts at 40%: on the real 32K window that is 13,107, not omp-vcc's default 16,384.
+    // The user compacts at 40%: on the real 32K window that is 13,107, not keel's default 16,384.
     const policy = { enabled: true, thresholdPercent: 40, keepRecentTokens: 20_000 };
     expect(omp.beforeCompact(undefined, policy).compaction.details.limits).toMatchObject({ contextWindow: 32_768, trigger: 13_107 });
     omp.setCompact(async () => {});
@@ -464,7 +481,7 @@ describe("omp entry: the model's real window", () => {
   });
 
   test("no compaction of its own for a provider in skipForProviders: omp's own would run", async () => {
-    writeFileSync(process.env.OMP_VCC_CONFIG_PATH!, JSON.stringify({ skipForProviders: [model.provider] }));
+    writeFileSync(process.env.KEEL_CONFIG_PATH!, JSON.stringify({ skipForProviders: [model.provider] }));
     recordLimit(32_768);
     const omp = createOmp();
     omp.ctx.model = model;
@@ -476,11 +493,11 @@ describe("omp entry: the model's real window", () => {
     await new Promise((r) => setTimeout(r, 5));
     expect(omp.compactCalls).toHaveLength(0);
     rmSync(limitsFile(), { force: true });
-    writeFileSync(process.env.OMP_VCC_CONFIG_PATH!, JSON.stringify({}));
+    writeFileSync(process.env.KEEL_CONFIG_PATH!, JSON.stringify({}));
   });
 
   test("no compaction of its own with overrideDefaultCompaction off, or when omp's window is right", async () => {
-    writeFileSync(process.env.OMP_VCC_CONFIG_PATH!, JSON.stringify({ overrideDefaultCompaction: false }));
+    writeFileSync(process.env.KEEL_CONFIG_PATH!, JSON.stringify({ overrideDefaultCompaction: false }));
     recordLimit(32_768);
     const off = createOmp();
     off.ctx.model = model;
@@ -488,7 +505,7 @@ describe("omp entry: the model's real window", () => {
     off.ctx.getContextUsage = () => ({ tokens: 30_000, contextWindow: 128_000, percent: 23 });
     off.fire("agent_end", { messages: [] });
     rmSync(limitsFile(), { force: true });
-    writeFileSync(process.env.OMP_VCC_CONFIG_PATH!, JSON.stringify({ overrideDefaultCompaction: true }));
+    writeFileSync(process.env.KEEL_CONFIG_PATH!, JSON.stringify({ overrideDefaultCompaction: true }));
     const right = createOmp();
     right.ctx.model = model;
     right.ctx.isIdle = () => true;

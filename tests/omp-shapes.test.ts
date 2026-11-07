@@ -129,19 +129,19 @@ describe("recall rendering of omp roles", () => {
 });
 
 describe("a turn still running", () => {
-  const prev = process.env.OMP_VCC_CONFIG_PATH;
+  const prev = process.env.KEEL_CONFIG_PATH;
   afterEach(() => {
-    if (prev === undefined) delete process.env.OMP_VCC_CONFIG_PATH;
-    else process.env.OMP_VCC_CONFIG_PATH = prev;
+    if (prev === undefined) delete process.env.KEEL_CONFIG_PATH;
+    else process.env.KEEL_CONFIG_PATH = prev;
   });
 
   // The threshold pass on such a turn (it waits) is omp-entry.test.ts's "a threshold pass waits for the turn to end".
   test("a recovery pass on a running turn whose one step is over half of it summarizes the turn whole", async () => {
     const { mkdtempSync, writeFileSync } = await import("fs");
     const { tmpdir } = await import("os");
-    const dir = mkdtempSync(join(tmpdir(), "omp-vcc-running-"));
-    process.env.OMP_VCC_CONFIG_PATH = join(dir, "c.json");
-    writeFileSync(process.env.OMP_VCC_CONFIG_PATH, JSON.stringify({ overrideDefaultCompaction: true }));
+    const dir = mkdtempSync(join(tmpdir(), "keel-running-"));
+    process.env.KEEL_CONFIG_PATH = join(dir, "c.json");
+    writeFileSync(process.env.KEEL_CONFIG_PATH, JSON.stringify({ overrideDefaultCompaction: true }));
     let handler: any;
     const hook = registerHook({ on: (name: string, fn: any) => { if (name === "session_before_compact") handler = fn; } });
     const entries = [
@@ -155,7 +155,7 @@ describe("a turn still running", () => {
       preparation: { previousSummary: undefined, fileOps: { read: [], written: [], edited: [] }, tokensBefore: 1000 },
       signal: new AbortController().signal,
     };
-    // Recovering, omp-vcc answers itself (omp would run snapcompact, handoff or an
+    // Recovering, keel answers itself (omp would run snapcompact, handoff or an
     // LLM summary otherwise). One step is more than half the turn, so the turn is
     // summarized whole, the request with it.
     const recovered = handler(event, { ui: { notify: () => {} } }).compaction;
@@ -166,9 +166,9 @@ describe("a turn still running", () => {
   test("a recovery pass on a longer running turn within the tail budget keeps its newest steps, at most half of it", async () => {
     const { mkdtempSync, writeFileSync } = await import("fs");
     const { tmpdir } = await import("os");
-    const dir = mkdtempSync(join(tmpdir(), "omp-vcc-running-"));
-    process.env.OMP_VCC_CONFIG_PATH = join(dir, "c.json");
-    writeFileSync(process.env.OMP_VCC_CONFIG_PATH, JSON.stringify({ overrideDefaultCompaction: true }));
+    const dir = mkdtempSync(join(tmpdir(), "keel-running-"));
+    process.env.KEEL_CONFIG_PATH = join(dir, "c.json");
+    writeFileSync(process.env.KEEL_CONFIG_PATH, JSON.stringify({ overrideDefaultCompaction: true }));
     let handler: any;
     const hook = registerHook({ on: (name: string, fn: any) => { if (name === "session_before_compact") handler = fn; } });
     const step = (i: number) => [
@@ -190,7 +190,7 @@ describe("a turn still running", () => {
     expect(kept).toBeLessThan(entries.length - 1);
     expect(entries[kept].message.role).toBe("assistant");
     expect(compaction.summary).toContain("Find which part of the log has the timeout");
-    expect(compaction.details).toMatchObject({ compactor: "omp-vcc", reason: "overflow" });
+    expect(compaction.details).toMatchObject({ compactor: "keel", reason: "overflow" });
   });
 });
 

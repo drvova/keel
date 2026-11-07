@@ -1,4 +1,4 @@
-;;;; recall.lisp --- one vcc_recall call: a session read once, one action run.
+;;;; recall.lisp --- one keel_recall call: a session read once, one action run.
 ;;;;
 ;;;; SPDX-License-Identifier: MIT
 ;;;;
@@ -10,7 +10,7 @@
 ;;;; session manager's current branch (its ids, and its entries' types and roles
 ;;;; for the turn in progress). Agents act on the output: it is an interface.
 
-(in-package #:omp-vcc)
+(in-package #:keel)
 
 (defparameter +recent-count+ 25)
 (defparameter +min-recall-output-chars+ (* 8 1024))

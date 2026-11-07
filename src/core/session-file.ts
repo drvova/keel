@@ -1,8 +1,8 @@
-// The host's session manager, as omp-vcc reads it: its file, its entry tree and
+// The host's session manager, as keel reads it: its file, its entry tree and
 // the branch it is on. The session file itself is the core's to read
 // (lisp/src/session.lisp).
 
-/** What omp-vcc reads of the host's session manager; omp's and Pi's ReadonlySessionManager both have it. */
+/** What keel reads of the host's session manager; omp's and Pi's ReadonlySessionManager both have it. */
 export interface SessionManagerLike {
   getSessionFile?(): string | undefined;
   getEntries?(): any[];

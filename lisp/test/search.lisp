@@ -5,7 +5,7 @@
 ;;;; The TypeScript tests drive the same search through recall
 ;;;; (tests/search.test.ts); these pin its parts.
 
-(in-package #:omp-vcc.test)
+(in-package #:keel.test)
 
 (defun docs (&rest texts)
   (coerce (loop for text in texts collect (list "user" text '())) 'vector))

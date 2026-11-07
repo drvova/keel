@@ -1,4 +1,4 @@
-// What /omp-vcc makes of its text, and what the hook reads back from a
+// What /keel makes of its text, and what the hook reads back from a
 // compaction's customInstructions (the core's op args; src/core/compact-args.ts for the command):
 // keep:N first or last, the rest a prompt to send after; the marker says the
 // pass is the command's.
@@ -50,7 +50,7 @@ describe("the instructions the hook reads", () => {
     expect(parseInstructions(undefined)).toEqual({ fromCommand: false, keepUserTurns: null, followUpPrompt: null });
     expect(parseInstructions("keep:2 then run the tests")).toEqual({ fromCommand: false, keepUserTurns: 2, followUpPrompt: "then run the tests" });
     // The marker only when it stands alone or before a space: anything else is /compact text.
-    for (const text of [`${M}keep:4`, "__omp_vcc", `  ${M}\tkeep:5 and more`]) {
+    for (const text of [`${M}keep:4`, "__keel", `  ${M}\tkeep:5 and more`]) {
       expect(parseInstructions(text)).toEqual({ fromCommand: false, keepUserTurns: null, followUpPrompt: text.trim() });
     }
   });

@@ -1,8 +1,8 @@
-// /omp-vcc's argument handling and what it reports, against a fake omp API.
+// /keel's argument handling and what it reports, against a fake omp API.
 // tests/omp-entry.test.ts covers the command wired to the hook through index.ts.
 import { ompBinding } from "./support/binding";
 import { describe, expect, test } from "bun:test";
-import { registerOmpVccCommand } from "../src/commands/omp-vcc";
+import { registerKeelCommand } from "../src/commands/keel";
 import { createCompactionState } from "../src/hooks/compaction";
 import { COMPACT_INSTRUCTION } from "./support/names";
 
@@ -21,8 +21,9 @@ function createHarness(sendUserMessage?: (content: string | unknown[]) => unknow
 
   const pi = {
     registerCommand: (name: string, command: { handler: typeof handler }) => {
-      expect(name).toBe("omp-vcc");
-      handler = command.handler;
+      // /keel, and /omp-vcc, its old name, with the same handler.
+      expect(["keel", "omp-vcc"]).toContain(name);
+      handler ??= command.handler;
     },
     sendUserMessage: sendUserMessage ?? ((content: string | unknown[]) => {
       userMessages.push(content);
@@ -46,7 +47,7 @@ function createHarness(sendUserMessage?: (content: string | unknown[]) => unknow
     },
   };
 
-  registerOmpVccCommand(pi, state, ompBinding);
+  registerKeelCommand(pi, state, ompBinding);
 
   return {
     invoke: async (args = "") => handler!(args, ctx),
@@ -57,8 +58,8 @@ function createHarness(sendUserMessage?: (content: string | unknown[]) => unknow
   };
 }
 
-describe("/omp-vcc", () => {
-  test("hands the hook the omp-vcc marker for the pass it starts, then clears it", async () => {
+describe("/keel", () => {
+  test("hands the hook the keel marker for the pass it starts, then clears it", async () => {
     const { invoke, compactCalls, state } = createHarness();
 
     await invoke();
@@ -136,7 +137,7 @@ describe("/omp-vcc", () => {
     await invoke();
     compactCalls[0].onComplete?.();
 
-    expect(notifyCalls).toEqual([{ msg: "Compacted with omp-vcc", level: "info" }]);
+    expect(notifyCalls).toEqual([{ msg: "Compacted with keel", level: "info" }]);
   });
 
   test("does not send trailing prompt on compaction error", async () => {
@@ -171,17 +172,17 @@ describe("/omp-vcc", () => {
       compactCalls[0].onError?.(new Error("Nothing to compact (session too small)"));
       await invoke();
       // The compaction the hook wrote for this pass.
-      state.written = { summary: "s", statsLine: "omp-vcc: kept 1/2 turns, ~120 tok (summarized 4).", fromCommand: true, willRetry: false, followUpPrompt: null };
+      state.written = { summary: "s", statsLine: "keel: kept 1/2 turns, ~120 tok (summarized 4).", fromCommand: true, willRetry: false, followUpPrompt: null };
       compactCalls[1].onComplete?.();
       expect(notifyCalls).toEqual([]);
       expect(written[0]).toStartWith("Nothing to compact yet:");
-      expect(written[1]).toBe("omp-vcc: kept 1/2 turns, ~120 tok (summarized 4).\n");
+      expect(written[1]).toBe("keel: kept 1/2 turns, ~120 tok (summarized 4).\n");
     } finally {
       (process.stderr as any).write = write;
     }
   });
 
-  // Seen with a real model: right after an automatic compaction, /omp-vcc blamed a short session.
+  // Seen with a real model: right after an automatic compaction, /keel blamed a short session.
   test("after a compaction, 'nothing to compact' says what is left is what came after it", async () => {
     const { invoke, compactCalls, notifyCalls } = createHarness(undefined, "rpc", [{ type: "message", id: "m1" }, { type: "compaction", id: "c1" }, { type: "message", id: "m2" }]);
     await invoke();
@@ -194,14 +195,14 @@ describe("/omp-vcc", () => {
     expect(cleared.notifyCalls[0].msg).toStartWith("Nothing to compact yet: the whole session still fits");
   });
 
-  test("when omp-vcc's hook cancelled, the command adds nothing: the hook told the user why", async () => {
+  test("when keel's hook cancelled, the command adds nothing: the hook told the user why", async () => {
     const written: string[] = [];
     const write = process.stderr.write;
     (process.stderr as any).write = (chunk: string) => (written.push(String(chunk)), true);
     try {
       const print = createHarness(undefined, "print");
       await print.invoke();
-      print.state.lastCancelNotice = "omp-vcc: Too few messages to compact";
+      print.state.lastCancelNotice = "keel: Too few messages to compact";
       print.compactCalls[0].onError?.(new Error("Compaction cancelled"));
       expect(written).toEqual([]);
     } finally {
@@ -209,7 +210,7 @@ describe("/omp-vcc", () => {
     }
     const rpc = createHarness(undefined, "rpc");
     await rpc.invoke();
-    rpc.state.lastCancelNotice = "omp-vcc: Too few messages to compact";
+    rpc.state.lastCancelNotice = "keel: Too few messages to compact";
     rpc.compactCalls[0].onError?.(new Error("Compaction cancelled"));
     expect(rpc.notifyCalls).toEqual([]);
   });

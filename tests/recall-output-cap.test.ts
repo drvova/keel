@@ -42,7 +42,7 @@ beforeAll(() => {
 
 const recall = (params: Record<string, unknown>) => callRecallTool(recallTool(), file, params, ids);
 
-describe("vcc_recall output size (issue #63)", () => {
+describe("keel_recall output size (issue #63)", () => {
   it("keeps a search snippet of a long single-line entry small", async () => {
     const out = await recall({ query: "needle_mark" });
     expect(out).toContain(`#${longLineIndex} [user]`);

@@ -14,7 +14,7 @@ const makeSession = (n: number, textOf: (i: number) => string) => {
 const register = recallTool;
 const invoke = (tool: any, file: string, ids: string[], params: Record<string, unknown>) => callRecallTool(tool, file, params, ids);
 
-describe("vcc_recall pagination and hard-cap truncation signaling", () => {
+describe("keel_recall pagination and hard-cap truncation signaling", () => {
   it("reports a capped page count and an explicit truncation message when raw hits exceed the cap", async () => {
     // "." makes this a regex-mode query, matching every one of the 60
     // messages deterministically (no BM25/floor involved) — isolates the

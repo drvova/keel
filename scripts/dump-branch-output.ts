@@ -5,7 +5,7 @@ import { prepareSessionSamples } from "../tests/support/real-sessions";
 import { loadSessionMessages } from "../tests/support/load-session";
 import { writeFileSync, mkdirSync } from "node:fs";
 
-const outDir = "/tmp/omp-vcc-compare";
+const outDir = "/tmp/keel-compare";
 const branch = process.argv[2] || "unknown";
 mkdirSync(`${outDir}/${branch}`, { recursive: true });
 

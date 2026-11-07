@@ -6,7 +6,7 @@
 ;;;; (compaction.lisp), and a compaction's chars per token is calibrated on the
 ;;;; context the host counted (window.lisp).
 
-(in-package #:omp-vcc.test)
+(in-package #:keel.test)
 
 (defun chars-of (json) (message-chars (parse-json json)))
 (defun content-of (json) (content-chars (parse-json json)))

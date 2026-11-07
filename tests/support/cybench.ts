@@ -1,5 +1,5 @@
 // Cybench (Zhang et al., ICLR 2025, arXiv:2408.08926; Apache-2.0) as one long
-// session: a real model in omp or Pi, with omp-vcc loaded, works through Cybench's
+// session: a real model in omp or Pi, with keel loaded, works through Cybench's
 // file-only capture-the-flag tasks back to back (binaries to reverse, a pcap and
 // emails to dissect, crypto to break), answering each task's own subtask
 // questions in Cybench's guided mode. The questions and answers are Cybench's,
@@ -58,13 +58,13 @@ interface Subtask { question: string; answer: string; answer_format?: string }
 interface Task { spec: TaskSpec; path: string; name: string; dir: string; prompt: string; subtasks: Subtask[]; difficulty: number }
 
 export interface CybenchOptions {
-  /** The host the session runs in: OMP_VCC_LH_HOST, omp by default. */
+  /** The host the session runs in: KEEL_LH_HOST, omp by default. */
   host?: Host;
   /** How many of CYBENCH_TASKS to run, from the start (default all). */
   tasks?: number;
   /** The window the host is told (default 128K). */
   contextWindow?: number;
-  /** omp-vcc settings: `{ workingSet: false }`, or `{ overrideDefaultCompaction: false }` for the host's own compaction. */
+  /** keel settings: `{ workingSet: false }`, or `{ overrideDefaultCompaction: false }` for the host's own compaction. */
   config?: Record<string, unknown>;
   /** The model's prices per million tokens, as its provider lists them (`providerModel`); 0 by default. */
   cost?: ModelCost;
@@ -101,9 +101,9 @@ export interface CybenchResult {
   /** The late round: a question asked again, tasks after it was answered right. */
   recall: AnswerScore[];
   compactions: number;
-  byOmpVcc: number;
+  byKeel: number;
   stats: RunStats;
-  /** What omp-vcc learned of the model over the session (its omp-vcc-models.json entry): the largest prompt accepted, chars per token. */
+  /** What keel learned of the model over the session (its keel-models.json entry): the largest prompt accepted, chars per token. */
   learned: { maxPromptTokens?: number; charsPerToken?: number; contextWindow?: number } | undefined;
   /** Chars per token as the session itself shows them: what the messages added between two requests over the prompt tokens they added. */
   measuredCharsPerToken: number | undefined;
@@ -142,7 +142,7 @@ const measuredCharsPerToken = (branch: any[]): number | undefined => {
 
 /** Cybench's repository at the pinned commit, only the tasks' directories (research/cybench). */
 export const fetchCybench = (dir = CACHE): string => {
-  const marker = join(dir, ".omp-vcc-commit");
+  const marker = join(dir, ".keel-commit");
   if (existsSync(marker) && readFileSync(marker, "utf8").trim() === CYBENCH_COMMIT) return dir;
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
@@ -211,7 +211,7 @@ const turnSince = (sessionManager: any, from: number): { reply: string; toolCall
 export const runCybench = async (options: CybenchOptions = {}): Promise<CybenchResult> => {
   const root = fetchCybench();
   const tasks = CYBENCH_TASKS.slice(0, options.tasks ?? CYBENCH_TASKS.length).map((p, i) => loadTask(root, p, i));
-  const work = mkdtempSync(join(tmpdir(), "omp-vcc-cybench-"));
+  const work = mkdtempSync(join(tmpdir(), "keel-cybench-"));
   let omp: HostSession | undefined;
   try {
     const proj = join(work, "ctf");
@@ -288,10 +288,10 @@ export const runCybench = async (options: CybenchOptions = {}): Promise<CybenchR
       answers,
       recall,
       compactions: compactions.length,
-      byOmpVcc: compactions.filter((e: any) => e.details?.compactor === "omp-vcc").length,
+      byKeel: compactions.filter((e: any) => e.details?.compactor === "keel").length,
       stats: runStats(branch),
       learned: (() => {
-        const file = join(work, "omp-vcc-models.json");
+        const file = join(work, "keel-models.json");
         if (!existsSync(file)) return undefined;
         const all = JSON.parse(readFileSync(file, "utf8"));
         return Object.values(all)[0] as CybenchResult["learned"];

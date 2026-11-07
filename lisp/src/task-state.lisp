@@ -19,7 +19,7 @@
 ;;;; #N that holds the rest, so the agent reads where it stands in one place
 ;;;; instead of spending requests finding out.
 
-(in-package #:omp-vcc)
+(in-package #:keel)
 
 (defparameter +changed-shown+ 8 "Changed files named in the section; past this the count says how many more.")
 (defparameter +error-line-chars+ 200 "An error line is clipped to this many characters.")

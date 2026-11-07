@@ -1,15 +1,15 @@
-;;;; settings.lisp --- omp-vcc's config file: read as settings, and scaffolded.
+;;;; settings.lisp --- keel's config file: read as settings, and scaffolded.
 ;;;;
 ;;;; SPDX-License-Identifier: MIT
 ;;;;
 ;;;; The settings are each value of the file in its default's type; the
 ;;;; scaffold writes the file whole. The TS side (src/core/settings.ts)
 ;;;; resolves where the file is (the host's agent directory, or
-;;;; OMP_VCC_CONFIG_PATH) and whether the pre-rename pi-vcc-config.json may be
+;;;; KEEL_CONFIG_PATH) and whether the pre-rename pi-vcc-config.json may be
 ;;;; copied; the core reads and writes the file itself. What it writes is what
 ;;;; JSON.stringify(value, null, 2) writes, with a newline after.
 
-(in-package #:omp-vcc)
+(in-package #:keel)
 
 ;; The settings' keys in the order the scaffold writes them, with their defaults.
 (defparameter +default-settings+

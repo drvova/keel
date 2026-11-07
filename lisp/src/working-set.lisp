@@ -21,7 +21,7 @@
 ;;;; and is never rewritten. Nothing depends on wording: paths, failure flags,
 ;;;; recency and recall's own ranking.
 
-(in-package #:omp-vcc)
+(in-package #:keel)
 
 (defparameter +min-item-chars+ 400 "Below this, an excerpt says too little to bring back.")
 (defparameter +max-item-share+ 0.6d0

@@ -3,15 +3,15 @@
  * (or Pi) works through Cybench's file-only CTF tasks back to back, answering
  * each task's own subtask questions, then is asked again what it found tasks ago.
  *
- *   OMP_VCC_LH_API_KEY=… bun run scripts/benchmark-cybench.ts [tasks] [contextWindow] [vcc|vcc-no-ws|evict|own] [--host=omp|pi] [--detach] [--max-requests=15]
+ *   KEEL_LH_API_KEY=… bun run scripts/benchmark-cybench.ts [tasks] [contextWindow] [keel|keel-no-ws|evict|own] [--host=omp|pi] [--detach] [--max-requests=15]
  *
- * The model is DeepSeek V4.1 Flash unless OMP_VCC_LH_MODEL (in the env or research/long-horizon.env) names another.
- * The host is omp unless --host=pi (or OMP_VCC_LH_HOST=pi) runs it in Pi.
+ * The model is DeepSeek V4.1 Flash unless KEEL_LH_MODEL (in the env or research/long-horizon.env) names another.
+ * The host is omp unless --host=pi (or KEEL_LH_HOST=pi) runs it in Pi.
  *
  * tasks: how many of the 17 (default all); contextWindow: what the host is told, or
  * `provider` for the window the provider lists (the prices are the provider's either way)
- * (default 128000); the compactor: omp-vcc (default), omp-vcc without
- * [Working Set], omp-vcc with old turns leaving the context whole (`evict`), or
+ * (default 128000); the compactor: keel (default), keel without
+ * [Working Set], keel with old turns leaving the context whole (`evict`), or
  * the host's own compaction (`own`; `omp` still means it). Expect two to three hours for all
  * tasks; --detach runs it in a process of its own, logging to research/.
  * --max-requests caps the model requests one question may take (default 15,
@@ -30,18 +30,19 @@ import { LONG_HORIZON_MODEL, providerModel, realModel, sessionHost, statsLine } 
 const args = process.argv.slice(2).filter((a) => a !== "--detach" && !a.startsWith("--max-requests=") && !a.startsWith("--host="));
 const capArg = process.argv.find((a) => a.startsWith("--max-requests="));
 const hostArg = process.argv.find((a) => a.startsWith("--host="));
-if (hostArg) process.env.OMP_VCC_LH_HOST = hostArg.split("=")[1];
+if (hostArg) process.env.KEEL_LH_HOST = hostArg.split("=")[1];
 const maxRequests = capArg ? Number(capArg.split("=")[1]) : undefined;
 const tasks = args[0] && args[0] !== "all" ? Number(args[0]) : CYBENCH_TASKS.length;
 // `provider`: the window and prices the provider lists for the model, as a user's catalog would hold them.
-// A number is the window the host is told; the prices are the provider's either way, so what omp-vcc
+// A number is the window the host is told; the prices are the provider's either way, so what keel
 // reads of a request's cost is real.
 const listed = await providerModel().catch(() => undefined);
 if (args[1] === "provider" && !listed) throw new Error("the provider lists no window for the model: give one");
 const contextWindow = args[1] === "provider" ? listed!.contextWindow : Number(args[1] ?? 128_000);
-const mode = args[2] === "omp" ? "own" : args[2] ?? "vcc";
+// Old names: omp for own, vcc for keel.
+const mode = ({ omp: "own", vcc: "keel", "vcc-no-ws": "keel-no-ws" } as Record<string, string>)[args[2] ?? ""] ?? args[2] ?? "keel";
 const model = realModel({ keyFile: true })?.model ?? LONG_HORIZON_MODEL.model;
-// The key file may set OMP_VCC_LH_HOST too; read after it.
+// The key file may set KEEL_LH_HOST too; read after it.
 const host = sessionHost();
 // Pi's logs go to files of their own; omp's keep their names (and `own` its old name, `omp`).
 const hostTag = host === "pi" ? "pi-" : "";
@@ -58,7 +59,7 @@ if (process.argv.includes("--detach")) {
   console.log(`running in the background (pid ${child.pid}), logging to ${log}`);
   process.exit(0);
 }
-const config = mode === "own" ? { overrideDefaultCompaction: false } : mode === "vcc-no-ws" ? { workingSet: false } : mode === "evict" ? { evict: true } : {};
+const config = mode === "own" ? { overrideDefaultCompaction: false } : mode === "keel-no-ws" ? { workingSet: false } : mode === "evict" ? { evict: true } : {};
 
 const started = Date.now();
 const r = await runCybench({ host, tasks, contextWindow, config, maxRequests, cost: listed?.cost, log: (l) => console.log(`  ${l}`) });
@@ -77,9 +78,9 @@ for (const a of r.recall) {
   if (a.correct) t.again++;
   t.calls += a.toolCalls;
 }
-console.log(`\n${tasks} tasks, ${Math.round(contextWindow / 1000)}K window, ${host}, ${model}, ${mode}: ${r.compactions} compactions (${r.byOmpVcc} by omp-vcc), ${statsLine(r.stats)}, ${minutes} min`);
+console.log(`\n${tasks} tasks, ${Math.round(contextWindow / 1000)}K window, ${host}, ${model}, ${mode}: ${r.compactions} compactions (${r.byKeel} by keel), ${statsLine(r.stats)}, ${minutes} min`);
 console.log(`window ${contextWindow}${args[1] === "provider" ? " (the provider's)" : ""}; prices per M ${JSON.stringify(listed?.cost ?? null)}`);
-console.log(`omp-vcc learned: ${JSON.stringify(r.learned ?? null)}; chars per token in the session's own record: ${r.measuredCharsPerToken ?? "-"}`);
+console.log(`keel learned: ${JSON.stringify(r.learned ?? null)}; chars per token in the session's own record: ${r.measuredCharsPerToken ?? "-"}`);
 console.log("task                                  answered  again  calls to answer again");
 for (const [name, t] of byTask) console.log(`${name.slice(0, 36).padEnd(37)} ${`${t.right}/${t.total}`.padStart(8)}  ${t.asked ? `${t.again}/${t.asked}`.padStart(5) : "    -"}  ${t.asked ? t.calls : "-"}`);
 const right = r.answers.filter((a) => a.correct).length;

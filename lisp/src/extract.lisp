@@ -6,7 +6,7 @@
 ;;;; and created, git commits and their hashes, and the invocations of the
 ;;;; commands settings name. tests/extract-*.test.ts hold them to what they read.
 
-(in-package #:omp-vcc)
+(in-package #:keel)
 
 ;;; --- words -------------------------------------------------------------------
 ;;;

@@ -1,5 +1,5 @@
 /**
- * Phase 2 (vcc_recall noise floor + hard cap) constant selection evidence.
+ * Phase 2 (keel_recall noise floor + hard cap) constant selection evidence.
  *
  * Runs the REAL production search (the core's, op search-sessions, with its
  * floor and cap overridden) against real session transcripts, comparing candidate

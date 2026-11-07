@@ -89,7 +89,7 @@ describe("the tool's params repaired", () => {
     expect(normalizeToolParams(raw)).toEqual({
       params: { query: "x" },
       dropped: [
-        'limit 20 (not a vcc_recall param)',
+        'limit 20 (not a keel_recall param)',
         'page 0 (not a page number)',
         'expand "the auth one" (not #N indices)',
         "range [5,6,7] (not [from, to])",
@@ -97,7 +97,7 @@ describe("the tool's params repaired", () => {
       ],
     });
     const r = parseToolRequest(raw);
-    expect(ignoredNote(r).startsWith("Ignored: limit 20 (not a vcc_recall param), page 0")).toBe(true);
+    expect(ignoredNote(r).startsWith("Ignored: limit 20 (not a keel_recall param), page 0")).toBe(true);
   });
 
   it("reads a param sent empty as not sent, with no Ignored: note", () => {
@@ -113,9 +113,9 @@ describe("the tool's params repaired", () => {
     let tool: any;
     registerRecallTool({ registerTool: (t: any) => { tool = t; } } as any, ompBinding);
     const raw = { query: "jpeg", mode: "all", expand: "459", limit: 20 };
-    const args = validateToolArguments(tool, { id: "1", name: "vcc_recall", arguments: raw } as any);
-    expect(normalizeToolParams(args)).toMatchObject({ params: { query: "jpeg", scope: "all", expand: [459] }, dropped: ["limit 20 (not a vcc_recall param)"] });
+    const args = validateToolArguments(tool, { id: "1", name: "keel_recall", arguments: raw } as any);
+    expect(normalizeToolParams(args)).toMatchObject({ params: { query: "jpeg", scope: "all", expand: [459] }, dropped: ["limit 20 (not a keel_recall param)"] });
     // A shape no repair could read still fails omp's check before execute().
-    expect(() => validateToolArguments(tool, { id: "1", name: "vcc_recall", arguments: { range: { from: 1 } } } as any)).toThrow();
+    expect(() => validateToolArguments(tool, { id: "1", name: "keel_recall", arguments: { range: { from: 1 } } } as any)).toThrow();
   });
 });

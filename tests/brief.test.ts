@@ -10,29 +10,29 @@ describe("compileBrief", () => {
     expect(compileBrief([])).toBe("");
   });
 
-  // Seen with a real model: a mode:'sessions' or expand call rendered as a bare `* vcc_recall`.
-  it("vcc_recall and vcc_pin lines say what was recalled or pinned", () => {
+  // Seen with a real model: a mode:'sessions' or expand call rendered as a bare `* keel_recall`.
+  it("keel_recall and keel_pin lines say what was recalled or pinned", () => {
     const call = (name: string, args: Record<string, unknown>, sourceIndex: number): NormalizedBlock => ({ kind: "tool_call", name, args, sourceIndex });
     const r = compileBrief([
-      call("vcc_recall", { query: "build tag", scope: "project", i: "intent text" }, 1),
-      call("vcc_recall", { mode: "sessions" }, 2),
-      call("vcc_recall", { expand: "[1, 25]" }, 3),
-      call("vcc_recall", { session: "01a19511", range: [28, 34] }, 4),
-      call("vcc_recall", { query: "build tag", page: 2 }, 7),
-      call("vcc_pin", { note: "The deploy host has no Redis" }, 5),
-      call("vcc_pin", { unpin: 2 }, 6),
-      call("vcc_pin", { note: "refused", unpin: 3 }, 8),
+      call("keel_recall", { query: "build tag", scope: "project", i: "intent text" }, 1),
+      call("keel_recall", { mode: "sessions" }, 2),
+      call("keel_recall", { expand: "[1, 25]" }, 3),
+      call("keel_recall", { session: "01a19511", range: [28, 34] }, 4),
+      call("keel_recall", { query: "build tag", page: 2 }, 7),
+      call("keel_pin", { note: "The deploy host has no Redis" }, 5),
+      call("keel_pin", { unpin: 2 }, 6),
+      call("keel_pin", { note: "refused", unpin: 3 }, 8),
     ]);
-    expect(r).toContain(`* vcc_recall "build tag" scope:project (#1)`);
-    expect(r).toContain("* vcc_recall mode:sessions (#2)");
-    expect(r).toContain("* vcc_recall expand:[1, 25] (#3)");
-    expect(r).toContain("* vcc_recall range:[28, 34] session:01a19511 (#4)");
+    expect(r).toContain(`* keel_recall "build tag" scope:project (#1)`);
+    expect(r).toContain("* keel_recall mode:sessions (#2)");
+    expect(r).toContain("* keel_recall expand:[1, 25] (#3)");
+    expect(r).toContain("* keel_recall range:[28, 34] session:01a19511 (#4)");
     // Page 2 is another call than page 1, not a repeat of it.
-    expect(r).toContain(`* vcc_recall "build tag" page:2 (#7)`);
-    expect(r).toContain(`* vcc_pin "The deploy host has no Redis" (#5)`);
-    expect(r).toContain("* vcc_pin unpin:2 (#6)");
+    expect(r).toContain(`* keel_recall "build tag" page:2 (#7)`);
+    expect(r).toContain(`* keel_pin "The deploy host has no Redis" (#5)`);
+    expect(r).toContain("* keel_pin unpin:2 (#6)");
     // The tool refused a call with both: it pinned nothing, and the brief does not say it did.
-    expect(r).toContain("* vcc_pin (#8)");
+    expect(r).toContain("* keel_pin (#8)");
     expect(r).not.toContain('"refused"');
     expect(r).not.toContain("intent text");
   });
@@ -84,7 +84,7 @@ describe("compileBrief", () => {
       { kind: "bash", command: "npm test", output: "FAIL noisy output", exitCode: 1, sourceIndex: 2 },
     ];
     const r = compileBrief(blocks);
-    // exit 1: the line says it failed (the output stays behind vcc_recall).
+    // exit 1: the line says it failed (the output stays behind keel_recall).
     expect(r).toContain("[user]\n$ npm test [failed] (#2)");
     expect(r).not.toContain("FAIL noisy output");
   });

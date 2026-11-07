@@ -9,7 +9,7 @@
 ;;;; A compaction reads the branch as the context holds it; recall reads the raw
 ;;;; file. omp writes no edits, so an omp branch comes back as it is.
 
-(in-package #:omp-vcc)
+(in-package #:keel)
 
 (defparameter +editable-roles+ '("user" "assistant" "toolResult" "custom")
   "The roles whose content a replacement changes (Pi's projectContextEntry).")

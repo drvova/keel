@@ -83,12 +83,12 @@ export interface CompileInput {
   previous?: SummaryState;
   /** The previous summary's text: one an older version or another compactor wrote. */
   previousSummary?: string;
-  /** Another compactor (an LLM) wrote `previousSummary`, not omp-vcc or pi-vcc. */
+  /** Another compactor (an LLM) wrote `previousSummary`, not keel or pi-vcc. */
   previousSummaryForeign?: boolean;
   fileOps?: FileOps;
   /** Session-global `#N` per message position; a missing one renders as no ref. Omitted, positions are the refs. */
   sourceIndices?: Array<number | undefined>;
-  /** Command names for [Tracked Commands] (VccSettings.trackCommands); none by default. */
+  /** Command names for [Tracked Commands] (KeelSettings.trackCommands); none by default. */
   trackCommands?: readonly string[];
   /** The history index to show, already merged with the previous one. */
   historyIndex?: readonly HistoryRange[];

@@ -2,12 +2,12 @@
 ;;;;
 ;;;; SPDX-License-Identifier: MIT
 ;;;;
-;;;; The outcome line a compaction is told with, what /omp-vcc says when the
+;;;; The outcome line a compaction is told with, what /keel says when the
 ;;;; compaction it asked for did not happen (src/commands/compact-feedback.ts
-;;;; asks), and whether omp-vcc handles the host's compactions at all (the
+;;;; asks), and whether keel handles the host's compactions at all (the
 ;;;; user's opt-outs).
 
-(in-package #:omp-vcc)
+(in-package #:keel)
 
 (defun js-to-fixed-1 (x)
   "Number.prototype.toFixed(1) of the double X: the nearer tenth of its exact value, the larger on a tie."
@@ -24,18 +24,18 @@
   (let ((cut (json-get stats "budgetCut"))
         (kept (format-tokens (json-get stats "keptTokensEst")))
         (summarized (js-string-of (json-get stats "summarized"))))
-    (cond ((equal cut "final_reply") (format nil "omp-vcc: kept the final reply (~~~a tok), summarized ~a." kept summarized))
-          ((equal cut "running_turn") (format nil "omp-vcc: kept the running turn's latest steps (~~~a tok), summarized ~a." kept summarized))
+    (cond ((equal cut "final_reply") (format nil "keel: kept the final reply (~~~a tok), summarized ~a." kept summarized))
+          ((equal cut "running_turn") (format nil "keel: kept the running turn's latest steps (~~~a tok), summarized ~a." kept summarized))
           ((member cut '("no_anchor" "oversized_tail") :test #'equal)
-           (format nil "omp-vcc: kept ~~~a tok tail (mid-turn cut, ~a), summarized ~a." kept
+           (format nil "keel: kept ~~~a tok tail (mid-turn cut, ~a), summarized ~a." kept
                    (if (equal cut "no_anchor") "no user anchor" "oversized tail") summarized))
           ((truthy-p cut) (error "No outcome line for the budget cut ~s." cut))
-          (t (format nil "omp-vcc: kept ~a/~a turns, ~~~a tok (summarized ~a~a)."
+          (t (format nil "keel: kept ~a/~a turns, ~~~a tok (summarized ~a~a)."
                      (js-string-of (json-get stats "keptUserTurns")) (js-string-of (json-get stats "totalUserTurns")) kept summarized
                      (if (truthy-p (json-get stats "smartKeepAdjusted")) ", smart-keep" ""))))))
 
 (defun compact-error-feedback (input)
-  "Why a compaction /omp-vcc asked for did not happen, from the host's error:
+  "Why a compaction /keel asked for did not happen, from the host's error:
 (values TEXT SEVERITY), or NIL when nothing is told. The hook's own cancel notice
 was told already; omp's TUI shows its own \"Compaction cancelled\" or
 \"Compaction failed\", so there only the hint for a session still too short is added."
@@ -54,7 +54,7 @@ was told already; omp's TUI shows its own \"Compaction cancelled\" or
           (t (values (format nil "Compaction failed: ~a" message) "error")))))
 
 (defun handles-host-compactions-p (settings provider)
-  "Whether omp-vcc answers the host's compactions: unless the user opted out
+  "Whether keel answers the host's compactions: unless the user opted out
 (overrideDefaultCompaction, skipForProviders), for every provider or this one."
   (and (eq (json-get settings "overrideDefaultCompaction") :true)
        (not (and (stringp provider)

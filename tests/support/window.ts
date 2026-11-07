@@ -46,6 +46,6 @@ export const recordLearnedWindow = (dir: string, key: string, contextWindow: num
 export const learnedWindow = (dir: string, key: string): number | undefined =>
   (core({ op: "limits", action: "learned", key, dir }).window as number | null | undefined) ?? undefined;
 export interface WindowInfo { host?: number; learned?: number; effective?: number; source: string }
-/** The window omp-vcc sizes for: the host's, or the smaller one an overflow error stated. */
+/** The window keel sizes for: the host's, or the smaller one an overflow error stated. */
 export const windowOf = (model: { provider?: string; id?: string; contextWindow?: number } | undefined, hostName: string, dir: string): WindowInfo =>
   core({ op: "limits", action: "window", model: model ?? null, hostName, dir }).window as WindowInfo;

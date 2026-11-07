@@ -3,7 +3,7 @@ import { describe, it, expect } from "bun:test";
 import { rmSync } from "fs";
 import { join } from "path";
 import { freshDir, sessionFileOfEntries } from "./support/session-files";
-import { registerVccRecallCommand } from "../src/commands/vcc-recall";
+import { registerKeelRecallCommand } from "../src/commands/keel-recall";
 
 // The search header and truncation note come from the core recall() both
 // surfaces share (tests/recall-quality.test.ts); these check what the command
@@ -26,14 +26,14 @@ const register = () => {
   const sent: Array<{ customType: string; content: string; display: boolean }> = [];
   const pi = {
     registerCommand: (name: string, command: { handler: typeof handler }) => {
-      expect(name).toBe("omp-vcc-recall");
-      handler = command.handler;
+      expect(["keel-recall", "omp-vcc-recall"]).toContain(name);
+      handler ??= command.handler;
     },
     sendMessage: (msg: any) => {
       sent.push(msg);
     },
   } as any;
-  registerVccRecallCommand(pi, ompBinding);
+  registerKeelRecallCommand(pi, ompBinding);
   return { handler: handler!, sent };
 };
 
@@ -48,8 +48,8 @@ const invoke = async (handler: (args: string, ctx: any) => Promise<void>, file: 
   });
 };
 
-describe("/omp-vcc-recall paging hints", () => {
-  it("reports an explicit out-of-range page (not a false 'No matches') using /omp-vcc-recall syntax, without duplicating 'refine your query'", async () => {
+describe("/keel-recall paging hints", () => {
+  it("reports an explicit out-of-range page (not a false 'No matches') using /keel-recall syntax, without duplicating 'refine your query'", async () => {
     // 60 raw matches capped to 50 → pages 1-10 exist. Page 11 has no rows to
     // slice, but hits.length (50) is > 0 — must not claim "No matches", and
     // since this IS a truncated result, the guidance must not repeat the
@@ -63,7 +63,7 @@ describe("/omp-vcc-recall paging hints", () => {
       expect(content).toContain("Page 11 is outside the available range 1-10");
       expect(content).toContain("50 matches");
       expect(content).not.toContain("No matches");
-      expect(content).toContain("/omp-vcc-recall");
+      expect(content).toContain("/keel-recall");
       expect(content).toContain("page:N");
       // "refine your query" must appear exactly once (from the truncation
       // note), not again in the out-of-range guidance.
@@ -90,7 +90,7 @@ describe("/omp-vcc-recall paging hints", () => {
 });
 
 // Issue #1: a brand-new session has no JSONL on disk yet.
-describe("/omp-vcc-recall in a fresh session with no session file on disk", () => {
+describe("/keel-recall in a fresh session with no session file on disk", () => {
   const freshSessionFile = () => {
     const dir = freshDir();
     return { dir, file: join(dir, "sessions", "not-written-yet.jsonl") };

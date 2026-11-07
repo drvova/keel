@@ -2,7 +2,7 @@
 ;;;;
 ;;;; SPDX-License-Identifier: MIT
 
-(in-package #:omp-vcc.test)
+(in-package #:keel.test)
 
 (defun msg (json) (parse-json json))
 

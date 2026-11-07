@@ -1,6 +1,6 @@
-// Turns out of the context, by the agent (vcc_context), the user
-// (/omp-vcc-evict) or omp-vcc as the context fills: the core decides
-// (lisp/src/evict.lisp, ops evict and context); each decision is an omp-vcc
+// Turns out of the context, by the agent (keel_context), the user
+// (/keel-evict) or keel as the context fills: the core decides
+// (lisp/src/evict.lisp, ops evict and context); each decision is a keel
 // custom entry the host appends, replayed along the branch as pins are.
 import { EVICT_ENTRY_TYPE } from "../names";
 import { core } from "./lisp-core";
@@ -11,7 +11,7 @@ export interface EvictHost {
   appendEntry: (customType: string, data?: unknown) => void;
 }
 
-/** A vcc_context call, or the text of /…-evict. */
+/** A keel_context call, or the text of /…-evict. */
 export type EvictCall = { surface: "tool"; params: unknown } | { surface: "command"; args: string };
 
 /** The call in the core, with the entries it decided appended through the host: what to tell. */
@@ -31,9 +31,9 @@ export interface RequestEvictions {
 
 /**
  * The host's next request with what is out of the context left out. The
- * evictions omp-vcc decides as the context fills are appended before the
+ * evictions keel decides as the context fills are appended before the
  * request goes, so the next request finds them in the ledger. `tool` says
- * whether vcc_context is registered, which the note names.
+ * whether keel_context is registered, which the note names.
  */
 export const evictRequest = (host: EvictHost, binding: Parameters<typeof hostSnapshot>[0], ctx: HostCtx, messages: unknown[], tool = false): RequestEvictions => {
   const reply = core({ op: "context", host: hostSnapshot(binding, ctx), messages, tool });

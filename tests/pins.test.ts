@@ -22,7 +22,7 @@ const session = (initial: any[] = []) => {
   };
 };
 
-/** The notes pinned on the session's branch, as vcc_pin lists them: [id, text, by]. */
+/** The notes pinned on the session's branch, as keel_pin lists them: [id, text, by]. */
 const readPins = (entries: any[]): Array<[number, string, string]> => {
   const s = { appendEntry: () => {} };
   const listed = executePin({}, s, { getBranch: () => entries, getEntries: () => entries });
@@ -67,9 +67,19 @@ describe("pinned notes: storage", () => {
     ];
     expect(readPins(entries).map(([, text]) => text)).toEqual(["after clear"]);
   });
+
+  it("reads the pins keel wrote as omp-vcc, and a new pin goes on from their ids", () => {
+    const s = session([
+      message("m1"),
+      { type: "custom", id: "p1", customType: "omp-vcc.pin", data: { v: 1, op: "add", id: 1, text: "pinned before the rename", by: "user" } },
+    ]);
+    expect(readPins(s.entries)).toEqual([[1, "pinned before the rename", "user"]]);
+    expect(executePin({ note: "pinned after" }, s.host, s.sm)).toStartWith("Pinned [2] pinned after");
+    expect(s.entries.at(-1).customType).toBe(PIN_ENTRY_TYPE);
+  });
 });
 
-describe("vcc_pin", () => {
+describe("keel_pin", () => {
   it("note pins, unpin removes, neither lists, both is refused", () => {
     const s = session();
     expect(executePin({}, s.host, s.sm)).toBe("No pinned notes.");
@@ -107,11 +117,11 @@ describe("named notes", () => {
     const notices: string[] = [];
     registerPinCommands({ registerCommand: (name: string, c: any) => commands.set(name, c.handler), appendEntry: s.host.appendEntry, sendMessage: () => {} } as any, ompBinding);
     const ctx = { sessionManager: s.sm, ui: { notify: (m: string) => notices.push(m) } };
-    await commands.get("omp-vcc-pin")!("name:test-cmd bun test tests/auth", ctx);
+    await commands.get("keel-pin")!("name:test-cmd bun test tests/auth", ctx);
     expect(notices.at(-1)).toBe("Pinned [1] test-cmd: bun test tests/auth (user, #0).");
-    await commands.get("omp-vcc-pin")!("Note: name:x is not at the start", ctx);
+    await commands.get("keel-pin")!("Note: name:x is not at the start", ctx);
     expect(notices.at(-1)).toBe("Pinned [2] Note: name:x is not at the start (user, #0).");
-    await commands.get("omp-vcc-unpin")!("test-cmd", ctx);
+    await commands.get("keel-unpin")!("test-cmd", ctx);
     expect(readPins(s.entries).map(([id]) => id)).toEqual([2]);
   });
 });
@@ -122,7 +132,7 @@ describe("the user's notes", () => {
     const commands = new Map<string, (args: string, ctx: any) => Promise<void>>();
     registerPinCommands({ registerCommand: (name: string, c: any) => commands.set(name, c.handler), appendEntry: s.host.appendEntry, sendMessage: () => {} } as any, ompBinding);
     const ctx = { sessionManager: s.sm, ui: { notify: () => {} } };
-    await commands.get("omp-vcc-pin")!("name:deploy only from main", ctx);
+    await commands.get("keel-pin")!("name:deploy only from main", ctx);
     expect(executePin({ note: "deploy from any branch", name: "deploy" }, s.host, s.sm))
       .toBe("[1] deploy: only from main (user, #0) is the user's note and stays: only the user has it defined again (/…-pin, /…-unpin). Tell the user what should change, or pin yours under another name.");
     expect(executePin({ unpin: "deploy" }, s.host, s.sm)).toStartWith("[1] deploy: only from main (user, #0) is the user's note and stays: only the user has it unpinned");
@@ -130,7 +140,7 @@ describe("the user's notes", () => {
     // The agent's own notes it changes freely; the user changes theirs.
     expect(executePin({ note: "v1", name: "plan" }, s.host, s.sm)).toStartWith("Pinned [2] plan: v1");
     expect(executePin({ note: "v2", name: "plan" }, s.host, s.sm)).toStartWith("Redefined [3] plan: v2");
-    await commands.get("omp-vcc-pin")!("name:deploy from main or release/*", ctx);
+    await commands.get("keel-pin")!("name:deploy from main or release/*", ctx);
     expect(readPins(s.entries).map(([, text]) => text)).toEqual(["plan: v2", "deploy: from main or release/*"]);
   });
 });
@@ -162,7 +172,7 @@ describe("named notes across sessions", () => {
   });
 });
 
-describe("/omp-vcc-pin and /omp-vcc-unpin", () => {
+describe("/keel-pin and /keel-unpin", () => {
   it("pin, tell the agent on its next turn, list, unpin", async () => {
     const s = session([message("m1")]);
     const commands = new Map<string, (args: string, ctx: any) => Promise<void>>();
@@ -174,15 +184,15 @@ describe("/omp-vcc-pin and /omp-vcc-unpin", () => {
       sendMessage: (m: any, o: any) => sent.push({ m, o }),
     } as any, ompBinding);
     const ctx = { sessionManager: s.sm, ui: { notify: (m: string) => notices.push(m) } };
-    await commands.get("omp-vcc-pin")!("never edit migrations/", ctx);
+    await commands.get("keel-pin")!("never edit migrations/", ctx);
     expect(notices.at(-1)).toBe("Pinned [1] never edit migrations/ (user, #0).");
     expect(sent[0]).toEqual({
-      m: { customType: "omp-vcc-pin", content: "The user pinned [1] never edit migrations/ (user, #0). It stays at the top of every summary.", display: true },
+      m: { customType: "keel-pin", content: "The user pinned [1] never edit migrations/ (user, #0). It stays at the top of every summary.", display: true },
       o: { deliverAs: "nextTurn" },
     });
-    await commands.get("omp-vcc-pin")!("", ctx);
+    await commands.get("keel-pin")!("", ctx);
     expect(notices.at(-1)).toContain("- [1] never edit migrations/");
-    await commands.get("omp-vcc-unpin")!("1", ctx);
+    await commands.get("keel-unpin")!("1", ctx);
     expect(readPins(s.entries)).toEqual([]);
     expect(sent.at(-1).m.content).toContain("The user unpinned [1]");
   });
@@ -190,15 +200,15 @@ describe("/omp-vcc-pin and /omp-vcc-unpin", () => {
 
 describe("pinned notes in summaries", () => {
   let dir: string;
-  const prev = process.env.OMP_VCC_CONFIG_PATH;
+  const prev = process.env.KEEL_CONFIG_PATH;
   beforeAll(() => {
-    dir = mkdtempSync(join(tmpdir(), "omp-vcc-pins-"));
-    process.env.OMP_VCC_CONFIG_PATH = join(dir, "c.json");
-    writeFileSync(process.env.OMP_VCC_CONFIG_PATH, JSON.stringify({ overrideDefaultCompaction: true, smartKeepTail: false }));
+    dir = mkdtempSync(join(tmpdir(), "keel-pins-"));
+    process.env.KEEL_CONFIG_PATH = join(dir, "c.json");
+    writeFileSync(process.env.KEEL_CONFIG_PATH, JSON.stringify({ overrideDefaultCompaction: true, smartKeepTail: false }));
   });
   afterAll(() => {
-    if (prev === undefined) delete process.env.OMP_VCC_CONFIG_PATH;
-    else process.env.OMP_VCC_CONFIG_PATH = prev;
+    if (prev === undefined) delete process.env.KEEL_CONFIG_PATH;
+    else process.env.KEEL_CONFIG_PATH = prev;
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -217,14 +227,14 @@ describe("pinned notes in summaries", () => {
     expect(out.compaction.summary.startsWith("[Pinned Notes]\n- [1] never edit migrations/ (agent, #3)\n\n[Task State]\n")).toBe(true);
   });
 
-  it("the notice /omp-vcc-pin sends the agent is not repeated in the transcript", () => {
-    const notice = { type: "custom_message", id: "n1", customType: "omp-vcc-pin", content: "The user pinned [1] never edit migrations/ (user, #3). It stays at the top of every summary.", display: true, timestamp: "2026-01-01T00:00:00.000Z" };
+  it("the notice /keel-pin sends the agent is not repeated in the transcript", () => {
+    const notice = { type: "custom_message", id: "n1", customType: "keel-pin", content: "The user pinned [1] never edit migrations/ (user, #3). It stays at the top of every summary.", display: true, timestamp: "2026-01-01T00:00:00.000Z" };
     const s = session([message("m1", "user", "first request here"), message("m2", "assistant", "ok"), notice, message("m3", "user", "second request here"), message("m4", "assistant", "ok")]);
     executePin({ note: "never edit migrations/" }, s.host, s.sm);
     let handler: any;
     registerHook({ on: (name: string, fn: any) => { if (name === "session_before_compact") handler = fn; } });
     const out = handler({
-      type: "session_before_compact", branchEntries: s.entries, customInstructions: "__omp_vcc__ keep:1",
+      type: "session_before_compact", branchEntries: s.entries, customInstructions: "__keel__ keep:1",
       preparation: { previousSummary: undefined, fileOps: { read: [], written: [], edited: [] }, tokensBefore: 100 },
       signal: new AbortController().signal,
     }, { ui: { notify: () => {} }, sessionManager: s.sm });

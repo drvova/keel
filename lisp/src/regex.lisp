@@ -25,7 +25,7 @@
 ;;;; with no captures is matched in a loop rather than by recursion, and a
 ;;;; deadline (*REGEX-DEADLINE*) is checked as it runs.
 
-(in-package #:omp-vcc)
+(in-package #:keel)
 
 (define-condition regex-syntax-error (error) ((detail :initarg :detail :reader regex-detail))
   (:report (lambda (c s) (format s "regex syntax error: ~a" (regex-detail c)))))

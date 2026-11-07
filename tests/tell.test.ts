@@ -1,4 +1,4 @@
-// What omp-vcc says to the user (src/host.ts): a UI that is gone is no error,
+// What keel says to the user (src/host.ts): a UI that is gone is no error,
 // and a message the host refuses to send is told, not lost.
 import { describe, expect, it } from "bun:test";
 import { deliver, tell } from "../src/host";
@@ -27,8 +27,8 @@ describe("deliver", () => {
     await deliver(ctx, "the follow-up prompt", () => { throw new Error("busy"); });
     await deliver(ctx, "the pin to the agent", () => Promise.reject(new Error("closed")));
     expect(told).toEqual([
-      ["omp-vcc: could not send the follow-up prompt: busy", "warning"],
-      ["omp-vcc: could not send the pin to the agent: closed", "warning"],
+      ["keel: could not send the follow-up prompt: busy", "warning"],
+      ["keel: could not send the pin to the agent: closed", "warning"],
     ]);
   });
 });

@@ -8,7 +8,7 @@
 ;;;; reads it to the second. Everything else (headers, ids and their short forms,
 ;;;; each file's scan by line heads, its pins on its active branch) is here.
 
-(in-package #:omp-vcc)
+(in-package #:keel)
 
 (defparameter +max-listed-sessions+ 50)
 (defparameter +short-id-chars+ 8)

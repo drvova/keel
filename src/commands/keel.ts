@@ -1,10 +1,10 @@
-// /omp-vcc (/pi-vcc on Pi).
+// /keel (also under its old name, /omp-vcc on omp and /pi-vcc on Pi).
 //
 // omp's ctx.compact() takes a focus string or an options object, not both, and
 // its options have no customInstructions. A string alone is not enough: the TUI
 // reports a failed compaction itself and resolves anyway, so only onComplete /
 // onError say how it ended. So the options object goes to ctx.compact(), and the
-// omp-vcc marker reaches the hook through this binding's state for the manual
+// keel marker reaches the hook through this binding's state for the manual
 // pass that call starts.
 //
 // Pi's ctx.compact() takes the options object with customInstructions, which
@@ -15,13 +15,13 @@
 import { commandArgs } from "../core/compact-args";
 import type { CompactionState } from "../hooks/compaction";
 import { reportCompactDone, reportCompactError } from "./compact-feedback";
-import { compactAndWait, tell, type Binding } from "../host";
+import { compactAndWait, registerCommand, tell, type Binding } from "../host";
 import { whenCore } from "../core/core-wait";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 
-export const registerOmpVccCommand = (pi: ExtensionAPI, state: CompactionState, host: Binding) => {
-  pi.registerCommand(host.command, {
-    description: "Compact the conversation into an omp-vcc structured summary (keep:N keeps the last N user turns)",
+export const registerKeelCommand = (pi: ExtensionAPI, state: CompactionState, host: Binding) => {
+  registerCommand(pi, host, "", {
+    description: "Compact the conversation into a keel structured summary (keep:N keeps the last N user turns)",
     handler: async (args, ctx) => {
       const parsed = whenCore(() => commandArgs(args), (why) => tell(ctx, why, "warning"));
       if (!parsed) return;

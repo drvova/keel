@@ -1,15 +1,15 @@
-// vcc_recall keeps the originals of what omp rewrites in the session file
-// (<session>.jsonl.vcc-raw: src/hooks/raw-capture.ts, lisp/src/raw-capture.lisp and
+// keel_recall keeps the originals of what omp rewrites in the session file
+// (<session>.jsonl.keel-raw: src/hooks/raw-capture.ts, lisp/src/raw-capture.lisp and
 // session.lisp), with no omp setting changed. Putting an original back is held
 // to its rules in lisp/test/store.lisp.
 import { ompBinding } from "./support/binding";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 
 /** The store beside a session file. */
-const rawStorePath = (file: string): string => `${file}.vcc-raw`;
+const rawStorePath = (file: string): string => `${file}.keel-raw`;
 /** What the store keeps, by id: the first copy of each (the store's format: one {id, content} line each). */
 const readRawStore = (file: string, ids: Set<string>): Map<string, unknown> => {
   const kept = new Map<string, unknown>();
@@ -26,14 +26,14 @@ import { captureNewEntries, createRawCaptureState, pointPlaceholders, registerRa
 import { registerRecallTool } from "../src/tools/recall";
 
 let dir: string;
-const prev = process.env.OMP_VCC_CONFIG_PATH;
+const prev = process.env.KEEL_CONFIG_PATH;
 beforeAll(() => {
-  dir = mkdtempSync(join(tmpdir(), "omp-vcc-raw-"));
-  process.env.OMP_VCC_CONFIG_PATH = join(dir, "omp-vcc-config.json");
+  dir = mkdtempSync(join(tmpdir(), "keel-raw-"));
+  process.env.KEEL_CONFIG_PATH = join(dir, "keel-config.json");
 });
 afterAll(() => {
-  if (prev === undefined) delete process.env.OMP_VCC_CONFIG_PATH;
-  else process.env.OMP_VCC_CONFIG_PATH = prev;
+  if (prev === undefined) delete process.env.KEEL_CONFIG_PATH;
+  else process.env.KEEL_CONFIG_PATH = prev;
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -67,7 +67,7 @@ describe("what is kept", () => {
       { role: "toolResult", content: text("b".repeat(1_000_010)) },
     ]);
     expect(kept.get("k0")).toEqual([{ type: "text", text: "a" }, { type: "image", mimeType: "image/png" }]);
-    expect((kept.get("k1") as any[])[0].text).toEndWith("...[omp-vcc kept the first 1000000 of 1000010 chars]");
+    expect((kept.get("k1") as any[])[0].text).toEndWith("...[keel kept the first 1000000 of 1000010 chars]");
   });
 });
 
@@ -80,7 +80,7 @@ describe("with omp's own session manager", () => {
   };
 
   it("recall reads what omp blanked or shook, from the copy taken as the messages landed", async () => {
-    writeFileSync(process.env.OMP_VCC_CONFIG_PATH!, JSON.stringify({ keepOriginals: true }));
+    writeFileSync(process.env.KEEL_CONFIG_PATH!, JSON.stringify({ keepOriginals: true }));
     const omp: any = await import("@oh-my-pi/pi-coding-agent");
     const sessions = join(dir, "sessions");
     const sm = omp.SessionManager.create(dir, sessions);
@@ -121,6 +121,11 @@ describe("with omp's own session manager", () => {
     expect(existsSync(rawStorePath(file))).toBe(true);
     expect(await recallOn(sm, { mode: "sessions" })).toStartWith("No earlier sessions in this project");
 
+    // A store keel kept as omp-vcc (.vcc-raw) is read the same.
+    renameSync(rawStorePath(file), `${file}.vcc-raw`);
+    expect(await recallOn(sm, { query: "zebrafish quota exceeded" })).toContain("step 7");
+    renameSync(`${file}.vcc-raw`, rawStorePath(file));
+
     // Without it, the placeholder is all there is.
     rmSync(rawStorePath(file));
     expect(await recallOn(sm, { query: "zebrafish quota exceeded" })).not.toContain("step 7");
@@ -133,11 +138,11 @@ describe("with omp's own session manager", () => {
     const entries: any[] = [{ type: "message", id: "r1", message: { role: "toolResult", toolCallId: "c", content: text("out") } }];
     const ctx = { sessionManager: { getSessionFile: () => file, getEntries: () => entries } };
     const fireAll = () => { for (const hs of handlers.values()) for (const h of hs) h({ messages: [] }, ctx); };
-    writeFileSync(process.env.OMP_VCC_CONFIG_PATH!, JSON.stringify({ keepOriginals: false }));
+    writeFileSync(process.env.KEEL_CONFIG_PATH!, JSON.stringify({ keepOriginals: false }));
     fireAll();
     expect(existsSync(rawStorePath(file))).toBe(false);
     // Off, the events passed the message by without taking it as seen.
-    writeFileSync(process.env.OMP_VCC_CONFIG_PATH!, JSON.stringify({ keepOriginals: true }));
+    writeFileSync(process.env.KEEL_CONFIG_PATH!, JSON.stringify({ keepOriginals: true }));
     handlers.get("message_end")![0]({}, ctx);
     expect([...readRawStore(file, new Set(["r1"])).values()]).toEqual([text("out")]);
   });
@@ -184,8 +189,8 @@ describe("the summary is written from the originals", () => {
     expect(readFileSync(rawStorePath(child), "utf8")).toBe(`${JSON.stringify({ id: "f2", content: text("f2 out") })}\n`);
   });
 
-  it("a commit whose git output omp blanked before omp-vcc compacted is still in [Commits]", async () => {
-    writeFileSync(process.env.OMP_VCC_CONFIG_PATH!, JSON.stringify({ overrideDefaultCompaction: true }));
+  it("a commit whose git output omp blanked before keel compacted is still in [Commits]", async () => {
+    writeFileSync(process.env.KEEL_CONFIG_PATH!, JSON.stringify({ overrideDefaultCompaction: true }));
     const { registerHook } = await import("./support/host");
     let handler: any;
     registerHook({ on: (name: string, fn: any) => { if (name === "session_before_compact") handler = fn; } });
@@ -224,11 +229,11 @@ describe("omp's placeholders point at the original", () => {
   const placeholder = (t: string) => ({ role: "toolResult", toolCallId: "c1", toolName: "bash", content: text(t) });
   const kept = (ids: string[]) => ({ ...createRawCaptureState(), kept: new Set(ids) });
 
-  it("names the recall ref when omp-vcc kept the original, the same text every time", () => {
+  it("names the recall ref when keel kept the original, the same text every time", () => {
     for (const notice of ["[Output truncated - 1200 tokens]", "[Superseded by a newer read of this file]", "[Uneventful result elided]"]) {
       const messages = [{ role: "user", content: "look at the log" }, placeholder(notice)];
       const out = pointPlaceholders(messages, kept(["r1"]), ompBinding, { sessionManager: sm }) as any[];
-      expect(out[1].content).toEqual(text(`${notice} (the original: vcc_recall expand:[2])`));
+      expect(out[1].content).toEqual(text(`${notice} (the original: keel_recall expand:[2])`));
       expect(pointPlaceholders(messages, kept(["r1"]), ompBinding, { sessionManager: sm })).toEqual(out);
       // The request's own messages are not changed in place.
       expect(messages[1].content).toEqual(text(notice));
@@ -245,7 +250,7 @@ describe("omp's placeholders point at the original", () => {
 
 describe("a fork reads its parent's originals", () => {
   it("what the parent kept before the fork, recall in the fork still finds", async () => {
-    writeFileSync(process.env.OMP_VCC_CONFIG_PATH!, JSON.stringify({ keepOriginals: true }));
+    writeFileSync(process.env.KEEL_CONFIG_PATH!, JSON.stringify({ keepOriginals: true }));
     const omp: any = await import("@oh-my-pi/pi-coding-agent");
     const sessions = join(dir, "fork-sessions");
     const sm = omp.SessionManager.create(dir, sessions);

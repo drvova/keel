@@ -2,12 +2,12 @@
 ;;;;
 ;;;; SPDX-License-Identifier: MIT
 ;;;;
-;;;; `/omp-vcc keep:N` becomes customInstructions carrying a marker, so the
+;;;; `/keel keep:N` becomes customInstructions carrying a marker, so the
 ;;;; hook knows the pass is the command's; `/compact` text may end or start with
 ;;;; keep:N and carry a prompt to send once it is done. src/core/compact-args.ts
 ;;;; asks for both.
 
-(in-package #:omp-vcc)
+(in-package #:keel)
 
 
 (defun keep-of (text)
@@ -28,8 +28,8 @@
               (values (js-trim (js-slice trimmed 0 (- (js-length trimmed) (js-length (rx-group last 1))))) last-keep)
               (values trimmed nil))))))
 
-(defun vcc-custom-instructions (keep)
-  "The customInstructions /omp-vcc hands the host: the marker, then keep:N when KEEP is given."
+(defun keel-custom-instructions (keep)
+  "The customInstructions /keel hands the host: the marker, then keep:N when KEEP is given."
   (if keep (format nil "~a keep:~d" +compact-instruction+ keep) +compact-instruction+))
 
 (defun parse-instructions (custom)
@@ -47,7 +47,7 @@ FOLLOW-UP-PROMPT): the command's marker and its keep:N, or `/compact` text."
 command's of its text (\"command\": the prompt, and the instructions it hands the host, keep:N in them)."
   (if (nth-value 1 (gethash "command" request))
       (multiple-value-bind (prompt keep) (parse-keep-and-prompt (json-get request "command"))
-        (json-object "ok" :true "followUpPrompt" prompt "instructions" (vcc-custom-instructions keep)))
+        (json-object "ok" :true "followUpPrompt" prompt "instructions" (keel-custom-instructions keep)))
       (multiple-value-bind (from-command keep prompt) (parse-instructions (json-get request "instructions"))
         (json-object "ok" :true "fromCommand" (if from-command :true :false)
                      "keepUserTurns" (or keep :null) "followUpPrompt" (or prompt :null)))))

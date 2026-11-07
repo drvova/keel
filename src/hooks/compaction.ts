@@ -16,12 +16,12 @@ import { hostSnapshot } from "../core/host-snapshot";
 /** What the compaction hook needs of its host. */
 export type CompactionHost = Pick<Binding, "name" | "displayName" | "modelsFile" | "convertToLlm" | "triggerOf" | "config">;
 
-/** The compaction omp-vcc wrote on the last pass, until the host has applied it. */
+/** The compaction keel wrote on the last pass, until the host has applied it. */
 export interface WrittenCompaction {
   summary: string;
   /** The outcome line, told once the host has applied it. */
   statsLine: string;
-  /** /omp-vcc's: the command tells the outcome itself. */
+  /** /keel's: the command tells the outcome itself. */
   fromCommand: boolean;
   /** The host retries the turn after it (an overflow, a cut-off reply): nothing to tell. */
   willRetry: boolean;
@@ -34,12 +34,12 @@ export interface CompactionState {
   /** Set by a pass that wrote a compaction, cleared at the start of every pass: matched to what the host applies by its summary. */
   written: WrittenCompaction | null;
   /**
-   * The /omp-vcc marker for the manual compaction the command is starting:
+   * The /keel marker for the manual compaction the command is starting:
    * omp's ctx.compact() cannot carry instructions together with callbacks. The
    * hook reads it for a manual pass that arrives without instructions.
    */
   pendingManualInstructions: string | null;
-  /** Why the hook last cancelled a compaction, for /omp-vcc to report where omp shows no notifications. */
+  /** Why the hook last cancelled a compaction, for /keel to report where omp shows no notifications. */
   lastCancelNotice: string | null;
   /** The user was told the core is not there yet (src/core/lisp-core.ts). */
   coreNoticeShown: boolean;
@@ -80,7 +80,7 @@ export const registerCompactionHook = (pi: ExtensionAPI, host: CompactionHost, s
         hostSettings: preparation.settings ?? null,
         previousSummary: typeof preparation.previousSummary === "string" ? preparation.previousSummary : null,
         fileOps: { read: [...preparation.fileOps.read], changed: [...preparation.fileOps.edited, ...preparation.fileOps.written] },
-        // A pass omp-vcc started itself went by the policy as last recorded; this one carries the current policy, which may since say no.
+        // A pass keel started itself went by the policy as last recorded; this one carries the current policy, which may since say no.
         selfStarted: windows.selfTrigger !== null,
       },
       ...(converted ? { converted } : {}),
@@ -88,7 +88,7 @@ export const registerCompactionHook = (pi: ExtensionAPI, host: CompactionHost, s
     let reply = ask();
     if (reply.kind === "convert") reply = ask((reply.messages as unknown[]).map((m) => convertOne(host.convertToLlm, m)));
     // With the `debug` setting on, the pass's decisions, beside the config; a debug write never breaks a compaction.
-    if (reply.debug) try { writeFileSync(join(host.config.dir(), "omp-vcc-debug.json"), JSON.stringify(reply.debug, null, 2)); } catch {}
+    if (reply.debug) try { writeFileSync(join(host.config.dir(), "keel-debug.json"), JSON.stringify(reply.debug, null, 2)); } catch {}
     if (reply.kind === "pass") return undefined;
     if (reply.kind === "cancel") {
       if (typeof reply.notice === "string") {
@@ -109,18 +109,18 @@ export const registerCompactionHook = (pi: ExtensionAPI, host: CompactionHost, s
   };
 
   pi.on("session_before_compact", (event, ctx): any =>
-    // While the core is not there, the host compacts as it would without omp-vcc; the user hears why once.
+    // While the core is not there, the host compacts as it would without keel; the user hears why once.
     whenCore(() => beforeCompact(event, ctx), (why) => {
       if (state.coreNoticeShown) return;
       state.coreNoticeShown = true;
       tell(ctx, why, "warning");
     }));
 
-  // The outcome of a compaction omp-vcc wrote, once the host applied that one (another extension's can win).
+  // The outcome of a compaction keel wrote, once the host applied that one (another extension's can win).
   pi.on("session_compact", async (event, ctx) => {
     const written = state.written;
     if (!event.fromExtension || !written || event.compactionEntry?.summary !== written.summary) return;
-    // /omp-vcc tells its own outcome, from the same record.
+    // /keel tells its own outcome, from the same record.
     if (written.fromCommand) return;
     // The host retries the turn itself after an overflow or a cut-off reply.
     if (written.willRetry) return;
