@@ -1,10 +1,10 @@
 // vcc_pin: the text the agent reads, its JSON Schema, and what a call does.
 // unpin also takes "#3"; omp has no prepareArguments, so the schema takes a
-// number or a string and removePin (core/pins.ts) reads either form.
+// number or a string and the core (lisp/src/pins.lisp) reads either form.
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { untilCore } from "../core/core-wait";
 import type { HostProfile } from "../host";
-import { addPin, listPins, PIN_CHARS, pinCallOf, pinInCore, removePin, type PinHost } from "../core/pins";
+import { PIN_CHARS, pinInCore, type PinHost } from "../core/pins";
 import type { SessionManagerLike } from "../core/session-file";
 import { PIN_PARAMS, PIN_TOOL } from "../names";
 
@@ -29,15 +29,8 @@ const PIN_PARAM_DESCRIPTIONS = {
 } as const;
 
 /** One vcc_pin call: note pins, unpin removes, neither lists. */
-export const executePin = (params: unknown, host: PinHost, session: SessionManagerLike): string => {
-  const inCore = pinInCore(host, session, { surface: "tool", params: params ?? null });
-  if (inCore) return inCore.text;
-  const call = pinCallOf((params && typeof params === "object" ? params : {}) as Record<string, unknown>);
-  if ("both" in call) return "Send note or unpin, not both, in one call.";
-  if ("note" in call) return addPin(host, session, call.note, "agent").text;
-  if ("unpin" in call) return removePin(host, session, call.unpin).text;
-  return listPins(session);
-};
+export const executePin = (params: unknown, host: PinHost, session: SessionManagerLike): string =>
+  pinInCore(host, session, { surface: "tool", params: params ?? null }).text;
 
 const PIN_PARAMETERS = {
   type: "object",

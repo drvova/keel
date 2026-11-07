@@ -12,11 +12,10 @@
 // along the current branch, so a branch keeps the pins made on it and an edited
 // or retried turn drops the ones made after the edit point. omp's /clear (a
 // reset_boundary) hides earlier pins, as it does omp's own context notes.
-import { clip } from "./content";
-import { afterReset, hostBranch, hostEntries, lastIndex, RESET_ENTRY_TYPE, type SessionManagerLike } from "./session-file";
+import { afterReset, hostBranch, hostEntries, RESET_ENTRY_TYPE, type SessionManagerLike } from "./session-file";
 import { PIN_ENTRY_TYPE, PIN_PARAMS, PIN_TOOL } from "../names";
 import { isUnset } from "./tools";
-import { callCore } from "./lisp-core";
+import { core } from "./lisp-core";
 
 /** One note is clipped to this many characters. */
 export const PIN_CHARS = 300;
@@ -63,19 +62,6 @@ export const readPins = (branch: readonly any[]): PinnedNote[] => {
   return [...notes.values()].sort((a, b) => a.id - b.id);
 };
 
-/** A fresh id: one past every id used on this branch, unpinned ones included, so an id never means two notes. */
-export const nextPinId = (branch: readonly any[]): number => {
-  let max = 0;
-  for (const e of branch) if (isPinEntry(e) && Number.isInteger(e.data.id)) max = Math.max(max, e.data.id);
-  return max + 1;
-};
-
-/** Normalize note text: one line, clipped. Empty when there is nothing to pin. */
-const pinText = (text: string): { text: string; clipped: boolean } => {
-  const flat = text.replace(/\s+/g, " ").trim();
-  return { text: clip(flat, PIN_CHARS), clipped: flat.length > PIN_CHARS };
-};
-
 export const formatPin = (n: PinnedNote): string =>
   `[${n.id}] ${n.text} (${n.by}${n.at != null ? `, #${n.at}` : ""})`;
 
@@ -89,28 +75,12 @@ export const formatPinLines = (notes: readonly PinnedNote[]): string[] => {
   ];
 };
 
-/** The pin list as tool or command output. */
-const formatPinList = (notes: readonly PinnedNote[]): string =>
-  notes.length === 0
-    ? "No pinned notes."
-    : `Pinned notes (kept at the top of every summary):\n${notes.map((n) => `- ${formatPin(n)}`).join("\n")}`;
-
 // ── Pinning and unpinning, for the tool and the commands ──
 
 /** Where a pin or unpin is written: the host's appendEntry. */
 export interface PinHost {
   appendEntry: (customType: string, data?: unknown) => void;
 }
-
-const branchOf = (session: SessionManagerLike): any[] => hostBranch(session) ?? [];
-
-/** "3", "#3", "[3]", 3 -> 3. */
-const toPinId = (value: unknown): number | undefined => {
-  if (typeof value === "number") return Number.isInteger(value) ? value : undefined;
-  if (typeof value !== "string") return undefined;
-  const m = value.trim().match(/^\[?#?(\d+)\]?$/);
-  return m ? Number(m[1]) : undefined;
-};
 
 /**
  * A vcc_pin call as the tool runs it and the brief reads it: a note to pin,
@@ -127,39 +97,13 @@ export const pinCallOf = (args: Record<string, unknown>): { note: string } | { u
   return { list: true };
 };
 
-/** Pin a note; `done` says whether it was pinned, `text` what happened. */
-export const addPin = (host: PinHost, session: SessionManagerLike, raw: string, by: PinAuthor): PinResult => {
-  const { text, clipped } = pinText(raw);
-  if (!text) return { done: false, text: "Nothing to pin: give the note text." };
-  const branch = branchOf(session);
-  const existing = readPins(branch).find((n) => n.text === text);
-  if (existing) return { done: false, text: `Already pinned: ${formatPin(existing)}.` };
-  const entries = hostEntries(session) ?? branch;
-  const op: PinOp = { v: 1, op: "add", id: nextPinId(branch), text, by, ...withAt(lastIndex(entries)) };
-  host.appendEntry(PIN_ENTRY_TYPE, op);
-  const note = { id: op.id, text, by, ...withAt(op.at) };
-  return { done: true, text: `Pinned ${formatPin(note)}${clipped ? ` (clipped to ${PIN_CHARS} chars)` : ""}.` };
-};
-
-const withAt = (at: number | undefined) => (at != null ? { at } : {});
-
-/** Unpin a note by its id ("3", "#3", "[3]", 3). */
-export const removePin = (host: PinHost, session: SessionManagerLike, idValue: unknown): PinResult => {
-  const id = toPinId(idValue);
-  const notes = readPins(branchOf(session));
-  const note = id == null ? undefined : notes.find((n) => n.id === id);
-  if (!note) return { done: false, text: `No pinned note ${id == null ? JSON.stringify(idValue) : `[${id}]`}. ${formatPinList(notes)}` };
-  host.appendEntry(PIN_ENTRY_TYPE, { v: 1, op: "remove", id: note.id } satisfies PinOp);
-  return { done: true, text: `Unpinned ${formatPin(note)}.` };
-};
-
-export const listPins = (session: SessionManagerLike): string => formatPinList(readPins(branchOf(session)));
-
 /** What a pin or unpin did: `done` when the note changed, `text` what to tell. */
 interface PinResult {
   done: boolean;
   text: string;
 }
+
+const branchOf = (session: SessionManagerLike): any[] => hostBranch(session) ?? [];
 
 /** A vcc_pin call, or the text of /…-pin or /…-unpin. */
 export type PinCall = { surface: "tool"; params: unknown } | { surface: "command"; name: "pin" | "unpin"; args: string };
@@ -176,12 +120,10 @@ export interface PinAnswer extends PinResult {
  * branch's pin entries and /clear boundaries, and of every entry what #N
  * counts (its type, whether it holds a message).
  */
-export const pinInCore = (host: PinHost, session: SessionManagerLike, call: PinCall): PinAnswer | undefined => {
+export const pinInCore = (host: PinHost, session: SessionManagerLike, call: PinCall): PinAnswer => {
   const branch = branchOf(session);
   const entries = (hostEntries(session) ?? branch).map((e: any) => ({ type: e?.type, ...(e?.message != null ? { message: 1 } : {}) }));
-  const reply = callCore({ op: "pin", input: { call, branch: branch.filter(replaysPins), entries } });
-  const answer = reply?.pin as (PinAnswer & { op?: PinOp }) | undefined;
-  if (!answer) return undefined;
+  const answer = core({ op: "pin", input: { call, branch: branch.filter(replaysPins), entries } }).pin as PinAnswer & { op?: PinOp };
   if (answer.op) host.appendEntry(PIN_ENTRY_TYPE, answer.op);
   return { done: answer.done, text: answer.text, ...(answer.severity ? { severity: answer.severity } : {}), ...(answer.agentNote ? { agentNote: answer.agentNote } : {}) };
 };

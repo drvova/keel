@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { nextPinId, PIN_CHARS, readPins, addPin, removePin } from "../src/core/pins";
+import { PIN_CHARS, readPins } from "../src/core/pins";
 import { PIN_ENTRY_TYPE } from "../src/names";
 import { executePin } from "../src/tools/pin";
 import { registerPinCommands } from "../src/commands/pin";
@@ -24,23 +24,28 @@ const message = (id: string, role = "user", text = "hello there") =>
   ({ type: "message", id, message: role === "user" ? { role, content: text } : { role, content: [{ type: "text", text }] } });
 
 describe("pinned notes: storage", () => {
+  // A note pinned by the agent's tool (by "agent"), or by the user's command (by "user").
+  const pin = (s: ReturnType<typeof session>, note: string) => executePin({ note }, s.host, s.sm);
+  const unpin = (s: ReturnType<typeof session>, id: unknown) => executePin({ unpin: id }, s.host, s.sm);
+
   it("replays pins and unpins along the branch, recording the #N they were made at", () => {
     const s = session([message("m1"), message("m2", "assistant")]);
-    expect(addPin(s.host, s.sm, "never edit migrations/", "user").text).toBe("Pinned [1] never edit migrations/ (user, #1).");
-    expect(addPin(s.host, s.sm, "  sessions   in SQLite ", "agent").text).toBe("Pinned [2] sessions in SQLite (agent, #1).");
-    expect(readPins(s.entries).map((n) => [n.id, n.text, n.by])).toEqual([[1, "never edit migrations/", "user"], [2, "sessions in SQLite", "agent"]]);
-    expect(removePin(s.host, s.sm, "#1").text).toBe("Unpinned [1] never edit migrations/ (user, #1).");
+    expect(pin(s, "never edit migrations/")).toBe("Pinned [1] never edit migrations/ (agent, #1).");
+    expect(pin(s, "  sessions   in SQLite ")).toBe("Pinned [2] sessions in SQLite (agent, #1).");
+    expect(readPins(s.entries).map((n) => [n.id, n.text, n.by])).toEqual([[1, "never edit migrations/", "agent"], [2, "sessions in SQLite", "agent"]]);
+    expect(unpin(s, "#1")).toBe("Unpinned [1] never edit migrations/ (agent, #1).");
     expect(readPins(s.entries).map((n) => n.id)).toEqual([2]);
     // An id is never reused, so an old [1] cannot come to mean a new note.
-    expect(nextPinId(s.entries)).toBe(3);
+    expect(pin(s, "a third note")).toBe("Pinned [3] a third note (agent, #1).");
   });
 
-  it("refuses an empty note and a duplicate, clips a long one", () => {
+  it("lists on a blank note, refuses a duplicate, clips a long one", () => {
     const s = session();
-    expect(addPin(s.host, s.sm, "   ", "user").text).toBe("Nothing to pin: give the note text.");
-    addPin(s.host, s.sm, "keep the API stable", "user");
-    expect(addPin(s.host, s.sm, "keep the API stable", "agent").text).toBe("Already pinned: [1] keep the API stable (user).");
-    expect(addPin(s.host, s.sm, "x".repeat(PIN_CHARS + 50), "agent").text).toContain(`(clipped to ${PIN_CHARS} chars)`);
+    // A blank note is a note not given: the call lists the notes.
+    expect(pin(s, "   ")).toBe("No pinned notes.");
+    pin(s, "keep the API stable");
+    expect(pin(s, "keep the API stable")).toBe("Already pinned: [1] keep the API stable (agent).");
+    expect(pin(s, "x".repeat(PIN_CHARS + 50))).toContain(`(clipped to ${PIN_CHARS} chars)`);
   });
 
   it("ignores other extensions' entries and malformed data, and hides pins made before omp's /clear", () => {
@@ -115,7 +120,7 @@ describe("pinned notes in summaries", () => {
 
   it("come first in the summary, verbatim", () => {
     const s = session([message("m1", "user", "first request here"), message("m2", "assistant", "ok"), message("m3", "user", "second request here"), message("m4", "assistant", "ok")]);
-    addPin(s.host, s.sm, "never edit migrations/", "user");
+    executePin({ note: "never edit migrations/" }, s.host, s.sm);
     let handler: any;
     const hook = registerHook({ on: (name: string, fn: any) => { if (name === "session_before_compact") handler = fn; } });
     hook.autoCompactionStart("threshold");
@@ -125,13 +130,13 @@ describe("pinned notes in summaries", () => {
       signal: new AbortController().signal,
     }, { ui: { notify: () => {} }, sessionManager: s.sm });
     // Pinned notes first, then where the work stands.
-    expect(out.compaction.summary.startsWith("[Pinned Notes]\n- [1] never edit migrations/ (user, #3)\n\n[Task State]\n")).toBe(true);
+    expect(out.compaction.summary.startsWith("[Pinned Notes]\n- [1] never edit migrations/ (agent, #3)\n\n[Task State]\n")).toBe(true);
   });
 
   it("the notice /omp-vcc-pin sends the agent is not repeated in the transcript", () => {
     const notice = { type: "custom_message", id: "n1", customType: "omp-vcc-pin", content: "The user pinned [1] never edit migrations/ (user, #3). It stays at the top of every summary.", display: true, timestamp: "2026-01-01T00:00:00.000Z" };
     const s = session([message("m1", "user", "first request here"), message("m2", "assistant", "ok"), notice, message("m3", "user", "second request here"), message("m4", "assistant", "ok")]);
-    addPin(s.host, s.sm, "never edit migrations/", "user");
+    executePin({ note: "never edit migrations/" }, s.host, s.sm);
     let handler: any;
     registerHook({ on: (name: string, fn: any) => { if (name === "session_before_compact") handler = fn; } });
     const out = handler({
