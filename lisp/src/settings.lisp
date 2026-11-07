@@ -2,15 +2,16 @@
 ;;;;
 ;;;; SPDX-License-Identifier: MIT
 ;;;;
-;;;; A port of src/core/settings.ts parseSettings and Config.scaffold. The TS
-;;;; side resolves where the file is (the host's agent directory, or
+;;;; The settings are each value of the file in its default's type; the
+;;;; scaffold writes the file whole. The TS side (src/core/settings.ts)
+;;;; resolves where the file is (the host's agent directory, or
 ;;;; OMP_VCC_CONFIG_PATH) and whether the pre-rename pi-vcc-config.json may be
 ;;;; copied; the core reads and writes the file itself. What it writes is what
 ;;;; JSON.stringify(value, null, 2) writes, with a newline after.
 
 (in-package #:omp-vcc)
 
-;; VccSettings' keys in DEFAULT_SETTINGS' order, with their defaults.
+;; The settings' keys in the order the scaffold writes them, with their defaults.
 (defparameter +default-settings+
   '(("overrideDefaultCompaction" . :true) ("smartKeepTail" . :true) ("debug" . :false)
     ("skipForProviders" . :list) ("skipCustomTypes" . :list) ("trackCommands" . :list)
@@ -48,7 +49,7 @@
              (cond ((string-equal s "true") :true) ((string-equal s "false") :false)))))))
 
 (defun parse-settings (parsed)
-  "settings.ts parseSettings: each value only in its default's type."
+  "The settings PARSED (the file's JSON) gives: each value only in its default's type."
   (let ((settings (default-settings)))
     (when (hash-table-p parsed)
       (loop for (key . value) in +default-settings+

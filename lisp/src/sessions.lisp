@@ -2,8 +2,8 @@
 ;;;;
 ;;;; SPDX-License-Identifier: MIT
 ;;;;
-;;;; A port of src/core/sessions.ts. The files themselves, newest first by last
-;;;; write and the current one left out, come from the TS side: listing a
+;;;; The files themselves, newest first by last write and the current one left
+;;;; out, come from the TS side (src/core/sessions.ts): listing a
 ;;;; directory by modification time to the millisecond is the host's, and SBCL
 ;;;; reads it to the second. Everything else (headers, ids and their short forms,
 ;;;; each file's scan by line heads, its pins on its active branch) is here.
@@ -46,7 +46,7 @@
                      (t (when (< bytes limit) (write-char #\REPLACEMENT_CHARACTER out)) (return)))))))
 
 (defun entry-head (line)
-  "session-file.ts entryHead: (values TYPE ID PARENT PARENT-PRESENT) read from the line's head."
+  "(values TYPE ID PARENT PARENT-PRESENT) read from the line's head, without parsing the line."
   (let* ((head (utf-8-head line 400))
          (type (let ((m (rx-exec (rx "^\\{\"type\":\"([^\"]+)\"") head))) (and m (rx-group m 1))))
          (id (let ((m (rx-exec (rx "\"id\":\"([^\"]+)\"") head))) (and m (rx-group m 1))))

@@ -25,23 +25,20 @@
 ;;;;   -> {"ok":true,"status":"ok","results":[{"test":B,"search":I,"count":N}...]}
 ;;;;      or "status":"syntax" (JavaScript throws) or "unsupported" (a back-reference into a look-behind)
 ;;;;
-;;;; summarize: a compaction's summary (tests/support/compile.ts compileSummary)
+;;;; summarize: a compaction's summary (summary.lisp compile-summary), for tests/support/compile.ts
 ;;;;   {"op":"summarize","input":COMPILE-INPUT} -> {"ok":true,"text":T,"state":STATE,"sections":[S...]}
 ;;;;
-;;;; compact: what a compaction does (src/compaction/plan.ts planCompaction)
-;;;;   {"op":"compact","input":{branch, notes, keepUserTurns, fromCommand, reason,
-;;;;    recovering, settings, ruleName, window, tokensBefore, hostSettings,
-;;;;    selfStarted?, sessionFile, previousSummary, fileOps}}
-;;;;   -> {"ok":true,"plan":PLAN}, PLAN with its "sizing" (the host's policy and
-;;;;   trigger, the context's overhead and chars per token, the budgets); NOTES,
-;;;;   parallel to BRANCH, carry for each live message what the host's
-;;;;   convertToLlm makes of it (summary-input.ts toSummaryMessage), as it is and
-;;;;   as its kept original, and its #N.
+;;;; compact: a session_before_compact, in two calls (src/hooks/compaction.ts; host.lisp compact-for-host)
+;;;;   {"op":"compact","host":SNAPSHOT,"event":EVENT,"converted":[MESSAGE...]?}
+;;;;   -> {"ok":true,"kind":"pass"} when the pass is not omp-vcc's; without
+;;;;   CONVERTED, {"ok":true,"kind":"convert","messages":[M...]}, what the host's
+;;;;   convertToLlm must convert, asked again with its answers in that order; with
+;;;;   them, the cancel or the compaction in the host's own result shape.
 ;;;;
 ;;;; cut: the cut alone (compaction.lisp), for the tests of where a compaction cuts
 ;;;;   {"op":"cut","action":"own"|"tail-budget"|"smart-keep"|"running-turn"|"whole-window",
 ;;;;    branch, notes, keep?, skip?, cut?, maxTokens?, minTokens?, charsPerToken?, requested?, smart?}
-;;;;   -> {"ok":true,"cut":CUT}, CUT as cut.ts's OwnCutResult ({ok:false, reason} when there is none,
+;;;;   -> {"ok":true,"cut":CUT}, CUT as cut-json writes it ({ok:false, reason} when there is none,
 ;;;;   null from running-turn and whole-window), or "keep" and "adjusted" for smart-keep.
 ;;;;
 ;;;; working-set: [Working Set] alone (working-set.lisp), for its tests
@@ -56,7 +53,7 @@
 ;;;; names: omp-vcc's own names and the limits its tools state (names.lisp), which src/names.ts copies
 ;;;;   {"op":"names"} -> {"ok":true,"names":{recallTool, recallParams, pinTool, ..., sessionRefMinChars}}
 ;;;;
-;;;; context-edits: a branch as Pi's context holds it (src/core/context-edits.ts), for the parity test
+;;;; context-edits: a branch as Pi's context holds it (context-edits.lisp), for the parity test
 ;;;;   {"op":"context-edits","branch":[ENTRY...]} -> {"ok":true,"entries":[ENTRY...]}
 ;;;;   (op compact applies the same projection to its BRANCH and NOTES)
 ;;;;
@@ -71,14 +68,14 @@
 ;;;;   -> {"ok":true,"pin":{done, text, op?, severity?, agentNote?}}; OP is the
 ;;;;   omp-vcc.pin entry's data for the host to append.
 ;;;;
-;;;; raw-capture: copy what omp may rewrite (src/hooks/raw-capture.ts captureNewEntries)
+;;;; raw-capture: copy what omp may rewrite (src/hooks/raw-capture.ts)
 ;;;;   {"op":"raw-capture","input":{file, entries:[the message entries since the last call],
 ;;;;    kept:[ids of them the binding keeps], lineage:B}}
 ;;;;   -> {"ok":true,"written":[ID...],"stored":B,"lineage":[ID...]?}; the core appends
 ;;;;   <file>.vcc-raw itself (STORED false: the write failed), and with LINEAGE
 ;;;;   reads the ids the file's and its parents' stores hold.
 ;;;;
-;;;; placeholders: pointers on omp's placeholders (raw-capture.ts pointPlaceholders)
+;;;; placeholders: pointers on omp's placeholders (src/hooks/raw-capture.ts)
 ;;;;   {"op":"placeholders","input":{candidates:[{i, callId, text}], branch:[{id, toolCallId}],
 ;;;;    entries:[{type, id, message?}], kept:[ID...]}}
 ;;;;   -> {"ok":true,"replace":[{i, text}...]}
@@ -87,19 +84,21 @@
 ;;;;   {"op":"args","command":TEXT} -> {"ok":true,"followUpPrompt":P,"keepUserTurns":N|null,"instructions":I}
 ;;;;   {"op":"args","instructions":TEXT|null} -> {"ok":true,"fromCommand":B,"keepUserTurns":N|null,"followUpPrompt":P|null}
 ;;;;
-;;;; limits: a model's learned window (src/core/model-limits.ts, src/hooks/window-limits.ts)
+;;;; limits: the learned-limits file alone (limits.lisp), for its tests
 ;;;;   {"op":"limits","action":"window","model":M,"hostName":H,"dir":D} -> {"ok":true,"window":{host?,learned?,effective?,source}}
 ;;;;   (each action takes the model M, or KEY, its provider/id)
 ;;;;   {"op":"limits","action":"learn","model":M,"dir":D,"window":N,"now":ISO?} -> {"ok":true,"recorded":B}
 ;;;;   {"op":"limits","action":"learned","model":M,"dir":D} -> {"ok":true,"window":N?}
-;;;;   {"op":"limits","action":"policy","model":M,"dir":D} -> {"ok":true,"policy":P?}
-;;;;   {"op":"limits","action":"record-policy","model":M,"dir":D,"policy":P} -> {"ok":true}
-;;;;   {"op":"limits","action":"settled","model":M,"dir":D,"configPath":C,"provider":P,"ruleName":R,
-;;;;    "hostName":H,"displayName":N,"modelsFile":F,"usedTokens":U} -> {"ok":true,"settled":{trigger, notice}?}
 ;;;;
-;;;; outcome: what a compaction's outcome is told as (src/compaction/stats.ts, compact-feedback.ts, details.ts)
+;;;; learn-limit: an assistant message that ended in an error (src/hooks/window-limits.ts)
+;;;;   {"op":"learn-limit","host":SNAPSHOT,"errors":[TEXT...]} -> {"ok":true,"recorded":B}
+;;;;
+;;;; settled: a run that settled (src/hooks/window-limits.ts)
+;;;;   {"op":"settled","host":SNAPSHOT} -> {"ok":true,"settled":{trigger, notice}?}
+;;;;
+;;;; outcome: what a compaction's outcome is told as (outcome.lisp; src/commands/compact-feedback.ts)
 ;;;;   {"op":"outcome","stats":S} -> {"ok":true,"line":L}
-;;;;   {"op":"outcome","error":{message, mode, cancelNotice, hostName, branch:[{type}]}} -> {"ok":true,"text":T?,"severity":S?}
+;;;;   {"op":"outcome","host":SNAPSHOT,"error":{message, mode, cancelNotice}} -> {"ok":true,"text":T?,"severity":S?}
 ;;;;   {"op":"outcome","details":D} -> {"ok":true,"own":DETAILS?}
 ;;;;   {"op":"outcome","settings":S,"provider":P} -> {"ok":true,"handles":B}
 ;;;;
@@ -121,7 +120,7 @@
 (in-package #:omp-vcc)
 
 (defun aborted-reply (message &optional (searched 0))
-  "A search past its time budget: no hits, and why (search-entries.ts SearchAborted)."
+  "A search past its time budget: no hits, and why."
   (json-object "ok" :true "hits" #() "totalBeforeCap" 0 "truncated" :false "aborted" message "searched" searched))
 
 (defun source-entries (source)
@@ -215,7 +214,7 @@ parity test compares with JavaScript's own."
       (regex-unsupported () (json-object "ok" :true "status" "unsupported")))))
 
 (defun handle-summarize (request)
-  "compileSummary on the CompileInput REQUEST carries in \"input\"."
+  "The summary of the CompileInput REQUEST carries in \"input\" (tests/support/compile.ts)."
   (multiple-value-bind (text state sections) (compile-summary (summary-input-from-json (json-get request "input")))
     (json-object "ok" :true "text" text "state" (state-json state) "sections" (coerce sections 'vector))))
 
@@ -226,7 +225,7 @@ parity test compares with JavaScript's own."
   (with-ok (compact-for-host (read-snapshot (json-get request "host")) (json-get request "event") (json-get request "converted"))))
 
 (defun cut-json (cut)
-  "A cut as cut.ts's OwnCutResult."
+  "A cut as the cut op answers it: its messages, their ids, the first kept entry, and how it was made."
   (cond ((null cut) :null)
         ((not (cut-p cut)) (json-object "ok" :false "reason" (cut-reason-name cut)))
         (t (let ((o (json-object "ok" :true
@@ -290,7 +289,7 @@ compact, it first asks for what the host's convertToLlm makes of the messages."
                    "lines" (coerce lines 'vector) "shown" (coerce shown 'vector)))))
 
 (defun action-json (action)
-  "A request's action as recall-request.ts wrote it."
+  "A request's action as JSON, for the request op's tests."
   (destructuring-bind (kind &rest rest) action
     (case kind
       (:search (json-object "kind" "search" "query" (first rest) "page" (second rest)))

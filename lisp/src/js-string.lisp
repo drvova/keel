@@ -171,7 +171,7 @@ the BMP are compared as their code units, which no case maps."
 
 (defun js-clip (text &optional (max 200))
   "TEXT cut to MAX code units at a space past 60% of MAX when there is one,
-never between the halves of a pair: content.ts's clip."
+never between the halves of a pair."
   (let ((length (js-length text)))
     (if (<= length max)
         text

@@ -2,13 +2,16 @@
 ;;;;
 ;;;; SPDX-License-Identifier: MIT
 ;;;;
-;;;; A port of src/core/summarize.ts compileSummary and what it is made of:
-;;;; format.ts (renderSummary, the only place summary text is written),
-;;;; summary-state.ts (this window's sections, merged into the state the
-;;;; previous compaction stored, never re-written from its text),
-;;;; legacy-summary.ts (a previous summary that has no stored state, read from
-;;;; its text once, in a frozen copy of the format it was written in), and the
-;;;; [Pinned Notes] and [History Index] lines (pins.ts, history-index.ts).
+;;;; COMPILE-SUMMARY and what it is made of: this window's sections as data,
+;;;; merged item by item into the state the previous compaction stored in its
+;;;; details, never re-written from its text; RENDER-SUMMARY, the only place
+;;;; summary text is written; the legacy reader of a previous summary that has
+;;;; no stored state (pi-vcc's, omp-vcc's before it stored one, another
+;;;; compactor's), read from its text once, in a frozen copy of the format it
+;;;; was written in, since renaming a section in the renderer must not stop
+;;;; older summaries being read; and the [Pinned Notes] and [History Index]
+;;;; lines. [Pinned Notes], [History Index], [Working Set] and [Task State] are
+;;;; not carried in the state: each compaction builds them again.
 
 (in-package #:omp-vcc)
 
@@ -17,7 +20,7 @@
   "Use `vcc_recall` to search for prior work, decisions, and context from before this summary. Do not redo work already completed.")
 (defparameter +command-separator+ " | ")
 (defparameter +tracked-entry-chars+ 80)
-(defparameter +tui-line-chars+ 120 "format.ts TUI_SAFE_LINE_CHARS.")
+(defparameter +tui-line-chars+ 120 "Lines are wrapped at this for the hosts' TUI, which shows a summary as written.")
 
 ;;; --- wrapping and capping -----------------------------------------------------------
 
@@ -124,7 +127,7 @@ A list it lacks is empty; earlySlots it lacks is what the requests it holds leav
                "brief" (state-brief s)))
 
 (defun fresh-state (blocks brief-blocks file-ops track-commands early-slots)
-  "This window's sections: summary-state.ts freshState."
+  "This window's sections, as the state stores them."
   (let* ((messages (extract-user-messages blocks))
          (early (subseq messages 0 (min (length messages) (max 0 early-slots)))))
     (multiple-value-bind (read modified created) (extract-files blocks file-ops)
@@ -150,14 +153,17 @@ A list it lacks is empty; earlySlots it lacks is what the requests it holds leav
              (if (plusp (length tail)) (format nil "~a~%~%~a" tail fresh) fresh)))))
 
 (defun merge-states (prev fresh limits)
-  "The previous summary's sections with this window's merged in: summary-state.ts mergeStates."
+  "The previous summary's sections with this window's merged in, item by item."
   (if (null prev)
       fresh
       (let* ((created-before (state-created prev))
              (existed-before (append (state-read prev) (state-modified prev)))
              (modified (append-touched (state-modified prev) (state-modified fresh)))
              (created (append-touched (state-created prev) (state-created fresh))))
-        ;; One rule for whether a file existed before it was written (summary-state.ts).
+        ;; One rule for whether a file existed before it was written, as within one
+        ;; window (EXTRACT-FILES): created earlier in the session, it stays created
+        ;; however it is changed since; read or changed earlier, a write now
+        ;; rewrites it (modified).
         (dolist (p (remove-duplicates (append (remove-if-not (lambda (p) (member p modified :test #'string=)) created)
                                               (remove-if-not (lambda (p) (member p existed-before :test #'string=)) (state-created fresh)))
                                       :test #'string= :from-end t))
@@ -186,7 +192,7 @@ A list it lacks is empty; earlySlots it lacks is what the requests it holds leav
 (defun limit (limits key) (json-get limits key))
 
 (defun cap-state (s limits)
-  "What a summary shows of each list, which is what it stores: summary-state.ts capState."
+  "What a summary shows of each list, which is what it stores."
   (let ((per (limit limits "filesPerCategory")))
     (make-state :early-requests (subseq (state-early-requests s) 0 (min 3 (length (state-early-requests s))))
                 :early-slots (state-early-slots s)
@@ -206,7 +212,7 @@ A list it lacks is empty; earlySlots it lacks is what the requests it holds leav
             when list collect (format nil "~a: ~a" label (cap-items (mapcar #'trim list) per ", "))))))
 
 (defun render-summary (s limits pins history working-set &optional task-state)
-  "The summary's text and the sections it shows: format.ts renderSummary."
+  "The summary's text and the sections it shows: the only place summary text is written."
   (let* ((parts (list (list "Pinned Notes" (section "Pinned Notes" pins))
                       (list "Task State" (section "Task State" task-state))
                       (list "Early Session Requests" (section "Early Session Requests" (state-early-requests s)))
@@ -240,7 +246,7 @@ A list it lacks is empty; earlySlots it lacks is what the requests it holds leav
    t))
 
 (defun split-summary (text)
-  "(values HEAD BRIEF): legacy-summary.ts splitSummary."
+  "A summary's text as (values HEAD BRIEF): the header sections, and the brief after the separator."
   (if (not (rx-test (rx "^\\[[A-Z][^\\]\\n]*\\]$") (first (split-string text #\Newline))))
       (values "" (js-trim text))
       (let ((idx (js-index-of +separator+ text)))
@@ -282,7 +288,7 @@ A list it lacks is empty; earlySlots it lacks is what the requests it holds leav
     (nreverse parts)))
 
 (defun legacy-previous (summary foreign)
-  "An older summary's text as state: legacy-summary.ts legacyPrevious."
+  "An older summary's text as state, read once so the next compaction merges into it like any other."
   (let* ((text (js-trim-end (rx-replace (recall-note-regex) summary (format nil "~%~%") :all t)))
          (early (section-items text "Early Session Requests"))
          (goal (and (null early)
