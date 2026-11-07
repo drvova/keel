@@ -121,8 +121,6 @@
 
 (in-package #:omp-vcc)
 
-(defun bool (x) (if x :true :false))
-
 (defun request-docs (request)
   (map 'vector
        (lambda (doc)
@@ -160,7 +158,7 @@ less the indices it skips."
     (when (stringp file)
       (multiple-value-bind (messages branch) (read-session file)
         (let* ((ids (json-get source "ids"))
-               (allowed (cond ((and (vectorp ids) (not (stringp ids)))
+               (allowed (cond ((json-array-p ids)
                                (let ((set (make-hash-table :test 'equal)))
                                  (loop for id across ids when (stringp id) do (setf (gethash id set) t))
                                  set))

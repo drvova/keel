@@ -19,12 +19,6 @@
 (defparameter +tracked-entry-chars+ 80)
 (defparameter +tui-line-chars+ 120 "format.ts TUI_SAFE_LINE_CHARS.")
 
-(defun last-n (list n)
-  "LIST's last N items, as Array.slice(-N) gives them (all of it for N 0)."
-  (if (or (<= n 0) (>= n (length list))) list (last list n)))
-
-(defun nl () (string #\Newline))
-
 ;;; --- wrapping and capping -----------------------------------------------------------
 
 (defun wrap-line (line max)
@@ -88,8 +82,6 @@
 (defstruct (state (:constructor make-state
                       (&key early-requests early-slots modified created read commits tracked user-messages (brief ""))))
   early-requests early-slots modified created read commits tracked user-messages brief)
-
-(defun strings-of (v) (if (and (vectorp v) (not (stringp v))) (remove-if-not #'stringp (coerce v 'list)) '()))
 
 (defun state-from-json (v)
   "A state the TS side read and checked (summary-state.ts readState)."
@@ -358,7 +350,7 @@
 INPUT is its CompileInput as JSON. Returns (values TEXT STATE SECTIONS)."
   (let* ((limits (json-get input "limits"))
          (blocks (summary-blocks (json-get input "messages" #())
-                                 (let ((ix (json-get input "sourceIndices"))) (and (vectorp ix) (not (stringp ix)) ix))))
+                                 (let ((ix (json-get input "sourceIndices"))) (and (json-array-p ix) ix))))
          (stored (let ((p (json-get input "previous"))) (and (json-object-p p) (state-from-json p))))
          (previous-summary (let ((s (json-get input "previousSummary"))) (and (stringp s) (plusp (length s)) s)))
          (legacy (and (null stored) previous-summary

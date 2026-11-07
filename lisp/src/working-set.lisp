@@ -23,7 +23,7 @@
 (defun ws-calls-of (m pos)
   (when (and (json-object-p m) (equal (json-get m "role") "assistant"))
     (let ((content (json-get m "content")))
-      (when (and (vectorp content) (not (stringp content)))
+      (when (json-array-p content)
         (loop for part across content
               when (and (json-object-p part) (equal (json-get part "type") "toolCall") (stringp (json-get part "id")))
                 collect (let ((call (make-call (string-or (json-get part "name") "unknown")

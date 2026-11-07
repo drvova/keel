@@ -32,7 +32,7 @@
 (defun pin-entry-p (e)
   "pins.ts isPinEntry: an omp-vcc.pin custom entry whose data is an object (an array is one too)."
   (and (equal (json-get e "type") "custom") (equal (json-get e "customType") "omp-vcc.pin")
-       (let ((d (json-get e "data"))) (or (json-object-p d) (and (vectorp d) (not (stringp d)))))))
+       (let ((d (json-get e "data"))) (or (json-object-p d) (json-array-p d)))))
 
 (defun next-pin-id (branch)
   "pins.ts nextPinId: one past every id used on this branch, unpinned ones included."

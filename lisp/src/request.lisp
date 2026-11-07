@@ -62,15 +62,15 @@
             (when present (let ((n (to-index v))) (if (and n (>= n 1)) (setf (gethash "page" p) n) (drop "page" "not a page number")))))
           (multiple-value-bind (v present) (gethash "expand" p)
             (when present
-              (let ((list (cond ((and (vectorp v) (not (stringp v))) (map 'list #'to-index v))
+              (let ((list (cond ((json-array-p v) (map 'list #'to-index v))
                                 ((stringp v) (index-list v))
                                 (t (list (to-index v))))))
-                (if (and (or list (and (vectorp v) (not (stringp v)))) (every #'identity list))
+                (if (and (or list (json-array-p v)) (every #'identity list))
                     (setf (gethash "expand" p) list)
                     (drop "expand" "not #N indices")))))
           (multiple-value-bind (v present) (gethash "range" p)
             (when present
-              (let ((pair (cond ((and (vectorp v) (not (stringp v))) (map 'list #'to-index v))
+              (let ((pair (cond ((json-array-p v) (map 'list #'to-index v))
                                 ((stringp v)
                                  (let ((m (rx-exec (rx "^\\[?\\s*#?(\\d+)\\s*(?:(?:-|\\.\\.|,|to)\\s*#?(\\d+)\\s*)?\\]?$" "i") (js-trim v))))
                                    (and m (list (parse-integer (rx-group m 1)) (parse-integer (or (rx-group m 2) (rx-group m 1)))))))

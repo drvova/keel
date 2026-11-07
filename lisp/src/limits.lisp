@@ -23,7 +23,7 @@
 (defun read-limits (dir)
   "The limits file's object (an array too, as JSON.parse gives it), or an empty one."
   (let ((parsed (read-json-file (limits-path dir))))
-    (if (or (hash-table-p parsed) (and (vectorp parsed) (not (stringp parsed)))) parsed (make-hash-table :test 'equal))))
+    (if (or (hash-table-p parsed) (json-array-p parsed)) parsed (make-hash-table :test 'equal))))
 
 (defun write-limits (dir limits)
   (ignore-errors (write-text-file (limits-path dir) (format nil "~a~%" (json-pretty-string limits))) t))
@@ -34,7 +34,7 @@
 
 (defun spread-any (value)
   "`{...VALUE}`: an object's keys, an array's or a string's indices, nothing of anything else."
-  (cond ((or (hash-table-p value) (and (vectorp value) (not (stringp value)))) (spread-object value))
+  (cond ((or (hash-table-p value) (json-array-p value)) (spread-object value))
         ((stringp value)
          (let ((object (make-hash-table :test 'equal)))
            (loop for i below (js-length value) do (setf (gethash (format nil "~d" i) object) (js-slice value i (1+ i))))
@@ -66,7 +66,7 @@
 
 (defun learned-host-policy (dir key)
   (let ((policy (json-get (limit-of (read-limits dir) key) "hostPolicy")))
-    (and (or (hash-table-p policy) (and (vectorp policy) (not (stringp policy)))) policy)))
+    (and (or (hash-table-p policy) (json-array-p policy)) policy)))
 
 (defun record-host-policy (dir key policy)
   "model-limits.ts recordHostPolicy: for a model with a learned window only, written when it changed."

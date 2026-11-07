@@ -126,5 +126,5 @@ the match. String.replace and replaceAll; no $ patterns are read."
                     (let ((*read-eval* nil) (*read-default-float-format* 'double-float))
                       (let ((v (ignore-errors (read-from-string s))))
                         (and (realp v) v)))))))
-        ((and (vectorp value) (not (stringp value))) (js-number-of (js-string-of value)))
+        ((json-array-p value) (js-number-of (js-string-of value)))
         (t nil)))

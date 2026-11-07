@@ -82,7 +82,7 @@
                     (t (let ((e (ignore-errors (parse-json line))))
                          (if (or (and (equal (json-get e "type") "custom") (equal (json-get e "customType") "omp-vcc.pin")
                                       ;; `typeof data === "object"`: an array is one too.
-                                      (let ((d (json-get e "data"))) (or (json-object-p d) (and (vectorp d) (not (stringp d))))))
+                                      (let ((d (json-get e "data"))) (or (json-object-p d) (json-array-p d))))
                                  (equal (json-get e "type") "reset_boundary"))
                              (push e pin-entries)
                              (setf title (or (name-of e) title)))))))))

@@ -146,7 +146,7 @@ and pipe tails stripped, lines joined with `; `, capped."
 (defparameter +recall-params+ '("query" "range" "expand" "page" "scope" "mode" "session") "src/names.ts RECALL_PARAMS.")
 
 (defun recall-arg (value)
-  (if (and (vectorp value) (not (stringp value)))
+  (if (json-array-p value)
       (format nil "[~a]" (join-strings (map 'list (lambda (v) (if (or (null v) (eq v :null)) "" (js-string-of v))) value) ", "))
       (js-clip (js-trim (js-string-of value)) 40)))
 
@@ -367,7 +367,7 @@ and pipe tails stripped, lines joined with `; `, capped."
 
 (defun path-set (paths)
   (let ((set (make-hash-table :test 'equal)))
-    (when (and (vectorp paths) (not (stringp paths)))
+    (when (json-array-p paths)
       (loop for p across paths when (and (stringp p) (plusp (length p))) do (setf (gethash p set) t)))
     set))
 

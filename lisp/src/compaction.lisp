@@ -29,7 +29,7 @@
 (defun content-chars (content)
   "estimateMessageContentChars: every token-bearing part of a message's content."
   (cond ((stringp content) (js-length content))
-        ((not (and (vectorp content) (not (stringp content)))) 0)
+        ((not (json-array-p content)) 0)
         (t (loop for part across content
                  sum (if (not (json-object-p part))
                          0
@@ -58,10 +58,10 @@
                 ((member role '("branchSummary" "compactionSummary") :test #'equal) (len (json-get m "summary")))
                 ((equal role "fileMention")
                  (let ((files (json-get m "files")))
-                   (if (and (vectorp files) (not (stringp files)))
+                   (if (json-array-p files)
                        (loop for f across files
                              sum (+ (len (json-get f "path")) (len (json-get f "content"))
-                                    (let ((img (json-get f "image"))) (if (and img (not (eq img :null)) (not (eq img :false)) (not (equal img "")) (not (eql img 0))) +image-content-chars+ 0))))
+                                    (if (truthy-p (json-get f "image")) +image-content-chars+ 0)))
                        0)))
                 (t (content-chars (json-get m "content"))))))))
 
@@ -75,8 +75,6 @@
 ;;;
 ;;; An item of the window is (ENTRY LIVE NOTE): the branch entry, its message as
 ;;; the context holds it, and what the TS side sent of it.
-
-(defun truthy-p (v) (and v (not (member v '(:null :false 0 "") :test #'equal))))
 
 (defun live-message (entry)
   "summary-input.ts toLiveMessage: a branch entry's message in the context, or NIL."
@@ -203,7 +201,7 @@
 
 (defun final-answer-p (m)
   (let ((content (json-get m "content")))
-    (and (equal (json-get m "role") "assistant") (vectorp content) (not (stringp content))
+    (and (equal (json-get m "role") "assistant") (json-array-p content)
          (some (lambda (p) (and (json-object-p p) (equal (json-get p "type") "text")
                                 (stringp (json-get p "text")) (plusp (length (js-trim (json-get p "text"))))))
                content)
@@ -267,9 +265,6 @@
 
 ;;; --- what an earlier compaction stored -------------------------------------------------
 
-(defun js-integer-p (v) (or (integerp v) (and (floatp v) (= v (ftruncate v)))))
-(defun as-integer (v) (if (integerp v) v (truncate v)))
-
 (defun vcc-details-of (details)
   "details.ts vccDetailsOf: omp-vcc's (or pi-vcc's) details on a compaction, or NIL."
   (flet ((own-p (d) (member (json-get d "compactor") '("omp-vcc" "pi-vcc") :test #'equal)))
@@ -281,7 +276,7 @@
   (when (json-object-p v)
     (let ((files (let ((f (json-get v "files" :absent))) (cond ((eq f :absent) (make-hash-table :test 'equal)) ((json-object-p f) f)))))
       (when files
-        (labels ((strings-p (x) (and (vectorp x) (not (stringp x)) (every #'stringp x)))
+        (labels ((strings-p (x) (and (json-array-p x) (every #'stringp x)))
                  (field (key obj test default)
                    (multiple-value-bind (x present) (gethash key obj)
                      (cond ((not present) (values default t)) ((funcall test x) (values x t)) (t (values nil nil))))))
@@ -293,12 +288,12 @@
               (take "modified" files #'strings-p #() fout)
               (take "created" files #'strings-p #() fout)
               (take "read" files #'strings-p #() fout)
-              (take "commits" v (lambda (x) (and (vectorp x) (not (stringp x))
+              (take "commits" v (lambda (x) (and (json-array-p x)
                                                  (every (lambda (c) (and (json-object-p c) (stringp (json-get c "message"))
                                                                          (multiple-value-bind (h p) (gethash "hash" c) (or (not p) (stringp h)))))
                                                         x)))
                     #() out)
-              (take "tracked" v (lambda (x) (and (vectorp x) (not (stringp x))
+              (take "tracked" v (lambda (x) (and (json-array-p x)
                                                  (every (lambda (tr) (and (json-object-p tr) (stringp (json-get tr "name")) (strings-p (json-get tr "entries")))) x)))
                     #() out)
               (take "userMessages" v #'strings-p #() out)
@@ -315,13 +310,13 @@
 (defun history-range-p (r)
   (and (json-object-p r)
        (js-integer-p (json-get r "from")) (js-integer-p (json-get r "to")) (<= (json-get r "from") (json-get r "to"))
-       (every (lambda (k) (let ((x (json-get r k))) (and (vectorp x) (not (stringp x))))) '("asks" "files" "commits"))
+       (every (lambda (k) (let ((x (json-get r k))) (json-array-p x))) '("asks" "files" "commits"))
        (js-integer-p (json-get r "commitCount")) (js-integer-p (json-get r "failed"))
        (multiple-value-bind (q present) (gethash "requests" r) (or (not present) (js-integer-p q)))))
 
 (defun read-history-index (index)
   "A stored index (details.historyIndex) as a list of ranges, or :INVALID when it is not a well-formed one."
-  (if (and (vectorp index) (not (stringp index)) (every #'history-range-p index)) (coerce index 'list) :invalid))
+  (if (and (json-array-p index) (every #'history-range-p index)) (coerce index 'list) :invalid))
 
 (defun read-pins (branch)
   "pins.ts readPins: the notes pinned on this branch since its last /clear, by id, as JSON."

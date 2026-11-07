@@ -161,7 +161,7 @@ it forked, and their originals are in the parent's store."
 
 (defun object-parts (content)
   "The object parts of a content array, in order."
-  (and (vectorp content) (not (stringp content)) (remove-if-not #'hash-table-p (coerce content 'list))))
+  (and (json-array-p content) (remove-if-not #'hash-table-p (coerce content 'list))))
 
 (defun was-rewritten-p (message)
   "omp rewrote MESSAGE in the session file: a tool result it blanked or shook
@@ -179,12 +179,6 @@ carries `prunedAt`; a text block it shook points at an `artifact://`."
                                            (cond ((stringp tx) tx)
                                                  ((or (null tx) (eq tx :null)) "")
                                                  (t (js-string-of tx))))))))))))
-
-(defun copy-object (table &optional without)
-  "A copy of the JSON object TABLE, its keys in their order, the key WITHOUT left out."
-  (let ((copy (make-hash-table :test 'equal)))
-    (dolist (k (json-keys table) copy)
-      (unless (equal k without) (setf (gethash k copy) (gethash k table))))))
 
 (defun with-original-content (message kept)
   "MESSAGE with what omp rewrote put back: a tool result takes the kept content

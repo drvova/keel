@@ -58,10 +58,10 @@
                    do (push (make-block :kind :user :text (format nil "[image: ~a]" (js-string-of (json-get part "mimeType"))) :index index) blocks)))
          (if blocks (nreverse blocks) (list (make-block :kind :user :text "" :index index)))))
       ((equal role "bashExecution")
-       (list (make-block :kind :bash :command (or-empty-raw (json-get message "command")) :output (or-empty-raw (json-get message "output"))
+       (list (make-block :kind :bash :command (or-empty (json-get message "command")) :output (or-empty (json-get message "output"))
                          :exit-code (json-get message "exitCode") :index index)))
       ((equal role "pythonExecution")
-       (list (make-block :kind :bash :command (or-empty-raw (json-get message "code")) :output (or-empty-raw (json-get message "output"))
+       (list (make-block :kind :bash :command (or-empty (json-get message "code")) :output (or-empty (json-get message "output"))
                          :exit-code (json-get message "exitCode") :index index :lang "python")))
       ((equal role "toolResult")
        (list (make-block :kind :tool-result
@@ -69,7 +69,7 @@
                          :name (json-get message "toolName")
                          :text (sanitize (text-of content)) :index index)))
       ((equal role "assistant")
-       (cond ((or (null content) (eq content :null) (equal content "") (eq content :false) (eql content 0)) '())
+       (cond ((not (truthy-p content)) '())
              ((stringp content) (list (make-block :kind :assistant :text (sanitize content) :index index)))
              (t (loop for part across content
                       append (cond ((equal (json-get part "type") "text")
@@ -80,10 +80,6 @@
                                                         :args (let ((a (json-get part "arguments"))) (if (json-object-p a) a (make-hash-table :test 'equal)))
                                                         :index index :failed (and id (gethash id failed-ids) t))))))))))
       (t '()))))
-
-(defun or-empty-raw (v)
-  "A text field as `?? \"\"` reads it: \"\" for null or absent, another value as its text."
-  (cond ((or (null v) (eq v :null)) "") ((stringp v) v) (t (js-string-of v))))
 
 (defun nonzero-exit-p (code)
   "`exitCode != null && exitCode !== 0`."
@@ -146,12 +142,6 @@ vector parallel to MESSAGES, or NIL for positions), host noise left out."
         '()
         (let ((paths (remove-if #'url-path-p (named-paths (call-args call)))))
           (if (eq kind :read) (mapcar #'strip-read-selector paths) paths)))))
-
-(defun unset-p (v)
-  "A tool argument sent empty: null, a blank string or an empty list."
-  (or (null v) (eq v :null)
-      (and (stringp v) (zerop (length (js-trim v))))
-      (and (vectorp v) (not (stringp v)) (zerop (length v)))))
 
 (defun pin-call-of (args)
   "A vcc_pin call as the tool reads it: (:note TEXT), (:unpin VALUE), :both or :list."

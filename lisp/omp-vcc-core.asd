@@ -29,6 +29,8 @@
      ;; core agree on every number they exchange.
      (:file "js-string")
      (:file "json")
+     ;; js: JavaScript's reading of JSON values (truthiness, arrays, empties), for every module.
+     (:file "js")
      ;; regex: JavaScript's regular expressions, which search compiles a
      ;; query and its terms with.
      (:file "regex")

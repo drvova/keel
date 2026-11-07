@@ -45,7 +45,7 @@ a text part's text is a string."
              copy)))))
 
 (defun text-parts (content)
-  (cond ((or (null content) (eq content :null) (eq content :false) (equal content "") (eql content 0)) '())
+  (cond ((not (truthy-p content)) '())
         ((stringp content) (list content))
         ((vectorp content)
          (loop for part across content
@@ -67,7 +67,7 @@ a text part's text is a string."
 (defun tool-calls-of (message)
   "MESSAGE's tool calls, in order."
   (let ((content (json-get message "content")))
-    (when (and (vectorp content) (not (stringp content)))
+    (when (json-array-p content)
       (loop for part across content
             when (and (json-object-p part) (equal (json-get part "type") "toolCall"))
               collect (make-call (string-or (json-get part "name") "unknown")
@@ -128,7 +128,7 @@ a text part's text is a string."
   "Every path a call names: its path argument, else `paths`, else the files in an omp edit's `input`."
   (let ((key (path-key-of args)))
     (cond (key (list (json-get args key)))
-          ((let ((paths (json-get args "paths"))) (and (vectorp paths) (not (stringp paths))))
+          ((let ((paths (json-get args "paths"))) (json-array-p paths))
            (loop for p across (json-get args "paths") when (and (stringp p) (plusp (length p))) collect p))
           (t (input-paths (json-get args "input"))))))
 
@@ -140,7 +140,7 @@ a text part's text is a string."
               ((or (stringp (json-get args "oldText")) (stringp (json-get args "old_string"))
                    (stringp (json-get args "newText")) (stringp (json-get args "new_string"))
                    (let ((edits (json-get args "edits")))
-                     (and (vectorp edits) (not (stringp edits)) (some #'json-object-p edits))))
+                     (and (json-array-p edits) (some #'json-object-p edits))))
                :edit)
               (t :other)))))
 
@@ -183,14 +183,10 @@ pattern, else its file (and how many more it names), command or query."
 
 (defun file-mention-paths (message)
   (let ((files (json-get message "files")))
-    (when (and (vectorp files) (not (stringp files)))
+    (when (json-array-p files)
       (loop for f across files
             for p = (json-get f "path")
             when (and (stringp p) (plusp (length p))) collect p))))
-
-(defun or-empty (v)
-  "A field as `${v ?? \"\"}` writes it."
-  (if (or (null v) (eq v :null)) "" (js-string-of v)))
 
 (defun call-subject-keys (call)
   "The arguments CALL's subject shows (tools.ts callSubject keys), so the full view leaves them out."
@@ -199,7 +195,7 @@ pattern, else its file (and how many more it names), command or query."
       (cond ((eq kind :shell) (key-if "command"))
             ((and (eq kind :search) (or (key-if "pattern") (key-if "pat"))))
             ((named-paths args)
-             (let ((key (or (path-key-of args) (and (vectorp (json-get args "paths")) (not (stringp (json-get args "paths"))) "paths"))))
+             (let ((key (or (path-key-of args) (and (json-array-p (json-get args "paths")) "paths"))))
                (and key (list key))))
             (t (or (key-if "command") (key-if "query")))))))
 
@@ -212,7 +208,7 @@ pattern, else its file (and how many more it names), command or query."
           (let ((path (json-get args key)) (content (json-get args "content")))
             (flet ((old-of (o) (or (string-or (json-get o "oldText") nil) (string-or (json-get o "old_string") nil)))
                    (new-of (o) (or (string-or (json-get o "newText") nil) (string-or (json-get o "new_string") nil))))
-              (let ((edits (let ((e (json-get args "edits"))) (and (vectorp e) (not (stringp e)) (remove-if-not #'json-object-p (coerce e 'list))))))
+              (let ((edits (let ((e (json-get args "edits"))) (and (json-array-p e) (remove-if-not #'json-object-p (coerce e 'list))))))
                 (cond ((and (stringp content) (plusp (length content))) (list :path path :content content))
                       ((some (lambda (e) (or (old-of e) (new-of e))) edits)
                        (list :path path :edits (loop for e in edits when (or (old-of e) (new-of e)) collect (cons (or (old-of e) "") (or (new-of e) "")))))

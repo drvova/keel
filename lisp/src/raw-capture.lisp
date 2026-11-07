@@ -18,7 +18,7 @@
 
 (defun content-parts (content)
   "raw-store.ts parts: the object parts of a content array (not arrays, not null)."
-  (and (vectorp content) (not (stringp content)) (remove-if-not #'json-object-p (coerce content 'list))))
+  (and (json-array-p content) (remove-if-not #'json-object-p (coerce content 'list))))
 
 (defun text-part-p (p) (and (equal (json-get p "type") "text") (stringp (json-get p "text"))))
 

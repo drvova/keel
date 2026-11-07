@@ -315,7 +315,7 @@
           (dolist (f found)
             (destructuring-bind (entry pool pos) (cdr f)
               (push entry out)
-              (let ((ids (remove-duplicates (loop for part across (let ((c (json-get (getf entry :message) "content"))) (if (and (vectorp c) (not (stringp c))) c #()))
+              (let ((ids (remove-duplicates (loop for part across (let ((c (json-get (getf entry :message) "content"))) (if (json-array-p c) c #()))
                                                   when (and (json-object-p part) (equal (json-get part "type") "toolCall") (stringp (json-get part "id")))
                                                     collect (json-get part "id"))
                                             :test #'string=)))
