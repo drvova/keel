@@ -310,21 +310,34 @@ describe("turn numbers in view", () => {
 });
 
 describe("pinned notes when turns leave", () => {
-  it("travel with the turn they were pinned in: its line carries the ones still held, as they read now", () => {
+  it("stand first in the request, in one block, as they read now, whatever has left", () => {
     setEvict(true);
     const s = session(4);
-    // Pinned in turn 0 (#0–#3) and turn 1; the one in turn 1 is defined again in turn 3.
+    // Carried from the last session, pinned in turn 0, and one pinned in turn 1 then defined again in turn 3.
     s.host.appendEntry(PIN_ENTRY_TYPE, { v: 1, op: "add", id: 9, name: "plan", text: "ship v2", by: "agent", at: null, from: "aaaa1111" });
     s.host.appendEntry(PIN_ENTRY_TYPE, { v: 1, op: "add", id: 1, text: "sessions live in SQLite", by: "agent", at: 1 });
     s.host.appendEntry(PIN_ENTRY_TYPE, { v: 1, op: "add", id: 2, name: "test-cmd", text: "bun test", by: "agent", at: 5 });
     s.host.appendEntry(PIN_ENTRY_TYPE, { v: 1, op: "add", id: 3, name: "test-cmd", text: "bun test --isolate", by: "agent", at: 13 });
+    const block = "[Pinned notes, as they read now (vcc_pin; a name pinned again replaces its note):\n- [1] sessions live in SQLite (agent, #1)\n- [3] test-cmd: bun test --isolate (agent, #13)\n- [9] plan: ship v2 (agent, from session aaaa1111)]";
+    // With vcc_context there and nothing out: first, before the first request's mark.
+    const first = (sent(s, undefined, true).messages as any[])[0].content.map((p: any) => p.text);
+    expect(first).toEqual([block, "[#0]", "request number 0 please read f0.ts"]);
+    // With turns out: still first, then the line for them; the same on every request.
     record(s, { op: "evict", from: 0, to: 7 });
-    const line = texts(sent(s).messages)[0];
-    // The first line also carries what was pinned before any turn: the notes carried from the last session.
-    expect(line).toContain("Pinned there, still held: [1] sessions live in SQLite (agent, #1); [9] plan: ship v2 (agent, from session aaaa1111).");
-    expect(line).not.toContain("test-cmd");
+    const out = (sent(s, undefined, true).messages as any[])[0].content.map((p: any) => p.text);
+    expect(out[0]).toBe(block);
+    expect(out[1]).toStartWith("[#0–#7 out of context: 2 turns");
+    expect(out[1]).not.toContain("Pinned");
+    expect((sent(s, undefined, true).messages as any[])[0].content.map((p: any) => p.text)).toEqual(out);
     const listing = tool(s, null);
     expect(listing).toContain("Pinned (vcc_pin; a name pinned again replaces its note):\n  [1] sessions live in SQLite (agent, #1)\n  [3] test-cmd: bun test --isolate (agent, #13)\n  [9] plan: ship v2 (agent, from session aaaa1111)");
+  });
+
+  it("are not added with eviction off and nothing out: the summary carries them", () => {
+    setEvict(false);
+    const s = session(3);
+    s.host.appendEntry(PIN_ENTRY_TYPE, { v: 1, op: "add", id: 1, text: "a note", by: "user", at: 1 });
+    expect(sent(s).messages).toBeUndefined();
   });
 });
 

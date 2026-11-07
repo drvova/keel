@@ -191,15 +191,10 @@ what an eviction of them records, so a range never overlaps one already out."
                                     (and cut (format nil "older steps of the turn at #~d" (turn-from cut)))))
                   " and ")))
 
-(defun stub-text (from to turns outs messages-by-n originals pins &optional first)
+(defun stub-text (from to turns outs messages-by-n originals)
   "The line the span FROM–TO of what is out leaves in the request: what it was,
 what it did (as [History Index] says it: files changed, commits, failed calls,
-read from the originals omp-vcc kept, ORIGINALS by #N), the notes pinned there
-that still hold (PINS, as they read now: a note travels with the turn it was
-pinned in, so it stays in view when that turn leaves, and the line changes only
-when one is unpinned or defined again; the FIRST line in a request also carries
-the notes pinned before any turn, carried from the last session), and how to
-read it back.
+read from the originals omp-vcc kept, ORIGINALS by #N), and how to read it back.
 It names no size, and reads only what omp leaves as it is or the originals: the
 line must read the same on every request for the provider's cache."
   (let* ((covering (remove-if-not (lambda (o) (overlaps-p (out-from o) (out-to o) from to)) outs))
@@ -211,15 +206,20 @@ line must read the same on every request for the provider's cache."
          (ns (loop for n from from to to when (gethash n originals) collect n))
          (range (and ns (range-of-window (map 'vector (lambda (n) (gethash n originals)) ns) (coerce ns 'vector))))
          (work (and range (range-work range)))
-         (notes (remove nil (mapcar #'out-note covering)))
-         (pinned (remove-if-not (lambda (p) (let ((at (json-get p "at"))) (if (realp at) (<= from at to) first))) pins)))
-    (format nil "[~a out of context: ~a, by ~a.~@[ Requests: ~a.~]~@[ It ~a.~]~@[ The agent's note: ~a~]~@[ Pinned there, still held: ~a.~] Each entry reads back word for word with ~a; vcc_recall query searches them.]"
+         (notes (remove nil (mapcar #'out-note covering))))
+    (format nil "[~a out of context: ~a, by ~a.~@[ Requests: ~a.~]~@[ It ~a.~]~@[ The agent's note: ~a~] Each entry reads back word for word with ~a; vcc_recall query searches them.]"
             (range-text from to) (span-what from to turns) (by-words (mapcar #'out-by covering))
             (and shown (format nil "~{\"~a\"~^; ~}~@[ (+~d more)~]" shown (and (> (length requests) (length shown)) (- (length requests) (length shown)))))
             (and work (join-strings work "; "))
             (and notes (join-strings (mapcar (lambda (n) (if (find (char n (1- (length n))) ".!?") n (concatenate 'string n "."))) notes) " "))
-            (and pinned (join-strings (mapcar #'format-pin pinned) "; "))
             (recall-expand-call from))))
+
+(defun notes-block (pins)
+  "The pinned notes as they read now, one block at the start of the request: the
+context's notes, kept by the agent and the user (vcc_pin, /…-pin), in view
+whatever has left the context, and changed only when a note is."
+  (format nil "[Pinned notes, as they read now (vcc_pin; a name pinned again replaces its note):~{~%- ~a~}]"
+          (mapcar #'format-pin pins)))
 
 ;;; --- a request, with what is out left out -----------------------------------------------
 
@@ -235,7 +235,8 @@ before and after: (values DROP STUBS OPS BEFORE AFTER). FILE is the session's,
 whose kept originals the stubs read. With MARK (vcc_context is there), each
 request that starts a turn in the context starts with its #N, as `[#12]`, so the
 agent can name turns to drop without listing them first: a turn's first #N
-never changes, so the mark reads the same on every request."
+never changes, so the mark reads the same on every request. Then (or with anything
+out) the pinned notes stand first, in one block (NOTES-BLOCK)."
   (let* ((turns (branch-turns branch index))
          (running (car (last turns)))
          (protected (let ((steps (and running (turn-steps running branch index))))
@@ -302,6 +303,10 @@ never changes, so the mark reads the same on every request."
                                                                               (mapcar (lambda (n) (gethash n id-of)) ns) file)
                                       do (setf (gethash n h) m))
                                 h)))
+          ;; The pinned notes first, in view whatever has left (with vcc_context there, or anything out).
+          (when (and pins (or mark outs))
+            (let ((place (notes-place messages v)))
+              (when place (push (cons place (notes-block pins)) stubs))))
           (loop with i = 0
                 while (< i (length messages))
                 do (if (not (aref v i))
@@ -310,7 +315,7 @@ never changes, so the mark reads the same on every request."
                          (loop while (and (< i (length messages)) (aref v i))
                                do (let ((n (aref n-of i))) (when n (setf lo (min (or lo n) n) hi (max (or hi n) n))))
                                   (push i drop) (incf i))
-                         (when lo (push (cons (stub-place messages v start (1- i)) (stub-text lo hi turns outs by-n originals pins (null stubs))) stubs)))))
+                         (when lo (push (cons (stub-place messages v start (1- i)) (stub-text lo hi turns outs by-n originals)) stubs)))))
           (when mark
             (let ((starts (make-hash-table)))
               (dolist (tr turns) (setf (gethash (turn-from tr) starts) t))
@@ -342,6 +347,16 @@ INDEX)."
       (cond ((carrier-p before) (cons before "append"))
             ((and (carrier-p after) (not (equal (json-get (aref messages after) "role") "toolResult"))) (cons after "prepend"))
             (t (cons start "insert"))))))
+
+(defun notes-place (messages dropped)
+  "Where the notes block goes: prepended to the first message the request keeps when
+it is sent as the user's and can carry text, else a message of its own before it."
+  (let ((i (position nil dropped)))
+    (when i
+      (let ((m (aref messages i)))
+        (cons i (if (and (member (json-get m "role") +user-side-roles+ :test #'equal)
+                         (let ((c (json-get m "content"))) (or (stringp c) (json-array-p c))))
+                    "prepend" "insert"))))))
 
 (defun budget-noted (branch)
   "The tenth of the trigger the model was last told of since the context last shrank
