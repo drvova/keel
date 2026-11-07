@@ -3,7 +3,7 @@
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { whenCore } from "../core/core-wait";
 import { recall } from "../core/recall-run";
-import { tell, type Binding } from "../host";
+import { deliver, tell, type Binding } from "../host";
 import { RECALL_COMMAND_MESSAGE_TYPE } from "../names";
 
 export const registerVccRecallCommand = (pi: ExtensionAPI, host: Binding) => {
@@ -22,7 +22,7 @@ export const registerVccRecallCommand = (pi: ExtensionAPI, host: Binding) => {
         tell(ctx, result.text, result.severity);
         return;
       }
-      pi.sendMessage({ customType: RECALL_COMMAND_MESSAGE_TYPE, content: result.text, display: true }, { triggerTurn: true });
+      await deliver(ctx, "the recall result", () => pi.sendMessage({ customType: RECALL_COMMAND_MESSAGE_TYPE, content: result.text, display: true }, { triggerTurn: true }));
     },
   });
 };

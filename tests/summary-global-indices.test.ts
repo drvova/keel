@@ -12,7 +12,7 @@ import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } fr
 import { existsSync, unlinkSync, writeFileSync, mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { compile as compileAt, type CompileInput } from "../src/core/summarize";
+import { compile as compileAt, type CompileInput } from "./support/compile";
 import { DEFAULT_SUMMARY_LIMITS } from "./support/window";
 import { COMPACT_INSTRUCTION } from "../src/names";
 import { registerHook } from "./support/host";

@@ -3,7 +3,7 @@ import { summarize, UNCAPPED } from "./support/summary";
 
 /** The brief a summary of these blocks shows, as it stores it. */
 const compileBrief = (blocks: NormalizedBlock[]): string => summarize(blocks, { limits: UNCAPPED }).state.brief;
-import type { NormalizedBlock } from "../src/types";
+import type { NormalizedBlock } from "./support/compile";
 
 describe("compileBrief", () => {
   it("returns empty string for no blocks", () => {

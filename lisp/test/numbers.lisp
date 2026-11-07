@@ -37,3 +37,13 @@
   (is (not (counted-entry-p (parse-json "{\"type\":\"message\"}"))))
   (is (not (counted-entry-p (parse-json "{\"type\":\"message\",\"message\":null}"))))
   (is (not (counted-entry-p (parse-json "{\"type\":\"compaction\"}")))))
+
+;;; rx.lisp js-number-of: Number() of a JSON value, read without the Lisp reader.
+
+(deftest number-reads-strings-as-javascript-does
+  (loop for (text want) in '(("12" 12) ("  12  " 12) ("" 0) ("+5" 5) ("-5" -5) ("5." 5) (".5" 0.5d0) ("1e3" 1000)
+                             ("1.5e3" 1500) ("2.5" 2.5d0) ("0x10" 16) ("0b101" 5) ("0o17" 15) ("0e999" 0) ("1e-999" 0)
+                             ("1.0" 1))
+        do (is (eql (js-number-of text) want) (format nil "Number(~s) is ~a, not ~a" text want (js-number-of text))))
+  (dolist (text '("." "+" "1e" "1x" "-0x10" "Infinity" "1e999" "1_0" "pkg::sym" "#.(boom)" "1/2"))
+    (is (null (js-number-of text)) (format nil "Number(~s) is NaN, not ~a" text (js-number-of text)))))

@@ -1,7 +1,7 @@
 // How a summary is laid out (lisp/src/summary.lisp render-summary): the
 // sections, then the brief after ---. A stored state rendered with nothing new.
 import { describe, it, expect } from "bun:test";
-import type { SummaryState } from "../src/core/summarize";
+import type { SummaryState } from "./support/compile";
 import { summarize } from "./support/summary";
 
 const empty: SummaryState = {

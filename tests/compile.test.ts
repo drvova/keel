@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { compile as compileAt, compileSummary, type CompileInput } from "../src/core/summarize";
+import { compile as compileAt, compileSummary, type CompileInput } from "./support/compile";
 import { DEFAULT_SUMMARY_LIMITS } from "./support/window";
 import {
   userMsg,

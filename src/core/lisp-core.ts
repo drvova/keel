@@ -40,8 +40,8 @@ export class CoreUnavailable extends Error {
 const coreUnavailableText = (status: CoreUnavailable["status"]): string => {
   switch (status.state) {
     case "building": return "omp-vcc is building its core, once for this version (a few seconds); until then it steps aside.";
-    case "no-sbcl": return `omp-vcc needs SBCL to build its core and found none (${status.sbcl}): install SBCL (apt install sbcl, brew install sbcl, or sbcl.org), or set SBCL to its path, and start a new session; until then it steps aside.`;
-    case "failed": return `omp-vcc could not build its core with SBCL: ${status.why}`;
+    case "no-sbcl": return `omp-vcc needs SBCL to build its core and found none (${status.sbcl}): install SBCL (apt install sbcl, brew install sbcl, or sbcl.org) and omp-vcc tries again within a minute, or set SBCL to its path and start a new session; until then it steps aside.`;
+    case "failed": return `omp-vcc could not build its core with SBCL (it tries again within a minute): ${status.why}`;
   }
 };
 
@@ -76,8 +76,12 @@ const buildOfSources = (): { hash: string; path: string } => {
   return buildOfSources();
 };
 
-/** One build per installed copy, shared by every binding of this process. */
-let building: CoreStatus | undefined;
+/** A core that could not be built is tried again after this: SBCL may have been installed since, or a full disk freed. */
+const RETRY_MS = 60_000;
+/** This process is building the core (one build per installed copy, shared by every binding). */
+let ownBuild = false;
+/** Why the last try could not build the core, and when: until RETRY_MS later, the answer. */
+let lastFailure: { status: Exclude<CoreStatus, { state: "ready" | "building" }>; at: number } | undefined;
 
 /** The core's state now; starts the build when it is neither there nor being built. */
 export const coreStatus = (): CoreStatus => {
@@ -85,23 +89,32 @@ export const coreStatus = (): CoreStatus => {
   if (named) return { state: "ready", path: named };
   const { path } = buildOfSources();
   if (existsSync(path)) return { state: "ready", path };
-  if (building && building.state !== "building") return building;
-  return (building = startBuild(path));
+  if (ownBuild) return { state: "building" };
+  if (lastFailure && Date.now() - lastFailure.at < RETRY_MS) return lastFailure.status;
+  lastFailure = undefined;
+  return startBuild(path);
+};
+
+const failed = (status: Exclude<CoreStatus, { state: "ready" | "building" }>): CoreStatus => {
+  lastFailure = { status, at: Date.now() };
+  return status;
 };
 
 const startBuild = (path: string): CoreStatus => {
-  const sbcl = process.env.SBCL ?? "sbcl";
-  if (spawnSync(sbcl, ["--version"], { stdio: "ignore" }).status !== 0) return { state: "no-sbcl", sbcl };
-  const dir = buildDir();
-  mkdirSync(dir, { recursive: true });
   // Another process (another omp or Pi session) may be building it already.
   const lock = `${path}.lock`;
+  if (existsSync(lock) && Date.now() - statSync(lock).mtimeMs <= STALE_LOCK_MS) return { state: "building" };
+  const sbcl = process.env.SBCL ?? "sbcl";
+  if (spawnSync(sbcl, ["--version"], { stdio: "ignore" }).status !== 0) return failed({ state: "no-sbcl", sbcl });
+  const dir = buildDir();
+  mkdirSync(dir, { recursive: true });
   try {
-    if (existsSync(lock) && Date.now() - statSync(lock).mtimeMs > STALE_LOCK_MS) rmSync(lock, { force: true });
+    rmSync(lock, { force: true });
     closeSync(openSync(lock, "wx"));
   } catch {
     return { state: "building" };
   }
+  ownBuild = true;
   const out = `${path}.tmp-${process.pid}`;
   let stderr = "";
   const child = spawn(sbcl, ["--noinform", "--non-interactive", "--load", join(LISP_DIR, "build.lisp")], {
@@ -116,18 +129,19 @@ const startBuild = (path: string): CoreStatus => {
         renameSync(out, path);
         // Builds of older sources are of no use now.
         for (const f of readdirSync(dir)) if (/^omp-vcc-core-[0-9a-f]+$/.test(f) && join(dir, f) !== path) rmSync(join(dir, f), { force: true });
-        building = undefined;
       } else {
         rmSync(out, { force: true });
-        building = { state: "failed", why: stderr.trim().split("\n").slice(-5).join("\n") || `sbcl exited with ${code}` };
+        failed({ state: "failed", why: stderr.trim().split("\n").slice(-5).join("\n") || `sbcl exited with ${code}` });
       }
     } finally {
+      ownBuild = false;
       rmSync(lock, { force: true });
     }
   });
   child.on("error", (err) => {
+    ownBuild = false;
     rmSync(lock, { force: true });
-    building = { state: "failed", why: err.message };
+    failed({ state: "failed", why: err.message });
   });
   child.unref();
   return { state: "building" };

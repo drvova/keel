@@ -1,9 +1,9 @@
 // The brief's ranking (lisp/src/brief.lisp): which blocks the brief keeps
 // when it cannot keep them all, and the char budget it keeps them within.
 import { describe, expect, it } from "bun:test";
-import { compile as compileAt, type CompileInput } from "../src/core/summarize";
+import { compile as compileAt, type CompileInput } from "./support/compile";
 import { DEFAULT_SUMMARY_LIMITS } from "./support/window";
-import type { NormalizedBlock } from "../src/types";
+import type { NormalizedBlock } from "./support/compile";
 import { assistantText, assistantWithToolCall, userMsg } from "./fixtures";
 import { summarize } from "./support/summary";
 /** compile at a ~128K window's section limits unless a test sets its own. */

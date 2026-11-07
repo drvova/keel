@@ -2,9 +2,11 @@
 // index.ts builds omp's from what omp hands an extension (src/hooks/omp-host.ts),
 // pi.ts builds Pi's from Pi's own package. Each piece comes from that host's
 // code; shared code reads what differs from here, never from the host's name.
-import type { CompactionReason } from "./types";
 import type { Config } from "./core/settings";
 import type { SessionManagerLike } from "./core/session-file";
+
+/** What started a compaction: omp's auto_compaction_start reason or Pi's session_before_compact reason, or manual (/compact, /omp-vcc, /pi-vcc). Pi's are manual, threshold and overflow. */
+export type CompactionReason = "manual" | "threshold" | "overflow" | "idle" | "incomplete";
 
 export type HostName = "omp" | "pi";
 
@@ -121,6 +123,21 @@ export const tell = (ctx: NotifyCtx, message: string, type: "info" | "warning" |
     if (ctx.hasUI === false) process.stderr.write(`${message}\n`);
     else ctx.ui.notify(message, type);
   } catch {}
+};
+
+/**
+ * Hand the host a message to send (a follow-up prompt, a note for the agent);
+ * if the host refuses it, the user hears what was not sent instead of nothing.
+ */
+export const deliver = (ctx: NotifyCtx, what: string, send: () => unknown): Promise<void> => {
+  const refused = (err: unknown) => tell(ctx, `omp-vcc: could not send ${what}: ${err instanceof Error ? err.message : String(err)}`, "warning");
+  try {
+    // Sent now, as the host expects it; only its answer is waited for.
+    return Promise.resolve(send()).then(() => {}, refused);
+  } catch (err) {
+    refused(err);
+    return Promise.resolve();
+  }
 };
 
 /** A compaction hook returns before the host applies it and shows its own status; its outcome line comes after that. */

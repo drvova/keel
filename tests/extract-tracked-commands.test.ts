@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import type { NormalizedBlock } from "../src/types";
+import type { NormalizedBlock } from "./support/compile";
 import { summarize, UNCAPPED } from "./support/summary";
 
 /** Each configured command's invocations, as the summary of these blocks stores them. */

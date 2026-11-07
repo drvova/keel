@@ -4,10 +4,10 @@ import { afterAll, beforeAll, describe, it, expect } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { compileSummary, type SummaryState } from "../src/core/summarize";
+import { compileSummary, type SummaryState } from "./support/compile";
 import { DEFAULT_SUMMARY_LIMITS } from "./support/window";
 import { COMPACT_INSTRUCTION } from "../src/names";
-import type { NormalizedBlock } from "../src/types";
+import type { NormalizedBlock } from "./support/compile";
 import { registerHook } from "./support/host";
 import { sectionLines, summarize } from "./support/summary";
 

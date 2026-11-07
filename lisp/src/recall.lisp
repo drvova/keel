@@ -58,8 +58,8 @@
             (let ((lineage (view-lineage v)))
               (loop for (index id message) in (first (view-read v))
                     when (or (null lineage) (and id (gethash id lineage)))
-                      append (let ((r (ignore-errors (render-entry message full index (view-detail-chars v) (via v)))))
-                               (and r (list (list :index index :id id :message message :role (first r) :summary (second r) :files (third r))))))))))
+                      collect (destructuring-bind (role summary files) (render-entry message full index (view-detail-chars v) (via v))
+                                (list :index index :id id :message message :role role :summary summary :files files)))))))
 
 (defun view-message (v index)
   (third (find index (first (view-read v)) :key #'first)))

@@ -1,5 +1,5 @@
 // What /omp-vcc says once a compaction it asked for ends.
-import { tell, tellLater, type NotifyCtx } from "../host";
+import { deliver, tell, tellLater, type NotifyCtx } from "../host";
 import { core } from "../core/lisp-core";
 import { hostSnapshot, type HostCtx } from "../core/host-snapshot";
 
@@ -8,11 +8,7 @@ export const reportCompactDone = (ctx: NotifyCtx, statsLine: string | null, foll
   // Without a line of omp-vcc's own (another extension's compaction won), the compaction still happened.
   if (statsLine) tellLater(ctx, statsLine);
   else tell(ctx, "Compacted with omp-vcc");
-  if (followUpPrompt) {
-    try {
-      void Promise.resolve(sendUserMessage(followUpPrompt)).catch(() => {});
-    } catch {}
-  }
+  if (followUpPrompt) void deliver(ctx, "the follow-up prompt", () => sendUserMessage(followUpPrompt));
 };
 
 /**

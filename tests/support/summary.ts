@@ -1,11 +1,11 @@
-// A summary compiled from test input, by the core (src/core/summarize.ts):
+// A summary compiled from test input, by the core (tests/support/compile.ts):
 // blocks (the summary's units: a user message, an assistant's text, a tool call
 // and its result, a command the user ran) turned back into the messages a
 // compaction compiles a summary from, so a test can say what a session did in
 // few words and read what the summary makes of it: its text, its sections,
 // and the state it stores for the next compaction.
-import type { NormalizedBlock } from "../../src/types";
-import { compileSummary, type CompileInput, type CompiledSummary } from "../../src/core/summarize";
+import type { NormalizedBlock } from "./compile";
+import { compileSummary, type CompileInput, type CompiledSummary } from "./compile";
 import { DEFAULT_SUMMARY_LIMITS } from "./window";
 
 /** Large enough that no section is capped: what the window gives, whole. */

@@ -543,7 +543,7 @@ is true when NODE matches there and K matches where it ends."
                                         (t (or (body-at) (funcall k pos)))))))))
                  (lambda (pos) (repeat pos min max))))))))))
 
-(defstruct (regex (:constructor %make-regex)) matcher groups source backrefs)
+(defstruct (regex (:constructor %make-regex)) matcher groups)
 
 (defun compile-regex (pattern &key (ignore-case t) multiline)
   "PATTERN compiled as `new RegExp(PATTERN, FLAGS)`, FLAGS i (the default, as
@@ -551,8 +551,7 @@ recall's search compiles a query) and m; signals REGEX-SYNTAX-ERROR where that
 throws, REGEX-UNSUPPORTED where this port would not be sure to agree."
   (let ((*ignore-case* ignore-case) (*multiline* multiline))
     (multiple-value-bind (tree groups) (parse-regex (string-units pattern))
-      (%make-regex :matcher (compile-node tree (lambda (p) p)) :groups groups :source pattern
-                   :backrefs (tree-has tree :backref)))))
+      (%make-regex :matcher (compile-node tree (lambda (p) p)) :groups groups))))
 
 (defun regex-match-at (regex units start &optional captures)
   "The end of REGEX's match starting at START, or NIL; and its captures, a

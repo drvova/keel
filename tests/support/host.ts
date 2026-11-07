@@ -8,7 +8,7 @@ import { testConfig } from "./binding";
 import { core } from "../../src/core/lisp-core";
 import { ompHost } from "../../src/hooks/omp-host";
 import { bind, MANUAL_TRIGGER, OMP_HOST } from "../../src/host";
-import type { CompactionReason } from "../../src/types";
+import type { CompactionReason } from "../../src/host";
 
 /** omp's convertToLlm, as pi.pi.convertToLlm hands it to the hook. */
 export const ompConvertToLlm = (messages: any[]): any[] => convertToLlm(messages);

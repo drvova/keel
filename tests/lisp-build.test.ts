@@ -31,7 +31,7 @@ describe("the core's source", () => {
     if (s.state === "ready") expect(s.path).toMatch(/lisp\/build\/omp-vcc-core-[0-9a-f]{16}$/);
   }, 180_000);
 
-  // Last: the state "no SBCL" is kept for the process, which would keep the build above from starting.
+  // Last: "no SBCL" is the answer for a minute, which would keep the build above from starting.
   it("says SBCL is missing when it cannot build one", () => {
     delete process.env.OMP_VCC_CORE;
     process.env.SBCL = "/nonexistent/sbcl";

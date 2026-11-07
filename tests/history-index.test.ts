@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import type { HistoryRange } from "../src/core/summarize";
+import type { HistoryRange } from "./support/compile";
 import { COMPACT_INSTRUCTION } from "../src/names";
 import { registerHook } from "./support/host";
 import { sectionLines, summarize } from "./support/summary";

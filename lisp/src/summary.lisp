@@ -345,7 +345,7 @@ and RANKING the brief's (window.lisp)."
   track-commands history pins working-set task-state limits ranking)
 
 (defun summary-input-from-json (input)
-  "op summarize's CompileInput (src/core/summarize.ts) as a summary-input."
+  "op summarize's CompileInput (tests/support/compile.ts) as a summary-input."
   (make-summary-input
    :messages (json-get input "messages" #())
    :indices (let ((ix (json-get input "sourceIndices"))) (and (json-array-p ix) ix))

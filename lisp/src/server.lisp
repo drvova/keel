@@ -7,10 +7,6 @@
 ;;;; code that calls it stays synchronous, and nothing outlives a request. A
 ;;;; start costs ~5 ms (the dumped image is mapped, not loaded).
 ;;;;
-;;;; search: entries the caller rendered (src/core/search-entries.ts)
-;;;;   {"op":"search","query":Q,"docs":[{"role":R,"text":T,"files":[F...]}...],"floor":X?,"cap":N?}
-;;;;   -> {"ok":true,"hits":[{"index":I,"snippet":S|null}...],"totalBeforeCap":N,"truncated":B}
-;;;;
 ;;;; search-sessions: session files the core reads itself (src/core/recall-run.ts)
 ;;;;   {"op":"search-sessions","query":Q,
 ;;;;    "sources":[{"file":F,"ids":[ID...]|"active"|null,"skip":[N...],"session":S|null,"bytes":B}...],
@@ -29,7 +25,7 @@
 ;;;;   -> {"ok":true,"status":"ok","results":[{"test":B,"search":I,"count":N}...]}
 ;;;;      or "status":"syntax" (JavaScript throws) or "unsupported" (a back-reference into a look-behind)
 ;;;;
-;;;; summarize: a compaction's summary (src/core/summarize.ts compileSummary)
+;;;; summarize: a compaction's summary (tests/support/compile.ts compileSummary)
 ;;;;   {"op":"summarize","input":COMPILE-INPUT} -> {"ok":true,"text":T,"state":STATE,"sections":[S...]}
 ;;;;
 ;;;; compact: what a compaction does (src/compaction/plan.ts planCompaction)
@@ -107,7 +103,7 @@
 ;;;;   {"op":"outcome","details":D} -> {"ok":true,"own":DETAILS?}
 ;;;;   {"op":"outcome","settings":S,"provider":P} -> {"ok":true,"handles":B}
 ;;;;
-;;;; window: the window rules (src/core/window.ts), case by case
+;;;; window: the window rules (tests/support/window.ts), case by case
 ;;;;   {"op":"window","cases":[{"error":TEXT} | {ruleName, window, hostSettings|policy,
 ;;;;    recovering, tokensBefore, overheadTokens, workingSet}...]}
 ;;;;   -> {"ok":true,"results":[{"limit":N?} | {policy?, trigger?, autoCompacts, budgets}...]}
@@ -123,31 +119,6 @@
 ;;;; answer falls back, so a broken core costs speed, not recall.
 
 (in-package #:omp-vcc)
-
-(defun request-docs (request)
-  (map 'vector
-       (lambda (doc)
-         (list (let ((role (json-get doc "role"))) (if (stringp role) role ""))
-               (let ((text (json-get doc "text"))) (if (stringp text) text ""))
-               (let ((files (json-get doc "files" #())))
-                 (if (vectorp files) (remove-if-not #'stringp (coerce files 'list)) '()))))
-       (let ((docs (json-get request "docs" #()))) (if (vectorp docs) docs #()))))
-
-(defun handle-search (request)
-  (let ((floor (json-get request "floor"))
-        (cap (json-get request "cap")))
-    (multiple-value-bind (hits total truncated)
-        (search-docs (let ((q (json-get request "query"))) (if (stringp q) q ""))
-                     (request-docs request)
-                     :floor (if (realp floor) (coerce floor 'double-float) +relative-floor+)
-                     :cap (if (integerp cap) cap +result-cap+))
-      (cond
-        ((eq hits :aborted) (aborted-reply total))
-        (t
-          (json-object "ok" :true
-                       "hits" (map 'vector (lambda (h) (json-object "index" (car h) "snippet" (or (cdr h) :null))) hits)
-                       "totalBeforeCap" total
-                       "truncated" (bool truncated)))))))
 
 (defun aborted-reply (message &optional (searched 0))
   "A search past its time budget: no hits, and why (search-entries.ts SearchAborted)."
@@ -171,8 +142,7 @@ less the indices it skips."
           (loop for (index id message) in messages
                 when (and (or (null allowed) (and id (gethash id allowed)))
                           (not (member index skip)))
-                  append (let ((rendered (ignore-errors (render-entry message))))
-                           (and rendered (list (list* index (append rendered (list (search-text message) id message))))))))))))
+                  collect (list* index (append (render-entry message) (list (search-text message) id message)))))))))
 
 (defun handle-search-sessions (request)
   (let* ((sources (let ((s (json-get request "sources" #()))) (if (vectorp s) (coerce s 'list) '())))
@@ -424,8 +394,7 @@ compact, it first asks for what the host's convertToLlm makes of the messages."
 (defun handle-request (request)
   "The response object to the parsed REQUEST."
   (let ((op (json-get request "op")))
-    (cond ((equal op "search") (handle-search request))
-          ((equal op "search-sessions") (handle-search-sessions request))
+    (cond ((equal op "search-sessions") (handle-search-sessions request))
           ((equal op "load") (handle-load request))
           ((equal op "regex") (handle-regex request))
           ((equal op "summarize") (handle-summarize request))

@@ -16,11 +16,11 @@ import {
   RECOVERY_BAND,
   triggerFor as triggerForRule,
 } from "./support/window";
-import type { TriggerRule } from "../src/core/window";
+import type { TriggerRule } from "./support/window-shapes";
 // omp's own function, which omp-vcc ports since omp does not export it to extensions.
 import { resolveThresholdTokens } from "@oh-my-pi/pi-agent-core/compaction";
 import { learnedWindow, recordLearnedWindow, windowOf as windowOfHost } from "./support/window";
-import type { CompactionReason } from "../src/types";
+import type { CompactionReason } from "../src/host";
 import type { HostName } from "../src/host";
 
 /** The learned limits sit next to the test's config. */

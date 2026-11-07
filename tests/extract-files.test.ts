@@ -1,6 +1,6 @@
 import { describe, it, expect } from "bun:test";
-import type { NormalizedBlock } from "../src/types";
-import type { FileOps } from "../src/types";
+import type { NormalizedBlock } from "./support/compile";
+import type { FileOps } from "./support/compile";
 import { summarize, UNCAPPED } from "./support/summary";
 
 /** The files the summary of these blocks lists, as it stores them for the next compaction. */

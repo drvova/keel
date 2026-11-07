@@ -297,19 +297,23 @@ list of terms, or a regex (the regex path's one pattern)."
 (defparameter +search-aborted+
   (format nil "Search aborted: query exceeded ~dms. Use fewer or more specific words; for a regex, avoid nested quantifiers such as (a+)+."
           +search-budget-ms+)
-  "What an aborted search says: search-entries.ts SearchAborted.")
+  "What a search past its time budget says.")
+
+(defparameter +search-too-deep+
+  "Search aborted: query too deeply nested to search. Use fewer or more specific words; for a regex, avoid nested quantifiers such as (a+)+."
+  "What a search that ran out of stack says: a regex that recurses that deep is one too costly to search.")
 
 (defun search-docs (query docs &key (floor +relative-floor+) (cap +result-cap+))
   "Rank DOCS, a vector of (ROLE TEXT FILES), for QUERY, as search-entries.ts
 search does. Returns the hits as a list of (INDEX . SNIPPET) best first, the
 count before the cap, and whether the cap cut it; or (values :ABORTED MESSAGE)
-past the time budget or the control stack."
+past the time budget or the stack, MESSAGE saying which."
   (let ((*regex-deadline* (+ (get-internal-real-time)
                              (* +search-budget-ms+ (/ internal-time-units-per-second 1000))))
         (*steps* 0))
     (handler-case (search-docs-within query docs floor cap)
-      ;; A regex too deep for the stack is one too costly to search, as one past the budget is.
-      ((or regex-aborted storage-condition) () (values :aborted +search-aborted+)))))
+      (regex-aborted () (values :aborted +search-aborted+))
+      (storage-condition () (values :aborted +search-too-deep+)))))
 
 (defun cap-hits (hits cap)
   (let ((total (length hits)))

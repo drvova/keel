@@ -7,7 +7,7 @@
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { writeFileSync } from "fs";
 import { join } from "path";
-import { tell, tellLater, type Binding, type ConvertToLlm } from "../host";
+import { deliver, tell, tellLater, type Binding, type ConvertToLlm } from "../host";
 import type { WindowState } from "./window-limits";
 import { core } from "../core/lisp-core";
 import { whenCore } from "../core/core-wait";
@@ -127,10 +127,7 @@ export const registerCompactionHook = (pi: ExtensionAPI, host: CompactionHost, s
     tellLater(ctx, written.statsLine);
     // omp resumes an interrupted run by itself after automatic maintenance
     // (compaction.autoContinue); only a /compact follow-up prompt is sent here.
-    if (written.followUpPrompt) {
-      try {
-        await pi.sendUserMessage(written.followUpPrompt);
-      } catch {}
-    }
+    const prompt = written.followUpPrompt;
+    if (prompt) await deliver(ctx, "the follow-up prompt", () => pi.sendUserMessage(prompt));
   });
 };
