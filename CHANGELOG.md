@@ -18,6 +18,8 @@ All notable changes to `@drvova/omp-vcc` are documented in this file. Entries fr
 
 ### Added
 
+- **Undo the last context edit** — `/omp-vcc-evict undo` and `vcc_context {undo: true}` reverse the last eviction or restore, every run it made; an undo again does it again. The benchmarks also report the prompt tokens the provider read uncached, the cost every edit of the context adds.
+
 - **Named notes carry into the next session, and the user's stay the user's** — a new session (a restart, `/new`) starts with the named notes of the project's last session, marked with the session they came from (`(agent, from session 01a194d8)`), and is told so; unnamed notes stay with their session. The agent can no longer define again or unpin a note the user pinned: it is told the note is the user's and to ask, or to pin its own under another name.
 
 - **Evictions that pay** — the agent's `vcc_context` drop is refused when it frees less than 45% of what it makes the provider read again uncached (everything after it), which a smaller context would repay only after many requests; the answer names the run from the oldest end that would pay (`oldest:4`). The user's command and the automatic eviction are not checked.

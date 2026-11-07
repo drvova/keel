@@ -278,6 +278,20 @@ describe("an eviction that does not pay", () => {
   });
 });
 
+describe("undo", () => {
+  it("reverses the last edit, all of its runs, and an undo again does it again", () => {
+    setEvict(false);
+    const s = session(6);
+    const command = (args: string) => call(s, { surface: "command", args });
+    expect(command("undo")).toBe("Nothing to undo: no turn was taken out or brought back.");
+    expect(command("#0-#3 #8-#11")).toStartWith("Out of context from the next request: #0–#3, #8–#11");
+    expect(command("undo")).toBe("Undone: #0–#3, #8–#11 back in context from the next request.");
+    expect(command("list")).toContain("Nothing is out of context.");
+    expect(tool(s, { undo: true })).toBe("Undone: #0–#3, #8–#11 out of context again from the next request.");
+    expect(command("list")).toContain("Out of context:\n  #0–#3 (1 turn)\n  #8–#11 (1 turn)");
+  });
+});
+
 describe("turn numbers in view", () => {
   it("each request in the context starts with its turn's #N while vcc_context is there, the same on every request", () => {
     setEvict(true);

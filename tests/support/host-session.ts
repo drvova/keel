@@ -239,6 +239,12 @@ export interface RunStats {
   promptTokens: number;
   /** The share of all prompt tokens (input, cache reads, cache writes) the provider read from its cache. */
   cacheShare: number;
+  /**
+   * The prompt tokens the provider read uncached (input and cache writes): what
+   * each edit of the context costs, since the provider reads everything after
+   * it again (the cost Context Language Models counts as prefix-reuse FLOPs).
+   */
+  uncachedTokens: number;
   /** omp-vcc's evict entries on the branch (one per run of turns taken out, restores not counted), by who made them (the agent with vcc_context, the user, omp-vcc as the context filled). */
   evictions: { agent: number; user: number; auto: number };
 }
@@ -251,9 +257,9 @@ export const runStats = (branch: any[]): RunStats => {
   for (const e of branch) {
     if (e.type === "custom" && e.customType === "omp-vcc.evict" && e.data?.op === "evict" && e.data.by in evictions) evictions[e.data.by as keyof typeof evictions]++;
   }
-  return { requests: usages.length, promptTokens: sum("input") + sum("cacheRead"), cacheShare: all ? sum("cacheRead") / all : 0, evictions };
+  return { requests: usages.length, promptTokens: sum("input") + sum("cacheRead"), cacheShare: all ? sum("cacheRead") / all : 0, uncachedTokens: sum("input") + sum("cacheWrite"), evictions };
 };
 
 /** The stats as the benchmarks print them. */
 export const statsLine = (s: RunStats): string =>
-  `${s.requests} requests, ${Math.round(s.promptTokens / 1000)}K prompt tokens, ${Math.round(s.cacheShare * 100)}% read from cache, evictions by the agent/user/omp-vcc ${s.evictions.agent}/${s.evictions.user}/${s.evictions.auto}`;
+  `${s.requests} requests, ${Math.round(s.promptTokens / 1000)}K prompt tokens, ${Math.round(s.cacheShare * 100)}% read from cache (${Math.round(s.uncachedTokens / 1000)}K uncached), evictions by the agent/user/omp-vcc ${s.evictions.agent}/${s.evictions.user}/${s.evictions.auto}`;

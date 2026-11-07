@@ -19,6 +19,7 @@ const description = (command: string): string => [
   "- oldest: how many of the oldest turns in context leave.",
   "- restore: #N refs or ranges of turns to bring back.",
   "- note: with drop or oldest, one line kept where the turns were (what they settled, what to look up).",
+  "- undo: true reverses the last edit (what it took out comes back, or what it brought back leaves).",
   "",
   "Drop rarely and in large runs from the oldest end: each edit makes the provider read again all that",
   "follows it, so a drop that frees too little for that is refused, with the run that would pay;",
@@ -30,6 +31,7 @@ const PARAM_DESCRIPTIONS: Record<(typeof CONTEXT_PARAMS)[number], string> = {
   oldest: "How many of the oldest turns in context to take out.",
   restore: "#N refs or ranges of turns to bring back into context.",
   note: `One line kept in place of the turns taken out (clipped at ${CONTEXT_NOTE_CHARS} chars).`,
+  undo: "true: reverse the last edit of the context.",
 };
 
 const refs = { anyOf: [{ type: "array", items: { anyOf: [{ type: "number" }, { type: "string" }] } }, { type: "number" }, { type: "string" }] };
@@ -41,6 +43,7 @@ const PARAMETERS = {
     oldest: { type: "number", description: PARAM_DESCRIPTIONS.oldest },
     restore: { description: PARAM_DESCRIPTIONS.restore, ...refs },
     note: { type: "string", description: PARAM_DESCRIPTIONS.note },
+    undo: { type: "boolean", description: PARAM_DESCRIPTIONS.undo },
   },
 } as const;
 

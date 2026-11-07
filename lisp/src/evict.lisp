@@ -470,6 +470,32 @@ context after its first #N that stays), in chars: (values FREED READ-AGAIN)."
       (when (and leaving (>= sum half)) (return (nreverse leaving)))
       (push tr leaving) (incf sum (turn-chars tr chars outs)))))
 
+(defun undo-last (branch by count)
+  "The last context edit on BRANCH undone: the ops of the last call (the runs it
+took out, or brought back) recorded in reverse. (values TEXT OPS). An undo is an
+edit too, so a second one does the first again."
+  (let* ((edits (loop for i from (1+ (last-reset-index branch)) below (length branch)
+                      for e = (aref branch i)
+                      when (and (evict-entry-p e) (member (json-get (json-get e "data") "op") '("evict" "restore") :test #'equal))
+                        collect (json-get e "data")))
+         (last (car (last edits)))
+         ;; One call's ops: the run at the end with the same kind, author and #N count.
+         (call (and last (let ((same '()))
+                           (dolist (op (reverse edits) same)
+                             (if (and (equal (json-get op "op") (json-get last "op")) (equal (json-get op "by") (json-get last "by"))
+                                      (eql (op-at op) (op-at last)))
+                                 (push op same)
+                                 (return same)))))))
+    (if (null call)
+        (values "Nothing to undo: no turn was taken out or brought back." '())
+        (let* ((back (equal (json-get last "op") "evict"))
+               (ops (mapcar (lambda (op) (evict-op (if back "restore" "evict") (json-get op "from") (json-get op "to") by count
+                                                   (and (not back) (stringp (json-get op "note")) (json-get op "note"))))
+                            call)))
+          (values (format nil "Undone: ~{~a~^, ~} ~:[out of context again~;back in context~] from the next request."
+                          (mapcar (lambda (op) (range-text (json-get op "from") (json-get op "to"))) ops) back)
+                  ops)))))
+
 (defun run-evict (call branch index chars by-n count)
   "One vcc_context call or evict command on BRANCH: (values TEXT OPS)."
   (let* ((turns (branch-turns branch index)) (outs (read-evictions branch))
@@ -479,7 +505,8 @@ context after its first #N that stays), in chars: (values FREED READ-AGAIN)."
                (restore (refs-of (json-get params "restore")))
                (oldest (let ((k (json-get params "oldest"))) (and (js-integer-p k) (> k 0) (as-integer k))))
                (note (let ((n (json-get params "note"))) (and (stringp n) (plusp (length (js-trim n))) (js-clip (js-trim n) +context-note-chars+)))))
-          (cond (restore (restore-turns restore outs by count))
+          (cond ((eq (json-get params "undo") :true) (undo-last branch by count))
+                (restore (restore-turns restore outs by count))
                 (drop (evict-turns (turns-touching drop turns) turns outs chars by note count t))
                 (oldest (let ((in (turns-in turns outs)))
                           (evict-turns (subseq in 0 (min oldest (length in))) turns outs chars by note count t)))
@@ -487,6 +514,7 @@ context after its first #N that stays), in chars: (values FREED READ-AGAIN)."
         (let* ((args (js-trim (let ((a (json-get call "args"))) (if (stringp a) a ""))))
                (words (remove "" (rx-split (rx "\\s+") args) :test #'string=)))
           (cond ((zerop (length args)) (evict-turns (oldest-half turns outs chars) turns outs chars by nil count))
+                ((string-equal args "undo") (undo-last branch by count))
                 ((string-equal args "list") (values (list-context turns outs chars by-n (read-pins branch)) '()))
                 ((string-equal args "all") (evict-turns (finished-turns turns) turns outs chars by nil count))
                 ((string-equal (first words) "restore")
@@ -498,4 +526,4 @@ context after its first #N that stays), in chars: (values FREED READ-AGAIN)."
                  (let ((in (turns-in turns outs)))
                    (evict-turns (subseq in 0 (min (parse-integer args) (length in))) turns outs chars by nil count)))
                 ((refs-of (coerce words 'vector)) (evict-turns (turns-touching (refs-of (coerce words 'vector)) turns) turns outs chars by nil count))
-                (t (values (format nil "Not understood: ~a. Give nothing (the oldest half), a number of turns, all, list, #A-#B, or restore #A-#B." args) '())))))))
+                (t (values (format nil "Not understood: ~a. Give nothing (the oldest half), a number of turns, all, list, #A-#B, restore #A-#B, or undo." args) '())))))))
