@@ -18,13 +18,16 @@ process.env.OMP_VCC_CONFIG_PATH = join(work, "omp-vcc-config.json");
 process.env.ANTHROPIC_API_KEY ??= "golden-not-a-key";
 await Bun.write(process.env.OMP_VCC_CONFIG_PATH, JSON.stringify({ overrideDefaultCompaction: true, trackCommands: ["docker", "ssh"] }));
 
+/** The model's window in each host's recorded session, set rather than read from the host's catalog, which changes between releases. */
+const GOLDEN_WINDOW = HOST === "omp" ? 1_000_000 : 200_000;
 let session: any, sessionManager: any, model: any, tool: (n: string) => any, auto: (reason: string) => Promise<void>, command: string;
 const notices: string[] = [];
 if (HOST === "omp") {
   const omp: any = await import(join(REPO, "node_modules/@oh-my-pi/pi-coding-agent/src/index.ts"));
   const { getBundledModels }: any = await import(join(REPO, "node_modules/@oh-my-pi/pi-catalog/src/models.ts"));
   const { initializeExtensions }: any = await import(join(REPO, "node_modules/@oh-my-pi/pi-coding-agent/src/modes/runtime-init.ts"));
-  model = getBundledModels("anthropic")[0];
+  // The window recorded in the fixtures, whatever this omp's catalog says of the model: the summary is sized from it.
+  model = { ...getBundledModels("anthropic")[0], contextWindow: GOLDEN_WINDOW };
   sessionManager = omp.SessionManager.create(work, join(work, "sessions"));
   session = (await omp.createAgentSession({
     cwd: work, agentDir: process.env.PI_CODING_AGENT_DIR, sessionManager,
@@ -39,7 +42,8 @@ if (HOST === "omp") {
 } else {
   const pi: any = await import(join(REPO, "node_modules/@earendil-works/pi-coding-agent/dist/index.js"));
   const modelRuntime = await pi.ModelRuntime.create({ authPath: join(work, "auth.json"), modelsPath: join(work, "models.json") });
-  model = modelRuntime.getModel("anthropic", "claude-sonnet-4-5");
+  // As on omp: Pi 1.0's catalog gives this model a 1M window, later ones 200K.
+  model = { ...modelRuntime.getModel("anthropic", "claude-sonnet-4-5"), contextWindow: GOLDEN_WINDOW };
   const resourceLoader = new pi.DefaultResourceLoader({ cwd: work, agentDir: process.env.PI_CODING_AGENT_DIR, additionalExtensionPaths: [REPO] });
   await resourceLoader.reload();
   sessionManager = pi.SessionManager.create(work, join(work, "sessions"));

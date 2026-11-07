@@ -97,7 +97,8 @@ jobs:
             bun build "$1" --target bun --packages external > /tmp/bundle.js
             ALLOWED="$2" bun -e '
               const extra = (process.env.ALLOWED ?? "").split(",").filter(Boolean);
-              const allowed = (p) => /^(node:)?(fs|path|os|child_process)$/.test(p) || extra.includes(p);
+              const builtin = new Set(require("node:module").builtinModules);
+              const allowed = (p) => builtin.has(p.replace(/^node:/, "")) || extra.includes(p);
               const found = new Bun.Transpiler({ loader: "js" }).scanImports(await Bun.file("/tmp/bundle.js").text());
               const bad = [...new Set(found.map((i) => i.path).filter((p) => !allowed(p)))];
               if (bad.length) { console.error("omp-vcc must not import packages at runtime:", bad.join(", ")); process.exit(1); }

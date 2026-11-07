@@ -17,7 +17,7 @@
 (defparameter +pin-tool+ "vcc_pin")
 (defparameter +pin-params+ '("note" "name" "unpin"))
 (defparameter +context-tool+ "vcc_context")
-(defparameter +context-params+ '("drop" "oldest" "restore" "note" "undo"))
+(defparameter +context-params+ '("drop" "oldest" "restore" "note" "undo" "force"))
 
 ;;; What omp-vcc writes into a session.
 (defparameter +pin-entry-type+ "omp-vcc.pin" "Custom entries that hold a pin or unpin: in the session file, never in the context.")
