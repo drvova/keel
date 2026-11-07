@@ -44,6 +44,8 @@ describe.skipIf(!piInstalled())("Pi host", () => {
     for (const key of ["PI_CODING_AGENT_DIR", "KEEL_CONFIG_PATH"]) savedEnv[key] = process.env[key];
     process.env.PI_CODING_AGENT_DIR = join(work, "agent");
     process.env.KEEL_CONFIG_PATH = join(work, "keel-config.json");
+    // These follow the summary: with eviction on (the default) automatic passes wait while old turns can leave.
+    writeFileSync(process.env.KEEL_CONFIG_PATH, JSON.stringify({ evict: false }));
 
     pi = await import("@earendil-works/pi-coding-agent");
     modelRuntime = await pi.ModelRuntime.create({ authPath: join(work, "auth.json"), modelsPath: join(work, "models.json") });

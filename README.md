@@ -1,9 +1,9 @@
 # keel
 
-Context management for [omp](https://github.com/can1357/oh-my-pi) (oh-my-pi) and [Pi](https://github.com/earendil-works/pi) coding agents, without an LLM call. When the context fills, keel makes room in one of two ways, and nothing it removes is lost:
+Context management for [omp](https://github.com/can1357/oh-my-pi) (oh-my-pi) and [Pi](https://github.com/earendil-works/pi) coding agents, without an LLM call. When the context fills, keel makes room in two ways, both on out of the box, and nothing it removes is lost:
 
-- **A summary**, built by extraction, not by a model: what the work is, where it stands, the files and commits, a pointer to every range it replaces, and the files the next step works from.
-- **Turns out whole** (opt-in): old turns leave the request word for word, a one-line pointer stands in their place, and the agent can shape its own context, as [Context Language Models](https://arxiv.org/abs/2609.37725) does.
+- **Turns out whole**: old turns leave the request word for word, a one-line pointer stands in their place, and the agent can shape its own context, as [Context Language Models](https://arxiv.org/abs/2609.37725) does.
+- **A summary**, built by extraction, not by a model, for every compaction the host still runs (`/compact`, an overflow, nothing left to take out): what the work is, where it stands, the files and commits, a pointer to every range it replaces, and the files the next step works from.
 
 Either way the session file keeps everything, and the agent reads any of it back with `keel_recall`, across the project's earlier sessions too. Pinned notes stay in view throughout.
 
@@ -57,9 +57,9 @@ The first time it loads, keel builds its core with that SBCL: a few seconds, onc
 
 ## Quick start
 
-Nothing needs configuring: once installed, keel writes every compaction the host runs (`/compact`, a full context, an overflow), and the agent has `keel_recall` and `keel_pin`.
+Nothing needs configuring. Once installed, old turns leave the context whole as it fills, keel writes every compaction the host still runs (`/compact`, an overflow), and the agent has `keel_recall`, `keel_pin`, `keel_context` and its context as an editable file.
 
-To have old turns leave whole instead of being summarized, set `"evict": true` in `keel-config.json` (see [Config](#config)) and start a new session. The agent then also gets `keel_context` and its context as an editable file.
+To summarize instead of taking turns out, set `"evict": false` in `keel-config.json` (see [Config](#config)) and start a new session.
 
 ## Commands and tools
 
@@ -152,7 +152,7 @@ Instead of a summary over the oldest part of the window, old turns leave the req
 | `undo` | The last edit reversed, whole |
 | `list` | What is in and what is out, by `#N` and size |
 
-**With `"evict": true`**:
+**With eviction on** (the default; `"evict": false` turns it off):
 
 - **The agent** decides too, with `keel_context`: no params lists; `drop`, `oldest`, `restore`, `undo`, a `note` kept in their place. A drop that would cost more than it saves is held back with the run that would pay, and `force: true` takes it out anyway.
 - **keel** takes the oldest finished turns out by itself past 85% of the host's trigger, down to half of it, and turns the host's threshold and idle passes down while a finished turn is left to take out. An overflow recovery, `/compact` and `/keel` still summarize.
@@ -228,7 +228,7 @@ Every size follows the model's real window, learned from what the provider prove
   "trackCommands": [],
   "keepOriginals": true,
   "workingSet": true,
-  "evict": false
+  "evict": true
 }
 ```
 
@@ -242,7 +242,7 @@ Every size follows the model's real window, learned from what the provider prove
 | `trackCommands` | `[]` | Commands remembered in `[Tracked Commands]`, by command or prefix (`"ssh"`, `"gh pr"`) |
 | `keepOriginals` | `true` | omp only: keep the original of what omp rewrites in place, in `<session>.jsonl.keel-raw` |
 | `workingSet` | `true` | Bring back what the next step works from as `[Working Set]` |
-| `evict` | `false` | Turns out whole as the context fills, `keel_context`, and the context as a file (from the next session) |
+| `evict` | `true` | Turns out whole as the context fills, `keel_context`, and the context as a file (from the next session) |
 
 ## On omp, on Pi
 

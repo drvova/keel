@@ -30,7 +30,7 @@ afterAll(() => {
 });
 
 beforeEach(() => {
-  writeFileSync(process.env.KEEL_CONFIG_PATH!, JSON.stringify({ overrideDefaultCompaction: true, smartKeepTail: false }));
+  writeFileSync(process.env.KEEL_CONFIG_PATH!, JSON.stringify({ overrideDefaultCompaction: true, smartKeepTail: false, evict: false }));
 });
 
 async function createPi(model: Record<string, unknown> = { provider: "anthropic", id: "claude-sonnet-4-5", contextWindow: 200_000 }) {

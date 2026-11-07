@@ -32,7 +32,7 @@ describe.skipIf(!piInstalled())("Pi shapes", () => {
     dir = mkdtempSync(join(tmpdir(), "keel-pi-shapes-"));
     for (const key of ["KEEL_CONFIG_PATH", "PI_CODING_AGENT_DIR"]) saved[key] = process.env[key];
     process.env.KEEL_CONFIG_PATH = join(dir, "keel-config.json");
-    writeFileSync(process.env.KEEL_CONFIG_PATH, JSON.stringify({ overrideDefaultCompaction: true, smartKeepTail: false }));
+    writeFileSync(process.env.KEEL_CONFIG_PATH, JSON.stringify({ overrideDefaultCompaction: true, smartKeepTail: false, evict: false }));
   });
 
   afterAll(() => {

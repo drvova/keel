@@ -24,7 +24,7 @@ afterAll(() => {
 });
 
 beforeEach(() => {
-  writeFileSync(process.env.KEEL_CONFIG_PATH!, JSON.stringify({ overrideDefaultCompaction: true, smartKeepTail: false }));
+  writeFileSync(process.env.KEEL_CONFIG_PATH!, JSON.stringify({ overrideDefaultCompaction: true, smartKeepTail: false, evict: false }));
 });
 
 function createOmp(mode: "tui" | "rpc" = "rpc") {
@@ -112,6 +112,11 @@ describe("omp entry: registration", () => {
     // The old names run the same commands.
     expect(omp.commands.get("omp-vcc-recall")).toBe(omp.commands.get("keel-recall"));
     expect(omp.tools.map((t: any) => t.name)).toEqual(["keel_recall", "keel_pin"]);
+  });
+
+  test("out of the box (no config) eviction is on: keel_context is there", () => {
+    writeFileSync(process.env.KEEL_CONFIG_PATH!, JSON.stringify({}));
+    expect(createOmp().tools.map((t: any) => t.name)).toEqual(["keel_recall", "keel_pin", "keel_context"]);
   });
 
   test("keel_recall is a top-level read-only tool with a plain JSON Schema", () => {

@@ -204,7 +204,7 @@ describe("pinned notes in summaries", () => {
   beforeAll(() => {
     dir = mkdtempSync(join(tmpdir(), "keel-pins-"));
     process.env.KEEL_CONFIG_PATH = join(dir, "c.json");
-    writeFileSync(process.env.KEEL_CONFIG_PATH, JSON.stringify({ overrideDefaultCompaction: true, smartKeepTail: false }));
+    writeFileSync(process.env.KEEL_CONFIG_PATH, JSON.stringify({ overrideDefaultCompaction: true, smartKeepTail: false, evict: false }));
   });
   afterAll(() => {
     if (prev === undefined) delete process.env.KEEL_CONFIG_PATH;

@@ -16,7 +16,7 @@ const work = mkdtempSync(join(tmpdir(), `golden-${HOST}-`));
 process.env.PI_CODING_AGENT_DIR = join(work, "agent");
 process.env.KEEL_CONFIG_PATH = join(work, "keel-config.json");
 process.env.ANTHROPIC_API_KEY ??= "golden-not-a-key";
-await Bun.write(process.env.KEEL_CONFIG_PATH, JSON.stringify({ overrideDefaultCompaction: true, trackCommands: ["docker", "ssh"] }));
+await Bun.write(process.env.KEEL_CONFIG_PATH, JSON.stringify({ overrideDefaultCompaction: true, trackCommands: ["docker", "ssh"], evict: false }));
 
 /** The model's window in each host's recorded session, set rather than read from the host's catalog, which changes between releases. */
 const GOLDEN_WINDOW = HOST === "omp" ? 1_000_000 : 200_000;

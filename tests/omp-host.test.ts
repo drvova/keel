@@ -47,6 +47,8 @@ describe.skipIf(!ompInstalled)("omp host", () => {
     for (const key of ["PI_CODING_AGENT_DIR", "KEEL_CONFIG_PATH", "ANTHROPIC_API_KEY"]) savedEnv[key] = process.env[key];
     process.env.PI_CODING_AGENT_DIR = join(work, "agent");
     process.env.KEEL_CONFIG_PATH = join(work, "keel-config.json");
+    // These follow the summary: with eviction on (the default) automatic passes wait while old turns can leave.
+    writeFileSync(process.env.KEEL_CONFIG_PATH, JSON.stringify({ evict: false }));
     // omp runs an automatic pass only through a method its model can use, which
     // needs a credential for the model's provider. Nothing is sent with it: the
     // compaction is keel's. Without it, CI (no key at all) skipped the idle pass.
