@@ -54,6 +54,7 @@ Tests: the preload (`bunfig.toml`, `tests/support/core-on.ts`) builds the core a
 - `src/core/pins.ts` (pinned notes: `keel.pin` custom entries replayed along the branch) and `src/core/sessions.ts` (the project's directory and its session files newest first; the core lists, resolves and reads them, `lisp/src/sessions.lisp`).
 - `src/commands/`: `/keel` (`keel.ts`, with `compact-feedback.ts`), `/keel-recall`, `/keel-pin`, `/keel-unpin` and `/keel-evict` (`evict.ts`).
 - `src/tools/`: `keel_recall` (`recall.ts`), `keel_pin` (`pin.ts`) and `keel_context` (`context.ts`, registered with the `evict` setting on): the text the agent reads, the JSON Schema, and what a call does.
+- `media/readme/`: the README's animation (`evict.gif`) and its source, a [raea](https://raea.io) composition (`evict.tsx`); its `README.md` says how to render it again.
 
 ## Rules
 

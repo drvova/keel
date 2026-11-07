@@ -7,6 +7,8 @@ Context management for [omp](https://github.com/can1357/oh-my-pi) (oh-my-pi) and
 
 Either way the session file keeps everything, and the agent reads any of it back with `keel_recall`, across the project's earlier sessions too. Pinned notes stay in view throughout.
 
+![Old turns leave the request whole as the context fills; the session file keeps them, and keel_recall reads one back.](media/readme/evict.gif)
+
 keel was called omp-vcc. Sessions, configs and commands from that name still work ([coming from omp-vcc or pi-vcc](#coming-from-omp-vcc-or-pi-vcc)).
 
 A fork of [pi-vcc](https://github.com/sting8k/pi-vcc) by [@sting8k](https://github.com/sting8k), inspired by [VCC](https://github.com/lllyasviel/VCC) (View-oriented Conversation Compiler), with a native entry for each host (`index.ts` for omp, `pi.ts` for Pi) over one core in Common Lisp ([why](#the-core-common-lisp-on-sbcl)).
