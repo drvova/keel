@@ -250,7 +250,12 @@ argument it came from (NIL for the files in an omp edit's `input`)."
 
 (defun render-entry (message &optional full index (detail-chars 4000) (via ""))
   "MESSAGE as recall shows it: (ROLE SUMMARY FILES), its one-line view, or with
-FULL expand's view, a tool call's other arguments clipped at DETAIL-CHARS."
+FULL expand's view, a tool call's other arguments clipped at DETAIL-CHARS.
+Worked out once for each message and these arguments."
+  (derived message (list :render full index detail-chars via)
+           (lambda () (render-entry-anew message full index detail-chars via))))
+
+(defun render-entry-anew (message full index detail-chars via)
   (let ((role (json-get message "role"))
         (content (json-get message "content")))
     (flet ((clipped (max) (if full (text-of content) (js-clip (text-of content) max)))
@@ -282,7 +287,10 @@ FULL expand's view, a tool call's other arguments clipped at DETAIL-CHARS."
   "Characters of a message's tool-call arguments search indexes.")
 
 (defun search-text (message)
-  "MESSAGE's text as search reads it."
+  "MESSAGE's text as search reads it, worked out once for each message."
+  (derived message :search-text (lambda () (search-text-anew message))))
+
+(defun search-text-anew (message)
   (let ((role (json-get message "role")))
     (cond ((equal role "bashExecution")
            (format nil "~a ~a" (or-empty (json-get message "command")) (or-empty (json-get message "output"))))
@@ -312,5 +320,5 @@ still taken), and what omp rewrote put back from the kept originals."
                                  (indexed-messages entries))))
     (values (loop for (index id) in indexed
                   for restored in (restore-originals (mapcar #'third indexed) (mapcar #'second indexed) path)
-                  collect (list index id (readable-message restored)))
+                  collect (list index id (derived restored :readable (lambda () (readable-message restored)))))
             (active-branch-ids entries))))

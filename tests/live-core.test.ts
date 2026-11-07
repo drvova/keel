@@ -31,6 +31,11 @@ describe("the live core", () => {
     let { live, alone } = both(search);
     expect(liveCorePid()).toBeNumber();
     expect(live).toEqual(alone);
+    // What was worked out of the file for one query (its rendering, its folded text) serves the next.
+    for (const query of ["entry 3", "alpha", "entry"]) {
+      ({ live, alone } = both({ ...search, query }));
+      expect(live).toEqual(alone);
+    }
     // Grown: only the new line is read, and it is found.
     appendFileSync(file, JSON.stringify({ type: "message", id: "z", parentId: "e5", message: { role: "user", content: "alpha appended" } }) + "\n");
     ({ live, alone } = both({ ...search, query: "appended" }));
