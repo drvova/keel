@@ -213,7 +213,7 @@ What is out is a ledger of `omp-vcc.evict` custom entries, replayed along the br
 
 How much a compaction keeps follows the model's window instead of fixed numbers:
 
-- **The window** is the host's (`contextWindow`: on omp from the provider when omp's `discovery` is configured, else its catalog, `models.yml` or a 128K default; on Pi from its catalog or `models.json`, 128K by default), or a limit an overflow error stated ("maximum context length is 32768 tokens") when that is smaller. omp-vcc makes no network call of its own. Learned limits are kept in `omp-vcc-models.json` next to the config, so the next session starts with them.
+- **The window** is the host's (`contextWindow`: on omp from the provider when omp's `discovery` is configured, else its catalog, `models.yml` or a 128K default; on Pi from its catalog or `models.json`, 128K by default), or a limit an overflow error stated ("maximum context length is 32768 tokens") when that is smaller, unless the provider has since accepted a larger prompt than that limit. omp-vcc makes no network call of its own. What it learns is kept per model in `omp-vcc-models.json` next to the config: the stated limit, the largest prompt accepted, and the model's chars per token as each request measures them, so the next session starts with them.
 - **The trigger** is where the host compacts, from the host itself: every compaction carries its compaction settings for the model, and omp-vcc applies them to the window exactly as the host does.
   - omp: `compaction.thresholdPercent`, `thresholdTokens`, `reserveTokens` and the model's `compaction.modelThresholds` entry; by default the window less a reserve of 15% or 16,384 tokens.
   - Pi: the window less `compaction.reserveTokens` (16,384 by default).

@@ -55,6 +55,14 @@ describe("limitFromOverflowError", () => {
     expect(limitFromOverflowError("request (40960 tokens) exceeds the available context size (32768 tokens)")).toBe(32768);
     expect(limitFromOverflowError("prompt (9000 tokens) + max tokens (4096) exceeds the context (12288)")).toBe(12288);
     expect(limitFromOverflowError("Trying to keep the first 9000 tokens when context the overflows. However, the model is loaded with context length of only 8192 tokens")).toBe(8192);
+    // The shapes other providers and servers send (Pi's overflow notes, and their own docs).
+    expect(limitFromOverflowError("Input length (265330) exceeds model's maximum context length (262144)")).toBe(262144);
+    expect(limitFromOverflowError("The input (140000 tokens) is longer than the model's context length (131072 tokens).")).toBe(131072);
+    expect(limitFromOverflowError("Prompt contains 140000 tokens, too large for model with 131072 maximum context length")).toBe(131072);
+    expect(limitFromOverflowError("Your request exceeds the maximum allowed input length of 65536 tokens")).toBe(65536);
+    expect(limitFromOverflowError("exceeded model token limit: 262144 (requested: 270000)")).toBe(262144);
+    expect(limitFromOverflowError("Range of input length should be [1, 129024]")).toBe(129024);
+    expect(limitFromOverflowError("prompt has 70000 tokens, but the configured context size is 65536 tokens")).toBe(65536);
   });
 
   it("names nothing for an overflow without a number, or a non-context cap", () => {

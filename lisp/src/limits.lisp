@@ -56,13 +56,37 @@
   (when (and key (realp window) (> window 0))
     (let* ((limits (read-limits dir))
            (known (json-get (limit-of limits key) "contextWindow")))
-      (unless (and (realp known) (<= known window))
+      ;; Unless a smaller one stands; one the provider has since outgrown (a larger prompt accepted) gives way.
+      (unless (and (realp known) (<= known window)
+                   (not (let ((a (json-get (limit-of limits key) "maxPromptTokens"))) (and (realp a) (> a known)))))
         (when (hash-table-p limits)
           (let ((entry (spread-any (json-get limits key))))
             (setf (gethash "contextWindow" entry) window (gethash "source" entry) "overflow-error" (gethash "at" entry) now
                   (gethash key limits) entry)))
         ;; An array keeps no property by that name: JSON.stringify writes it as it was.
         (write-limits dir limits)))))
+
+(defun record-evidence (dir key &key prompt chars-per-token)
+  "Keep what a request proved of KEY's window and tokens: PROMPT, the largest prompt
+the provider accepted (the window is at least that), and CHARS-PER-TOKEN, the
+latest calibration of the session's messages against the provider's count
+(a model's tokenizer is its own: Claude 4.7 counts about 30% more tokens than
+4.6 for the same text). Written only when the largest prompt grew or the
+calibration moved by more than 5%."
+  (when key
+    (let* ((limits (read-limits dir)) (known (limit-of limits key))
+           (was-prompt (json-get known "maxPromptTokens")) (was-cpt (json-get known "charsPerToken"))
+           (grew (and (realp prompt) (> prompt 0) (or (not (realp was-prompt)) (> prompt was-prompt))))
+           (moved (and (realp chars-per-token) (or (not (realp was-cpt)) (> (abs (- chars-per-token was-cpt)) (* 0.05 was-cpt))))))
+      (when (and (or grew moved) (hash-table-p limits))
+        (let ((entry (spread-any known)))
+          (when grew (setf (gethash "maxPromptTokens" entry) prompt))
+          (when moved (setf (gethash "charsPerToken" entry) (/ (round (* chars-per-token 100)) 100d0)))
+          (setf (gethash key limits) entry)
+          (write-limits dir limits))))))
+
+(defun learned-chars-per-token (dir key)
+  (let ((c (json-get (limit-of (read-limits dir) key) "charsPerToken"))) (and (realp c) (> c 0) c)))
 
 (defun learned-host-policy (dir key)
   (let ((policy (json-get (limit-of (read-limits dir) key) "hostPolicy")))
@@ -85,12 +109,21 @@ only (where it is read); written when it changed."
     (and known (reduce #'min known))))
 
 (defun window-of (model host-name dir)
-  "The window for MODEL: the host's, the learned one, the smaller, and whose it is."
+  "The window for MODEL: the host's (its catalog's, or on omp the provider's own),
+capped by a limit an overflow error stated, unless the provider has since
+accepted a larger prompt than that limit: then the limit was wrong for this
+model (the total with the output, another route of the same model) and is not
+kept to. The largest prompt accepted is reported beside it, and never raises
+the window past the host's, whose trigger is its own. Whose the window is says
+which won."
   (let* ((cw (json-get model "contextWindow"))
          (host (and (realp cw) (> cw 0) cw))
-         (learned (learned-window dir (model-key model)))
+         (entry (limit-of (read-limits dir) (model-key model)))
+         (accepted (let ((p (json-get entry "maxPromptTokens"))) (and (realp p) (> p 0) p)))
+         (stated (learned-window dir (model-key model)))
+         (learned (and stated (not (and accepted (> accepted stated))) stated))
          (effective (effective-window host learned)))
-    (json-object "host" host "learned" learned "effective" effective
+    (json-object "host" host "learned" learned "accepted" accepted "effective" effective
                  "source" (cond ((null effective) "unknown")
                                 ((and learned (= effective learned) (not (and host (= learned host)))) "overflow-error")
                                 (t host-name)))))

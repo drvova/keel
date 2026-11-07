@@ -319,6 +319,36 @@ whatever has left the context."
   "What ties a request's message to its session entry: role, time and call id."
   (format nil "~a|~a|~a" (json-get m "role") (js-string-of (json-get m "timestamp")) (or (json-get m "toolCallId") "")))
 
+(defvar *chars-per-token* +default-chars-per-token+
+  "Chars per token where a request is not there to calibrate on (vcc_context, the
+evict command): the model's own, as the last request measured it (limits.lisp).")
+
+(defparameter +fit-min-tokens+ 2000 "Two requests' prompts this far apart measure the chars per token between them.")
+
+(defun fit-chars-per-token (messages n-of branch chars-kept)
+  "Chars per token of this session's messages, from two requests the provider
+counted: the prompt grows by the messages added between them and nothing else,
+so their chars over the tokens they added is the ratio, free of the system
+prompt and tools, which both carry. CHARS-KEPT gives what a request sent
+then. Requests made before the last compaction in MESSAGES sent what it
+replaced, so they are left out. NIL without two requests far enough apart."
+  (let* ((cutoff (or (loop for m across messages
+                           when (and (json-object-p m) (member (json-get m "role") '("compactionSummary" "branchSummary") :test #'equal)
+                                     (realp (json-get m "timestamp")))
+                             maximize (json-get m "timestamp"))
+                     -1))
+         (points (loop for i from 0 below (length messages)
+                       for m = (aref messages i)
+                       for prompt = (and (json-object-p m) (usage-prompt-tokens m))
+                       when (and prompt (or (not (realp (json-get m "timestamp"))) (> (json-get m "timestamp") cutoff)))
+                         collect (cons (funcall chars-kept (let ((n (aref n-of i))) (if n (read-evictions branch n) (read-evictions branch))) i)
+                                       prompt))))
+    (when (rest points)
+      (let ((a (first points)) (b (car (last points))))
+        (when (and (>= (- (cdr b) (cdr a)) +fit-min-tokens+) (> (car b) (car a)))
+          (clamp-chars-per-token (/ (dbl (- (car b) (car a))) (- (cdr b) (cdr a)))
+                                 (cjk-share (loop for m across messages when (json-object-p m) collect (text-of (json-get m "content"))))))))))
+
 (defun evict-request (branch index messages &key trigger auto (count 0) file mark mirror)
   "What leaves REQUEST MESSAGES (a vector, the host's next request): the indices
 to drop, the stubs (index . text) to put before them, the evict ops omp-vcc
@@ -338,7 +368,7 @@ out) the pinned notes stand first, in one block (NOTES-BLOCK)."
          (outs (read-evictions branch))
          (n-of (make-array (length messages) :initial-element nil))
          (chars (make-hash-table)) (by-n (make-hash-table))
-         (per-token +default-chars-per-token+) (ops '()))
+         (per-token +default-chars-per-token+) (fit nil) (ops '()))
     (loop for i from (live-window-start branch) below (length branch)
           for e = (aref branch i)
           when (counted-entry-p e)
@@ -362,6 +392,8 @@ out) the pinned notes stand first, in one block (NOTES-BLOCK)."
                  v))
              (chars-kept (outs &optional (below (length messages)))
                (let ((v (dropped outs))) (loop for i from 0 below below unless (aref v i) sum (message-chars (aref messages i))))))
+      ;; Chars per token measured on this request's own messages, or the model's last measure.
+      (setf fit (fit-chars-per-token messages n-of branch #'chars-kept) per-token (or fit *chars-per-token*))
       ;; The context now, estimated: what the provider counted for the latest
       ;; request, less what was sent then, is what the request holds besides the
       ;; messages (the system prompt, the tools); plus the messages kept now.
@@ -423,7 +455,7 @@ out) the pinned notes stand first, in one block (NOTES-BLOCK)."
                     for n = (aref n-of i)
                     when (and n (not (aref v i)) (gethash n starts) (equal (json-get (aref messages i) "role") "user"))
                       do (push (cons (cons i "prepend") (turn-mark n)) stubs))))
-          (values (nreverse drop) (nreverse stubs) (nreverse ops) before after n-of v outs turns))))))
+          (values (nreverse drop) (nreverse stubs) (nreverse ops) before after n-of v outs turns fit))))))
 
 (defun turn-mark (n) (format nil "[#~d]" n))
 
@@ -513,9 +545,9 @@ told of, TOOL (vcc_context) is there, and something can leave: (values NOTE OP),
          (shown (last-n in +turns-listed+)))
     (format nil "In context: ~a, ~~~a tokens of messages (the last is the one running, which stays).~@[~%  (+~d older)~]~{~%  ~a~}~%~a~a"
             (plural (length in) "turn")
-            (js-string-of (tokens-from-chars (reduce #'+ (mapcar (lambda (tr) (turn-chars tr chars outs)) in)) +default-chars-per-token+))
+            (js-string-of (tokens-from-chars (reduce #'+ (mapcar (lambda (tr) (turn-chars tr chars outs)) in)) *chars-per-token*))
             (and (> (length in) (length shown)) (- (length in) (length shown)))
-            (mapcar (lambda (tr) (turn-line tr chars +default-chars-per-token+ by-n outs)) shown)
+            (mapcar (lambda (tr) (turn-line tr chars *chars-per-token* by-n outs)) shown)
             (if outs
                 (format nil "Out of context:~{~%  ~a~}"
                         (mapcar (lambda (o) (format nil "~a (~a)" (range-text (out-from o) (out-to o)) (span-what (out-from o) (out-to o) turns))) outs))
@@ -544,7 +576,7 @@ context after its first #N that stays), in chars: (values FREED READ-AGAIN)."
   (multiple-value-bind (freed again) (eviction-cost leaving turns outs chars)
     (let* ((in (turns-in turns outs))
            (k (loop for k from 1 to (length in) when (pays-p (subseq in 0 k) turns outs chars payback) return k))
-           (tok (lambda (c) (js-string-of (tokens-from-chars c +default-chars-per-token+)))))
+           (tok (lambda (c) (js-string-of (tokens-from-chars c *chars-per-token*)))))
       (format nil "Not worth it: that frees ~~~a tokens but makes the provider read the ~~~a after it again; ~a, a drop must free ~d% of what it makes it read again. ~:[Nothing taken out would pay yet: wait until more of the context is old~;Take out more in one go, from the oldest end (oldest:~:*~d)~], or send force: true to take these out anyway (when you were asked to, or what they hold is done with)."
               (funcall tok freed) (funcall tok again) (payback-words payback) (round (* 100 (payback-share payback))) k))))
 
@@ -563,7 +595,7 @@ context after its first #N that stays), in chars: (values FREED READ-AGAIN)."
           (values (format nil "Out of context from the next request: ~{~a~^, ~} (~a, ~~~a tokens). ~a reads any entry back word for word."
                           (mapcar (lambda (op) (range-text (json-get op "from") (json-get op "to"))) ops)
                           (plural (length leaving) "turn")
-                          (js-string-of (tokens-from-chars (reduce #'+ (mapcar (lambda (tr) (turn-chars tr chars outs)) leaving)) +default-chars-per-token+))
+                          (js-string-of (tokens-from-chars (reduce #'+ (mapcar (lambda (tr) (turn-chars tr chars outs)) leaving)) *chars-per-token*))
                           (recall-expand-call (json-get (first ops) "from")))
                   ops))))))
 

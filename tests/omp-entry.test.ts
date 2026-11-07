@@ -340,6 +340,25 @@ describe("omp entry: the model's real window", () => {
     rmSync(limitsFile(), { force: true });
   });
 
+  test("a prompt the provider accepted is kept as a floor, and outgrows a stated limit that was wrong", () => {
+    rmSync(limitsFile(), { force: true });
+    const omp = createOmp();
+    omp.ctx.model = model;
+    const answered = (input: number, cacheRead = 0) =>
+      omp.fire("message_end", { message: { role: "assistant", stopReason: "stop", content: [], usage: { input, cacheRead, cacheWrite: 0, output: 10 } } });
+    answered(20_000, 10_000);
+    expect(JSON.parse(readFileSync(limitsFile(), "utf8"))["electronhub/small-model"].maxPromptTokens).toBe(30_000);
+    // A smaller one is no news.
+    answered(5_000);
+    expect(JSON.parse(readFileSync(limitsFile(), "utf8"))["electronhub/small-model"].maxPromptTokens).toBe(30_000);
+    // An overflow says 32,768; the provider then takes 40,000: the stated limit was not this model's, and the hook sizes by omp's window again.
+    overflow(omp, "This model's maximum context length is 32768 tokens. However, you requested 40112 tokens.");
+    answered(40_000);
+    omp.setEntries(big());
+    expect(omp.beforeCompact().compaction.details.limits).toMatchObject({ contextWindow: 128_000, windowSource: "omp" });
+    rmSync(limitsFile(), { force: true });
+  });
+
   test("a limit at or above omp's window teaches nothing; a window omp has right keeps the old budgets", () => {
     rmSync(limitsFile(), { force: true });
     const omp = createOmp();
