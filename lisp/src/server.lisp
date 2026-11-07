@@ -75,8 +75,10 @@
 ;;;;
 ;;;; limits: a model's learned window (src/core/model-limits.ts, src/hooks/window-limits.ts)
 ;;;;   {"op":"limits","action":"window","model":M,"hostName":H,"dir":D} -> {"ok":true,"window":{host?,learned?,effective?,source}}
+;;;;   (each action takes the model M, or KEY, its provider/id)
 ;;;;   {"op":"limits","action":"learn","model":M,"dir":D,"window":N,"now":ISO?} -> {"ok":true,"recorded":B}
-;;;;   {"op":"limits","action":"policy","key":K|"model":M,"dir":D} -> {"ok":true,"policy":P?}
+;;;;   {"op":"limits","action":"learned","model":M,"dir":D} -> {"ok":true,"window":N?}
+;;;;   {"op":"limits","action":"policy","model":M,"dir":D} -> {"ok":true,"policy":P?}
 ;;;;   {"op":"limits","action":"record-policy","model":M,"dir":D,"policy":P} -> {"ok":true}
 ;;;;   {"op":"limits","action":"settled","model":M,"dir":D,"configPath":C,"provider":P,"ruleName":R,
 ;;;;    "hostName":H,"displayName":N,"modelsFile":F,"usedTokens":U} -> {"ok":true,"settled":{trigger, notice}?}
@@ -267,17 +269,19 @@ parity test compares with JavaScript's own."
   (json-object "ok" :true "replace" (coerce (point-placeholders (json-get request "input")) 'vector)))
 
 (defun handle-limits (request)
-  (let ((action (json-get request "action")) (model (json-get request "model")) (dir (json-get request "dir")))
+  (let* ((action (json-get request "action")) (model (json-get request "model")) (dir (json-get request "dir"))
+         ;; A model, or its provider/id key as the learned-limits file names it.
+         (key (let ((k (json-get request "key"))) (if (stringp k) k (model-key model)))))
     (unless (stringp dir) (return-from handle-limits (json-object "ok" :false "error" "limits: no dir")))
     (cond ((equal action "window") (json-object "ok" :true "window" (window-of model (json-get request "hostName") dir)))
           ((equal action "learn")
            (json-object "ok" :true "recorded"
-                        (if (record-learned-window dir (model-key model) (json-get request "window")
+                        (if (record-learned-window dir key (json-get request "window")
                                                    (let ((now (json-get request "now"))) (if (stringp now) now (iso-now))))
                             :true :false)))
-          ((equal action "policy")
-           (json-object "ok" :true "policy" (learned-host-policy dir (let ((k (json-get request "key"))) (if (stringp k) k (model-key model))))))
-          ((equal action "record-policy") (record-host-policy dir (model-key model) (json-get request "policy")) (json-object "ok" :true))
+          ((equal action "learned") (json-object "ok" :true "window" (learned-window dir key)))
+          ((equal action "policy") (json-object "ok" :true "policy" (learned-host-policy dir key)))
+          ((equal action "record-policy") (record-host-policy dir key (json-get request "policy")) (json-object "ok" :true))
           ((equal action "settled")
            (let ((path (json-get request "configPath")))
              (json-object "ok" :true "settled"

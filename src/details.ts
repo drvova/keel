@@ -3,12 +3,10 @@ import type { HistoryRange } from "./core/history-index";
 import type { SummaryState } from "./core/summary-state";
 import { COMPACTOR, LEGACY_COMPACTOR } from "./names";
 import type { HostName } from "./host";
-import { callCore } from "./core/lisp-core";
+import { core } from "./core/lisp-core";
 
 /** Compactions stored before the rename say "pi-vcc"; both are read as this extension's. */
 type VccCompactor = typeof COMPACTOR | typeof LEGACY_COMPACTOR;
-
-const isVccCompactor = (value: unknown): value is VccCompactor => value === COMPACTOR || value === LEGACY_COMPACTOR;
 
 export interface VccCompactionDetails {
   compactor: VccCompactor;
@@ -45,10 +43,5 @@ export interface VccCompactionDetails {
  * This extension's details on a compaction entry, or undefined for another
  * compactor's. omp's notes-backed rollover nests a hook's details under hookDetails.
  */
-export const vccDetailsOf = (details: unknown): (Partial<VccCompactionDetails> & { compactor: VccCompactor }) | undefined => {
-  const inCore = callCore({ op: "outcome", details: details ?? null });
-  if (inCore) return (inCore.own as (Partial<VccCompactionDetails> & { compactor: VccCompactor }) | undefined) ?? undefined;
-  const d = details as { compactor?: unknown; hookDetails?: unknown } | undefined;
-  const own = isVccCompactor(d?.compactor) ? d : (d?.hookDetails as typeof d | undefined);
-  return isVccCompactor(own?.compactor) ? (own as Partial<VccCompactionDetails> & { compactor: VccCompactor }) : undefined;
-};
+export const vccDetailsOf = (details: unknown): (Partial<VccCompactionDetails> & { compactor: VccCompactor }) | undefined =>
+  (core({ op: "outcome", details: details ?? null }).own as (Partial<VccCompactionDetails> & { compactor: VccCompactor }) | undefined) ?? undefined;

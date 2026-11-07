@@ -3,7 +3,12 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { DEFAULT_SETTINGS, openConfig } from "../src/core/settings";
+import { openConfig } from "../src/core/settings";
+
+/** What a fresh config holds, in its order. */
+const DEFAULT_SETTINGS = {
+  overrideDefaultCompaction: true, smartKeepTail: true, debug: false, skipForProviders: [], skipCustomTypes: [], trackCommands: [], keepOriginals: true, workingSet: true,
+};
 
 const saved = { config: process.env.OMP_VCC_CONFIG_PATH, agentDir: process.env.PI_CODING_AGENT_DIR };
 let dir: string;
@@ -86,4 +91,29 @@ describe("settings", () => {
     expect(load({ debug: "no", overrideDefaultCompaction: 0 })).toMatchObject({ debug: false, overrideDefaultCompaction: true });
     expect(load({ debug: "true", overrideDefaultCompaction: "FALSE", workingSet: false })).toMatchObject({ debug: true, overrideDefaultCompaction: false, workingSet: false });
   });
+
+  test("the file is written as JSON.stringify(value, null, 2) writes it, a newline after", () => {
+    openConfig(() => dir).scaffold();
+    expect(readFileSync(join(dir, "omp-vcc-config.json"), "utf8")).toBe(`${JSON.stringify(DEFAULT_SETTINGS, null, 2)}\n`);
+  });
+
+  test("missing keys are added after the user's, which keep their order, values and number notation", () => {
+    const file = join(dir, "omp-vcc-config.json");
+    writeFileSync(file, '{"debug": true, "z": [1e-7, 1e21, 0.1, 12345678.5, 9007199254740993], "2": "x"}');
+    openConfig(() => dir).scaffold();
+    const text = readFileSync(file, "utf8");
+    // Array-index keys first, as JavaScript orders an object's keys; numbers as String() writes them.
+    expect(text.startsWith('{\n  "2": "x",\n  "debug": true,\n  "z": [\n    1e-7,\n    1e+21,\n    0.1,\n    12345678.5,\n    9007199254740992\n  ],\n  "overrideDefaultCompaction": true,')).toBe(true);
+  });
+
+  test("a file that is not a JSON object or array is left alone, and reads as the defaults", () => {
+    const file = join(dir, "omp-vcc-config.json");
+    for (const text of ["{ not json", "null", "42", '"debug"', "{\"n\": 01}"]) {
+      writeFileSync(file, text);
+      const config = openConfig(() => dir);
+      config.scaffold();
+      expect({ text, after: readFileSync(file, "utf8"), settings: config.load() }).toEqual({ text, after: text, settings: DEFAULT_SETTINGS });
+    }
+  });
+
 });

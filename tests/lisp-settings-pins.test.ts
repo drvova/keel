@@ -122,26 +122,6 @@ const runCommand = async (name: "pin" | "unpin", args: string, branch: any[], us
 };
 
 maybe("Lisp core settings and pins", () => {
-  it("loads and scaffolds generated config files as settings.ts does, byte for byte", () => {
-    for (let seed = 1; seed <= 150 + FIXED.length; seed++) {
-      const r = rng(seed * 7919);
-      const fixed = seed > 150 ? FIXED[seed - 151] : undefined;
-      const text = fixed ?? (r() < 0.15 ? undefined : configText(r));
-      const legacy = !fixed && r() < 0.4 ? configText(r) : undefined;
-      const viaEnv = !fixed && r() < 0.3;
-      const nested = !fixed && r() < 0.2;
-      const results = [undefined, core].map((useCore, k) => {
-        const agent = join(dir, `s${seed}-${k}`, ...(nested ? ["deep", "er"] : []));
-        if (!nested) mkdirSync(agent, { recursive: true });
-        const file = join(agent, "omp-vcc-config.json");
-        if (!nested && text !== undefined) writeFileSync(file, text);
-        if (!nested && legacy !== undefined) writeFileSync(join(agent, "pi-vcc-config.json"), legacy);
-        return runConfig(file, agent, useCore, viaEnv);
-      });
-      expect({ seed, ...results[1] }).toEqual({ seed, ...results[0] });
-    }
-  });
-
   it("answers generated vcc_pin calls as executePin does", () => {
     let appended = 0;
     for (let seed = 1; seed <= 300; seed++) {

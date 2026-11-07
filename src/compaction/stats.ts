@@ -2,7 +2,7 @@
 // read by the hook (automatic and /compact passes) and /omp-vcc's feedback.
 import type { BudgetCutKind } from "./cut";
 import { tell, type NotifyCtx } from "../host";
-import { callCore } from "../core/lisp-core";
+import { core } from "../core/lisp-core";
 
 /** What the outcome line says. */
 export interface CompactionStats {
@@ -16,31 +16,8 @@ export interface CompactionStats {
   smartKeepAdjusted?: boolean;
 }
 
-const formatTokens = (n: number): string => {
-  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
-  return String(n);
-};
-
-export const formatCompactionStats = (stats: CompactionStats): string => {
-  // The Lisp core writes the same line (lisp/src/outcome.lisp, op outcome).
-  const inCore = callCore({ op: "outcome", stats });
-  if (inCore) return inCore.line as string;
-  if (stats.budgetCut) {
-    if (stats.budgetCut === "final_reply") {
-      return `omp-vcc: kept the final reply (~${formatTokens(stats.keptTokensEst)} tok), summarized ${stats.summarized}.`;
-    }
-    if (stats.budgetCut === "running_turn") {
-      return `omp-vcc: kept the running turn's latest steps (~${formatTokens(stats.keptTokensEst)} tok), summarized ${stats.summarized}.`;
-    }
-    const reason = stats.budgetCut === "no_anchor" ? "no user anchor" : "oversized tail";
-    return `omp-vcc: kept ~${formatTokens(stats.keptTokensEst)} tok tail (mid-turn cut, ${reason}), summarized ${stats.summarized}.`;
-  }
-  const notes: string[] = [`summarized ${stats.summarized}`];
-  if (stats.smartKeepAdjusted) {
-    notes.push("smart-keep");
-  }
-  return `omp-vcc: kept ${stats.keptUserTurns}/${stats.totalUserTurns} turns, ~${formatTokens(stats.keptTokensEst)} tok (${notes.join(", ")}).`;
-};
+/** The outcome line, as the core writes it (lisp/src/outcome.lisp, op outcome). */
+export const formatCompactionStats = (stats: CompactionStats): string => core({ op: "outcome", stats }).line as string;
 
 /** The hook returns before the host applies the compaction and shows its own status; the line comes after it. */
 const AFTER_HOST_STATUS_MS = 500;

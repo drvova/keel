@@ -13,7 +13,7 @@ import { buildWorkingSet } from "../core/working-set";
 import { estimateMessageChars } from "../core/token-estimate";
 import type { CompactionBudgets } from "../core/window";
 import type { VccSettings } from "../core/settings";
-import { vccDetailsOf } from "../details";
+import type { VccCompactionDetails } from "../details";
 import { summaryInputOf, toLiveMessage } from "./summary-input";
 import type { ConvertToLlm } from "../host";
 import type { OwnCutResult } from "./cut";
@@ -75,6 +75,12 @@ interface Assembled {
   growth: SummaryGrowth;
 }
 
+/** omp-vcc's (or pi-vcc's) details on a compaction, also under omp's rollover: this TypeScript path's own reading, which goes with it (the core's is lisp/src/compaction.lisp vcc-details-of). */
+const ownDetails = (details: any): Partial<VccCompactionDetails> | undefined => {
+  const own = (d: any) => d?.compactor === "omp-vcc" || d?.compactor === "pi-vcc";
+  return own(details) ? details : own(details?.hookDetails) ? details.hookDetails : undefined;
+};
+
 export const assembleSummary = (input: AssembleInput): Assembled => {
   const { branchEntries, cut, budgets, settings } = input;
   // omp may have blanked or shaken some of these in place since they landed.
@@ -91,7 +97,7 @@ export const assembleSummary = (input: AssembleInput): Assembled => {
   // reset_boundary) the summary and [History Index] start over.
   const lastCompactionIdx = lastCompactionIndex(branchEntries);
   const previousCompaction = lastCompactionIdx >= 0 ? branchEntries[lastCompactionIdx] : undefined;
-  const previousDetails = previousCompaction ? vccDetailsOf(previousCompaction.details) : undefined;
+  const previousDetails = previousCompaction ? ownDetails(previousCompaction.details) : undefined;
 
   // [History Index]: this window's range added to the one the previous compaction stored.
   const windowRange = rangeOfWindow(summaryInput.messages, sourceIndices);

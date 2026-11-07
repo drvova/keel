@@ -5,15 +5,10 @@
 // its catalog and models.json) and makes no network call of its own. When a
 // provider serves less than the host was told, its overflow error often states
 // the limit ("maximum context length is 32768 tokens"); that limit is kept per
-// model in omp-vcc-models.json next to the config, so the next session starts
-// with it.
-import { existsSync, readFileSync, writeFileSync } from "fs";
-import { join } from "path";
-import { effectiveWindow } from "./window";
-import { callCore } from "./lisp-core";
-
-/** The Lisp core's answer for the limits file (lisp/src/limits.lisp, op limits), or undefined without it. */
-const limitsInCore = (request: Record<string, unknown>) => callCore({ op: "limits", ...request });
+// model in omp-vcc-models.json next to the config, with the host's compaction
+// policy as the latest compaction for that model carried it, so the next session
+// starts with both. The core reads and writes the file (lisp/src/limits.lisp, op limits).
+import { core } from "./lisp-core";
 
 export interface ModelLike {
   provider?: string;
@@ -21,90 +16,28 @@ export interface ModelLike {
   contextWindow?: number | null;
 }
 
-export const modelKey = (model: ModelLike | undefined): string | undefined =>
-  model?.provider && model?.id ? `${model.provider}/${model.id}` : undefined;
-
-const LIMITS_FILE = "omp-vcc-models.json";
-
-interface LearnedLimit {
-  contextWindow: number;
-  source: "overflow-error";
-  at: string;
-  /**
-   * The host's compaction policy as the latest compaction for this model
-   * carried it (preparation.settings, read by its TriggerRule): where omp-vcc
-   * compacts in the host's stead (hooks/window-limits.ts), in a later session too.
-   */
-  hostPolicy?: object;
-}
-
-const writeLimits = (dir: string, limits: Record<string, LearnedLimit>): boolean => {
-  try {
-    writeFileSync(join(dir, LIMITS_FILE), `${JSON.stringify(limits, null, 2)}\n`);
-    return true;
-  } catch {
-    return false;
-  }
-};
-
-const readLimits = (dir: string): Record<string, LearnedLimit> => {
-  try {
-    const path = join(dir, LIMITS_FILE);
-    if (!existsSync(path)) return {};
-    const parsed = JSON.parse(readFileSync(path, "utf8"));
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
-};
-
-/** The limit an overflow error stated for this model, in this or an earlier session; `dir` is the config's (Config.dir). */
-export const learnedWindow = (dir: string, key: string | undefined): number | undefined => {
-  if (!key) return undefined;
-  const n = readLimits(dir)[key]?.contextWindow;
-  return typeof n === "number" && n > 0 ? n : undefined;
-};
-
-/** Keep the limit an overflow error stated for `model`. A smaller one replaces a larger one, never the reverse. */
-export const learnWindow = (dir: string, model: ModelLike | undefined, contextWindow: number, now = new Date()): boolean => {
-  const inCore = limitsInCore({ action: "learn", model: modelOf(model), dir, window: contextWindow, now: now.toISOString() });
-  return inCore ? inCore.recorded === true : recordLearnedWindow(dir, modelKey(model), contextWindow, now);
-};
-
 /** What the core needs of a model: its provider, id and window. */
 const modelOf = (model: ModelLike | undefined) => (model ? { provider: model.provider, id: model.id, contextWindow: model.contextWindow } : null);
 
-/** Keep the limit an overflow error stated. A smaller one replaces a larger one, never the reverse. */
-export const recordLearnedWindow = (dir: string, key: string | undefined, contextWindow: number, now = new Date()): boolean => {
-  if (!key || !(contextWindow > 0)) return false;
-  const limits = readLimits(dir);
-  const known = limits[key]?.contextWindow;
-  if (typeof known === "number" && known <= contextWindow) return false;
-  limits[key] = { ...limits[key], contextWindow, source: "overflow-error", at: now.toISOString() };
-  return writeLimits(dir, limits);
-};
+const limits = (request: Record<string, unknown>) => core({ op: "limits", ...request });
+
+/** Keep the limit an overflow error stated for `model`; a smaller one replaces a larger one, never the reverse. `dir` is the config's (Config.dir). */
+export const learnWindow = (dir: string, model: ModelLike | undefined, contextWindow: number, now = new Date()): boolean =>
+  limits({ action: "learn", model: modelOf(model), dir, window: contextWindow, now: now.toISOString() }).recorded === true;
+
+/** The same by the model's provider/id key, as the file names it. */
+export const recordLearnedWindow = (dir: string, key: string, contextWindow: number, now = new Date()): boolean =>
+  limits({ action: "learn", key, dir, window: contextWindow, now: now.toISOString() }).recorded === true;
+
+/** The limit an overflow error stated for this model's key, in this or an earlier session. */
+export const learnedWindow = (dir: string, key: string): number | undefined => limits({ action: "learned", key, dir }).window as number | undefined;
 
 /** The host's policy for a model with a learned window, as a compaction last carried it; undefined before one did. */
-export const learnedHostPolicy = (dir: string, key: string | undefined): object | undefined => {
-  const inCore = key ? limitsInCore({ action: "policy", key, dir }) : undefined;
-  if (inCore) return (inCore.policy as object | undefined) ?? undefined;
-  const policy = key ? readLimits(dir)[key]?.hostPolicy : undefined;
-  return policy && typeof policy === "object" ? policy : undefined;
-};
+export const learnedHostPolicy = (dir: string, key: string): object | undefined => limits({ action: "policy", key, dir }).policy as object | undefined;
 
 /** Keep the policy a compaction carried, for a model with a learned window only (where it is read); written when it changed. */
 export const keepHostPolicy = (dir: string, model: ModelLike | undefined, policy: object | undefined): void => {
-  if (limitsInCore({ action: "record-policy", model: modelOf(model), dir, policy: policy ?? null })) return;
-  recordHostPolicy(dir, modelKey(model), policy);
-};
-
-export const recordHostPolicy = (dir: string, key: string | undefined, policy: object | undefined): void => {
-  if (!key || !policy) return;
-  const limits = readLimits(dir);
-  const known = limits[key];
-  if (!known || JSON.stringify(known.hostPolicy) === JSON.stringify(policy)) return;
-  limits[key] = { ...known, hostPolicy: policy };
-  writeLimits(dir, limits);
+  limits({ action: "record-policy", model: modelOf(model), dir, policy: policy ?? null });
 };
 
 export interface WindowInfo<Host extends string = string> {
@@ -118,14 +51,5 @@ export interface WindowInfo<Host extends string = string> {
 }
 
 /** The window for this model: the host's, or the smaller one an overflow error stated (learned next to the config in `configDir`). */
-export const windowOf = <Host extends string>(model: ModelLike | undefined, hostName: Host, configDir: string): WindowInfo<Host> => {
-  const inCore = limitsInCore({ action: "window", model: modelOf(model), hostName, dir: configDir });
-  if (inCore) return inCore.window as WindowInfo<Host>;
-  const host = typeof model?.contextWindow === "number" && model.contextWindow > 0 ? model.contextWindow : undefined;
-  const learned = learnedWindow(configDir, modelKey(model));
-  const effective = effectiveWindow(host, learned);
-  const source = effective === undefined ? "unknown"
-    : effective === learned && learned !== host ? "overflow-error"
-    : hostName;
-  return { host, learned, effective, source };
-};
+export const windowOf = <Host extends string>(model: ModelLike | undefined, hostName: Host, configDir: string): WindowInfo<Host> =>
+  limits({ action: "window", model: modelOf(model), hostName, dir: configDir }).window as WindowInfo<Host>;
