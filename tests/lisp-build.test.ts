@@ -2,13 +2,16 @@
 // names one, else the build of this copy's sources with
 // the user's SBCL, named by their hash; without SBCL it says so.
 import { afterEach, describe, expect, it } from "bun:test";
-import { existsSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { coreStatus } from "../src/core/lisp-core";
 import { lispCore } from "./support/lisp-core";
 
-const saved = { core: process.env.OMP_VCC_CORE, sbcl: process.env.SBCL };
+const saved = { core: process.env.OMP_VCC_CORE, sbcl: process.env.SBCL, dir: process.env.OMP_VCC_CORE_BUILD_DIR };
 afterEach(() => {
-  for (const [k, v] of [["OMP_VCC_CORE", saved.core], ["SBCL", saved.sbcl]] as const) {
+  if (process.env.OMP_VCC_CORE_BUILD_DIR !== saved.dir) rmSync(process.env.OMP_VCC_CORE_BUILD_DIR!, { recursive: true, force: true });
+  for (const [k, v] of [["OMP_VCC_CORE", saved.core], ["SBCL", saved.sbcl], ["OMP_VCC_CORE_BUILD_DIR", saved.dir]] as const) {
     if (v === undefined) delete process.env[k];
     else process.env[k] = v;
   }
@@ -35,9 +38,8 @@ describe("the core's source", () => {
   it("says SBCL is missing when it cannot build one", () => {
     delete process.env.OMP_VCC_CORE;
     process.env.SBCL = "/nonexistent/sbcl";
-    const s = coreStatus();
-    // A build of these sources may exist from an earlier run; else there is no SBCL to make one.
-    if (s.state === "ready") expect(existsSync(s.path)).toBe(true);
-    else expect(s).toEqual({ state: "no-sbcl", sbcl: "/nonexistent/sbcl" });
+    // An empty build directory: no earlier build of these sources to fall back on.
+    process.env.OMP_VCC_CORE_BUILD_DIR = mkdtempSync(join(tmpdir(), "omp-vcc-no-build-"));
+    expect(coreStatus()).toEqual({ state: "no-sbcl", sbcl: "/nonexistent/sbcl" });
   });
 });

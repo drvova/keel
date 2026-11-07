@@ -1,20 +1,9 @@
 import { ompBinding } from "./support/binding";
-import { describe, it, expect, afterEach } from "bun:test";
-import { mkdtempSync, writeFileSync, rmSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+import { describe, it, expect } from "bun:test";
+import { sessionFileOfEntries } from "./support/session-files";
 import { registerRecallTool } from "../src/tools/recall";
 
-const dirs: string[] = [];
-afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
-
-const writeSession = (entries: any[]) => {
-  const dir = mkdtempSync(join(tmpdir(), "omp-vcc-range-"));
-  dirs.push(dir);
-  const file = join(dir, "session.jsonl");
-  writeFileSync(file, entries.map((e) => JSON.stringify(e)).join("\n") + "\n", "utf8");
-  return file;
-};
+const writeSession = (entries: any[]) => sessionFileOfEntries(entries).file;
 
 const msg = (id: string, role: string, content: unknown, extra: Record<string, unknown> = {}) =>
   ({ type: "message", id, message: { role, content, ...extra } });
@@ -351,7 +340,7 @@ describe("vcc_recall with malformed entries", () => {
     expect(await recall(file, { query: "rotation weekly" }, ids)).toContain("#1 [assistant]");
     expect(await recall(file, { expand: [1] }, ids)).toContain("rotation scheduled weekly");
     expect(await recall(file, { range: [0, 5] }, ids)).toContain("#5 [assistant] vault path is /srv/vault");
-    expect(await recall(file, { mode: "touched" }, ids)).not.toContain("TypeError");
+    expect(await recall(file, { mode: "touched" }, ids)).toBe("No file operations found in session history.");
   });
 });
 

@@ -7,9 +7,9 @@ import type { VccSettings } from "../src/core/settings";
 import { core } from "../src/core/lisp-core";
 import { ompBinding } from "./support/binding";
 
-const formatCompactionStats = (stats: object): string => core({ op: "outcome", stats }).line as string;
+const outcomeLine = (stats: object): string => core({ op: "outcome", stats }).line as string;
 /** omp-vcc's details on a compaction entry (omp's notes-backed rollover nests them under hookDetails), or undefined. */
-const vccDetailsOf = (details: unknown) => (core({ op: "outcome", details: details ?? null }).own as object | undefined) ?? undefined;
+const ownDetails = (details: unknown) => (core({ op: "outcome", details: details ?? null }).own as object | undefined) ?? undefined;
 /** Whether omp-vcc answers the host's own compactions for a model of this provider. */
 const handlesHostCompactions = (settings: VccSettings, provider: unknown): boolean => core({ op: "outcome", settings, provider: provider ?? null }).handles === true;
 
@@ -27,7 +27,7 @@ describe("the outcome line", () => {
     [{ keptTokensEst: 950, budgetCut: "no_anchor" }, "omp-vcc: kept ~950 tok tail (mid-turn cut, no user anchor), summarized 40."],
     [{ keptTokensEst: 99_950, budgetCut: "oversized_tail" }, "omp-vcc: kept ~100.0k tok tail (mid-turn cut, oversized tail), summarized 40."],
   ])("%j", (stats, line) => {
-    expect(formatCompactionStats({ ...base, ...stats } as any)).toBe(line);
+    expect(outcomeLine({ ...base, ...stats } as any)).toBe(line);
   });
 });
 
@@ -63,10 +63,10 @@ describe("what /omp-vcc says when its compaction did not happen", () => {
 
 describe("whose details a compaction carries", () => {
   it("omp-vcc's and pi-vcc's, also nested under omp's notes-backed rollover; none of another compactor's", () => {
-    expect(vccDetailsOf({ compactor: "pi-vcc", willRetry: true })).toEqual({ compactor: "pi-vcc", willRetry: true });
-    expect(vccDetailsOf({ compactor: "other", hookDetails: { compactor: "omp-vcc", reason: "idle" } })).toEqual({ compactor: "omp-vcc", reason: "idle" });
-    expect(vccDetailsOf({ compactor: "other" })).toBeUndefined();
-    expect(vccDetailsOf(null)).toBeUndefined();
+    expect(ownDetails({ compactor: "pi-vcc", willRetry: true })).toEqual({ compactor: "pi-vcc", willRetry: true });
+    expect(ownDetails({ compactor: "other", hookDetails: { compactor: "omp-vcc", reason: "idle" } })).toEqual({ compactor: "omp-vcc", reason: "idle" });
+    expect(ownDetails({ compactor: "other" })).toBeUndefined();
+    expect(ownDetails(null)).toBeUndefined();
   });
 });
 

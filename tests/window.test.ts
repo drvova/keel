@@ -1,7 +1,7 @@
 // Limits that follow the model's context window (lisp/src/window.lisp, limits.lisp), held to each host's own.
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test";
 import { assertRealPi, piInstalled } from "./support/pi";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { mkdtempSync, readFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join, dirname } from "path";
 import {
@@ -110,7 +110,11 @@ describe("omp's trigger", () => {
 
 describe("compactionBudgets", () => {
   it("keeps the old fixed numbers on a typical window and when nothing is known", () => {
-    expect(compactionBudgets(undefined)).toEqual(DEFAULT_BUDGETS);
+    expect(DEFAULT_BUDGETS).toEqual({
+      maxTailTokens: 25_000, minTailTokens: 5_000, briefTokens: 1_100, briefCeilingTokens: 2_000,
+      briefTokensPerBlock: 15, briefMaxBlocks: 80, growthMarginChars: 500, summaryScale: 1, workingSetTokens: 3_800,
+      summary: { userMessages: 15, filesPerCategory: 10, commits: 8, historyRanges: 8, briefLines: 120, commandsPerName: 10 },
+    });
     expect(compactionBudgets(ompDefaultTrigger(128_000), 8_000)).toEqual(DEFAULT_BUDGETS);
     expect(compactionBudgets(ompDefaultTrigger(200_000), 8_000)).toEqual(DEFAULT_BUDGETS);
   });

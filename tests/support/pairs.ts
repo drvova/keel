@@ -1,26 +1,23 @@
 // A search over these messages, or a vcc_recall call on them, as recall runs
 // it: written as a session file and read by the core, each entry's index its #N.
-import { mkdtempSync, rmSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
 import { join } from "path";
 import { core } from "../../src/core/lisp-core";
+import { freshDir, writeJsonl } from "./session-files";
 
 export interface SearchHit { index: number; role: string; summary: string; files?: string[]; snippet?: string }
 export interface SearchResult { hits: SearchHit[]; totalBeforeCap: number; truncated: boolean; aborted?: string }
 
-const dir = mkdtempSync(join(tmpdir(), "omp-vcc-search-"));
-process.on("exit", () => rmSync(dir, { recursive: true, force: true }));
 let n = 0;
 
 /** A session file of these messages, one entry each on one branch. */
 export const sessionFileOf = (messages: readonly unknown[]): string => {
   // A directory of its own: no other test's file reads as this project's earlier session.
-  const file = join(mkdtempSync(join(dir, "p")), `s${++n}.jsonl`);
+  const file = join(freshDir(), `s${++n}.jsonl`);
   const lines = [
     { type: "session", version: 3, id: `session-${n}`, timestamp: "2026-01-01T00:00:00.000Z", cwd: "/w" },
     ...messages.map((message, i) => ({ type: "message", id: `m${i}`, parentId: i ? `m${i - 1}` : null, timestamp: "2026-01-01T00:00:00.000Z", message })),
   ];
-  writeFileSync(file, lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
+  writeJsonl(file, lines);
   return file;
 };
 

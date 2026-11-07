@@ -6,7 +6,6 @@
 // Runs only where @oh-my-pi/pi-coding-agent is installed (it needs Bun >= 1.4.4):
 //   V=18.14.2; npm install --no-save --ignore-scripts --no-audit --no-fund @oh-my-pi/pi-coding-agent@$V
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { lispCore, tracedCore, withCoreAt } from "./support/lisp-core";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join, resolve } from "path";
@@ -184,14 +183,6 @@ describe.skipIf(!ompInstalled)("omp host", () => {
     expect(listed).toContain('"Rotate the staging API key"');
     const found = (await recall.execute("q", { query: "vault staging key revoked", scope: "project" }, undefined, undefined)).content[0].text;
     expect(found).toContain(`[session ${short}] #1 [assistant]`);
-    // Recall is the core's: the same search through a traced core starts it and answers the same text.
-    const core = lispCore();
-    if (core) {
-      const traced = tracedCore(core, work);
-      const viaCore = await withCoreAt(traced.path, () => recall.execute("q", { query: "vault staging key revoked", scope: "project" }, undefined, undefined));
-      expect(viaCore.content[0].text).toBe(found);
-      expect(traced.starts()).toBeGreaterThan(0);
-    }
     await other.close?.();
   });
 

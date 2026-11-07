@@ -22,7 +22,7 @@ afterAll(() => {
   rmSync(tmpDir, { recursive: true, force: true });
 });
 
-// The stats toast is shown 500 ms after session_compact (tellCompactionStats).
+// The stats toast is shown 500 ms after session_compact (tellLater, src/host.ts).
 // Under fake timers, jest.runAllTimers() fires it, and anything else scheduled, at once.
 beforeEach(() => jest.useFakeTimers());
 afterEach(() => jest.useRealTimers());

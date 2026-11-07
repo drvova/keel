@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync, utimesSync, writeFileSync } from "fs";
+import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 // The project's other sessions (lisp/src/sessions.lisp): listed by mode:'sessions',
@@ -8,6 +8,7 @@ import { executeRecall, ompBinding } from "./support/binding";
 import { recall } from "../src/core/recall-run";
 import { core } from "../src/core/lisp-core";
 import { PIN_ENTRY_TYPE } from "../src/names";
+import { writeJsonl } from "./support/session-files";
 
 /** How many sessions a listing shows (lisp/src/sessions.lisp). */
 const MAX_LISTED_SESSIONS = 50;
@@ -29,10 +30,7 @@ const chain = (texts: Array<["user" | "assistant", string]>, start: string | nul
   }
   return out;
 };
-const write = (file: string, lines: unknown[], mtime: number) => {
-  writeFileSync(file, lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
-  utimesSync(file, mtime, mtime);
-};
+const write = writeJsonl;
 
 let dir: string;
 let current: string;

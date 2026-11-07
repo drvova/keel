@@ -1,9 +1,8 @@
 import { ompBinding } from "./support/binding";
 import { describe, it, expect } from "bun:test";
-import { mkdtempSync, writeFileSync, rmSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+import { rmSync } from "fs";
 import { registerRecallTool } from "../src/tools/recall";
+import { sessionFileOfEntries } from "./support/session-files";
 import { core } from "../src/core/lisp-core";
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -23,13 +22,10 @@ const userMsg = (id: string, content: string) => ({
   message: { role: "user", content },
 });
 
-let dirCount = 0;
-const makeSession = (entries: any[]) => {
-  const dir = mkdtempSync(join(tmpdir(), `omp-vcc-touched-${dirCount++}-`));
-  const file = join(dir, "session.jsonl");
-  writeFileSync(file, entries.map((e) => JSON.stringify(e)).join("\n") + "\n", "utf8");
-  return { dir, file, ids: entries.filter((e) => e.type === "message" && e.message).map((e) => e.id) };
-};
+const makeSession = (entries: any[]) => ({
+  ...sessionFileOfEntries(entries),
+  ids: entries.filter((e) => e.type === "message" && e.message).map((e) => e.id),
+});
 
 const register = () => {
   let tool: any;

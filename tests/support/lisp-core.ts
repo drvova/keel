@@ -1,7 +1,7 @@
 // The Lisp core's executable for tests: built from lisp/ with the `sbcl` on PATH
 // (or SBCL), once per process; undefined where there is no SBCL.
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 const ROOT = join(import.meta.dir, "..", "..");
@@ -26,24 +26,4 @@ export const lispCore = (): string | undefined => {
     if (run.status !== 0 || !existsSync(CORE)) throw new Error(`lisp core build failed:\n${run.stdout}\n${run.stderr}`);
   }
   return (built = CORE);
-};
-
-/** Run `fn`, awaiting it, with OMP_VCC_CORE naming `core` (a traced one, say), then put back what was there. */
-export const withCoreAt = async <T>(core: string, fn: () => Promise<T>): Promise<T> => {
-  const was = process.env.OMP_VCC_CORE;
-  process.env.OMP_VCC_CORE = core;
-  try { return await fn(); } finally {
-    if (was === undefined) delete process.env.OMP_VCC_CORE;
-    else process.env.OMP_VCC_CORE = was;
-  }
-};
-
-/** The core behind a script that logs each start to `dir`, and how many starts there were. */
-export const tracedCore = (core: string, dir: string): { path: string; starts: () => number } => {
-  const log = join(dir, "core-starts.log");
-  const path = join(dir, "omp-vcc-core-traced");
-  writeFileSync(path, `#!/bin/sh\necho start >> '${log}'\nexec '${core}' "$@"\n`);
-  chmodSync(path, 0o755);
-  writeFileSync(log, "");
-  return { path, starts: () => readFileSync(log, "utf8").split("\n").filter(Boolean).length };
 };
