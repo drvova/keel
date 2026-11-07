@@ -150,7 +150,7 @@ registered), and what to tell the user."
          (trigger (and auto (snapshot-trigger s))) (count (snapshot-count s)) (branch (snapshot-branch s)))
     (multiple-value-bind (drop stubs ops before after)
         (evict-request branch (snapshot-index s) (coerce messages 'vector) :file (snapshot-session-file s)
-                       :trigger trigger :auto auto :count count)
+                       :trigger trigger :auto auto :count count :mark tool)
       (multiple-value-bind (note note-op)
           ;; After an eviction this request, the context just shrank: no note.
           (and auto (null ops) (budget-note branch (snapshot-index s) after trigger tool count))

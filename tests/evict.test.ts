@@ -262,6 +262,23 @@ describe("a turn whose older steps left while it ran", () => {
   });
 });
 
+describe("turn numbers in view", () => {
+  it("each request in the context starts with its turn's #N while vcc_context is there, the same on every request", () => {
+    setEvict(true);
+    const s = session(3);
+    record(s, { op: "evict", from: 0, to: 3 });
+    const out = sent(s, undefined, true).messages as any[];
+    const requests = out.filter((m) => m.role === "user").map((m) => m.content.map((p: any) => p.text));
+    // The line for turn 0 rides on turn 1's request, before its mark.
+    expect(requests[0][0]).toStartWith("[#0–#3 out of context");
+    expect(requests[0].slice(1)).toEqual(["[#4]", "request number 1 please read f1.ts"]);
+    expect(requests[1]).toEqual(["[#8]", "request number 2 please read f2.ts"]);
+    expect(sent(s, undefined, true).messages).toEqual(out);
+    // Without the tool, nothing is marked.
+    expect(texts(sent(s, undefined, false).messages).filter((t) => t === "[#8]")).toEqual([]);
+  });
+});
+
 describe("pinned notes when turns leave", () => {
   it("travel with the turn they were pinned in: its line carries the ones still held, as they read now", () => {
     setEvict(true);
@@ -364,8 +381,8 @@ describe("as the context fills", () => {
     // 10 turns of 20,000 chars, 50,000 tokens counted: past half of 83,616, short of 85%.
     const s = session(10, 20_000, 50_000);
     const first = sent(s, 100_000, true);
-    // The request itself is left as it is: the note is stored and sent before the next model call.
-    expect(first.messages).toBeUndefined();
+    // Nothing leaves the request (its turns only gain their #N): the note is stored and sent before the next model call.
+    expect((first.messages as any[]).length).toBe(s.request().length);
     expect(first.note).toMatch(/^\[omp-vcc: the context is past \d0% of where the host compacts \(~83616 tokens\); past 85% the oldest turns leave by themselves\. vcc_context lists what is in it and takes old turns out, with a note of what to keep\.\]$/);
     expect(s.appended.map((e) => e.data.op)).toEqual(["budget"]);
     // The same tenth again: nothing more is said.

@@ -11,7 +11,8 @@ import { CONTEXT_NOTE_CHARS, CONTEXT_PARAMS, CONTEXT_TOOL, EVICT_AT_PERCENT, REC
 const description = (command: string): string => [
   "Decide what stays in your context. Old turns can leave it whole: nothing is summarized or rewritten,",
   `the session keeps every word, and ${RECALL_TOOL} expand:[N] reads any entry back exactly. A turn starts at`,
-  "a user request and holds every call and result after it; the turn running now always stays.",
+  "a user request and holds every call and result after it; the turn running now always stays. Each",
+  "request in your context starts with its turn's #N, as [#12], so you can drop by it without listing first.",
   "",
   "- no params: list the turns in context, by #N range and size, and what is out.",
   "- drop: #N refs or ranges ('#12-#40'); every turn they touch leaves from the next request.",

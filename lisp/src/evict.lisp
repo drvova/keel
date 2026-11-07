@@ -216,12 +216,15 @@ line must read the same on every request for the provider's cache."
   "What ties a request's message to its session entry: role, time and call id."
   (format nil "~a|~a|~a" (json-get m "role") (js-string-of (json-get m "timestamp")) (or (json-get m "toolCallId") "")))
 
-(defun evict-request (branch index messages &key trigger auto (count 0) file)
+(defun evict-request (branch index messages &key trigger auto (count 0) file mark)
   "What leaves REQUEST MESSAGES (a vector, the host's next request): the indices
 to drop, the stubs (index . text) to put before them, the evict ops omp-vcc
 records itself (AUTO and past +EVICT-AT-SHARE+ of TRIGGER), and the estimate
 before and after: (values DROP STUBS OPS BEFORE AFTER). FILE is the session's,
-whose kept originals the stubs read."
+whose kept originals the stubs read. With MARK (vcc_context is there), each
+request that starts a turn in the context starts with its #N, as `[#12]`, so the
+agent can name turns to drop without listing them first: a turn's first #N
+never changes, so the mark reads the same on every request."
   (let* ((turns (branch-turns branch index))
          (running (car (last turns)))
          (protected (let ((steps (and running (turn-steps running branch index))))
@@ -297,7 +300,16 @@ whose kept originals the stubs read."
                                do (let ((n (aref n-of i))) (when n (setf lo (min (or lo n) n) hi (max (or hi n) n))))
                                   (push i drop) (incf i))
                          (when lo (push (cons (stub-place messages v start (1- i)) (stub-text lo hi turns outs by-n originals pins)) stubs)))))
+          (when mark
+            (let ((starts (make-hash-table)))
+              (dolist (tr turns) (setf (gethash (turn-from tr) starts) t))
+              (loop for i from 0 below (length messages)
+                    for n = (aref n-of i)
+                    when (and n (not (aref v i)) (gethash n starts) (equal (json-get (aref messages i) "role") "user"))
+                      do (push (cons (cons i "prepend") (turn-mark n)) stubs))))
           (values (nreverse drop) (nreverse stubs) (nreverse ops) before after))))))
+
+(defun turn-mark (n) (format nil "[#~d]" n))
 
 (defparameter +user-side-roles+
   '("user" "custom" "hookMessage" "bashExecution" "pythonExecution" "fileMention" "branchSummary" "compactionSummary" "developer")

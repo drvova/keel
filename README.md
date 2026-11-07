@@ -199,6 +199,7 @@ The other way to make room: instead of a summary written over the oldest part of
 [#0–#20 out of context: 7 turns, by omp-vcc as the context filled. Requests: "fix the auth bug"; "add the refresh test"; "run the suite" (+4 more). It changed 5 files in auth, billing; 2 commits, last 3f2a1c9 fix refresh; 1 failed call. Each entry reads back word for word with vcc_recall expand:[0]; vcc_recall query searches them.]
 ```
 
+- With `vcc_context` there, each request in the context starts with its turn's `#N` (`[#12]`), so the agent names turns to drop without listing them first; a turn's first `#N` never changes, so the mark reads the same on every request.
 - A note pinned in a turn that leaves stays in view: the line carries the notes pinned there that still hold, as they read now (`Pinned there, still held: [3] auth-plan: …`), and `vcc_context` lists every pinned note with the turns.
 - Past half the host's trigger, the model is told how full its context is and that `vcc_context` makes room, once for each further tenth, as a message of its own stored in the session (so the cache keeps it), and only while something can leave. Models that are not told do not edit their context.
 
