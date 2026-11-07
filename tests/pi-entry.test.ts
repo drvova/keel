@@ -104,9 +104,9 @@ describe.skipIf(!piInstalled())("Pi entry", () => {
   beforeAll(assertRealPi);
   test("registers the hook on Pi's events, the /pi-vcc commands and the tools, and nothing of omp's", async () => {
     const pi = await createPi();
-    // No raw capture (Pi rewrites nothing in place) and no omp trigger tracking.
-    expect([...pi.handlers.keys()].sort()).toEqual(["agent_settled", "message_end", "session_before_compact", "session_compact"]);
-    expect([...pi.commands.keys()].sort()).toEqual(["pi-vcc", "pi-vcc-pin", "pi-vcc-recall", "pi-vcc-unpin"]);
+    // No raw capture (Pi rewrites nothing in place) and no omp trigger tracking; the request hook leaves evicted turns out.
+    expect([...pi.handlers.keys()].sort()).toEqual(["agent_settled", "context", "message_end", "session_before_compact", "session_compact"]);
+    expect([...pi.commands.keys()].sort()).toEqual(["pi-vcc", "pi-vcc-evict", "pi-vcc-pin", "pi-vcc-recall", "pi-vcc-unpin"]);
     expect(pi.tools.map((t: any) => t.name)).toEqual(["vcc_recall", "vcc_pin"]);
     // The tools name Pi's commands: vcc_pin told the agent the user pins with /omp-vcc-pin.
     const pin = pi.tools.find((t: any) => t.name === "vcc_pin");

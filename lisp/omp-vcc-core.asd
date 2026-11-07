@@ -74,6 +74,7 @@
      (:file "sessions")
      (:file "recall")
      ;; host: the snapshot of what the host knows, which every op for a host event reads.
+     (:file "evict")
      (:file "host")
      (:file "server"))))
   :in-order-to ((test-op (test-op "omp-vcc-core/test"))))

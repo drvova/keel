@@ -15,7 +15,7 @@
 (defparameter +default-settings+
   '(("overrideDefaultCompaction" . :true) ("smartKeepTail" . :true) ("debug" . :false)
     ("skipForProviders" . :list) ("skipCustomTypes" . :list) ("trackCommands" . :list)
-    ("keepOriginals" . :true) ("workingSet" . :true)))
+    ("keepOriginals" . :true) ("workingSet" . :true) ("evict" . :false)))
 
 (defun default-setting (value) (if (eq value :list) (vector) value))
 

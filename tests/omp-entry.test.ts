@@ -108,7 +108,7 @@ describe("omp entry: registration", () => {
     expect([...omp.handlers.keys()].sort()).toEqual(
       ["agent_end", "auto_compaction_end", "auto_compaction_start", "context", "message_end", "session_before_compact", "session_compact", "session_start", "turn_end"],
     );
-    expect([...omp.commands.keys()].sort()).toEqual(["omp-vcc", "omp-vcc-pin", "omp-vcc-recall", "omp-vcc-unpin"]);
+    expect([...omp.commands.keys()].sort()).toEqual(["omp-vcc", "omp-vcc-evict", "omp-vcc-pin", "omp-vcc-recall", "omp-vcc-unpin"]);
     expect(omp.tools.map((t: any) => t.name)).toEqual(["vcc_recall", "vcc_pin"]);
   });
 

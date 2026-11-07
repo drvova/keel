@@ -126,6 +126,40 @@ host's window (or the host knows none); T when it was recorded."
           (gethash "branch" input) (snapshot-branch s))
     input))
 
+;;; --- turns out of the context (evict.lisp) -----------------------------------------
+
+(defun snapshot-count (s) "How many entries #N counts now: the next one's #N." (count-if #'counted-entry-p (snapshot-tree s)))
+
+(defun snapshot-trigger (s)
+  "Where the host compacts on the model's window, by its last recorded policy (its defaults before one is)."
+  (let* ((w (snapshot-window s)) (effective (json-get w "effective")))
+    (and (realp effective) (> effective 0)
+         (trigger-for effective nil nil (learned-host-policy (snapshot-config-dir s) (model-key (snapshot-model s))) (snapshot-name s)))))
+
+(defun context-for-host (s messages)
+  "The host's next request MESSAGES with what is out of the context left out: the
+indices to drop, the lines to put in their place, the evictions omp-vcc records
+itself as the context fills (the evict setting), and what to tell of them."
+  (let ((auto (eq (json-get (snapshot-settings s) "evict") :true)))
+    (multiple-value-bind (drop stubs ops before after)
+        (evict-request (snapshot-branch s) (snapshot-index s) (coerce messages 'vector)
+                       :trigger (and auto (snapshot-trigger s)) :auto auto :count (snapshot-count s))
+      (json-object "drop" (coerce drop 'vector)
+                   "stubs" (map 'vector (lambda (st) (json-object "at" (car st) "text" (cdr st))) stubs)
+                   "ops" (coerce ops 'vector)
+                   "notice" (and ops (format nil "omp-vcc: Context ~~~a → ~~~a tokens · ~{#~a~^, ~} out · by omp-vcc as the context filled; vcc_recall expand reads any of it back."
+                                             (js-string-of before) (js-string-of after)
+                                             (mapcar (lambda (op) (format nil "~d–#~d" (json-get op "from") (json-get op "to"))) ops)))))))
+
+(defun evict-for-host (s call)
+  "One vcc_context call or evict command: what to tell, and the entries to append. Turn sizes come from the session file."
+  (let ((chars (make-hash-table)) (by-n (make-hash-table)) (file (snapshot-session-file s)))
+    (when (and file (probe-file (native-path file)))
+      (loop for (index nil message) in (read-session file)
+            do (setf (gethash index chars) (message-chars message) (gethash index by-n) message)))
+    (multiple-value-bind (text ops) (run-evict call (snapshot-branch s) (snapshot-index s) chars by-n (snapshot-count s))
+      (json-object "text" text "ops" (coerce ops 'vector)))))
+
 ;;; --- a compaction, in two calls --------------------------------------------------
 
 (defun projected-branch (event)

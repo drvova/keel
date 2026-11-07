@@ -101,6 +101,15 @@
 ;;;;    recovering, tokensBefore, overheadTokens, workingSet}...]}
 ;;;;   -> {"ok":true,"results":[{"limit":N?} | {policy?, trigger?, autoCompacts, budgets}...]}
 ;;;;
+;;;; context: the host's next request with what is out of the context left out (src/hooks/eviction.ts)
+;;;;   {"op":"context","host":SNAPSHOT,"messages":[M...]}
+;;;;   -> {"ok":true,"drop":[I...],"stubs":[{at,text}...],"ops":[OP...],"notice":T?}: drop the messages at
+;;;;   I, put each stub's text before message AT, append each OP (one omp-vcc.evict entry) and tell NOTICE.
+;;;;
+;;;; evict: one vcc_context call or evict command (src/core/evict.ts)
+;;;;   {"op":"evict","host":SNAPSHOT,"call":{surface:"tool",params}|{surface:"command",args}}
+;;;;   -> {"ok":true,"text":T,"ops":[OP...]}
+;;;;
 ;;;; recall: one vcc_recall call or /…-recall command (src/core/recall-run.ts)
 ;;;;   {"op":"recall","host":SNAPSHOT,"call":{surface:"tool",params}|{surface:"command",name,args},
 ;;;;    "projectFiles":[F...] (newest first)}
@@ -369,6 +378,8 @@ compact, it first asks for what the host's convertToLlm makes of the messages."
           ((equal op "window") (handle-window request))
           ((equal op "settings") (handle-settings request))
           ((equal op "pin") (handle-pin request))
+          ((equal op "context") (with-ok (context-for-host (read-snapshot (json-get request "host")) (json-get request "messages" #()))))
+          ((equal op "evict") (with-ok (evict-for-host (read-snapshot (json-get request "host")) (json-get request "call"))))
           ((equal op "raw-capture") (handle-raw-capture request))
           ((equal op "args") (handle-args request))
           ((equal op "limits") (handle-limits request))

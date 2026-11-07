@@ -69,6 +69,15 @@ export interface VccSettings {
    * a share of the window.
    */
   workingSet: boolean;
+  /**
+   * When true, old turns leave the context whole instead of being summarized
+   * (lisp/src/evict.lisp): the agent takes them out with vcc_context, the user
+   * with /omp-vcc-evict, and past 85% of the host's trigger the oldest finished
+   * turns leave by themselves, down to half of it. Nothing is rewritten: the
+   * session file keeps every word and vcc_recall expand reads it back. Off by
+   * default; the summary stays the safety net either way.
+   */
+  evict: boolean;
 }
 
 /** omp-vcc's config for one binding: its file in the host's agent directory (or OMP_VCC_CONFIG_PATH). */

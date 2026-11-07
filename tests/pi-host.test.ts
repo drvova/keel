@@ -7,7 +7,7 @@
 // Runs only where @earendil-works/pi-coding-agent is installed (`bun run setup:pi`).
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { assertRealPi, piInstalled } from "./support/pi";
-import { mkdtempSync, rmSync } from "fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { dirname, join, resolve } from "path";
 
@@ -197,4 +197,35 @@ describe.skipIf(!piInstalled())("Pi host", () => {
     const found = (await tool.execute("s", { query: "vault", scope: "project" }, undefined, undefined)).content[0].text;
     expect(found).toContain(`[session ${short}] #1 [assistant]`);
   });
+
+  test("/pi-vcc-evict takes old turns out of the next request whole, and vcc_recall still reads them", async () => {
+    user("Write the release notes for 2.0");
+    assistant([{ type: "text", text: "Done." }], "stop");
+    user("Tag the release");
+    assistant([{ type: "text", text: "Done." }], "stop");
+    const config = process.env.OMP_VCC_CONFIG_PATH!;
+    const saved = readFileSync(config, "utf8");
+    writeFileSync(config, JSON.stringify({ ...JSON.parse(saved), evict: true }));
+    try {
+      notices.length = 0;
+      await session.prompt("/pi-vcc-evict 1");
+      expect(notices.join("\n")).toContain("Out of context from the next request: #");
+      // The request the host builds next, through its own context hook.
+      const messages = sessionManager.buildSessionContext().messages;
+      const sent = await session.extensionRunner.emitContext(structuredClone(messages));
+      const text = (m: any) => (typeof m.content === "string" ? m.content : Array.isArray(m.content) ? m.content.map((p: any) => p.text ?? "").join("") : "");
+      const stub = sent.find((m: any) => text(m).includes("out of context:"));
+      expect(text(stub)).toMatch(/^\[#(\d+)–#\d+ out of context: 1 turn, ~\d+ tokens, by the user\./);
+      expect(sent.length).toBeLessThan(messages.length + 1);
+      expect(sent.some((m: any) => text(m) === "Tag the release")).toBe(true);
+      // What left the request is in the session, word for word.
+      const n = Number(text(stub).match(/^\[#(\d+)/)![1]);
+      const recall = agentTool("vcc_recall");
+      const expanded = (await recall.execute("x", { expand: [n] }, undefined, undefined)).content[0].text;
+      expect(expanded).toContain(`Expanded #${n}:`);
+    } finally {
+      writeFileSync(config, saved);
+    }
+  });
+
 });

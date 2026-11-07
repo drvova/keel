@@ -12,6 +12,11 @@ export const PIN_PARAMS = ["note", "unpin"] as const;
 
 /** Custom entries that hold a pin or unpin: in the session file, never in the model's context. */
 export const PIN_ENTRY_TYPE = "omp-vcc.pin";
+/** vcc_context, the agent's say over what stays in its context, and what it takes. */
+export const CONTEXT_TOOL = "vcc_context";
+export const CONTEXT_PARAMS = ["drop", "oldest", "restore", "note"] as const;
+/** The custom entries that take turns out of the context or bring them back. */
+export const EVICT_ENTRY_TYPE = "omp-vcc.evict";
 /** The custom message telling the agent of a pin the user made; a summary leaves it out. */
 export const PIN_NOTICE_TYPE = "omp-vcc-pin";
 /** The custom message carrying /…-recall output to the agent. */

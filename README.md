@@ -186,6 +186,20 @@ The same search as a slash command (`/pi-vcc-recall` on Pi), with results shown 
 /omp-vcc-recall auth token session:01a194d8
 ```
 
+## Turns out of the context, whole
+
+The other way to make room: instead of a summary written over the oldest part of the window, old turns leave the context whole. Nothing is summarized or rewritten. The session file keeps every word, `vcc_recall expand:[N]` reads any entry back exactly and a search finds it; only the requests the host sends change. A turn is a request the user made and every call and result after it, so a call never leaves without its result, and the turn running now always stays.
+
+- **`/omp-vcc-evict`** (`/pi-vcc-evict` on Pi), at any time: no text takes out the oldest half of the turns in context; `3` the three oldest; `all` every finished turn; `#12-#40` the turns that range touches; `restore #12` (or `restore all`) brings them back; `list` shows what is in and what is out, by `#N` and size.
+- **With `"evict": true`** in the config, the agent decides too, with the `vcc_context` tool (no params lists; `drop`, `oldest`, `restore`, and a `note` kept in their place), and past 85% of the host's trigger the oldest finished turns leave by themselves, down to half of it, so the host's own compaction is rarely reached. When it is, the summary is the safety net it always was.
+- In place of each run of turns that are out, the request carries one line, the same on every request so the provider's prompt cache keeps it:
+
+```text
+[#0–#20 out of context: 7 turns, ~52595 tokens, by omp-vcc as the context filled. Requests: "fix the auth bug"; "add the refresh test"; "run the suite" (+4 more). Each entry reads back word for word with vcc_recall expand:[0]; vcc_recall query searches them.]
+```
+
+What is out is a ledger of `omp-vcc.evict` custom entries, replayed along the branch as pinned notes are, so a branch keeps its own and `/tree` back past one undoes it. Turns leave in large runs from the oldest end: every edit makes the provider read again all that follows it, so one large eviction costs less than many small ones. The idea is [Context Language Models](https://arxiv.org/abs/2609.37725) (the model decides what stays) and [nodecode](https://nodecode.ai/docs/context) (the oldest finished turns leave whole past 85%, and read back by their number).
+
 ## The model's context window
 
 How much a compaction keeps follows the model's window instead of fixed numbers:
@@ -222,7 +236,8 @@ Config lives at `omp-vcc-config.json` in the host's agent directory (omp: `~/.om
   "skipCustomTypes": [],
   "trackCommands": [],
   "keepOriginals": true,
-  "workingSet": true
+  "workingSet": true,
+  "evict": false
 }
 ```
 
@@ -233,6 +248,7 @@ Config lives at `omp-vcc-config.json` in the host's agent directory (omp: `~/.om
 - **`skipCustomTypes`** *(default `[]`)*: `customType` values of `custom_message` entries to leave out of the summary, for per-turn boilerplate other extensions inject (skill cards, guidance blocks). Exact, case-sensitive match; look for `"type":"custom_message"` in your session file to find the value. They stay in context and count toward what is kept; a cut whose summarized part would hold only skipped messages summarizes the whole window instead, as that summary would be empty.
 - **`keepOriginals`** *(default `true`, omp only)*: keep the original of every message omp may rewrite in place (tool output, long text blocks) in `<session>.jsonl.vcc-raw`, so `vcc_recall` reads what was there after omp blanks or shakes it (see [On omp](#on-omp)). Text over 1M chars per message is clipped; images are kept without their data. `false`: recall shows omp's placeholders. Pi never rewrites the session file, so there is nothing to keep.
 - **`workingSet`** *(default `true`)*: bring back what the next step works from with each compaction, as `[Working Set]` (see [Compacted message structure](#compacted-message-structure)). `false`: the summary says what happened, the agent fetches what it needs with `vcc_recall`, and the kept tail gets the working set's room.
+- **`evict`** *(default `false`)*: old turns leave the context whole as it fills, and the agent gets `vcc_context` to take turns out itself (see [Turns out of the context, whole](#turns-out-of-the-context-whole)). The evict command works either way. The tool is registered when a session starts, so turning this on takes effect in the next session; the automatic eviction, on the next request.
 - **`trackCommands`** *(default `[]`)*: commands to remember across compactions, listed in a `[Tracked Commands]` section. Any command or prefix works: `["ssh", "kubectl", "docker"]`, `["psql", "./deploy.sh"]`, or `"gh pr"` (matches `gh pr merge`, not `gh run`). Each entry is the command as written, up to the next shell separator outside quotes, with any `sudo`/`env`/`VAR=` prefix kept; the 10 most recent per command are kept. Only `bash` calls are read, and only `ssh` remote commands are looked into, not `sh -c` or `docker exec`. Empty = off.
 
 ## Coming from pi-vcc
@@ -283,6 +299,7 @@ The long-horizon work (history index, failure markers, pinned notes, recall acro
 | [Masking Stale Observations Helps Search Agents — Until It Doesn't](https://arxiv.org/abs/2606.00408), Zhang et al., 2026 | A masked observation keeps which tool ran with what arguments, and the page stays reachable by its id, so the agent can open it again. omp's placeholders for blanked tool output name the recall ref of the original omp-vcc kept. |
 | [Beyond Compaction: Structured Context Eviction](https://arxiv.org/abs/2606.11213), Semenov et al., 2026 | Evicting content the agent still needs makes it re-explore what it had already read. omp-vcc keeps what omp evicts in place, writes the summary from it, and brings back the files and the failure the next step works from (`[Working Set]`). |
 | [Context as an Environment](https://arxiv.org/abs/2608.21690), Lin et al., 2026 | Evicted spans stay recoverable through landmarks tied to exact log addresses: the kept original of each rewritten entry, by its `#N`. |
+| [Context Language Models](https://arxiv.org/abs/2609.37725), Shao et al., 2026 | A model that edits its own context does better than summary compaction, which "can lose or hallucinate information"; one large edit beats many small ones, as every edit makes the provider read again what follows it. Old turns leave whole (`vcc_context`, the evict command), never rewritten, from the oldest end. |
 | [TRACER](https://arxiv.org/abs/2608.29363), Lin et al., 2026 | Counts the tool calls an agent makes again after compression as a cost of it: `[Working Set]` brings their results back with the compaction. |
 
 Also read for this work: [LLMs Get Lost In Multi-Turn Conversation](https://arxiv.org/abs/2505.06120) (Laban et al., 2025), [Evaluating Goal Drift in Language Model Agents](https://arxiv.org/abs/2505.02709) (Arike et al., 2025), [Generative Agents](https://arxiv.org/abs/2304.03442) (Park et al., 2023), [Recursively Summarizing Enables Long-Term Dialogue Memory in Large Language Models](https://arxiv.org/abs/2308.15022) (Wang et al., 2023) and [Slipstream](https://arxiv.org/abs/2605.08580) (Chen et al., 2026).

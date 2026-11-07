@@ -7,7 +7,7 @@ import { openConfig } from "../src/core/settings";
 
 /** What a fresh config holds, in its order. */
 const DEFAULT_SETTINGS = {
-  overrideDefaultCompaction: true, smartKeepTail: true, debug: false, skipForProviders: [], skipCustomTypes: [], trackCommands: [], keepOriginals: true, workingSet: true,
+  overrideDefaultCompaction: true, smartKeepTail: true, debug: false, skipForProviders: [], skipCustomTypes: [], trackCommands: [], keepOriginals: true, workingSet: true, evict: false,
 };
 
 const saved = { config: process.env.OMP_VCC_CONFIG_PATH, agentDir: process.env.PI_CODING_AGENT_DIR };

@@ -5,7 +5,7 @@
 import type { HostProfile } from "../host";
 import type { Config } from "./settings";
 import { hostBranch, hostEntries, type SessionManagerLike } from "./session-file";
-import { PIN_ENTRY_TYPE } from "../names";
+import { EVICT_ENTRY_TYPE, PIN_ENTRY_TYPE } from "../names";
 
 /** What a host's ctx offers omp-vcc at an event. */
 export interface HostCtx {
@@ -18,19 +18,26 @@ export interface HostCtx {
 
 /**
  * One entry as the snapshot carries it: its place in the tree and what it is,
- * without its body. A message is only its role (and a tool result's call id),
- * so #N, the branch and the turn in progress read from it; omp-vcc's own pin
- * entries keep their data, which the pins are read from.
+ * without its body. A message is its role, time, attribution and a tool
+ * result's call id, so #N, the branch, the turns and a request's messages read
+ * from it; a compaction keeps where its kept tail starts; omp-vcc's own pin and
+ * evict entries keep their data, which the pins and the evictions are read from.
  */
 const skeleton = (e: any): Record<string, unknown> => ({
   type: e?.type,
   id: e?.id,
   parentId: e?.parentId,
   ...(typeof e?.customType === "string" ? { customType: e.customType } : {}),
-  ...(e?.customType === PIN_ENTRY_TYPE ? { data: e.data } : {}),
-  ...(e && "message" in e
-    ? { message: e.message == null ? null : { role: e.message.role, ...(typeof e.message.toolCallId === "string" ? { toolCallId: e.message.toolCallId } : {}) } }
-    : {}),
+  ...(e?.customType === PIN_ENTRY_TYPE || e?.customType === EVICT_ENTRY_TYPE ? { data: e.data } : {}),
+  ...(e?.type === "compaction" ? { firstKeptEntryId: e.firstKeptEntryId, providerReplayThroughEntryId: e.providerReplayThroughEntryId } : {}),
+  ...(e && "message" in e ? { message: e.message == null ? null : messageSkeleton(e.message) } : {}),
+});
+
+const messageSkeleton = (m: any): Record<string, unknown> => ({
+  role: m.role,
+  ...(m.timestamp !== undefined ? { timestamp: m.timestamp } : {}),
+  ...(typeof m.attribution === "string" ? { attribution: m.attribution } : {}),
+  ...(typeof m.toolCallId === "string" ? { toolCallId: m.toolCallId } : {}),
 });
 
 export const hostSnapshot = (host: Pick<HostProfile, "name" | "displayName" | "modelsFile"> & { config: Pick<Config, "path"> }, ctx: HostCtx | undefined) => {

@@ -13,6 +13,9 @@ import { registerPinCommands } from "./commands/pin";
 import { registerRecallTool } from "./tools/recall";
 import { registerPinTool } from "./tools/pin";
 import { coreStatus } from "./core/lisp-core";
+import { registerEviction } from "./hooks/eviction";
+import { registerContextTool } from "./tools/context";
+import { registerEvictCommand } from "./commands/evict";
 
 export const register = (pi: ExtensionAPI, host: Host): void => {
   // The core is built with the user's SBCL the first time this copy runs (lisp-core.ts): start it now.
@@ -29,4 +32,8 @@ export const register = (pi: ExtensionAPI, host: Host): void => {
   registerRecallTool(pi, binding);
   registerPinTool(pi, binding);
   registerPinCommands(pi, binding);
+  // Old turns out of the context whole, instead of a summary, with the evict setting on.
+  registerEviction(pi, binding);
+  if (binding.config.load().evict) registerContextTool(pi, binding);
+  registerEvictCommand(pi, binding);
 };

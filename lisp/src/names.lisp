@@ -16,9 +16,12 @@
 (defparameter +recall-params+ '("query" "range" "expand" "page" "scope" "mode" "session"))
 (defparameter +pin-tool+ "vcc_pin")
 (defparameter +pin-params+ '("note" "unpin"))
+(defparameter +context-tool+ "vcc_context")
+(defparameter +context-params+ '("drop" "oldest" "restore" "note"))
 
 ;;; What omp-vcc writes into a session.
 (defparameter +pin-entry-type+ "omp-vcc.pin" "Custom entries that hold a pin or unpin: in the session file, never in the context.")
+(defparameter +evict-entry-type+ "omp-vcc.evict" "Custom entries that take turns out of the context or bring them back: in the session file, never in the context.")
 (defparameter +pin-notice-type+ "omp-vcc-pin" "The custom message telling the agent of a pin the user made; [Pinned Notes] carries the note, so a summary leaves it out.")
 (defparameter +recall-command-message-type+ "vcc-recall" "The custom message carrying /…-recall output to the agent.")
 (defparameter +compactor+ "omp-vcc" "The compactor id in a compaction's details.")
@@ -46,7 +49,8 @@
   "Every name and limit above, as op names hands them over."
   (json-object "recallTool" +recall-tool+ "recallParams" (coerce +recall-params+ 'vector)
                "pinTool" +pin-tool+ "pinParams" (coerce +pin-params+ 'vector)
-               "pinEntryType" +pin-entry-type+ "pinNoticeType" +pin-notice-type+
+               "contextTool" +context-tool+ "contextParams" (coerce +context-params+ 'vector)
+               "pinEntryType" +pin-entry-type+ "evictEntryType" +evict-entry-type+ "pinNoticeType" +pin-notice-type+
                "recallCommandMessageType" +recall-command-message-type+
                "compactor" +compactor+ "legacyCompactor" +legacy-compactor+
                "compactInstruction" +compact-instruction+
