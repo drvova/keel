@@ -15,7 +15,7 @@
 (defparameter +default-settings+
   '(("overrideDefaultCompaction" . :true) ("smartKeepTail" . :true) ("debug" . :false)
     ("skipForProviders" . :list) ("skipCustomTypes" . :list) ("trackCommands" . :list)
-    ("keepOriginals" . :true) ("workingSet" . :true) ("evict" . :false)))
+    ("keepOriginals" . :true) ("workingSet" . :true) ("evict" . :true)))
 
 (defun default-setting (value) (if (eq value :list) (vector) value))
 
@@ -77,9 +77,14 @@
 (defun scaffold-settings (path legacy)
   "Config.scaffold: the file at PATH with every default key. Missing: LEGACY's
 copy when there is one, else the defaults. Not JSON: left alone. Valid: missing
-keys added, existing values kept. Nothing here fails the caller."
+keys added, existing values kept. Nothing here fails the caller.
+
+Eviction was off by default under the earlier names, and their scaffold wrote
+that default into every file: a copied file's \"evict\": false is that default,
+not a choice, so the copy takes keel's default instead."
   (ignore-errors
    (ensure-directories-exist (native-path path))
+   (let ((copied nil))
    (unless (probe-file (native-path path))
      (if (and legacy (probe-file (native-path legacy)))
          (with-open-file (in (native-path legacy) :element-type '(unsigned-byte 8))
@@ -87,13 +92,16 @@ keys added, existing values kept. Nothing here fails the caller."
                                                    :if-exists :supersede :if-does-not-exist :create)
              (let ((bytes (make-array (file-length in) :element-type '(unsigned-byte 8))))
                (read-sequence bytes in)
-               (write-sequence bytes out))))
+               (write-sequence bytes out)
+               (setf copied t))))
          (progn (write-text-file path (format nil "~a~%" (json-pretty-string (default-settings))))
                 (return-from scaffold-settings))))
    (let ((parsed (read-json-file path)))
      (when (or (hash-table-p parsed) (json-array-p parsed))
        (let ((next (spread-object parsed)) (changed nil))
+         (when (and copied (eq (switch-of (json-get next "evict")) :false))
+           (remhash "evict" next))
          (loop for (key . value) in +default-settings+
                unless (nth-value 1 (gethash key next))
                  do (setf (gethash key next) (default-setting value) changed t))
-         (when changed (write-text-file path (format nil "~a~%" (json-pretty-string next)))))))))
+         (when changed (write-text-file path (format nil "~a~%" (json-pretty-string next))))))))))

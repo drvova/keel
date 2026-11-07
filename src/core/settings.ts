@@ -77,7 +77,7 @@ export interface KeelSettings {
    * (lisp/src/evict.lisp): the agent takes them out with keel_context, the user
    * with /keel-evict, and past 85% of the host's trigger the oldest finished
    * turns leave by themselves, down to half of it. Nothing is rewritten: the
-   * session file keeps every word and keel_recall expand reads it back. Off by
+   * session file keeps every word and keel_recall expand reads it back. On by
    * default; the summary stays the safety net either way.
    */
   evict: boolean;

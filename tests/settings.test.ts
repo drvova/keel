@@ -7,7 +7,7 @@ import { openConfig } from "../src/core/settings";
 
 /** What a fresh config holds, in its order. */
 const DEFAULT_SETTINGS = {
-  overrideDefaultCompaction: true, smartKeepTail: true, debug: false, skipForProviders: [], skipCustomTypes: [], trackCommands: [], keepOriginals: true, workingSet: true, evict: false,
+  overrideDefaultCompaction: true, smartKeepTail: true, debug: false, skipForProviders: [], skipCustomTypes: [], trackCommands: [], keepOriginals: true, workingSet: true, evict: true,
 };
 
 const saved = { config: process.env.KEEL_CONFIG_PATH, oldConfig: process.env.OMP_VCC_CONFIG_PATH, agentDir: process.env.PI_CODING_AGENT_DIR };
@@ -66,6 +66,17 @@ describe("settings", () => {
     config.scaffold();
     expect(existsSync(join(dir, "omp-vcc-config.json"))).toBe(true); // left in place
     expect(config.load()).toMatchObject({ trackCommands: ["from omp-vcc"], evict: true, smartKeepTail: true });
+  });
+
+  test("eviction is on by default; the evict: false an earlier name's scaffold wrote is not carried, a keel file's is kept", () => {
+    const config = openConfig(() => dir);
+    writeFileSync(join(dir, "omp-vcc-config.json"), JSON.stringify({ evict: false, trackCommands: ["ssh"] }));
+    config.scaffold();
+    expect(config.load()).toMatchObject({ evict: true, trackCommands: ["ssh"] });
+    // Turned off in keel's own file, it stays off.
+    writeFileSync(join(dir, "keel-config.json"), JSON.stringify({ evict: false }));
+    config.scaffold();
+    expect(config.load().evict).toBe(false);
   });
 
   test("OMP_VCC_CONFIG_PATH still names the config, and KEEL_CONFIG_PATH comes first", () => {

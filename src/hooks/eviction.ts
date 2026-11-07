@@ -1,6 +1,6 @@
 // Before every request: the turns that are out of the context (by the agent,
 // the user's evict command, or keel) leave the request, a line stands in
-// their place, and with the evict setting on, past 85% of the host's trigger,
+// their place, and with the evict setting on (the default), past 85% of the host's trigger,
 // the oldest finished turns leave by themselves (src/core/evict.ts,
 // lisp/src/evict.lisp). Only the request changes; the session file keeps every
 // word. The core decides all of it; the hook only spares a request the call
