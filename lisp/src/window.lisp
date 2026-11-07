@@ -57,7 +57,7 @@
         (rx "greater than the context length of (\\d[\\d,]*)" "i")))
 
 (defun limit-from-overflow-error (text)
-  "window.ts limitFromOverflowError: the context limit an overflow error states, or NIL."
+  "The context limit an overflow error states, or NIL."
   (when (and (stringp text) (plusp (length text)))
     (dolist (re +limit-patterns+)
       (let* ((m (rx-exec re text))
@@ -76,7 +76,7 @@
 (defparameter +pi-default-reserve-tokens+ 16384)
 
 (defun omp-policy-of (settings)
-  "window.ts ompPolicyOf: the fields of omp's preparation.settings that decide where it compacts."
+  "The fields of omp's preparation.settings that decide where it compacts."
   (when (json-object-p settings)
     (let ((policy (json-object)))
       (let ((v (json-get settings "enabled"))) (when (member v '(:true :false)) (setf (gethash "enabled" policy) v)))
@@ -117,7 +117,7 @@ would not fit). tests/window.test.ts holds it to omp's own."
 ;;; --- Pi's policy and trigger (its shouldCompact) -------------------------------------
 
 (defun pi-policy-of (settings)
-  "window.ts piPolicyOf."
+  "The policy fields in Pi's preparation.settings (enabled, reserveTokens), or NIL when it is not an object."
   (when (json-object-p settings)
     (let ((policy (json-object)))
       (let ((v (json-get settings "enabled"))) (when (member v '(:true :false)) (setf (gethash "enabled" policy) v)))
@@ -147,7 +147,10 @@ would compact every turn; the trigger is then 1."
 (defun rule-auto-compacts-p (rule policy) (funcall (third (rule-of rule)) policy))
 
 (defun trigger-for (window recovering tokens-before policy rule)
-  "window.ts triggerFor: where this compaction's budgets assume the next one happens."
+  "Where this compaction's budgets assume the next one happens: the host's
+POLICY applied to the effective WINDOW as the host applies it (RULE). When the
+host's window is too high its trigger can never fire, and the same policy on the
+real window applies. A recovery pass is bounded by the context that overflowed."
   (let ((trigger (and (realp window) (/= window 0) (rule-trigger rule window policy)))
         (before (positive-floor tokens-before)))
     ;; A trigger of 0 (a window of 1) is falsy there: the context's count stands alone.
@@ -169,7 +172,8 @@ would compact every turn; the trigger is then 1."
 (defparameter +min-tail-tokens+ 1000 "The kept tail's floor: the working set takes only the landing room above it.")
 (defparameter +reference-trigger+ (omp-trigger 128000) "omp's trigger on a 128K window: where the numbers below were tuned, and what an unknown trigger is taken to be.")
 
-;; (KEY DEFAULT FLOOR), in DEFAULT_SUMMARY_LIMITS' order.
+;; (KEY DEFAULT FLOOR), in the order the summary limits are written: DEFAULT is
+;; the size on a ~128K window, FLOOR the least it scales down to.
 (defparameter +summary-limits+
   '(("userMessages" 15 4) ("filesPerCategory" 10 3) ("commits" 8 2)
     ("historyRanges" 8 3) ("briefLines" 120 30) ("commandsPerName" 10 3)))
@@ -218,10 +222,11 @@ working set (the setting off), its room goes to the kept tail."
                    "summaryScale" (let ((r (js-round (* scale 100)))) (if (zerop (mod r 100)) (floor r 100) (/ (dbl r) 100d0)))
                    "workingSetTokens" working-set))))
 
-;;; --- the context, measured (plan.ts sizeCompaction) ---------------------------------
+;;; --- the context, measured ---------------------------------------------------------
 
 (defun calibrate-chars-per-token (chars tokens)
-  "token-estimate.ts calibrateCharsPerToken."
+  "Chars per token from CHARS of messages the host counted as TOKENS, clamped to
+2..6; the 4-char heuristic when the host counted none."
   (if (or (not (realp tokens)) (<= tokens 0) (<= chars 0))
       (json-object "mode" "heuristic" "charsPerToken" +default-chars-per-token+)
       (let ((raw (/ (dbl chars) (dbl tokens))))
@@ -248,10 +253,15 @@ working set (the setting off), its room goes to the kept tail."
     nil))
 
 (defun size-compaction (input branch)
-  "plan.ts sizeCompaction: the policy, the trigger, the overhead, chars per token, the budgets."
+  "What a compaction is sized from: the policy, the trigger, the overhead, chars
+per token, the budgets. The overhead (system prompt, tool schemas) is measured
+on the session's first request, whose prompt held little else; without one, the
+counted context less what the messages account for at 4 chars per token, which
+overstates it for dense text. Chars per token are calibrated on the messages
+alone, so a token budget maps to the chars the messages take."
   (let* ((tokens-before (let ((v (json-get input "tokensBefore"))) (and (realp v) v)))
          (previous (let ((p (json-get input "previousSummary"))) (and (stringp p) p)))
-         ;; The live messages (cut.ts collectLiveMessages) and the summary before them.
+         ;; The live messages (LIVE-WINDOW-START on) and the summary before them.
          (content (+ (loop for i from (live-window-start branch) below (length branch)
                            sum (let ((m (live-message (aref branch i)))) (if m (message-chars m) 0)))
                      (if previous (js-length previous) 0)))

@@ -3,13 +3,12 @@
 ;;;; SPDX-License-Identifier: MIT
 ;;;;
 ;;;; Recall's reading of a session file, with the raw store beside it. JSONL,
-;;;; one entry per line; the first
-;;;; `session` entry is the header; every other entry has an `id` and a
-;;;; `parentId`, so the entries form a tree and the active branch is the last
-;;;; entry back to the root. `#N` numbers the message entries in file order,
-;;;; every branch included: it is what summaries cite, and the hook's count
-;;;; (src/core/session-file.ts indexById) must be the same, so it is counted
-;;;; here exactly as there.
+;;;; one entry per line; the first `session` entry is the header; every other
+;;;; entry has an `id` and a `parentId`, so the entries form a tree and the
+;;;; active branch is the last entry back to the root. `#N` numbers the message
+;;;; entries in file order, every branch included: it is what summaries cite and
+;;;; recall resolves, so the summary's count (INDEX-BY-ID over the host's
+;;;; snapshot, host.lisp) and recall's (over the file) are the one count here.
 ;;;;
 ;;;; omp rewrites messages in place; omp-vcc keeps their originals in
 ;;;; `<session>.jsonl.vcc-raw` (raw-capture.lisp), and a message omp rewrote is read

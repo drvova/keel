@@ -30,7 +30,7 @@
 (define-condition regex-syntax-error (error) ((detail :initarg :detail :reader regex-detail))
   (:report (lambda (c s) (format s "regex syntax error: ~a" (regex-detail c)))))
 (define-condition regex-unsupported (error) ((detail :initarg :detail :reader regex-detail))
-  (:report (lambda (c s) (format s "regex construct left to the TS search: ~a" (regex-detail c)))))
+  (:report (lambda (c s) (format s "regex construct searched as text: ~a" (regex-detail c)))))
 (define-condition regex-aborted (error) ())
 
 (deftype units () '(simple-array (unsigned-byte 16) (*)))
@@ -549,7 +549,7 @@ is true when NODE matches there and K matches where it ends."
 (defun compile-regex (pattern &key (ignore-case t) multiline)
   "PATTERN compiled as `new RegExp(PATTERN, FLAGS)`, FLAGS i (the default, as
 recall's search compiles a query) and m; signals REGEX-SYNTAX-ERROR where that
-throws, REGEX-UNSUPPORTED where this port would not be sure to agree."
+throws, REGEX-UNSUPPORTED where this engine would not be sure to agree."
   (let ((*ignore-case* ignore-case) (*multiline* multiline))
     (multiple-value-bind (tree groups) (parse-regex (string-units pattern))
       (%make-regex :matcher (compile-node tree (lambda (p) p)) :groups groups))))

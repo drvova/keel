@@ -7,7 +7,7 @@
 ;;;; code that calls it stays synchronous, and nothing outlives a request. A
 ;;;; start costs ~5 ms (the dumped image is mapped, not loaded).
 ;;;;
-;;;; search-sessions: session files the core reads itself (src/core/recall-run.ts)
+;;;; search-sessions: session files the core reads itself, for the search tests (tests/support/pairs.ts)
 ;;;;   {"op":"search-sessions","query":Q,
 ;;;;    "sources":[{"file":F,"ids":[ID...]|"active"|null,"skip":[N...],"session":S|null,"bytes":B}...],
 ;;;;    "maxBytes":B?,"maxEntries":N?}
@@ -63,8 +63,7 @@
 ;;;;   first (from LEGACY, pi-vcc's file, when given and there is none at P).
 ;;;;
 ;;;; pin: one vcc_pin call or /…-pin, /…-unpin command (src/core/pins.ts)
-;;;;   {"op":"pin","input":{call:{surface:"tool",params}|{surface:"command",name:"pin"|"unpin",args},
-;;;;    branch:[the branch's pin entries and /clear boundaries], entries:[{type, message?}...]}}
+;;;;   {"op":"pin","host":SNAPSHOT,"call":{surface:"tool",params}|{surface:"command",name:"pin"|"unpin",args}}
 ;;;;   -> {"ok":true,"pin":{done, text, op?, severity?, agentNote?}}; OP is the
 ;;;;   omp-vcc.pin entry's data for the host to append.
 ;;;;
@@ -107,15 +106,15 @@
 ;;;;    recovering, tokensBefore, overheadTokens, workingSet}...]}
 ;;;;   -> {"ok":true,"results":[{"limit":N?} | {policy?, trigger?, autoCompacts, budgets}...]}
 ;;;;
-;;;; recall: one vcc_recall call or /…-recall command (src/core/recall-run.ts recall)
-;;;;   {"op":"recall","input":{call:{surface:"tool",params}|{surface:"command",name,args},
-;;;;    sessionFile, projectFiles (newest first), cwd, lineageIds, hostBranch, contextWindow, skipCurrentTurn}}
+;;;; recall: one vcc_recall call or /…-recall command (src/core/recall-run.ts)
+;;;;   {"op":"recall","host":SNAPSHOT,"call":{surface:"tool",params}|{surface:"command",name,args},
+;;;;    "projectFiles":[F...] (newest first)}
 ;;;;   -> {"ok":true,"recall":{"ok":B,"text":T,"severity":S?}}
 ;;;;
 ;;;; Any failure answers {"ok":false,"error":MESSAGE}.
 ;;;;
-;;;; Any error is answered, never thrown past MAIN: a caller that gets no
-;;;; answer falls back, so a broken core costs speed, not recall.
+;;;; Any error is answered, never thrown past MAIN: src/core/lisp-core.ts
+;;;; throws it as the core's failure, with the message.
 
 (in-package #:omp-vcc)
 
