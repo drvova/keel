@@ -13,6 +13,7 @@ import { registerPinCommands } from "./commands/pin";
 import { registerRecallTool } from "./tools/recall";
 import { registerPinTool } from "./tools/pin";
 import { coreStatus } from "./core/lisp-core";
+import { whenCore } from "./core/core-wait";
 import { registerEviction } from "./hooks/eviction";
 import { registerContextTool } from "./tools/context";
 import { registerEvictCommand } from "./commands/evict";
@@ -34,6 +35,7 @@ export const register = (pi: ExtensionAPI, host: Host): void => {
   registerPinCommands(pi, binding);
   // Old turns out of the context whole, instead of a summary, with the evict setting on.
   registerEviction(pi, binding);
-  if (binding.config.load().evict) registerContextTool(pi, binding);
+  // The setting is read through the core, which may not be built yet: then the tool comes with the next session.
+  if (whenCore(() => binding.config.load().evict)) registerContextTool(pi, binding);
   registerEvictCommand(pi, binding);
 };

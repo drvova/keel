@@ -7,6 +7,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { evict, evictRequest, type EvictCall } from "../src/core/evict";
+import { registerEviction } from "../src/hooks/eviction";
 import { EVICT_ENTRY_TYPE } from "../src/names";
 import { ompBinding } from "./support/binding";
 import { writeJsonl, freshDir } from "./support/session-files";
@@ -82,7 +83,7 @@ describe("vcc_context", () => {
     const shown = texts(messages);
     // The two turns' six messages are gone; one line stands where they were, then turns 2 and 3 as they are.
     expect(shown).toHaveLength(1 + 6);
-    expect(shown[0]).toBe('[#0–#5 out of context: 2 turns, ~' + shown[0].match(/~(\d+) tokens/)![1] + ' tokens, by the agent. Requests: "request number 0 please read f0.ts"; "request number 1 please read f1.ts". Note: f0 and f1 were read; nothing to fix there. Each entry reads back word for word with vcc_recall expand:[0]; vcc_recall query searches them.]');
+    expect(shown[0]).toBe('[#0–#5 out of context: 2 turns, by the agent. Requests: "request number 0 please read f0.ts"; "request number 1 please read f1.ts". Note: f0 and f1 were read; nothing to fix there. Each entry reads back word for word with vcc_recall expand:[0]; vcc_recall query searches them.]');
     expect(shown[1]).toBe("request number 2 please read f2.ts");
     // A call and its result leave together: what stays has every result's call.
     const calls = new Set((messages as any[]).flatMap((m) => (m.role === "assistant" ? m.content.map((p: any) => p.id) : [])));
@@ -125,6 +126,26 @@ describe("/omp-vcc-evict", () => {
     expect(command(s, "#3-#4")).toContain("#3–#5 (1 turn");
     expect(command(s, "whatever")).toContain("Not understood: whatever.");
     expect(s.appended.map((e) => e.data.by).every((b) => b === "user")).toBe(true);
+  });
+});
+
+describe("the request hook", () => {
+  it("leaves out what the evict command took, with the evict setting off too", async () => {
+    setEvict(false);
+    const s = session(4);
+    expect(call(s, { surface: "command", args: "2" })).toContain("#0–#5 (2 turns");
+    let handler: any;
+    registerEviction({ on: (name: string, fn: any) => { if (name === "context") handler = fn; }, appendEntry: s.host.appendEntry } as any, ompBinding as any);
+    const result = await handler({ type: "context", messages: s.request() }, { ...s.ctx(), ui: { notify: () => {} } });
+    expect(texts(result.messages)[0]).toStartWith("[#0–#5 out of context: 2 turns, by the user.");
+  });
+
+  it("does nothing, and asks the core nothing, with the setting off and nothing recorded", async () => {
+    setEvict(false);
+    const s = session(4);
+    let handler: any;
+    registerEviction({ on: (name: string, fn: any) => { if (name === "context") handler = fn; }, appendEntry: s.host.appendEntry } as any, ompBinding as any);
+    expect(await handler({ type: "context", messages: s.request() }, s.ctx())).toBeUndefined();
   });
 });
 

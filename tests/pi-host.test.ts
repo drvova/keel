@@ -215,7 +215,7 @@ describe.skipIf(!piInstalled())("Pi host", () => {
       const sent = await session.extensionRunner.emitContext(structuredClone(messages));
       const text = (m: any) => (typeof m.content === "string" ? m.content : Array.isArray(m.content) ? m.content.map((p: any) => p.text ?? "").join("") : "");
       const stub = sent.find((m: any) => text(m).includes("out of context:"));
-      expect(text(stub)).toMatch(/^\[#(\d+)–#\d+ out of context: 1 turn, ~\d+ tokens, by the user\./);
+      expect(text(stub)).toMatch(/^\[#(\d+)–#\d+ out of context: 1 turn, by the user\./);
       expect(sent.length).toBeLessThan(messages.length + 1);
       expect(sent.some((m: any) => text(m) === "Tag the release")).toBe(true);
       // What left the request is in the session, word for word.

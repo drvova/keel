@@ -271,13 +271,20 @@ describe("compaction hook: compact-all path", () => {
 
   test("with turns leaving the context whole, threshold and idle passes are turned down; a recovery or a manual one still compacts", () => {
     setConfig({ debug: false, overrideDefaultCompaction: true, evict: true });
-    const { pi, invokeBefore } = createMockOmp();
+    const { pi, invokeBefore, ctx } = createMockOmp();
     register(pi);
     const entries = [msg("m1", "user"), msg("m2", "assistant"), msg("m3", "user"), msg("m4", "assistant")];
+    // The session as omp's session manager holds it: #N and the turns are counted there.
+    let tree: any[] = entries;
+    (ctx as any).sessionManager = { getEntries: () => tree, getBranch: () => tree };
     expect(invokeBefore(makeEvent(entries, undefined, { reason: "threshold", willRetry: false }))).toEqual({ cancel: true });
     expect(invokeBefore(makeEvent(entries, undefined, { reason: "idle", willRetry: false }))).toEqual({ cancel: true });
     expect(invokeBefore(makeEvent(entries, undefined, { reason: "overflow", willRetry: true })).compaction).toBeDefined();
     expect(invokeBefore(makeEvent(entries)).compaction).toBeDefined();
+    // With every finished turn out already there is nothing left to evict: the summary runs.
+    const out = { type: "custom", id: "x1", parentId: "m4", customType: "omp-vcc.evict", data: { v: 1, op: "evict", from: 0, to: 1, by: "auto", at: 4 } };
+    tree = [...entries, out];
+    expect(invokeBefore(makeEvent(tree, undefined, { reason: "threshold", willRetry: false })).compaction).toBeDefined();
     setConfig({ debug: false, overrideDefaultCompaction: true });
   });
 

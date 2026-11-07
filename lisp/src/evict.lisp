@@ -45,23 +45,30 @@
 made after that left it out)."
   from to by note at)
 
-(defun read-evictions (branch)
+(defun op-at (op) (let ((at (json-get op "at"))) (if (js-integer-p at) (as-integer at) 0)))
+
+(defun overlaps-p (from to other-from other-to) (and (<= from other-to) (>= to other-from)))
+
+(defun range-text (from to) (format nil "#~d–#~d" from to))
+
+(defun read-evictions (branch &optional as-of)
   "What is out of the context on BRANCH since its last /clear: each evict and
-restore replayed along it, as outs ordered by #N."
+restore replayed along it, as outs ordered by #N; with AS-OF, only the ops
+recorded by then (when the #N count was at most AS-OF), as a request made then saw it."
   (let ((outs '()))
     (loop for i from (1+ (last-reset-index branch)) below (length branch)
           for e = (aref branch i)
-          when (evict-entry-p e)
+          when (and (evict-entry-p e) (or (null as-of) (<= (op-at (json-get e "data")) as-of)))
             do (let* ((op (json-get e "data")) (from (json-get op "from")) (to (json-get op "to")))
                  (when (and (js-integer-p from) (js-integer-p to) (<= from to))
                    (let ((from (as-integer from)) (to (as-integer to)))
                      (cond ((equal (json-get op "op") "evict")
                             (push (make-out from to (let ((b (json-get op "by"))) (if (member b '("agent" "user" "auto") :test #'equal) b "agent"))
                                             (let ((n (json-get op "note"))) (and (stringp n) (plusp (length (js-trim n))) n))
-                                            (let ((at (json-get op "at"))) (if (js-integer-p at) (as-integer at) 0)))
+                                            (op-at op))
                                   outs))
                            ((equal (json-get op "op") "restore")
-                            (setf outs (remove-if (lambda (o) (and (<= (out-from o) to) (>= (out-to o) from))) outs))))))))
+                            (setf outs (remove-if (lambda (o) (overlaps-p (out-from o) (out-to o) from to)) outs))))))))
     (sort outs #'< :key #'out-from)))
 
 (defun out-of (n outs) (find-if (lambda (o) (<= (out-from o) n (out-to o))) outs))
@@ -90,7 +97,11 @@ comes before the first request in the window is a turn of its own."
 
 (defun turn-out-p (turn outs) (and (out-of (turn-from turn) outs) t))
 
-(defun finished-turns (turns) (butlast turns))
+(defun finished-turns (turns) "Every turn but the newest, which is the one running." (butlast turns))
+
+(defun turns-in (turns outs) "The finished TURNS still in the context: what can leave." (remove-if (lambda (tr) (turn-out-p tr outs)) (finished-turns turns)))
+
+(defun room-to-evict-p (branch index) "Whether a finished turn on BRANCH is still in the context." (and (turns-in (branch-turns branch index) (read-evictions branch)) t))
 
 (defun turn-of-n (n turns) (find-if (lambda (tr) (<= (turn-from tr) n (turn-to tr))) turns))
 
@@ -115,19 +126,20 @@ comes before the first request in the window is a turn of its own."
                        (remove-duplicates bys :test #'equal :from-end t))))
     (join-strings names " and ")))
 
-(defun stub-text (run outs chars per-token messages-by-n)
-  "The line a run of turns that are out leaves in the request: what it was and how to read it back."
+(defun stub-text (run outs messages-by-n)
+  "The line a run of turns that are out leaves in the request: what it was and
+how to read it back. It names no size: the turns' messages are what omp rewrites
+in place, and the line must read the same on every request for the cache."
   (let* ((from (turn-from (first run))) (to (turn-to (car (last run))))
-         (covering (remove-if-not (lambda (o) (and (<= (out-from o) to) (>= (out-to o) from))) outs))
+         (covering (remove-if-not (lambda (o) (overlaps-p (out-from o) (out-to o) from to)) outs))
          (requests (loop for tr in run
                          for m = (gethash (turn-from tr) messages-by-n)
                          for w = (and m (equal (json-get m "role") "user") (request-words m))
                          when w collect w))
          (shown (subseq requests 0 (min +stub-requests-shown+ (length requests))))
-         (notes (remove nil (mapcar #'out-note covering)))
-         (tokens (tokens-from-chars (reduce #'+ (mapcar (lambda (tr) (turn-chars tr chars)) run)) per-token)))
-    (format nil "[#~d–#~d out of context: ~a, ~~~a tokens, by ~a.~@[ Requests: ~a.~]~@[ Note: ~a~] Each entry reads back word for word with ~a; vcc_recall query searches them.]"
-            from to (plural (length run) "turn") (js-string-of tokens) (by-words (mapcar #'out-by covering))
+         (notes (remove nil (mapcar #'out-note covering))))
+    (format nil "[~a out of context: ~a, by ~a.~@[ Requests: ~a.~]~@[ Note: ~a~] Each entry reads back word for word with ~a; vcc_recall query searches them.]"
+            (range-text from to) (plural (length run) "turn") (by-words (mapcar #'out-by covering))
             (and shown (format nil "~{\"~a\"~^; ~}~@[ (+~d more)~]" shown (and (> (length requests) (length shown)) (- (length requests) (length shown)))))
             (and notes (join-strings (mapcar (lambda (n) (if (find (char n (1- (length n))) ".!?") n (concatenate 'string n "."))) notes) " "))
             (recall-expand-call from))))
@@ -137,14 +149,6 @@ comes before the first request in the window is a turn of its own."
 (defun message-key (m)
   "What ties a request's message to its session entry: role, time and call id."
   (format nil "~a|~a|~a" (json-get m "role") (js-string-of (json-get m "timestamp")) (or (json-get m "toolCallId") "")))
-
-(defun prompt-tokens (m)
-  "The prompt the provider counted for the request that made assistant message M, or NIL."
-  (let ((u (and (equal (json-get m "role") "assistant") (json-get m "usage"))))
-    (when (json-object-p u)
-      (let ((n (+ (or (js-number-of (json-get u "input")) 0) (or (js-number-of (json-get u "cacheRead")) 0)
-                  (or (js-number-of (json-get u "cacheWrite")) 0))))
-        (and (> n 0) n)))))
 
 (defun evict-request (branch index messages &key trigger auto (count 0))
   "What leaves REQUEST MESSAGES (a vector, the host's next request): the indices
@@ -177,11 +181,11 @@ before and after: (values DROP STUBS OPS BEFORE AFTER)."
       ;; The context now, estimated: what the provider counted for the latest
       ;; request, less what was sent then, is what the request holds besides the
       ;; messages (the system prompt, the tools); plus the messages kept now.
-      (let* ((last-at (position-if (lambda (m) (and (json-object-p m) (prompt-tokens m))) messages :from-end t))
+      (let* ((last-at (position-if (lambda (m) (and (json-object-p m) (usage-prompt-tokens m))) messages :from-end t))
              (overhead (if last-at
                            (let* ((m (aref messages last-at)) (made (aref n-of last-at))
-                                  (then (remove-if (lambda (o) (and made (> (out-at o) made))) outs)))
-                             (max 0 (- (prompt-tokens m) (tokens-from-chars (chars-kept then last-at) per-token))))
+                                  (then (if made (read-evictions branch made) outs)))
+                             (max 0 (- (usage-prompt-tokens m) (tokens-from-chars (chars-kept then last-at) per-token))))
                            0))
              (before (+ overhead (tokens-from-chars (chars-kept outs) per-token)))
              (after before))
@@ -201,11 +205,17 @@ before and after: (values DROP STUBS OPS BEFORE AFTER)."
           (dolist (run (runs-of (remove-if-not (lambda (tr) (turn-out-p tr outs)) (finished-turns turns))))
             (let ((first-at (position-if (lambda (tr) (member tr run)) turn-at)))
               (when first-at
-                (push (cons first-at (stub-text run outs chars per-token by-n)) stubs)
+                (push (cons first-at (stub-text run outs by-n)) stubs)
                 (loop for i from first-at below (length messages)
                       while (or (null (aref turn-at i)) (member (aref turn-at i) run))
                       when (member (aref turn-at i) run) do (push i drop)))))
           (values (nreverse drop) (nreverse stubs) (nreverse ops) before after))))))
+
+(defun auto-notice (ops before after)
+  "What the user is told when omp-vcc took turns out as the context filled."
+  (format nil "omp-vcc: Context ~~~a → ~~~a tokens · ~{~a~^, ~} out · by omp-vcc as the context filled; vcc_recall expand reads any of it back."
+          (js-string-of before) (js-string-of after)
+          (mapcar (lambda (op) (range-text (json-get op "from") (json-get op "to"))) ops)))
 
 ;;; --- the agent's and the user's calls -----------------------------------------------------
 
@@ -222,7 +232,7 @@ before and after: (values DROP STUBS OPS BEFORE AFTER)."
 
 (defun turn-line (tr chars per-token messages-by-n)
   (let ((m (gethash (turn-from tr) messages-by-n)))
-    (format nil "#~d–#~d ~~~a tokens~@[ \"~a\"~]" (turn-from tr) (turn-to tr)
+    (format nil "~a ~~~a tokens~@[ \"~a\"~]" (range-text (turn-from tr) (turn-to tr))
             (js-string-of (tokens-from-chars (turn-chars tr chars) per-token))
             (and m (equal (json-get m "role") "user") (request-words m)))))
 
@@ -237,38 +247,38 @@ before and after: (values DROP STUBS OPS BEFORE AFTER)."
             (mapcar (lambda (tr) (turn-line tr chars +default-chars-per-token+ by-n)) shown)
             (if out-runs
                 (format nil "Out of context:~{~%  ~a~}"
-                        (mapcar (lambda (run) (format nil "#~d–#~d (~a)" (turn-from (first run)) (turn-to (car (last run))) (plural (length run) "turn")))
+                        (mapcar (lambda (run) (format nil "~a (~a)" (range-text (turn-from (first run)) (turn-to (car (last run)))) (plural (length run) "turn")))
                                 out-runs))
                 "Nothing is out of context."))))
 
 (defun evict-turns (leaving turns outs chars by note count)
   "Record LEAVING (turns, oldest first) as out: (values TEXT OPS)."
-  (let ((leaving (remove-if (lambda (tr) (turn-out-p tr outs)) (intersection leaving (finished-turns turns)))))
+  (let ((leaving (intersection leaving (turns-in turns outs))))
     (setf leaving (sort (copy-list leaving) #'< :key #'turn-from))
     (if (null leaving)
         (values "Nothing to take out: those turns are out already, or one is the turn running, which stays." '())
         (let ((ops (mapcar (lambda (run) (evict-op "evict" (turn-from (first run)) (turn-to (car (last run))) by count note))
                            (runs-of leaving))))
-          (values (format nil "Out of context from the next request: ~{#~a~^, ~} (~a, ~~~a tokens). ~a reads any entry back word for word."
-                          (mapcar (lambda (op) (format nil "~d–#~d" (json-get op "from") (json-get op "to"))) ops)
+          (values (format nil "Out of context from the next request: ~{~a~^, ~} (~a, ~~~a tokens). ~a reads any entry back word for word."
+                          (mapcar (lambda (op) (range-text (json-get op "from") (json-get op "to"))) ops)
                           (plural (length leaving) "turn")
                           (js-string-of (tokens-from-chars (reduce #'+ (mapcar (lambda (tr) (turn-chars tr chars)) leaving)) +default-chars-per-token+))
                           (recall-expand-call (json-get (first ops) "from")))
                   ops)))))
 
 (defun restore-turns (ranges outs by count)
-  (let ((back (remove-if-not (lambda (o) (some (lambda (r) (and (<= (out-from o) (cdr r)) (>= (out-to o) (car r)))) ranges)) outs)))
+  (let ((back (remove-if-not (lambda (o) (some (lambda (r) (overlaps-p (out-from o) (out-to o) (car r) (cdr r))) ranges)) outs)))
     (if (null back)
         (values "Nothing to bring back: no turn there is out of context." '())
-        (values (format nil "Back in context from the next request: ~{#~a~^, ~}." (mapcar (lambda (o) (format nil "~d–#~d" (out-from o) (out-to o))) back))
+        (values (format nil "Back in context from the next request: ~{~a~^, ~}." (mapcar (lambda (o) (range-text (out-from o) (out-to o))) back))
                 (mapcar (lambda (o) (evict-op "restore" (out-from o) (out-to o) by count)) back)))))
 
 (defun turns-touching (ranges turns)
-  (remove-if-not (lambda (tr) (some (lambda (r) (and (<= (turn-from tr) (cdr r)) (>= (turn-to tr) (car r)))) ranges)) turns))
+  (remove-if-not (lambda (tr) (some (lambda (r) (overlaps-p (turn-from tr) (turn-to tr) (car r) (cdr r))) ranges)) turns))
 
 (defun oldest-half (turns outs chars)
   "The oldest finished turns in context holding about half of their tokens."
-  (let* ((in (remove-if (lambda (tr) (turn-out-p tr outs)) (finished-turns turns)))
+  (let* ((in (turns-in turns outs))
          (half (/ (reduce #'+ (mapcar (lambda (tr) (turn-chars tr chars)) in)) 2)) (sum 0) (leaving '()))
     (dolist (tr in (nreverse leaving))
       (when (and leaving (>= sum half)) (return (nreverse leaving)))
@@ -285,7 +295,7 @@ before and after: (values DROP STUBS OPS BEFORE AFTER)."
                (note (let ((n (json-get params "note"))) (and (stringp n) (plusp (length (js-trim n))) (js-clip (js-trim n) +pin-chars+)))))
           (cond (restore (restore-turns restore outs by count))
                 (drop (evict-turns (turns-touching drop turns) turns outs chars by note count))
-                (oldest (let ((in (remove-if (lambda (tr) (turn-out-p tr outs)) (finished-turns turns))))
+                (oldest (let ((in (turns-in turns outs)))
                           (evict-turns (subseq in 0 (min oldest (length in))) turns outs chars by note count)))
                 (t (values (list-context turns outs chars by-n) '()))))
         (let* ((args (js-trim (let ((a (json-get call "args"))) (if (stringp a) a ""))))
@@ -299,7 +309,7 @@ before and after: (values DROP STUBS OPS BEFORE AFTER)."
                                     (refs-of (coerce (rest words) 'vector)))
                                 outs by count))
                 ((every #'digit-char-p args)
-                 (let ((in (remove-if (lambda (tr) (turn-out-p tr outs)) (finished-turns turns))))
+                 (let ((in (turns-in turns outs)))
                    (evict-turns (subseq in 0 (min (parse-integer args) (length in))) turns outs chars by nil count)))
                 ((refs-of (coerce words 'vector)) (evict-turns (turns-touching (refs-of (coerce words 'vector)) turns) turns outs chars by nil count))
                 (t (values (format nil "Not understood: ~a. Give nothing (the oldest half), a number of turns, all, list, #A-#B, or restore #A-#B." args) '())))))))

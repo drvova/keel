@@ -147,9 +147,7 @@ itself as the context fills (the evict setting), and what to tell of them."
       (json-object "drop" (coerce drop 'vector)
                    "stubs" (map 'vector (lambda (st) (json-object "at" (car st) "text" (cdr st))) stubs)
                    "ops" (coerce ops 'vector)
-                   "notice" (and ops (format nil "omp-vcc: Context ~~~a → ~~~a tokens · ~{#~a~^, ~} out · by omp-vcc as the context filled; vcc_recall expand reads any of it back."
-                                             (js-string-of before) (js-string-of after)
-                                             (mapcar (lambda (op) (format nil "~d–#~d" (json-get op "from") (json-get op "to"))) ops)))))))
+                   "notice" (and ops (auto-notice ops before after))))))
 
 (defun evict-for-host (s call)
   "One vcc_context call or evict command: what to tell, and the entries to append. Turn sizes come from the session file."

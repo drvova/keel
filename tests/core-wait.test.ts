@@ -45,6 +45,17 @@ describe("while the core cannot run", () => {
     expect(told[0]).toContain("omp-vcc needs SBCL to build its core");
   });
 
+  it("the extension still loads, every command and tool but the one the core's settings decide", () => {
+    const { register } = require("../src/register") as typeof import("../src/register");
+    const commands: string[] = [];
+    const tools: string[] = [];
+    const pi: any = { on: () => {}, registerCommand: (name: string) => commands.push(name), registerTool: (t: any) => tools.push(t.name), appendEntry: () => {} };
+    const host: any = { ...require("../src/host").OMP_HOST, agentDir: () => dir, convertToLlm: (m: unknown[]) => m, triggerOf: () => ({ reason: "manual", willRetry: false }) };
+    expect(() => register(pi, host)).not.toThrow();
+    expect(commands).toContain("omp-vcc-evict");
+    expect(tools).toEqual(expect.arrayContaining(["vcc_recall", "vcc_pin"]));
+  });
+
   it("vcc_recall and vcc_pin answer with the reason", async () => {
     const tools: any[] = [];
     const pi: any = { registerTool: (t: any) => tools.push(t), appendEntry: () => {} };

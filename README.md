@@ -192,10 +192,10 @@ The other way to make room: instead of a summary written over the oldest part of
 
 - **`/omp-vcc-evict`** (`/pi-vcc-evict` on Pi), at any time: no text takes out the oldest half of the turns in context; `3` the three oldest; `all` every finished turn; `#12-#40` the turns that range touches; `restore #12` (or `restore all`) brings them back; `list` shows what is in and what is out, by `#N` and size.
 - **With `"evict": true`** in the config, the agent decides too, with the `vcc_context` tool (no params lists; `drop`, `oldest`, `restore`, and a `note` kept in their place), and past 85% of the host's trigger the oldest finished turns leave by themselves, down to half of it, so the host's own compaction is rarely reached; its automatic threshold and idle passes are turned down, since a summary would be written over what eviction keeps whole. An overflow recovery still gets its summary, as do `/compact` and `/omp-vcc` when you ask for one.
-- In place of each run of turns that are out, the request carries one line, the same on every request so the provider's prompt cache keeps it:
+- In place of each run of turns that are out, the request carries one line, the same on every request so the provider's prompt cache keeps it (it names no size, since what omp rewrites in place would change it):
 
 ```text
-[#0–#20 out of context: 7 turns, ~52595 tokens, by omp-vcc as the context filled. Requests: "fix the auth bug"; "add the refresh test"; "run the suite" (+4 more). Each entry reads back word for word with vcc_recall expand:[0]; vcc_recall query searches them.]
+[#0–#20 out of context: 7 turns, by omp-vcc as the context filled. Requests: "fix the auth bug"; "add the refresh test"; "run the suite" (+4 more). Each entry reads back word for word with vcc_recall expand:[0]; vcc_recall query searches them.]
 ```
 
 What is out is a ledger of `omp-vcc.evict` custom entries, replayed along the branch as pinned notes are, so a branch keeps its own and `/tree` back past one undoes it. Turns leave in large runs from the oldest end: every edit makes the provider read again all that follows it, so one large eviction costs less than many small ones. The idea is [Context Language Models](https://arxiv.org/abs/2609.37725) (the model decides what stays) and [nodecode](https://nodecode.ai/docs/context) (the oldest finished turns leave whole past 85%, and read back by their number).

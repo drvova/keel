@@ -241,18 +241,22 @@ working set (the setting off), its room goes to the kept tail."
 
 (defun number-or-zero (v) (or (js-number-of v) 0))
 
+(defun usage-prompt-tokens (m)
+  "The prompt the provider counted for the request that made assistant message M
+(input, cache reads and cache writes), or NIL."
+  (let ((u (and (json-object-p m) (equal (json-get m "role") "assistant") (json-get m "usage"))))
+    (when (truthy-p u)
+      (let ((n (+ (number-or-zero (json-get u "input")) (number-or-zero (json-get u "cacheRead")) (number-or-zero (json-get u "cacheWrite")))))
+        (and (> n 0) n)))))
+
 (defun measured-overhead-tokens (branch)
   "Prompt tokens of the session's first request less what its messages account for, or NIL."
   (let ((chars 0))
     (loop for e across branch
           for m = (json-get e "message")
           when (and (equal (json-get e "type") "message") (truthy-p m))
-            do (let* ((u (and (equal (json-get m "role") "assistant") (json-get m "usage")))
-                      (prompt (if (truthy-p u)
-                                  (+ (number-or-zero (json-get u "input")) (number-or-zero (json-get u "cacheRead"))
-                                     (number-or-zero (json-get u "cacheWrite")))
-                                  0)))
-                 (when (> prompt 0) (return-from measured-overhead-tokens (max 0 (- prompt (tokens-from-chars chars)))))
+            do (let ((prompt (usage-prompt-tokens m)))
+                 (when prompt (return-from measured-overhead-tokens (max 0 (- prompt (tokens-from-chars chars)))))
                  (incf chars (message-chars m))))
     nil))
 
