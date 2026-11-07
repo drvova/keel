@@ -223,8 +223,12 @@ export const runLongHorizon = async (options: LongHorizonOptions = {}): Promise<
       await session.prompt(plan.user);
       const pin = options.pins?.[t];
       if (pin) await hostSession.tool("vcc_pin").execute("pin", { note: pin }, undefined, undefined);
-      // omp's idle pass; on Pi, which has none, Pi's /compact.
-      if ((t + 1) % compactEvery === 0) await hostSession.periodicCompaction();
+      // omp's idle pass; on Pi, which has none, Pi's /compact. With turns leaving
+      // the context whole, omp-vcc turns omp's idle pass down while there is a
+      // turn to take out; Pi's /compact is a compaction the user asks for, which
+      // it never turns down, so as a stand-in for an idle pass it is left out.
+      const standIn = hostSession.host === "pi" && options.config?.evict === true;
+      if ((t + 1) % compactEvery === 0 && !standIn) await hostSession.periodicCompaction();
     }
     await sessionManager.flush?.();
 
