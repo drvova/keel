@@ -84,6 +84,35 @@ describe("vcc_pin", () => {
   });
 });
 
+describe("named notes", () => {
+  it("a name pinned again replaces its note; unpin takes the name; a bad name is refused", () => {
+    const s = session([message("m1"), message("m2", "assistant")]);
+    expect(executePin({ note: "refresh after reset", name: "Auth-Plan" }, s.host, s.sm)).toBe("Pinned [1] auth-plan: refresh after reset (agent, #1).");
+    expect(executePin({ note: "an unnamed note" }, s.host, s.sm)).toBe("Pinned [2] an unnamed note (agent, #1).");
+    expect(executePin({ note: "refresh after reset", name: "auth-plan" }, s.host, s.sm)).toBe("Already pinned: [1] auth-plan: refresh after reset (agent, #1).");
+    expect(executePin({ note: "refresh after reset; never touch SSO", name: "auth-plan" }, s.host, s.sm))
+      .toBe("Redefined [3] auth-plan: refresh after reset; never touch SSO (agent, #1). It replaces [1] auth-plan: refresh after reset (agent, #1).");
+    expect(readPins(s.entries)).toEqual([[2, "an unnamed note", "agent"], [3, "auth-plan: refresh after reset; never touch SSO", "agent"]]);
+    expect(executePin({ note: "x", name: "no spaces here" }, s.host, s.sm)).toStartWith("Not a name: \"no spaces here\".");
+    expect(executePin({ unpin: "auth-plan" }, s.host, s.sm)).toBe("Unpinned [3] auth-plan: refresh after reset; never touch SSO (agent, #1).");
+    expect(readPins(s.entries).map(([id]) => id)).toEqual([2]);
+  });
+
+  it("the command names a note with name:NAME", async () => {
+    const s = session([message("m1")]);
+    const commands = new Map<string, (args: string, ctx: any) => Promise<void>>();
+    const notices: string[] = [];
+    registerPinCommands({ registerCommand: (name: string, c: any) => commands.set(name, c.handler), appendEntry: s.host.appendEntry, sendMessage: () => {} } as any, ompBinding);
+    const ctx = { sessionManager: s.sm, ui: { notify: (m: string) => notices.push(m) } };
+    await commands.get("omp-vcc-pin")!("name:test-cmd bun test tests/auth", ctx);
+    expect(notices.at(-1)).toBe("Pinned [1] test-cmd: bun test tests/auth (user, #0).");
+    await commands.get("omp-vcc-pin")!("Note: name:x is not at the start", ctx);
+    expect(notices.at(-1)).toBe("Pinned [2] Note: name:x is not at the start (user, #0).");
+    await commands.get("omp-vcc-unpin")!("test-cmd", ctx);
+    expect(readPins(s.entries).map(([id]) => id)).toEqual([2]);
+  });
+});
+
 describe("/omp-vcc-pin and /omp-vcc-unpin", () => {
   it("pin, tell the agent on its next turn, list, unpin", async () => {
     const s = session([message("m1")]);

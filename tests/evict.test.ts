@@ -8,7 +8,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { evict, evictRequest, type EvictCall } from "../src/core/evict";
 import { registerEviction } from "../src/hooks/eviction";
-import { EVICT_ENTRY_TYPE } from "../src/names";
+import { EVICT_ENTRY_TYPE, PIN_ENTRY_TYPE } from "../src/names";
 import { ompBinding } from "./support/binding";
 import { writeJsonl, freshDir } from "./support/session-files";
 
@@ -259,6 +259,23 @@ describe("a turn whose older steps left while it ran", () => {
     expect(listing).toContain("Out of context:\n  #1–#4 (older steps of the turn at #0)");
     // Taking that turn out records only what of it is still in: no range overlaps one out already.
     expect(tool(s, { drop: [0] })).toStartWith("Out of context from the next request: #0, #5–#10 (1 turn");
+  });
+});
+
+describe("pinned notes when turns leave", () => {
+  it("travel with the turn they were pinned in: its line carries the ones still held, as they read now", () => {
+    setEvict(true);
+    const s = session(4);
+    // Pinned in turn 0 (#0–#3) and turn 1; the one in turn 1 is defined again in turn 3.
+    s.host.appendEntry(PIN_ENTRY_TYPE, { v: 1, op: "add", id: 1, text: "sessions live in SQLite", by: "agent", at: 1 });
+    s.host.appendEntry(PIN_ENTRY_TYPE, { v: 1, op: "add", id: 2, name: "test-cmd", text: "bun test", by: "agent", at: 5 });
+    s.host.appendEntry(PIN_ENTRY_TYPE, { v: 1, op: "add", id: 3, name: "test-cmd", text: "bun test --isolate", by: "agent", at: 13 });
+    record(s, { op: "evict", from: 0, to: 7 });
+    const line = texts(sent(s).messages)[0];
+    expect(line).toContain("Pinned there, still held: [1] sessions live in SQLite (agent, #1).");
+    expect(line).not.toContain("test-cmd");
+    const listing = tool(s, null);
+    expect(listing).toContain("Pinned (vcc_pin; a name pinned again replaces its note):\n  [1] sessions live in SQLite (agent, #1)\n  [3] test-cmd: bun test --isolate (agent, #13)");
   });
 });
 

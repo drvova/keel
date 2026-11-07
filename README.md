@@ -49,8 +49,8 @@ omp-vcc runs whenever the host compacts, or on demand. The commands carry the ho
 |---|---|---|
 | `/omp-vcc` | `/pi-vcc` | Compact now, keeping the last user turn. |
 | `/omp-vcc keep:N [prompt]` | `/pi-vcc keep:N [prompt]` | Keep the last `N` user turns (`keep:0` compacts everything), then send the optional prompt to the agent instead of resuming the interrupted turn. |
-| `/omp-vcc-pin <note>` | `/pi-vcc-pin <note>` | Pin a note that stays at the top of every summary; with no note, list them. The agent pins its own with the `vcc_pin` tool (decisions, constraints, facts the task depends on). |
-| `/omp-vcc-unpin <N>` | `/pi-vcc-unpin <N>` | Unpin note `N`. |
+| `/omp-vcc-pin <note>` | `/pi-vcc-pin <note>` | Pin a note that stays at the top of every summary; with no note, list them. `name:NAME` first names it, and pinning a name again replaces its note. The agent pins its own with the `vcc_pin` tool (decisions, constraints, facts the task depends on), with a `name` to keep one current. |
+| `/omp-vcc-unpin <N>` | `/pi-vcc-unpin <N>` | Unpin note `N`, or a note by its name. |
 | `/omp-vcc-recall …` | `/pi-vcc-recall …` | Search the history, as `vcc_recall` does (see [Recall](#recall)). |
 | `/omp-vcc-evict …` | `/pi-vcc-evict …` | Take old turns out of the context whole, bring them back, or list what is in and out (see [Turns out of the context, whole](#turns-out-of-the-context-whole)). |
 
@@ -199,6 +199,7 @@ The other way to make room: instead of a summary written over the oldest part of
 [#0–#20 out of context: 7 turns, by omp-vcc as the context filled. Requests: "fix the auth bug"; "add the refresh test"; "run the suite" (+4 more). It changed 5 files in auth, billing; 2 commits, last 3f2a1c9 fix refresh; 1 failed call. Each entry reads back word for word with vcc_recall expand:[0]; vcc_recall query searches them.]
 ```
 
+- A note pinned in a turn that leaves stays in view: the line carries the notes pinned there that still hold, as they read now (`Pinned there, still held: [3] auth-plan: …`), and `vcc_context` lists every pinned note with the turns.
 - Past half the host's trigger, the model is told how full its context is and that `vcc_context` makes room, once for each further tenth, as a message of its own stored in the session (so the cache keeps it), and only while something can leave. Models that are not told do not edit their context.
 
 What is out is a ledger of `omp-vcc.evict` custom entries, replayed along the branch as pinned notes are, so a branch keeps its own and `/tree` back past one undoes it. Turns leave in large runs from the oldest end: every edit makes the provider read again all that follows it, so one large eviction costs less than many small ones. The idea is [Context Language Models](https://arxiv.org/abs/2609.37725) (the model decides what stays) and [nodecode](https://nodecode.ai/docs/context) (the oldest finished turns leave whole past 85%, and read back by their number).

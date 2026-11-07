@@ -5,7 +5,7 @@ import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { untilCore } from "../core/core-wait";
 import type { Binding } from "../host";
 import { pin } from "../core/pins";
-import { PIN_CHARS, PIN_PARAMS, PIN_TOOL } from "../names";
+import { PIN_CHARS, PIN_NAME_CHARS, PIN_PARAMS, PIN_TOOL } from "../names";
 
 const PIN_TOOL_LABEL = "VCC Pin";
 
@@ -16,7 +16,9 @@ const pinToolDescription = (command: string): string => [
   "unpinned; everything else in a summary ages out on a long task.",
   "",
   "- note: the text to pin, one self-contained line (clipped at " + PIN_CHARS + " chars).",
-  "- unpin: the [N] of a note that no longer holds.",
+  "- name: optional, with note: a short name for it (e.g. auth-plan). Pinning a name again replaces",
+  "  its note, so keep a plan, a decision or a command current under one name instead of adding notes.",
+  "- unpin: the [N] or the name of a note that no longer holds.",
   "- neither: list the pinned notes.",
   "",
   `Pin sparingly, what you would need if you lost the conversation; the user pins with /${command}-pin.`,
@@ -24,7 +26,8 @@ const pinToolDescription = (command: string): string => [
 
 const PIN_PARAM_DESCRIPTIONS: Record<(typeof PIN_PARAMS)[number], string> = {
   note: "Text to pin: one self-contained line, e.g. 'Sessions live in SQLite, not Redis: the deploy host has no Redis.'",
-  unpin: "The [N] of a pinned note to remove.",
+  name: `A name for the note (letters, digits, . _ -, up to ${PIN_NAME_CHARS} chars), e.g. 'auth-plan'. A note pinned under a name already pinned replaces it.`,
+  unpin: "The [N] or the name of a pinned note to remove.",
 };
 
 
@@ -32,6 +35,7 @@ const PIN_PARAMETERS = {
   type: "object",
   properties: {
     note: { type: "string", description: PIN_PARAM_DESCRIPTIONS.note },
+    name: { type: "string", description: PIN_PARAM_DESCRIPTIONS.name },
     unpin: { description: PIN_PARAM_DESCRIPTIONS.unpin, anyOf: [{ type: "number" }, { type: "string" }] },
   },
 } as const;

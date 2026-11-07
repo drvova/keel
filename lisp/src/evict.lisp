@@ -182,10 +182,13 @@ what an eviction of them records, so a range never overlaps one already out."
                                     (and cut (format nil "older steps of the turn at #~d" (turn-from cut)))))
                   " and ")))
 
-(defun stub-text (from to turns outs messages-by-n originals)
+(defun stub-text (from to turns outs messages-by-n originals pins)
   "The line the span FROM–TO of what is out leaves in the request: what it was,
 what it did (as [History Index] says it: files changed, commits, failed calls,
-read from the originals omp-vcc kept, ORIGINALS by #N), and how to read it back.
+read from the originals omp-vcc kept, ORIGINALS by #N), the notes pinned there
+that still hold (PINS, as they read now: a note travels with the turn it was
+pinned in, so it stays in view when that turn leaves, and the line changes only
+when one is unpinned or defined again), and how to read it back.
 It names no size, and reads only what omp leaves as it is or the originals: the
 line must read the same on every request for the provider's cache."
   (let* ((covering (remove-if-not (lambda (o) (overlaps-p (out-from o) (out-to o) from to)) outs))
@@ -197,12 +200,14 @@ line must read the same on every request for the provider's cache."
          (ns (loop for n from from to to when (gethash n originals) collect n))
          (range (and ns (range-of-window (map 'vector (lambda (n) (gethash n originals)) ns) (coerce ns 'vector))))
          (work (and range (range-work range)))
-         (notes (remove nil (mapcar #'out-note covering))))
-    (format nil "[~a out of context: ~a, by ~a.~@[ Requests: ~a.~]~@[ It ~a.~]~@[ The agent's note: ~a~] Each entry reads back word for word with ~a; vcc_recall query searches them.]"
+         (notes (remove nil (mapcar #'out-note covering)))
+         (pinned (remove-if-not (lambda (p) (let ((at (json-get p "at"))) (and (realp at) (<= from at to)))) pins)))
+    (format nil "[~a out of context: ~a, by ~a.~@[ Requests: ~a.~]~@[ It ~a.~]~@[ The agent's note: ~a~]~@[ Pinned there, still held: ~a.~] Each entry reads back word for word with ~a; vcc_recall query searches them.]"
             (range-text from to) (span-what from to turns) (by-words (mapcar #'out-by covering))
             (and shown (format nil "~{\"~a\"~^; ~}~@[ (+~d more)~]" shown (and (> (length requests) (length shown)) (- (length requests) (length shown)))))
             (and work (join-strings work "; "))
             (and notes (join-strings (mapcar (lambda (n) (if (find (char n (1- (length n))) ".!?") n (concatenate 'string n "."))) notes) " "))
+            (and pinned (join-strings (mapcar #'format-pin pinned) "; "))
             (recall-expand-call from))))
 
 ;;; --- a request, with what is out left out -----------------------------------------------
@@ -226,7 +231,8 @@ whose kept originals the stubs read."
          (outs (read-evictions branch))
          (n-of (make-array (length messages) :initial-element nil))
          (chars (make-hash-table)) (by-n (make-hash-table))
-         (per-token +default-chars-per-token+) (ops '()))
+         (per-token +default-chars-per-token+) (ops '())
+         (pins (read-pins branch)))
     (loop for i from (live-window-start branch) below (length branch)
           for e = (aref branch i)
           when (counted-entry-p e)
@@ -290,7 +296,7 @@ whose kept originals the stubs read."
                          (loop while (and (< i (length messages)) (aref v i))
                                do (let ((n (aref n-of i))) (when n (setf lo (min (or lo n) n) hi (max (or hi n) n))))
                                   (push i drop) (incf i))
-                         (when lo (push (cons (stub-place messages v start (1- i)) (stub-text lo hi turns outs by-n originals)) stubs)))))
+                         (when lo (push (cons (stub-place messages v start (1- i)) (stub-text lo hi turns outs by-n originals pins)) stubs)))))
           (values (nreverse drop) (nreverse stubs) (nreverse ops) before after))))))
 
 (defparameter +user-side-roles+
@@ -364,10 +370,10 @@ told of, TOOL (vcc_context) is there, and something can leave: (values NOTE OP),
             (and m (equal (json-get m "role") "user") (request-words m))
             (some (lambda (o) (overlaps-p (out-from o) (out-to o) (turn-from tr) (turn-to tr))) outs))))
 
-(defun list-context (turns outs chars by-n)
+(defun list-context (turns outs chars by-n pins)
   (let* ((in (remove-if (lambda (tr) (turn-out-p tr outs)) turns))
          (shown (last-n in +turns-listed+)))
-    (format nil "In context: ~a, ~~~a tokens of messages (the last is the one running, which stays).~@[~%  (+~d older)~]~{~%  ~a~}~%~a"
+    (format nil "In context: ~a, ~~~a tokens of messages (the last is the one running, which stays).~@[~%  (+~d older)~]~{~%  ~a~}~%~a~a"
             (plural (length in) "turn")
             (js-string-of (tokens-from-chars (reduce #'+ (mapcar (lambda (tr) (turn-chars tr chars outs)) in)) +default-chars-per-token+))
             (and (> (length in) (length shown)) (- (length in) (length shown)))
@@ -375,7 +381,10 @@ told of, TOOL (vcc_context) is there, and something can leave: (values NOTE OP),
             (if outs
                 (format nil "Out of context:~{~%  ~a~}"
                         (mapcar (lambda (o) (format nil "~a (~a)" (range-text (out-from o) (out-to o)) (span-what (out-from o) (out-to o) turns))) outs))
-                "Nothing is out of context."))))
+                "Nothing is out of context.")
+            (if pins
+                (format nil "~%Pinned (vcc_pin; a name pinned again replaces its note):~{~%  ~a~}" (mapcar #'format-pin pins))
+                ""))))
 
 (defun evict-turns (leaving turns outs chars by note count)
   "Record LEAVING (turns, oldest first) as out: (values TEXT OPS)."
@@ -422,11 +431,11 @@ told of, TOOL (vcc_context) is there, and something can leave: (values NOTE OP),
                 (drop (evict-turns (turns-touching drop turns) turns outs chars by note count))
                 (oldest (let ((in (turns-in turns outs)))
                           (evict-turns (subseq in 0 (min oldest (length in))) turns outs chars by note count)))
-                (t (values (list-context turns outs chars by-n) '()))))
+                (t (values (list-context turns outs chars by-n (read-pins branch)) '()))))
         (let* ((args (js-trim (let ((a (json-get call "args"))) (if (stringp a) a ""))))
                (words (remove "" (rx-split (rx "\\s+") args) :test #'string=)))
           (cond ((zerop (length args)) (evict-turns (oldest-half turns outs chars) turns outs chars by nil count))
-                ((string-equal args "list") (values (list-context turns outs chars by-n) '()))
+                ((string-equal args "list") (values (list-context turns outs chars by-n (read-pins branch)) '()))
                 ((string-equal args "all") (evict-turns (finished-turns turns) turns outs chars by nil count))
                 ((string-equal (first words) "restore")
                  (restore-turns (if (and (second words) (string-equal (second words) "all"))

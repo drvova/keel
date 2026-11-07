@@ -8,7 +8,7 @@ export const RECALL_TOOL = "vcc_recall";
 export const RECALL_PARAMS = ["query", "range", "expand", "page", "scope", "mode", "session"] as const;
 export const PIN_TOOL = "vcc_pin";
 /** vcc_pin's params, for its JSON Schema. */
-export const PIN_PARAMS = ["note", "unpin"] as const;
+export const PIN_PARAMS = ["note", "name", "unpin"] as const;
 
 /** Custom entries that hold a pin or unpin: in the session file, never in the model's context. */
 export const PIN_ENTRY_TYPE = "omp-vcc.pin";
@@ -31,6 +31,7 @@ export const RANGE_PAGE_SIZE = 20;
 export const RECALL_OUTPUT_CHARS = 50 * 1024;
 /** A pinned note is clipped to this many characters. */
 export const PIN_CHARS = 300;
+export const PIN_NAME_CHARS = 40;
 /** A vcc_context note is clipped to this many characters. */
 export const CONTEXT_NOTE_CHARS = 300;
 /** Past this percent of where the host compacts, the oldest finished turns leave the context. */
