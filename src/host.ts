@@ -23,7 +23,7 @@ export interface CompactionTrigger {
 export const MANUAL_TRIGGER: CompactionTrigger = { reason: "manual", willRetry: false };
 
 /** What differs between the hosts and is the same for every session of one. */
-export interface HostProfile {
+interface HostProfile {
   name: "omp" | "pi";
   /** The host's name in what keel tells the user. */
   displayName: "omp" | "Pi";
@@ -254,7 +254,7 @@ export const deliver = (ctx: NotifyCtx, what: string, send: () => unknown): Prom
 };
 
 /** What the core asks the host to do, in order (lisp/src/surface.lisp). */
-export type Effect =
+type Effect =
   | { do: "append"; customType: string; data: unknown }
   | { do: "tell"; text: string; severity: "info" | "warning" | "error" }
   | { do: "send"; what: string; message: { customType: string; content: string; display: boolean }; options: Record<string, unknown> };

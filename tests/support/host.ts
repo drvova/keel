@@ -32,7 +32,7 @@ export const convertEach = (messages: unknown[]): unknown[][] => messages.map((m
 });
 
 /** A request to the core that first asks for what the host's convertToLlm makes of messages (op cut, op compact): asked, converted, asked again. */
-export const withConversions = (request: Record<string, unknown>): Record<string, any> => {
+const withConversions = (request: Record<string, unknown>): Record<string, any> => {
   const first = core(request);
   return first.kind === "convert" ? core({ ...request, converted: convertEach(first.messages as unknown[]) }) : first;
 };

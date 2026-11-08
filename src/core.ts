@@ -237,11 +237,16 @@ const buildTarget = (path: string) => {
   return { out, env: { ...process.env, KEEL_CORE_OUT: out } };
 };
 
-/** A finished build OUT installed as PATH, the builds of older sources removed. */
+/** Builds kept in the build directory: two installed copies sharing one (KEEL_CORE_BUILD_DIR) keep each other's. */
+const KEPT_BUILDS = 3;
+
+/** A finished build OUT installed as PATH; past KEPT_BUILDS, the least recently built ones removed. */
 const install = (out: string, path: string): void => {
   renameSync(out, path);
   const dir = buildDir();
-  for (const f of readdirSync(dir)) if (/^keel-core-[0-9a-f]+(\.exe)?$/.test(f) && join(dir, f) !== path) rmSync(join(dir, f), { force: true });
+  const builds = readdirSync(dir).filter((f) => /^keel-core-[0-9a-f]+(\.exe)?$/.test(f)).map((f) => join(dir, f))
+    .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
+  for (const f of builds.slice(KEPT_BUILDS)) if (f !== path) rmSync(f, { force: true });
 };
 
 /**
