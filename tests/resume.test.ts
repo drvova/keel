@@ -4,7 +4,7 @@
 // are read back from the last session's own transcript, with no model.
 import { describe, expect, it } from "bun:test";
 import { join } from "path";
-import { utimesSync } from "fs";
+import { mkdirSync, utimesSync, writeFileSync } from "fs";
 import { fakeHost } from "./support/binding";
 import { freshDir, writeJsonl } from "./support/session-files";
 
@@ -14,10 +14,10 @@ const result = (id: string, name: string, out: string, isError = false) => ({ ro
 const entriesOf = (messages: any[]) => messages.map((message, i) => ({ type: "message", id: `m${i}`, parentId: i ? `m${i - 1}` : null, message }));
 
 /** A project with one earlier session holding MESSAGES, and a new one starting: what keel sends the agent. */
-const start = async (messages: any[], current: any[] = []) => {
+const start = async (messages: any[], current: any[] = [], cwd = "/x") => {
   const dir = freshDir();
   const old = join(dir, "2026-01-01_aaaa1111.jsonl");
-  writeJsonl(old, [{ type: "session", id: "aaaa1111-0000", cwd: "/x" }, ...entriesOf(messages)]);
+  writeJsonl(old, [{ type: "session", id: "aaaa1111-0000", cwd }, ...entriesOf(messages)]);
   utimesSync(old, new Date(1_700_000_000_000), new Date(1_700_000_000_000));
   const file = join(dir, "2026-01-02_bbbb2222.jsonl");
   writeJsonl(file, [{ type: "session", id: "bbbb2222-0000", cwd: "/x" }, ...current]);
@@ -51,6 +51,20 @@ describe("a new session starts knowing where the last one stopped", () => {
     // What a tool printed stays with its session: the fix names the run, not its output.
     expect(said.split("\n").find((l) => l.startsWith("Fixed:"))).not.toContain("undefined");
     expect(said).toEndWith('keel_recall with session:"aaaa1111" reads any #N of it.');
+  });
+
+  it("names the files it worked on that were written since it ended", async () => {
+    const cwd = freshDir();
+    mkdirSync(join(cwd, "src"));
+    writeFileSync(join(cwd, "src/auth.ts"), "export const login = () => changedAgain;");
+    writeFileSync(join(cwd, "CHANGELOG.md"), "old");
+    // The changelog was last written before the session ended; auth.ts after.
+    utimesSync(join(cwd, "CHANGELOG.md"), new Date(1_600_000_000_000), new Date(1_600_000_000_000));
+    const said = (await start(work, [], cwd))[0].message.content as string;
+    expect(said).toContain("Changed since it ended: src/auth.ts. What it says of it may no longer hold.");
+    expect(said).not.toContain("Changed since it ended: src/auth.ts, CHANGELOG.md");
+    // Files that are not there, as in the first test, are not named.
+    expect((await start(work))[0].message.content).not.toContain("Changed since it ended");
   });
 
   it("nothing for a session that has a message already (resumed, forked)", async () => {

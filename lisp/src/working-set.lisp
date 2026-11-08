@@ -50,6 +50,16 @@
 (defun excerpt-chars (text) (reduce #'+ (mapcar #'line-cost (nonblank-lines text))))
 (defun line-count (text) (length (nonblank-lines text)))
 
+(defun changed-after (r calls indices)
+  "Where a file R's call read was changed after R, as \"P changed at #M\", or NIL:
+what R shows of it no longer holds (MemTrace, arXiv:2610.04838, reuses evidence
+only while it matches the repository's state)."
+  (let ((c (result-call r)))
+    (when (and c (on-file-p c) (not (changes-p c)))
+      (loop for p in (files-of c)
+            for later = (find-if (lambda (d) (and (> (call-pos d) (result-pos r)) (changes-p d) (member p (files-of d) :test #'string=))) calls)
+            when later return (format nil "~a changed at #~a" p (js-string-of (nth (call-pos later) indices)))))))
+
 (defstruct (ws-item (:constructor make-ws-item (index title note text from-end &optional whole))) index title note text from-end whole)
 
 (defun select-working-set (history indices kept max-chars)
@@ -148,7 +158,11 @@
                                                   (and (result-call r) (eql (nth (call-pos (result-call r)) indices) n)))))
                             results)))
             (when r
-              (push (make-ws-item (result-index r) (title-of (result-call r)) "recalled lately" (result-text r) nil) items)
+              (push (make-ws-item (result-index r) (title-of (result-call r))
+                                  (let ((stale (changed-after r all-calls indices)))
+                                    (if stale (format nil "recalled lately; ~a, so this may not hold" stale) "recalled lately"))
+                                  (result-text r) nil)
+                    items)
               (setf (gethash (result-index r) used) t)
               (incf taken)))))
       ;; 4. What recall ranks highest for the latest request.
@@ -162,6 +176,8 @@
               (unless (or (null (result-index r)) (gethash (result-index r) used) (result-error r) (zerop (length (js-trim (result-text r))))
                           (and c (or (edits-p c) (writes-whole-p c)))
                           (and c (/= (gethash (run-of c) latest-run) (result-pos r)))
+                          ;; A read of a file changed after it: what it shows no longer holds.
+                          (changed-after r all-calls indices)
                           (some (lambda (p) (or (member p in-context :test #'string=) (member p chosen :test #'string=))) (and c (files-of c))))
                 (let ((message (nth (result-pos r) history)))
                   (destructuring-bind (role summary files) (render-entry message)

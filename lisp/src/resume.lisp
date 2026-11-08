@@ -72,21 +72,47 @@ the #N reads it (an injection carried into the next session is how one persists)
                           (if (> (length files) (length shown)) (format nil " (+~d more)" (- (length files) (length shown))) ""))
                   "")))))
 
+(defun write-time (path)
+  "PATH's last write, or NIL when there is no such file."
+  (ignore-errors (let ((p (probe-file (native-path path)))) (and p (file-write-date p)))))
+
+(defun changed-since (paths cwd ended)
+  "The PATHS (relative to CWD) whose files were written after ENDED, a universal
+time: what the last session said of them may no longer hold."
+  (when ended
+    (remove-if-not (lambda (p)
+                     (let ((full (if (or (zerop (length p)) (char= (char p 0) #\/) (not (stringp cwd)))
+                                     p
+                                     (concatenate 'string (string-right-trim "/" cwd) "/" p))))
+                       (let ((at (write-time full))) (and at (> at ended)))))
+                   paths)))
+
 (defun resume-briefing (entries files)
   "What the agent is told of the project's last session (FILES, newest first) as
 this one starts, or NIL: nothing for a session with a message already, or when
 the last one made no request since its /clear."
   (unless (or (null files) (some #'counted-entry-p entries))
     (let* ((previous (first files))
-           (id (let ((i (json-get (read-header previous) "id"))) (and (stringp i) i))))
+           (header (read-header previous))
+           (id (let ((i (json-get header "id"))) (and (stringp i) i))))
       (multiple-value-bind (messages indices) (session-since-clear previous)
         (let ((state (build-task-state messages indices)))
           (when state
-            (let* ((fixes (fixed-failures messages indices))
-                   (fixes (last fixes +resume-fixes+)))
-              (format nil "Where the last session~@[ (~a)~] stopped, read from its transcript:~%~{~a~%~}~{~a~%~}~a"
+            (let* ((fixes (last (fixed-failures messages indices) +resume-fixes+))
+                   ;; What it changed, and what its fixes rest on, written again since it ended (MemTrace's
+                   ;; applicability check, arXiv:2610.04838, by the files' own write times).
+                   (worked (remove-duplicates
+                            (append (loop for m in messages
+                                          when (equal (json-get m "role") "assistant")
+                                            nconc (loop for c in (tool-calls-of m) when (changes-p c) append (copy-list (files-of c))))
+                                    (loop for f in fixes append (copy-list (fourth f))))
+                            :test #'string= :from-end t))
+                   (moved (changed-since worked (json-get header "cwd") (write-time previous))))
+              (format nil "Where the last session~@[ (~a)~] stopped, read from its transcript:~%~{~a~%~}~{~a~%~}~@[~a~%~]~a"
                       (and id (subseq id 0 (min 8 (length id))))
                       state (mapcar #'fix-line fixes)
+                      (and moved (format nil "Changed since it ended: ~a. What it says of ~:[it~;them~] may no longer hold."
+                                         (join-strings (subseq moved 0 (min +resume-files+ (length moved))) ", ") (rest moved)))
                       (if id
                           (format nil "~a with session:~a reads any #N of it." +recall-tool+ (json-string (subseq id 0 (min 8 (length id)))))
                           (format nil "~a mode:'sessions' finds it." +recall-tool+))))))))))

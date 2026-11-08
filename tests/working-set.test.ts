@@ -261,3 +261,28 @@ describe("in the compaction hook", () => {
     }
   });
 });
+
+describe("[Working Set] and what changed after", () => {
+  // A read of config.ts, then an edit of it; a read of notes.md, never changed.
+  const history = [
+    user("tune the retry config"),
+    call("r1", "read", { path: "src/config.ts" }), result("r1", "read", `retries: 3\n${"// config line\n".repeat(40)}`),
+    call("e1", "edit", { path: "src/config.ts", oldText: "retries: 3", newText: "retries: 5" }), result("e1", "edit", "Edited src/config.ts"),
+    call("r2", "read", { path: "docs/retry-notes.md" }), result("r2", "read", `retry config notes\n${"the retry config backs off\n".repeat(40)}`),
+    say("Tuned."),
+    user("explain the retry config to me"),
+  ];
+  const pick = (recalled?: number[]) =>
+    core({ op: "working-set", history, indices: history.map((_, i) => i), kept: [], maxChars: 4_000, ...(recalled ? { recalled } : {}) }).items as Item[];
+
+  it("says a read recalled lately may not hold once its file changed after it", () => {
+    expect(pick([2]).find((i) => i.index === 2)?.note).toBe("recalled lately; src/config.ts changed at #3, so this may not hold");
+    expect(pick([6]).find((i) => i.index === 6)?.note).toBe("recalled lately");
+  });
+
+  it("never ranks in a read of a file changed after it", () => {
+    const ranked = pick().filter((i) => i.note === "matches the latest request").map((i) => i.index);
+    expect(ranked).toContain(6);
+    expect(ranked).not.toContain(2);
+  });
+});
