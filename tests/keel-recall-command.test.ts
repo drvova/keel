@@ -1,9 +1,8 @@
-import { ompBinding } from "./support/binding";
+import { fakeHost } from "./support/binding";
 import { describe, it, expect } from "bun:test";
 import { rmSync } from "fs";
 import { join } from "path";
 import { freshDir, sessionFileOfEntries } from "./support/session-files";
-import { registerKeelRecallCommand } from "../src/commands/keel-recall";
 
 // The search header and truncation note come from the core recall() both
 // surfaces share (tests/recall-quality.test.ts); these check what the command
@@ -21,20 +20,13 @@ const makeSession = (n: number, textOf: (i: number) => string) => {
   return { ...sessionFileOfEntries(entries), ids: entries.map((e) => e.id) };
 };
 
+/** /keel-recall as keel registers it, and the messages it sent the agent. */
 const register = () => {
-  let handler: ((args: string, ctx: any) => Promise<void>) | undefined;
-  const sent: Array<{ customType: string; content: string; display: boolean }> = [];
-  const pi = {
-    registerCommand: (name: string, command: { handler: typeof handler }) => {
-      expect(["keel-recall", "omp-vcc-recall"]).toContain(name);
-      handler ??= command.handler;
-    },
-    sendMessage: (msg: any) => {
-      sent.push(msg);
-    },
-  } as any;
-  registerKeelRecallCommand(pi, ompBinding);
-  return { handler: handler!, sent };
+  const h = fakeHost();
+  // Its old name runs the same command.
+  expect(h.commands.get("omp-vcc-recall")).toBe(h.commands.get("keel-recall"));
+  // What the command sent the agent, each message as the host got it.
+  return { handler: h.commands.get("keel-recall")!, sent: () => h.sent.map((s) => s.message) };
 };
 
 const invoke = async (handler: (args: string, ctx: any) => Promise<void>, file: string, ids: string[], args: string) => {
@@ -59,7 +51,7 @@ describe("/keel-recall paging hints", () => {
       const { handler, sent } = register();
       await invoke(handler, file, ids, "zebra_query_tag.*entry page:11");
 
-      const content = sent[0].content;
+      const content = sent()[0].content;
       expect(content).toContain("Page 11 is outside the available range 1-10");
       expect(content).toContain("50 matches");
       expect(content).not.toContain("No matches");
@@ -79,7 +71,7 @@ describe("/keel-recall paging hints", () => {
       const { handler, sent } = register();
       await invoke(handler, file, ids, "zebra_query_tag.*entry scope:all page:11");
 
-      const content = sent[0].content;
+      const content = sent()[0].content;
       expect(content).toContain("(scope: all)");
       expect(content).toContain("scope:all");
       expect(content).toContain("Page 11 is outside the available range 1-10");
@@ -102,8 +94,8 @@ describe("/keel-recall in a fresh session with no session file on disk", () => {
       const { handler, sent } = register();
       await invoke(handler, file, [], "");
 
-      expect(sent).toHaveLength(1);
-      expect(sent[0].content).toBe("No entries in session history.");
+      expect(sent()).toHaveLength(1);
+      expect(sent()[0].content).toBe("No entries in session history.");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -115,8 +107,8 @@ describe("/keel-recall in a fresh session with no session file on disk", () => {
       const { handler, sent } = register();
       await invoke(handler, file, [], "redis cache decision");
 
-      expect(sent).toHaveLength(1);
-      expect(sent[0].content).toBe('No matches for "redis cache decision" in session history.');
+      expect(sent()).toHaveLength(1);
+      expect(sent()[0].content).toBe('No matches for "redis cache decision" in session history.');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

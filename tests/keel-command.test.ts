@@ -2,8 +2,7 @@
 // tests/omp-entry.test.ts covers the command wired to the hook through index.ts.
 import { ompBinding } from "./support/binding";
 import { describe, expect, test } from "bun:test";
-import { registerKeelCommand } from "../src/commands/keel";
-import { createCompactionState } from "../src/hooks/compaction";
+import { createCompactionState, registerCompaction } from "../src/compaction";
 import { COMPACT_INSTRUCTION } from "./support/names";
 
 type CompactOptions = {
@@ -20,6 +19,8 @@ function createHarness(sendUserMessage?: (content: string | unknown[]) => unknow
   const state = createCompactionState();
 
   const pi = {
+    // The compaction's events are tests/compaction-hook.test.ts's; here only the command.
+    on: () => {},
     registerCommand: (name: string, command: { handler: typeof handler }) => {
       // /keel, and /omp-vcc, its old name, with the same handler.
       expect(["keel", "omp-vcc"]).toContain(name);
@@ -47,7 +48,7 @@ function createHarness(sendUserMessage?: (content: string | unknown[]) => unknow
     },
   };
 
-  registerKeelCommand(pi, state, ompBinding);
+  registerCompaction(pi, ompBinding, state);
 
   return {
     invoke: async (args = "") => handler!(args, ctx),

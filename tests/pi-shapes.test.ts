@@ -7,28 +7,27 @@ import { assertRealPi, piInstalled } from "./support/pi";
 import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { createCompactionState, registerCompactionHook, type CompactionHost } from "../src/hooks/compaction";
-import { createWindowState } from "../src/hooks/window-limits";
+import { createCompactionState, registerCompaction } from "../src/compaction";
 import { testConfig } from "./support/binding";
-import { core } from "../src/core/lisp-core";
+import { core } from "../src/core";
 import { summarize } from "./support/summary";
 import { COMPACT_INSTRUCTION } from "./support/names";
 import { recallOn } from "./support/pairs";
-import { openConfig } from "../src/core/settings";
-import { bind, MANUAL_TRIGGER, PI_HOST } from "../src/host";
+import { openConfig } from "../src/settings";
+import { MANUAL_TRIGGER, PI_HOST, type Binding } from "../src/host";
 
 
 
 describe.skipIf(!piInstalled())("Pi shapes", () => {
   let pi: any;
-  let host: CompactionHost;
+  let host: Binding;
   let dir: string;
   const saved: Record<string, string | undefined> = {};
 
   beforeAll(async () => {
     assertRealPi();
     pi = await import("@earendil-works/pi-coding-agent");
-    host = bind({ ...PI_HOST, convertToLlm: (m: any[]) => pi.convertToLlm(m), triggerOf: () => MANUAL_TRIGGER }, testConfig);
+    host = { ...PI_HOST, convertToLlm: (m: any[]) => pi.convertToLlm(m), agentDir: () => "", triggerOf: () => MANUAL_TRIGGER, config: testConfig };
     dir = mkdtempSync(join(tmpdir(), "keel-pi-shapes-"));
     for (const key of ["KEEL_CONFIG_PATH", "PI_CODING_AGENT_DIR"]) saved[key] = process.env[key];
     process.env.KEEL_CONFIG_PATH = join(dir, "keel-config.json");
@@ -43,7 +42,7 @@ describe.skipIf(!piInstalled())("Pi shapes", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  /** The summary /pi-vcc keep:0 writes of a branch with these entries, on Pi's convertToLlm. */
+  /** The summary /keel keep:0 writes of a branch with these entries, on Pi's convertToLlm. */
   const summaryOf = (...entries: any[]): string => {
     const at = (i: number) => ({ id: `e${i}`, parentId: i ? `e${i - 1}` : null, timestamp: "2026-11-06T00:00:00.000Z" });
     const branch = [
@@ -53,7 +52,7 @@ describe.skipIf(!piInstalled())("Pi shapes", () => {
       { type: "message", ...at(entries.length + 1), message: { role: "assistant", content: [{ type: "text", text: "Done. ".repeat(400) }], timestamp: 1 } },
     ];
     const handlers = new Map<string, any>();
-    registerCompactionHook({ on: (name: string, h: any) => handlers.set(name, h) } as any, host, createCompactionState(), createWindowState());
+    registerCompaction({ on: (name: string, h: any) => handlers.set(name, h), registerCommand: () => {} } as any, host, createCompactionState());
     return handlers.get("session_before_compact")(
       { type: "session_before_compact", customInstructions: `${COMPACT_INSTRUCTION} keep:0`, branchEntries: branch,
         preparation: { tokensBefore: 5000, fileOps: { read: new Set(), written: new Set(), edited: new Set() }, settings: { enabled: true, reserveTokens: 16_384 } } },
@@ -116,8 +115,8 @@ describe.skipIf(!piInstalled())("Pi shapes", () => {
 
     test("summarizes Pi's shapes as Pi's context holds them, sized for Pi's trigger", () => {
       const handlers = new Map<string, any>();
-      const fake: any = { on: (name: string, h: any) => handlers.set(name, h) };
-      registerCompactionHook(fake, { ...host, triggerOf: () => ({ reason: "threshold", willRetry: false }) }, createCompactionState(), createWindowState());
+      const fake: any = { on: (name: string, h: any) => handlers.set(name, h), registerCommand: () => {} };
+      registerCompaction(fake, { ...host, triggerOf: () => ({ reason: "threshold", willRetry: false }) }, createCompactionState());
       const result = handlers.get("session_before_compact")(
         {
           type: "session_before_compact",

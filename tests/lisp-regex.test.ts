@@ -5,7 +5,7 @@
 // back-reference into or inside a look-behind (matched backwards in
 // JavaScript), which it refuses; those must stay rare.
 import { describe, expect, it } from "bun:test";
-import { core as callCore } from "../src/core/lisp-core";
+import { core as callCore } from "../src/core";
 
 
 const rng = (seed: number) => () => {

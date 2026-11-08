@@ -3,6 +3,6 @@
 // included.
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { register } from "./src/register";
-import { ompHost } from "./src/hooks/omp-host";
+import { ompHost } from "./src/host";
 
 export default (pi: ExtensionAPI) => register(pi, ompHost(pi));

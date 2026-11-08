@@ -3,7 +3,7 @@
 ;;;; SPDX-License-Identifier: MIT
 ;;;;
 ;;;; `keel-core --serve DIR` answers requests one after another instead of
-;;;; one per process: the host process keeps one (src/core/lisp-core.ts), so
+;;;; one per process: the host process keeps one (src/core.ts), so
 ;;;; what a request reads stays in memory for the next (a session file parsed
 ;;;; once, its new lines only after that: JSONL-VALUES in session.lisp), and a
 ;;;; request costs no process start. The TS side stays synchronous, which is

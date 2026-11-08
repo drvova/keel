@@ -2,7 +2,7 @@ import { callRecallTool, recallTool } from "./support/binding";
 import { describe, it, expect } from "bun:test";
 import { rmSync } from "fs";
 import { sessionFileOfEntries } from "./support/session-files";
-import { core } from "../src/core/lisp-core";
+import { core } from "../src/core";
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 

@@ -2,7 +2,7 @@
 ;;;;
 ;;;; SPDX-License-Identifier: MIT
 ;;;;
-;;;; With the decision src/hooks/window-limits.ts asks for once a run settles.
+;;;; With the decision src/compaction.ts asks for once a run settles.
 ;;;; keel takes the window from the host and makes no network call of its
 ;;;; own; when a provider serves less, the limit its overflow error states
 ;;;; ("maximum context length is 32768 tokens") is kept per model in keel-models.json next to the config, with the
@@ -132,7 +132,7 @@ which won."
                                 (t host-name)))))
 
 (defun settled-compaction (&key model dir host display-name models-file used-tokens)
-  "Once a run settles (src/hooks/window-limits.ts): whether keel compacts in the host's
+  "Once a run settles (src/compaction.ts): whether keel compacts in the host's
 stead (the host's window is above the real one, its last recorded policy
 compacts, the context is past the trigger), at what trigger, and the note
 that says so."

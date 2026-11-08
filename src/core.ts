@@ -22,7 +22,7 @@ import { fileURLToPath } from "node:url";
  *
  * While it is not there (being built, no SBCL, a failed build) a call throws
  * CoreUnavailable, which says why in words a user can act on; each surface
- * catches it and steps aside or tells (src/core/core-wait.ts). A core that
+ * catches it and steps aside or tells (whenCore, below). A core that
  * fails throws too: it is all there is.
  */
 export const core = (request: object): Record<string, unknown> => {
@@ -178,7 +178,7 @@ export type CoreStatus =
   | { state: "no-sbcl"; sbcl: string }
   | { state: "failed"; why: string };
 
-const LISP_DIR = fileURLToPath(new URL("../../lisp/", import.meta.url));
+const LISP_DIR = fileURLToPath(new URL("../lisp/", import.meta.url));
 /** Where builds go: lisp/build, or KEEL_CORE_BUILD_DIR (an install whose own directory is read-only). */
 const buildDir = (): string => env("CORE_BUILD_DIR") || join(LISP_DIR, "build");
 /** A lock older than this is a build that died with its process: built again. */
@@ -300,4 +300,17 @@ const startBuild = (path: string): CoreStatus => {
   });
   child.unref();
   return { state: "building" };
+};
+
+/** Run `run`; while the core is not there, hand its reason to `waiting` and give back undefined. A core that fails throws. */
+export const whenCore = <T>(run: () => T, waiting: (why: string) => void = () => {}): T | undefined => {
+  try {
+    return run();
+  } catch (err) {
+    if (err instanceof CoreUnavailable) {
+      waiting(err.message);
+      return undefined;
+    }
+    throw err;
+  }
 };

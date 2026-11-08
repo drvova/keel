@@ -1,10 +1,10 @@
 // What a compaction's outcome is told as, what /keel says when its
-// compaction did not happen (src/commands/compact-feedback.ts), whose details a
+// compaction did not happen (src/compaction.ts), whose details a
 // compaction entry carries, and the provider opt-out: lisp/src/outcome.lisp, case by case.
 import { describe, expect, it } from "bun:test";
-import { reportCompactError } from "../src/commands/compact-feedback";
-import type { KeelSettings } from "../src/core/settings";
-import { core } from "../src/core/lisp-core";
+import { hostSnapshot } from "../src/host";
+import type { KeelSettings } from "../src/settings";
+import { core } from "../src/core";
 import { ompBinding } from "./support/binding";
 
 const outcomeLine = (stats: object): string => core({ op: "outcome", stats }).line as string;
@@ -33,9 +33,9 @@ describe("the outcome line", () => {
 
 describe("what /keel says when its compaction did not happen", () => {
   const told = (message: string, mode: string, notice: string | null, branch: unknown[] = []) => {
-    const out: unknown[] = [];
-    reportCompactError(ompBinding, { mode, hasUI: true, ui: { notify: (m: string, t: string) => out.push([m, t]) }, sessionManager: { getBranch: () => branch } } as any, new Error(message), notice);
-    return out;
+    // As /keel's onError asks it (src/compaction.ts), and tells the text it gets back.
+    const r = core({ op: "outcome", host: hostSnapshot(ompBinding, { sessionManager: { getBranch: () => branch } } as any), error: { message, mode, cancelNotice: notice } });
+    return typeof r.text === "string" ? [[r.text, r.severity]] : [];
   };
 
   it("adds nothing to a cancel the hook explained, nor to omp's TUI, which shows its own", () => {

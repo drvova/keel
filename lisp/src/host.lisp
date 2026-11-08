@@ -3,7 +3,7 @@
 ;;;; SPDX-License-Identifier: MIT
 ;;;;
 ;;;; Each op the TypeScript side sends for a host event carries one snapshot
-;;;; (src/core/host-snapshot.ts): which host, keel's config file, the
+;;;; (src/host.ts): which host, keel's config file, the
 ;;;; session file, the working directory, the model and the context the host
 ;;;; counted, the session's entry tree as a skeleton, and the branch the session
 ;;;; manager is on. From it the core counts #N, finds the branch, loads the
@@ -11,7 +11,7 @@
 ;;;; caller reduces the session its own way.
 ;;;;
 ;;;; The skeleton is every entry in file order with the bulky parts left out
-;;;; (src/core/host-snapshot.ts skeleton): a message is its role, timestamp,
+;;;; (src/host.ts skeleton): a message is its role, timestamp,
 ;;;; attribution and a tool result's call id; a compaction keeps where its kept
 ;;;; tail starts (firstKeptEntryId, providerReplayThroughEntryId); keel's own
 ;;;; pin and evict entries keep their data. That is what #N, the branch, the
@@ -295,6 +295,9 @@ pass is not keel's to answer; with it, what the hook returns."
               ;; Kept beside a learned window, for the compaction keel starts in the host's stead.
               (record-host-policy (snapshot-config-dir s) (model-key (snapshot-model s)) (json-get (json-get plan "sizing") "policy"))
               (let ((reply (compaction-reply plan from-command follow-up (json-get event "tokensBefore"))))
+                ;; With the debug setting on, the pass's decisions beside the config; a debug write never breaks a compaction.
                 (when (eq (json-get settings "debug") :true)
-                  (setf (gethash "debug" reply) (debug-record plan event from-command)))
+                  (ignore-errors
+                   (write-text-file (concatenate 'string (string-right-trim "/" (snapshot-config-dir s)) "/keel-debug.json")
+                                    (json-pretty-string (debug-record plan event from-command)))))
                 reply))))))))

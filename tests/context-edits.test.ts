@@ -1,7 +1,7 @@
 // Pi's context edits as the compaction applies them (lisp/src/context-edits.lisp,
 // op context-edits), checked against Pi's own projection where Pi is installed.
 import { describe, expect, test } from "bun:test";
-import { core } from "../src/core/lisp-core";
+import { core } from "../src/core";
 
 const applyContextEdits = (branch: any[]): any[] => core({ op: "context-edits", branch }).entries as any[];
 import { assertRealPi, piInstalled } from "./support/pi";

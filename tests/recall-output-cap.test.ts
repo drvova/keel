@@ -3,7 +3,7 @@ import { callRecallTool, recallTool } from "./support/binding";
 import { sessionFileOfEntries } from "./support/session-files";
 import { describe, it, expect, beforeAll } from "bun:test";
 import { createHash } from "crypto";
-import { RECALL_OUTPUT_CHARS } from "../src/names";
+import { RECALL_OUTPUT_CHARS } from "./support/names";
 
 // One tool result is a ~600 KB base64 image on a single line (issue #63).
 const blob = Buffer.concat(Array.from({ length: 14_000 }, (_, i) => createHash("sha256").update(String(i)).digest())).toString("base64");

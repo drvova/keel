@@ -4,12 +4,13 @@
 ;;;;
 ;;;; What keel registers with a host and writes into sessions, and the
 ;;;; numbers an agent is told (page sizes, the cap, the shortest session id).
-;;;; The TypeScript side registers the tools with their descriptions before a
-;;;; core may exist (it is built in the background), so it keeps its own copy
-;;;; (src/names.ts, the tools); op names hands these over, and
-;;;; tests/names.test.ts holds the copy to them.
+;;;; surface.lisp words the tools and commands from them; op names hands them
+;;;; over to the tests.
 
 (in-package #:keel)
+
+;;; The command prefix, /keel… on both hosts (each also registered under its old name).
+(defparameter +command+ "keel")
 
 ;;; The tools and their params.
 (defparameter +recall-tool+ "keel_recall")

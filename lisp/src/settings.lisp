@@ -3,15 +3,24 @@
 ;;;; SPDX-License-Identifier: MIT
 ;;;;
 ;;;; The settings are each value of the file in its default's type; the
-;;;; scaffold writes the file whole. The TS side (src/core/settings.ts)
+;;;; scaffold writes the file whole. The TS side (src/settings.ts)
 ;;;; resolves where the file is (the host's agent directory, or
-;;;; KEEL_CONFIG_PATH) and whether the pre-rename pi-vcc-config.json may be
+;;;; KEEL_CONFIG_PATH) and whether an earlier name's file (omp-vcc-config.json, pi-vcc-config.json) may be
 ;;;; copied; the core reads and writes the file itself. What it writes is what
 ;;;; JSON.stringify(value, null, 2) writes, with a newline after.
 
 (in-package #:keel)
 
-;; The settings' keys in the order the scaffold writes them, with their defaults.
+;; The settings' keys in the order the scaffold writes them, with their defaults:
+;;   overrideDefaultCompaction  keel writes every compaction the host runs; off, only /keel's
+;;   smartKeepTail              a small keep:1 tail grows to more turns, within the budgets' tail (window.lisp)
+;;   debug                      each compaction's decisions written to keel-debug.json beside the config
+;;   skipForProviders           providers (ctx.model.provider, any case) whose compactions are left to the host
+;;   skipCustomTypes            custom messages left out of the summary's input (another extension's per-turn boilerplate)
+;;   trackCommands              commands whose runs [Tracked Commands] keeps ("ssh", "gh pr", ...)
+;;   keepOriginals              on omp, the originals of what omp rewrites kept in <session>.jsonl.keel-raw (raw-capture.lisp)
+;;   workingSet                 [Working Set] in each summary (working-set.lisp)
+;;   evict                      old turns out of the context whole as it fills, keel_context, the context as a file (evict.lisp)
 (defparameter +default-settings+
   '(("overrideDefaultCompaction" . :true) ("smartKeepTail" . :true) ("debug" . :false)
     ("skipForProviders" . :list) ("skipCustomTypes" . :list) ("trackCommands" . :list)

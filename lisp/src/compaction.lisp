@@ -11,7 +11,7 @@
 ;;;; earlier compaction stored.
 ;;;;
 ;;;; The one thing it cannot do is the host's: convertToLlm. The hook
-;;;; (src/hooks/compaction.ts) converts the messages MESSAGES-TO-CONVERT lists
+;;;; (src/compaction.ts) converts the messages MESSAGES-TO-CONVERT lists
 ;;;; and sends the answers back; HOST-NOTES puts them beside each entry, of the
 ;;;; message as it is (SUMMARY) and, where omp rewrote it, as the kept original
 ;;;; (RESTORED).

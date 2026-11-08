@@ -1,11 +1,12 @@
-// keel's names that only the core uses (lisp/src/names.lisp), as tests
-// write them into sessions and instructions: read from the core itself.
-import { core } from "../../src/core/lisp-core";
+// keel's names and limits as the core holds them (lisp/src/names.lisp), for
+// tests that write them into sessions, instructions and expectations.
+import { core } from "../../src/core";
 
-const names = core({ op: "names" }).names as Record<string, string>;
+const names = core({ op: "names" }).names as Record<string, any>;
 
-/** The compactor id in a compaction's details; omp-vcc's and pi-vcc's are read as ours. */
-export const COMPACTOR = names.compactor;
-export const LEGACY_COMPACTORS = names.legacyCompactors as unknown as string[];
+export const PIN_ENTRY_TYPE: string = names.pinEntryType;
+export const EVICT_ENTRY_TYPE: string = names.evictEntryType;
+export const PIN_CHARS: number = names.pinChars;
+export const RECALL_OUTPUT_CHARS: number = names.recallOutputChars;
 /** What /keel puts first in the customInstructions it hands the host. */
-export const COMPACT_INSTRUCTION = names.compactInstruction;
+export const COMPACT_INSTRUCTION: string = names.compactInstruction;

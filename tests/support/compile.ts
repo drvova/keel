@@ -5,7 +5,7 @@
 // gives, which a compaction's details store.
 import type { Message } from "@oh-my-pi/pi-ai";
 import type { SummaryLimits } from "./window-shapes";
-import { core } from "../../src/core/lisp-core";
+import { core } from "../../src/core";
 
 /** What the host says the summarized turns did to files (its preparation.fileOps). */
 export interface FileOps {

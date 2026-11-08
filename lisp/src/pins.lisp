@@ -2,11 +2,10 @@
 ;;;;
 ;;;; SPDX-License-Identifier: MIT
 ;;;;
-;;;; What a keel_pin call (src/tools/pin.ts) or a pin command (src/commands/pin.ts)
-;;;; does. The notes are the pin ops replayed along the branch (READ-PINS); a pin
-;;;; or unpin is an op the host appends (its appendEntry), so the core answers
-;;;; with the op to append and the text to tell, and the TS side
-;;;; (src/core/pins.ts) appends and tells.
+;;;; What a keel_pin call or a pin command does. The notes are the pin ops
+;;;; replayed along the branch (READ-PINS); a pin or unpin is an op the host
+;;;; appends (its appendEntry), so the core answers with the op to append and
+;;;; the text to tell (surface.lisp words them as effects).
 
 (in-package #:keel)
 
