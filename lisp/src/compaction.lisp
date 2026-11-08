@@ -449,7 +449,7 @@ sections and brief that would replace it."
                (past (remove-if (lambda (s) (and (>= kept-at 0) (>= (first s) kept-at))) since)))
           (multiple-value-bind (lines shown)
               (build-working-set (mapcar #'second past) (mapcar #'third past) kept
-                                 (* (budget budgets "workingSetTokens") per-token) removed)
+                                 (* (budget budgets "workingSetTokens") per-token) removed (recalled-of input))
             (when lines (setf working-lines lines working-shown shown)))))
       (let* ((task-lines
                ;; [Task State], from everything since /clear: what is summarized, then what stays.

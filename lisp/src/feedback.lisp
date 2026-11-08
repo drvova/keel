@@ -24,22 +24,6 @@
 (defparameter +recall-hold-turns+ 3 "A recall counts for this many turns after it: the turn it was in, and the next ones.")
 (defparameter +recall-max-shown+ 50 "The #N one recall entry holds at most.")
 
-;;; What recall showed, while it runs (recall.lisp binds it for this session's
-;;; view only; another session's #N are its own). :OFF when nothing records.
-(defvar *shown-entries* :off)
-
-(defun note-shown (indices)
-  "INDICES were shown to the agent by the recall running now."
-  (when (listp *shown-entries*)
-    (dolist (n indices) (when (integerp n) (push n *shown-entries*)))))
-
-(defun shown-entries ()
-  "What the recall running now showed, oldest call first, each #N once, at most +recall-max-shown+."
-  (if (listp *shown-entries*)
-      (let ((ns (remove-duplicates (reverse *shown-entries*) :from-end t)))
-        (subseq ns 0 (min (length ns) +recall-max-shown+)))
-      '()))
-
 (defun recent-recalls (recalls turns)
   "RECALLS made in the last +recall-hold-turns+ of TURNS (the running one counts)."
   (let ((since (if (> (length turns) +recall-hold-turns+)
@@ -115,8 +99,10 @@ recalls would bring it back on every request (a real run did: 171 restores in
     (values (min +reread-max+ (/ (+ continued (* (or prior +reread-prior+) +reread-prior-weight+)) (+ trials +reread-prior-weight+)))
             trials)))
 
-;;; What [Working Set] reads: the entries recalled, newest recall first.
-(defvar *recalled* '())
+
+(defun recalled-of (json)
+  "The #N JSON's \"recalled\" lists: what the agent recalled lately, newest first, as a compaction reads it."
+  (loop for n across (coerce (json-get json "recalled" #()) 'vector) when (js-integer-p n) collect (as-integer n)))
 
 (defun recalled-newest-first (recalls)
   (remove-duplicates (mapcar #'car (sort (copy-list recalls) #'> :key #'cdr)) :from-end t))

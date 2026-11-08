@@ -43,7 +43,40 @@
 ;;; --- a view: one session, read once, on a scope -------------------------------------
 
 (defstruct (view (:constructor %make-view))
-  scope file session lineage project max-chars detail-chars read-cell cache wide turn-cell turn-fn)
+  "One recall's reading of a session file. NOTES maps #N to what superseded that
+entry (SUPERSEDED-NOTES); SHOWN-CELL, a cons whose car collects the #N shown to
+the agent (feedback.lisp), or NIL where nothing records (another session's #N
+are its own). A widened view shares the file's read, the notes and the cell."
+  scope file session lineage project max-chars detail-chars read-cell cache wide turn-cell turn-fn notes shown-cell)
+
+(defun note-shown (v indices)
+  "INDICES were shown to the agent by recall view V."
+  (let ((cell (view-shown-cell v)))
+    (when cell (dolist (n indices) (when (integerp n) (push n (car cell)))))))
+
+(defun view-shown (v)
+  "What V showed, oldest call first, each #N once, at most +recall-max-shown+."
+  (let ((ns (remove-duplicates (reverse (car (view-shown-cell v))) :from-end t)))
+    (subseq ns 0 (min (length ns) +recall-max-shown+))))
+
+(defun format-recall-output (v entries &optional query header)
+  "ENTRIES (plists :index :role :summary :files :session :snippet) of recall view V
+under a header. Those of this session (no :session) are noted as shown
+(feedback.lisp), each with what superseded it (recall.lisp SUPERSEDED-NOTES)."
+  (note-shown v (loop for e in entries unless (getf e :session) collect (getf e :index)))
+  (if (null entries)
+      (if query (format nil "No matches for \"~a\" in session history." query) "No entries in session history.")
+      (format nil "~a~%~%~a"
+              (if header (format nil "~a~@[ for \"~a\"~]:" header query) (format nil "Session history (~d entries):" (length entries)))
+              (join-strings (mapcar (lambda (e)
+                                      (format nil "~@[[session ~a] ~]#~a [~a]~@[ (~a)~]~a ~a"
+                                              (getf e :session) (getf e :index) (getf e :role)
+                                              ;; What superseded it (recall.lisp superseded-notes), in this session only.
+                                              (and (view-notes v) (not (getf e :session)) (gethash (getf e :index) (view-notes v)))
+                                              (if (getf e :files) (format nil " files:[~a]" (join-strings (getf e :files) ", ")) "")
+                                              (if (and query (getf e :snippet)) (getf e :snippet) (getf e :summary))))
+                                    entries)
+                            (format nil "~%~%")))))
 
 (defun view-read (v)
   "The view's file, read once for every view of it: (MESSAGES BRANCH-IDS)."
@@ -103,11 +136,12 @@
 (defun view-message (v index)
   (third (find index (first (view-read v)) :key #'first)))
 
-(defun open-view (file scope lineage &key project session max-chars detail-chars read-cell turn-fn)
+(defun open-view (file scope lineage &key project session max-chars detail-chars read-cell turn-fn notes shown-cell)
   (%make-view :scope scope :file file :session session :lineage (and (not (equal scope "all")) lineage)
               :project project :max-chars (or max-chars +recall-output-chars+)
               :detail-chars (or detail-chars (expand-detail-chars (or max-chars +recall-output-chars+)))
-              :read-cell (or read-cell (list nil)) :cache (make-hash-table) :turn-fn turn-fn :turn-cell (list nil nil)))
+              :read-cell (or read-cell (list nil)) :cache (make-hash-table) :turn-fn turn-fn :turn-cell (list nil nil)
+              :notes notes :shown-cell shown-cell))
 
 (defun view-widen (v)
   (if (equal (view-scope v) "all")
@@ -115,7 +149,8 @@
       (or (view-wide v)
           (setf (view-wide v) (open-view (view-file v) "all" nil :project (view-project v) :session (view-session v)
                                          :max-chars (view-max-chars v) :detail-chars (view-detail-chars v)
-                                         :read-cell (view-read-cell v) :turn-fn (view-turn-fn v))))))
+                                         :read-cell (view-read-cell v) :turn-fn (view-turn-fn v)
+                                         :notes (view-notes v) :shown-cell (view-shown-cell v))))))
 
 (defun view-current-turn (v)
   (let ((cell (view-turn-cell v)))
@@ -272,7 +307,7 @@
       (let ((count (funcall (getf (view-project v) :count))))
         (if (> count 0) (format nil "~%~a" (funcall (getf hints :other-sessions) count)) ""))))
 
-(defun page-of-hits (hits total truncated query page &key where scope hints around)
+(defun page-of-hits (v hits total truncated query page &key where scope hints around)
   (let ((pages (ceiling (length hits) +search-page-size+))
         (note (if truncated (format nil " — showing ~d of ~d matches, refine your query for more precise results" (length hits) total) "")))
     (if (and hits (> page pages))
@@ -281,7 +316,7 @@
         (let* ((shown (subseq hits (min (length hits) (* (1- page) +search-page-size+)) (min (length hits) (* page +search-page-size+))))
                (header (if (> pages 1) (format nil "Page ~d/~d (~d total matches~a~a)" page pages (length hits) where note)
                            (format nil "~d matches~a~a" (length hits) where note))))
-          (concatenate 'string (format-recall-output shown query header)
+          (concatenate 'string (format-recall-output v shown query header)
                        (if shown (funcall around (first shown)) "")
                        (if (< page pages) (funcall (getf hints :next-page) query scope (1+ page)) ""))))))
 
@@ -304,7 +339,7 @@
                  (format nil "No earlier matches for \"~a\"; its ~d match~a in the current turn, which is already in your context.~a"
                          query in-turn (if (= in-turn 1) " is" "es are") (other-sessions-note v hints))))))
          (concatenate 'string
-                      (page-of-hits hits total truncated query page
+                      (page-of-hits v hits total truncated query page
                                     :where (if (equal (view-scope v) "all") " (scope: all)" "") :scope (view-scope v) :hints hints
                                     :around (lambda (top) (let ((f (getf hints :around-hit))) (if f (funcall f (getf top :index) (view-scope v)) ""))))
                       (if (null hits) (other-sessions-note v hints) "")))))))
@@ -328,7 +363,7 @@
       (multiple-value-bind (hits total truncated) (search-loaded corpus query)
         (cond ((eq hits :aborted) (format nil "~a Searching ~a: narrow the query, or read one session with session:'id' (mode:'sessions' lists them)." total covered))
               ((null hits) (format nil "No matches for \"~a\" in ~a." query covered))
-              (t (page-of-hits hits total truncated query page :where (format nil " in ~a" covered) :scope "project" :hints hints
+              (t (page-of-hits v hits total truncated query page :where (format nil " in ~a" covered) :scope "project" :hints hints
                                :around (lambda (top) (let ((f (getf (surface-hints surface (getf top :session)) :around-hit)))
                                                        (if f (funcall f (getf top :index) "lineage") ""))))))))))
 
@@ -372,7 +407,7 @@
                        (if off-path (format nil "~a ~a not on the current conversation path (edited or retried branch).~%~%"
                                             (join-strings off-path ", ") (if (= (length off-path) 1) "is" "are"))
                            "")
-                       (format-recall-output (nreverse out) nil (format nil "Expanded ~a" (join-strings (mapcar (lambda (i) (format nil "#~a" i)) indices) ", "))))))))
+                       (format-recall-output v (nreverse out) nil (format nil "Expanded ~a" (join-strings (mapcar (lambda (i) (format nil "#~a" i)) indices) ", "))))))))
 
 (defun run-range (range page v)
   (destructuring-bind (lo to) range
@@ -394,7 +429,7 @@
               (if (> page pages)
                   (format nil "~a Use a page between 1 and ~d." (outside-page page pages (format nil "#~d..#~d: ~a" lo hi counts)) pages)
                   (concatenate 'string
-                               (format-recall-output (subseq entries (* (1- page) +range-page-size+) (min (length entries) (* page +range-page-size+))) nil
+                               (format-recall-output v (subseq entries (* (1- page) +range-page-size+) (min (length entries) (* page +range-page-size+))) nil
                                                      (if (> pages 1) (format nil "Range #~d..#~d, page ~d/~d (~a)" lo hi page pages counts) (format nil "Range #~d..#~d (~a)" lo hi counts)))
                                (if (< page pages)
                                    (format nil "~%--- Use range:[~d, ~d] page:~d~a for the next ~d ---" lo hi (1+ page)
@@ -427,7 +462,7 @@
          (all (equal (view-scope v) "all")))
     (ecase (first action)
       (:drill (destructuring-bind (index path full offset limit) (rest action)
-                (note-shown (list index))
+                (note-shown v (list index))
                 (let* ((message (view-message v index))
                        (off (and message (not all) (notany (lambda (e) (eql (getf e :index) index)) (view-load v nil)))))
                   (concatenate 'string (if off +off-path-note+ "")
@@ -443,7 +478,7 @@
                      (run-project-search (second action) (third action) v surface skip)
                      (run-search (second action) (third action) v hints skip))))
       (:recent (concatenate 'string (if all (format nil "Scope: all~%~%") "")
-                            (format-recall-output (last-n (view-load v nil) +recent-count+)))))))
+                            (format-recall-output v (last-n (view-load v nil) +recent-count+)))))))
 
 (defun run-recall (input)
   "One recall: (values OK TEXT SEVERITY SHOWN). INPUT carries the call (the tool's
@@ -473,9 +508,9 @@ session:'id' shows none)."
                     (values nil (second target) "warning")
                     (let* ((header (format nil "Session ~a~%~%" (describe-session target)))
                            (v (open-session-view target (getf request :scope) :max-chars (- max (js-length header) (js-length note)) :detail-chars detail)))
-                      (values t (concatenate 'string header (cap-output (concatenate 'string note (let ((*entry-notes* (superseded-notes v))) (run-action request v surface skip-turn cwd))) (max 0 (- max (js-length header)))))))))
+                      (values t (concatenate 'string header (cap-output (concatenate 'string note (progn (setf (view-notes v) (superseded-notes v)) (run-action request v surface skip-turn cwd))) (max 0 (- max (js-length header)))))))))
               (let ((v (open-view file (getf request :scope) lineage :project project :max-chars (- max (js-length note)) :detail-chars detail
-                                  :turn-fn (current-turn-fn host-branch lineage)))
-                    (*shown-entries* '()))
-                (let ((text (cap-output (concatenate 'string note (let ((*entry-notes* (superseded-notes v))) (run-action request v surface skip-turn cwd))) max)))
-                  (values t text nil (shown-entries)))))))))
+                                  :turn-fn (current-turn-fn host-branch lineage))))
+                (setf (view-notes v) (superseded-notes v) (view-shown-cell v) (list '()))
+                (let ((text (cap-output (concatenate 'string note (run-action request v surface skip-turn cwd)) max)))
+                  (values t text nil (view-shown v)))))))))

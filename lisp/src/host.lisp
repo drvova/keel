@@ -249,9 +249,6 @@ pass is not keel's to answer; with it, what the hook returns."
               (return-from compact-for-host (json-object "kind" "convert" "messages" (coerce wanted 'vector))))
             (let* ((reason (json-get event "reason"))
                    (will-retry (json-get event "willRetry"))
-                   ;; What the agent recalled lately, which [Working Set] brings back first (feedback.lisp).
-                   (*recalled* (let ((b (snapshot-branch s)))
-                                 (recalled-newest-first (recent-recalls (read-recalls b) (branch-turns b (snapshot-index s))))))
                    (window (snapshot-window s))
                    (input (json-object "settings" settings
                                        "keepUserTurns" (or keep :null)
@@ -269,6 +266,9 @@ pass is not keel's to answer; with it, what the hook returns."
                                        ;; Whether a finished turn is left to take out (evict.lisp), for the evict setting's policy.
                                        "evictRoom" (bool (room-to-evict-p (snapshot-branch s) (snapshot-index s)))
                                        "sessionFile" file
+                                       ;; What the agent recalled lately, which [Working Set] brings back first (feedback.lisp).
+                                       "recalled" (let ((b (snapshot-branch s)))
+                                                    (coerce (recalled-newest-first (recent-recalls (read-recalls b) (branch-turns b (snapshot-index s)))) 'vector))
                                        "previousSummary" (json-get event "previousSummary")
                                        "fileOps" (json-get event "fileOps")))
                    (plan (plan-compaction input branch (host-notes branch live originals (or converted #()) (snapshot-index s)))))

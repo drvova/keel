@@ -256,9 +256,8 @@ compact, it first asks for what the host's convertToLlm makes of the messages."
   "The items [Working Set] picks of REQUEST's history, and the section's lines."
   (let* ((max (json-get request "maxChars"))
          ;; What the agent recalled lately, newest first (feedback.lisp), as a compaction reads it from the session.
-         (*recalled* (loop for n across (coerce (json-get request "recalled" #()) 'vector) when (js-integer-p n) collect (as-integer n)))
          (items (select-working-set (coerce (json-get request "history" #()) 'list) (coerce (json-get request "indices" #()) 'list)
-                                    (coerce (json-get request "kept" #()) 'list) max)))
+                                    (coerce (json-get request "kept" #()) 'list) max (recalled-of request))))
     (multiple-value-bind (lines shown) (format-working-set items max)
       (json-object "ok" :true
                    "items" (map 'vector (lambda (i) (json-object "index" (ws-item-index i) "title" (ws-item-title i)

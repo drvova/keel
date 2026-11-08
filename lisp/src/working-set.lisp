@@ -20,7 +20,7 @@
 ;;;; the previous summary keeps only the sections it knows), so it stays bounded
 ;;;; and is never rewritten. Nothing depends on wording: paths, failure flags,
 ;;;; recency, recall's own ranking, and what the agent recalled itself lately
-;;;; (feedback.lisp *recalled*), which says what it needs more surely than any of them.
+;;;; (feedback.lisp recalled-newest-first), which says what it needs more surely than any of them.
 
 (in-package #:keel)
 
@@ -62,7 +62,8 @@ only while it matches the repository's state)."
 
 (defstruct (ws-item (:constructor make-ws-item (index title note text from-end &optional whole))) index title note text from-end whole)
 
-(defun select-working-set (history indices kept max-chars)
+(defun select-working-set (history indices kept max-chars &optional recalled)
+  "The items to bring back; RECALLED, the #N the agent recalled lately, newest first (feedback.lisp)."
   (unless (>= max-chars +min-item-chars+) (return-from select-working-set '()))
   (multiple-value-bind (all-calls results) (read-calls history :indices indices)
     (when (null results) (return-from select-working-set '()))
@@ -149,7 +150,7 @@ only while it matches the repository's state)."
       ;; 3. What the agent recalled lately: it went looking for these, so the
       ;; next step is likelier to need them than what a ranking guesses.
       (let ((taken 0))
-        (dolist (n *recalled*)
+        (dolist (n recalled)
           (when (>= taken +max-recalled+) (return))
           (let ((r (find-if (lambda (r) (and (result-index r) (not (gethash (result-index r) used)) (not (result-error r))
                                               (plusp (length (js-trim (result-text r))))
@@ -232,8 +233,8 @@ told apart by them), and an indented line never reads as a section header."
               (decf left (reduce #'+ (mapcar (lambda (l) (1+ (js-length l))) block))))))))
     (values lines (nreverse shown))))
 
-(defun build-working-set (history indices kept budget-chars removed-chars)
+(defun build-working-set (history indices kept budget-chars removed-chars &optional recalled)
   "The section for a compaction that removes REMOVED-CHARS, within BUDGET-CHARS
 (the budgets' workingSetTokens) and at most half of what it removes."
   (let ((max (js-round (min budget-chars (* removed-chars 0.5d0)))))
-    (format-working-set (select-working-set history indices kept max) max)))
+    (format-working-set (select-working-set history indices kept max recalled) max)))
