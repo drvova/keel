@@ -169,6 +169,40 @@ describe("the line in place of what is out", () => {
   });
 });
 
+describe("a repeated tool output", () => {
+  // The same test run three times with the same failure, and once more after a fix.
+  const reruns = () => {
+    const fail = `bun test tests/billing\n1 fail: totals rounding\n${"  at roundTotals (src/billing/totals.ts:42)\n".repeat(20)}`;
+    const messages: any[] = [{ role: "user", content: "fix the rounding" }];
+    for (const [i, out] of [fail, fail, fail, "12 pass"].entries()) {
+      messages.push({ role: "assistant", content: [{ type: "toolCall", id: `t${i}`, name: "bash", arguments: { command: "bun test tests/billing" } }] });
+      messages.push({ role: "toolResult", toolCallId: `t${i}`, toolName: "bash", isError: out !== "12 pass", content: [{ type: "text", text: out }] });
+    }
+    return sessionOf(messages);
+  };
+
+  it("is sent as a line naming the first, every call kept", () => {
+    setEvict(true);
+    const s = reruns();
+    const all = sent(s, 100_000).messages as any[];
+    const results = all.filter((m) => m.role === "toolResult");
+    expect(results).toHaveLength(4);
+    expect(results[0].content[0].text).toStartWith("bun test tests/billing\n1 fail");
+    expect(results[1].content).toEqual([{ type: "text", text: "[#4: the same output as #2, word for word. keel_recall expand:[4] reads it.]" }]);
+    expect(results[2].content[0].text).toBe("[#6: the same output as #2, word for word. keel_recall expand:[6] reads it.]");
+    // A short output, and one that differs, go as they are.
+    expect(results[3].content[0].text).toBe("12 pass");
+    // Nothing is recorded: the line is made again, the same, for each request.
+    expect(s.appended).toEqual([]);
+    expect(texts(sent(s, 100_000).messages)).toEqual(texts(all));
+  });
+
+  it("goes as it is with eviction off", () => {
+    setEvict(false);
+    expect(sent(reruns(), 100_000).messages).toBeUndefined();
+  });
+});
+
 describe("the running turn", () => {
   // One long request: twelve reads of 30,000 chars, the last reporting 80,000 tokens.
   const long = () => {

@@ -74,8 +74,8 @@ and each of the agent's notes, in request order."
                         ;; The running turn's messages are left out: it grows with every request,
                         ;; and a file that changes under the agent's edit is an edit misread.
                         (unless (and tr (eq tr running))
-                          (format out "~a~%" (if (eq (aref dropped i) :replace)
-                                                 (format nil "[toolResult #~d] ~a" n (result-stub-text n m))
+                          (format out "~a~%" (if (stringp (aref dropped i))
+                                                 (format nil "[toolResult #~d] ~a" n (aref dropped i))
                                                  (message-mirror-text m n))))
                         (let ((note (and n (cdr (assoc n inserts)))))
                           (when note

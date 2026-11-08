@@ -31,6 +31,7 @@
 (defparameter +evict-at-share+ (/ +evict-at-percent+ 100d0) "Past this share of the host's trigger, the oldest finished turns leave.")
 (defparameter +evict-to-share+ 0.5d0 "They leave until the context is estimated at this share of the trigger.")
 (defparameter +big-result-share+ 1/16 "A tool result this share of the trigger or more leaves on its own first, its call kept.")
+(defparameter +repeat-min-chars+ 400 "A tool result this long or more, the same as one before it, is sent as a line naming that one.")
 (defparameter +big-result-min-tokens+ 2000 "And at least this many tokens: below it, a result leaves with its turn.")
 (defstruct (payback (:constructor make-payback (share cache write ahead measured)))
   "When an eviction by the agent pays, worked out from the session: SHARE, how
@@ -404,11 +405,24 @@ out) the pinned notes stand first, in one block (NOTES-BLOCK)."
                                           (after (loop for j from (1+ i) below (length messages) when (aref n-of j) return (aref n-of j))))
                                       (and before (out-p before outs) (or (null after) (out-p after outs)))))))
                  ;; A result out while its call stays in keeps its place, its content a line
-                 ;; (:replace): a call is never sent without its result.
+                 ;; (the line, as a string): a call is never sent without its result.
                  (loop for i from 0 below (length messages)
                        for m = (aref messages i)
                        when (and (eq (aref v i) t) (aref n-of i) (json-object-p m) (equal (json-get m "role") "toolResult"))
-                         do (let ((j (holder i))) (when (and j (not (aref v j))) (setf (aref v i) :replace))))
+                         do (let ((j (holder i))) (when (and j (not (aref v j))) (setf (aref v i) (result-stub-text (aref n-of i) m)))))
+                 ;; A result word for word the same as one the request still holds: a line naming it.
+                 (when auto
+                   (let ((first-of (make-hash-table :test 'equal)))
+                     (loop for i from 0 below (length messages)
+                           for m = (aref messages i)
+                           for n = (aref n-of i)
+                           when (and n (null (aref v i)) (json-object-p m) (equal (json-get m "role") "toolResult"))
+                             do (let ((text (text-of (json-get m "content"))))
+                                  (when (>= (length text) +repeat-min-chars+)
+                                    (let* ((key (cons (eq (json-get m "isError") :true) text)) (earlier (gethash key first-of)))
+                                      (if earlier
+                                          (setf (aref v i) (repeat-stub-text n earlier))
+                                          (setf (gethash key first-of) n))))))))
                  v))
              (chars-kept (outs &optional (below (length messages)))
                (let ((v (dropped outs))) (loop for i from 0 below below unless (aref v i) sum (message-chars (aref messages i))))))
@@ -483,7 +497,7 @@ out) the pinned notes stand first, in one block (NOTES-BLOCK)."
                ;; The originals of what leaves (only that), which the lines read.
                (originals (let ((h (make-hash-table))
                                 (ns (sort (remove-duplicates (loop for i from 0 below (length messages)
-                                                                   when (and (aref v i) (aref n-of i)) collect (aref n-of i)))
+                                                                   when (and (eq (aref v i) t) (aref n-of i)) collect (aref n-of i)))
                                           #'<)))
                                 (loop for n in ns for m in (restore-originals (mapcar (lambda (n) (gethash n by-n)) ns)
                                                                               (mapcar (lambda (n) (gethash n id-of)) ns) file)
@@ -502,8 +516,8 @@ out) the pinned notes stand first, in one block (NOTES-BLOCK)."
                 while (< i (length messages))
                 do (cond
                      ((not (aref v i)) (incf i))
-                     ((eq (aref v i) :replace)
-                      (push (cons (cons i "replace") (result-stub-text (aref n-of i) (aref messages i))) stubs)
+                     ((stringp (aref v i))
+                      (push (cons (cons i "replace") (aref v i)) stubs)
                       (incf i))
                      (t
                        (let ((start i) (lo nil) (hi nil))
@@ -543,6 +557,10 @@ call and what follows it, so its result is the step's last message but one at mo
                                 (equal (json-get (gethash n by-n) "role") "toolResult")
                                 (>= (tokens-from-chars (gethash n chars 0) per-token) floor))
                         collect n))))
+
+(defun repeat-stub-text (n earlier)
+  "The line a tool result word for word the same as #EARLIER is sent as. The same on every request."
+  (format nil "[#~d: the same output as #~d, word for word. ~a reads it.]" n earlier (recall-expand-call n)))
 
 (defun result-stub-text (n m)
   "The line a tool result out on its own leaves as its content: its call stays
