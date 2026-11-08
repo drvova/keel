@@ -57,6 +57,8 @@
      ;; turns that carry on one another; eviction and [Working Set] read them.
      (:file "feedback")
      (:file "links")
+     ;; credit: what each eviction cost, by kind of turn, learned per model.
+     (:file "credit")
      (:file "working-set")
      (:file "task-state")
      ;; context-edits: Pi's context edits, applied before the cut reads the branch.

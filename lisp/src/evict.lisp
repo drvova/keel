@@ -355,7 +355,7 @@ replaced, so they are left out. NIL without two requests far enough apart."
           (clamp-chars-per-token (/ (dbl (- (car b) (car a))) (- (cdr b) (cdr a)))
                                  (cjk-share (loop for m across messages when (json-object-p m) collect (text-of (json-get m "content"))))))))))
 
-(defun evict-request (branch index messages &key trigger auto (count 0) file mark mirror reread-prior)
+(defun evict-request (branch index messages &key trigger auto (count 0) file mark mirror reread-prior credit-prior)
   "What leaves REQUEST MESSAGES (a vector, the host's next request): the indices
 to drop, the stubs (index . text) to put before them, the evict ops keel
 records itself (AUTO and past +EVICT-AT-SHARE+ of TRIGGER), and the estimate
@@ -374,7 +374,7 @@ out) the pinned notes stand first, in one block (NOTES-BLOCK)."
          (outs (read-evictions branch))
          (n-of (make-array (length messages) :initial-element nil))
          (chars (make-hash-table)) (by-n (make-hash-table))
-         (per-token +default-chars-per-token+) (fit nil) (ops '()) (reread nil) (reread-trials 0))
+         (per-token +default-chars-per-token+) (fit nil) (ops '()) (reread nil) (reread-trials 0) (credit nil) (rates nil))
     (loop for i from (live-window-start branch) below (length branch)
           for e = (aref branch i)
           when (counted-entry-p e)
@@ -465,8 +465,11 @@ out) the pinned notes stand first, in one block (NOTES-BLOCK)."
               ;; context at the trigger and every request took a sliver of the
               ;; running turn (a real 60-turn run: 285 evictions against 60, and
               ;; 2.4 times the prompt tokens).
+              ;; What each eviction before cost, by kind of turn (credit.lisp): a kind this
+              ;; model keeps recalling once out leaves after the others.
+              (setf credit (eviction-credit branch turns recalls by-n) rates (kind-rates credit credit-prior))
               (let* ((finished (multiple-value-bind (held free) (partition (lambda (u) (held-turn-p u recent)) (turns-in turns outs))
-                                 (append free held)))
+                                 (append (credit-order free rates by-n) held)))
                      ;; Then the running turn: first each of its tool results big enough to
                      ;; matter on its own, its call kept, so the turn's reasoning stays in view
                      ;; (VISTA, arXiv:2606.30005: a few large blocks hold most of a long
@@ -540,7 +543,7 @@ out) the pinned notes stand first, in one block (NOTES-BLOCK)."
             (let ((last-in (position nil gone :from-end t)))
               (when (and last-in (realp trigger) (> trigger 0))
                 (push (cons (cons last-in "append") (dashboard after trigger turns outs chars per-token)) stubs))))
-          (values (nreverse drop) (nreverse stubs) (nreverse ops) before after n-of v outs turns fit reread reread-trials))))))
+          (values (nreverse drop) (nreverse stubs) (nreverse ops) before after n-of v outs turns fit reread reread-trials rates credit))))))
 
 (defun turn-mark (n) (format nil "[#~d]" n))
 

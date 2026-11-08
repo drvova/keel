@@ -71,14 +71,15 @@
 
 (defparameter +chars-per-token-seen+ 8 "The measured chars per token kept per model, newest last.")
 
-(defun record-evidence (dir key &key prompt chars-per-token reread)
+(defun record-evidence (dir key &key prompt chars-per-token reread recall-by-kind)
   "Keep what a request proved of KEY's window and tokens: PROMPT, the largest prompt
 the provider accepted (the window is at least that), and CHARS-PER-TOKEN, the
 latest calibration of the session's messages against the provider's count
 (a model's tokenizer is its own: Claude 4.7 counts about 30% more tokens than
 4.6 for the same text). Written only when the largest prompt grew or the
 calibration moved by more than 5%, or REREAD, how often the model recalls a turn
-again (feedback.lisp), moved by more than 0.05; each chars-per-token value it moved to is kept, the last
+again (feedback.lisp), or RECALL-BY-KIND, a hash of each kind of turn's chance of
+being recalled once out (credit.lisp), moved by more than 0.05; each chars-per-token value it moved to is kept, the last
 +chars-per-token-seen+ of them (LEARNED-CHARS-PER-TOKEN reads the lowest)."
   (when key
     (let* ((limits (read-limits dir)) (known (limit-of limits key))
@@ -86,11 +87,20 @@ again (feedback.lisp), moved by more than 0.05; each chars-per-token value it mo
            (grew (and (realp prompt) (> prompt 0) (or (not (realp was-prompt)) (> prompt was-prompt))))
            (moved (and (realp chars-per-token) (or (not (realp was-cpt)) (> (abs (- chars-per-token was-cpt)) (* 0.05 was-cpt)))))
            (was-reread (json-get known "rereadContinue"))
-           (reread-moved (and (realp reread) (or (not (realp was-reread)) (> (abs (- reread was-reread)) 0.05d0)))))
-      (when (and (or grew moved reread-moved) (hash-table-p limits))
+           (reread-moved (and (realp reread) (or (not (realp was-reread)) (> (abs (- reread was-reread)) 0.05d0))))
+           (was-kinds (json-get known "recallAfterEvict"))
+           (kinds-moved (and (hash-table-p recall-by-kind)
+                             (loop for k being the hash-keys of recall-by-kind using (hash-value v)
+                                   for was = (and (json-object-p was-kinds) (json-get was-kinds k))
+                                   thereis (or (not (realp was)) (> (abs (- v was)) 0.05d0))))))
+      (when (and (or grew moved reread-moved kinds-moved) (hash-table-p limits))
         (let ((entry (spread-any known)))
           (when grew (setf (gethash "maxPromptTokens" entry) prompt))
           (when reread-moved (setf (gethash "rereadContinue" entry) (/ (round (* reread 100)) 100d0)))
+          (when kinds-moved
+            (let ((kinds (if (json-object-p was-kinds) (spread-any was-kinds) (json-object))))
+              (maphash (lambda (k v) (setf (gethash k kinds) (/ (round (* v 100)) 100d0))) recall-by-kind)
+              (setf (gethash "recallAfterEvict" entry) kinds)))
           (when moved
             (let ((value (/ (round (* chars-per-token 100)) 100d0))
                   (seen (let ((v (json-get known "charsPerTokenSeen"))) (if (json-array-p v) (remove-if-not #'realp (coerce v 'list)) '()))))
@@ -102,6 +112,14 @@ again (feedback.lisp), moved by more than 0.05; each chars-per-token value it mo
 (defun learned-reread (dir key)
   "How often KEY's model recalls a turn out of the context again, having recalled it once, as its last session showed (feedback.lisp), or NIL."
   (let ((q (json-get (limit-of (read-limits dir) key) "rereadContinue"))) (and (realp q) (<= 0 q 1) q)))
+
+(defun learned-recall-by-kind (dir key)
+  "How often KEY's model recalled a turn of each kind once it was out (credit.lisp), as a hash of kind to rate, or NIL."
+  (let ((kinds (json-get (limit-of (read-limits dir) key) "recallAfterEvict")))
+    (when (json-object-p kinds)
+      (let ((h (make-hash-table :test 'equal)))
+        (maphash (lambda (k v) (when (and (realp v) (<= 0 v 1)) (setf (gethash k h) v))) kinds)
+        h))))
 
 (defun learned-chars-per-token (dir key)
   "KEY's chars per token, from the low side: the fewest chars a token of the values
