@@ -181,20 +181,49 @@ describe("the running turn", () => {
     return sessionOf(messages);
   };
 
-  it("lets its older steps leave as the context fills, keeping its request and its newest step", () => {
+  it("lets its big results leave on their own as the context fills, each call kept, its request and newest step whole", () => {
     setEvict(true);
     const s = long();
     const { messages } = sent(s, 100_000);
+    // Each result is ~7,500 tokens, past a sixteenth of the 83,616 trigger: results go, one #N each, oldest first.
+    const ops = s.appended.map((e) => e.data);
+    expect(ops.length).toBeGreaterThan(0);
+    expect(ops.every((op: any) => op.op === "evict" && op.by === "auto" && op.from === op.to && op.from % 2 === 0)).toBe(true);
+    expect(ops[0].from).toBe(2);
+    // Every call stays, each with its result: the ones out hold a line in place of their content.
+    const all = messages as any[];
+    expect(all.filter((m) => m.role === "assistant")).toHaveLength(12);
+    expect(all.filter((m) => m.role === "toolResult")).toHaveLength(12);
+    const out = all.find((m) => m.toolCallId === "r0");
+    expect(out.content).toEqual([{ type: "text", text: "[#2 out of context: this read result, on its own; its call stays. It reads back word for word with keel_recall expand:[2].]" }]);
+    expect(all[0].content).toBe("audit every module in the repository");
+    // The newest step stays whole.
+    expect(all.at(-1).toolCallId).toBe("r11");
+    expect(all.at(-1).content[0].text).toStartWith("11:x");
+    // Once the turn has finished, the context's file shows the line too, inside the turn's block.
+    s.entries.push({ type: "message", id: "next", parentId: s.entries.at(-1).id, message: { role: "user", content: "now the tests", timestamp: 1_800_000_000_000 } });
+    sent(s, 100_000, true);
+    expect(readFileSync(`${s.file}.keel-context.md`, "utf8")).toContain("[toolResult #2] [#2 out of context: this read result, on its own;");
+  });
+
+  it("lets its older steps leave whole when no result is big on its own", () => {
+    setEvict(true);
+    // Sixty reads of 5,000 chars: none near a sixteenth of the trigger, together past 85% of it.
+    const messages: any[] = [{ role: "user", content: "audit every module in the repository" }];
+    for (let i = 0; i < 60; i++) {
+      messages.push({ role: "assistant", content: [{ type: "toolCall", id: `r${i}`, name: "read", arguments: { path: `m${i}.ts` } }] });
+      messages.push({ role: "toolResult", toolCallId: `r${i}`, toolName: "read", content: [{ type: "text", text: `${i}:`.padEnd(5_000, "x") }] });
+    }
+    messages.at(-2).usage = { input: 80_000, output: 10, cacheRead: 0, cacheWrite: 0 };
+    const s = sessionOf(messages);
+    const { messages: request } = sent(s, 100_000);
     expect(s.appended.map((e) => e.data)).toEqual([expect.objectContaining({ op: "evict", from: 1, by: "auto" })]);
-    // The line ends the request it follows, so no two user messages stand in a row.
-    const request = (messages as any[])[0].content.map((p: any) => p.text);
-    expect(request[0]).toBe("audit every module in the repository");
-    expect(request[1]).toStartWith(`[#1–#${s.appended[0].data.to} out of context: older steps of the turn at #0, by keel as the context filled.`);
-    expect((messages as any[])[1].role).toBe("assistant");
+    const first = (request as any[])[0].content.map((p: any) => p.text);
+    expect(first[1]).toStartWith(`[#1–#${s.appended[0].data.to} out of context: older steps of the turn at #0, by keel as the context filled.`);
     // The newest step stays, and every result that stays has its call.
-    expect((messages as any[]).at(-1).toolCallId).toBe("r11");
-    const calls = new Set((messages as any[]).flatMap((m) => (m.role === "assistant" ? m.content.map((p: any) => p.id) : [])));
-    expect((messages as any[]).filter((m) => m.role === "toolResult").every((m) => calls.has(m.toolCallId))).toBe(true);
+    expect((request as any[]).at(-1).toolCallId).toBe("r59");
+    const calls = new Set((request as any[]).flatMap((m) => (m.role === "assistant" ? m.content.map((p: any) => p.id) : [])));
+    expect((request as any[]).filter((m) => m.role === "toolResult").every((m) => calls.has(m.toolCallId))).toBe(true);
   });
 
   it("gives the compaction no room once only its request and newest step are left", () => {

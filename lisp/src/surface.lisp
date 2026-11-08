@@ -267,14 +267,22 @@ prompt (resume.lisp)."
 
 (defun splice-request (messages drop stubs)
   "MESSAGES without the indices DROP, each stub line put where the core placed it:
-before or after a message's content, or as a message of its own."
+before or after a message's content, in place of it (a tool result out on its
+own), or as a message of its own."
   (let ((drop (coerce drop 'list)) (out '()))
     (loop for m across messages for i from 0
           do (let ((here (remove-if-not (lambda (st) (eql (json-get st "at") i)) stubs)))
                (dolist (st here) (when (equal (json-get st "how") "insert") (push (json-get st "message") out)))
                (unless (member i drop)
                  (let ((before (loop for st in here when (equal (json-get st "how") "prepend") collect (json-get st "text")))
-                       (after (loop for st in here when (equal (json-get st "how") "append") collect (json-get st "text"))))
+                       (after (loop for st in here when (equal (json-get st "how") "append") collect (json-get st "text")))
+                       ;; A result out on its own: its line in place of its content, the message kept for its call.
+                       (m (let ((r (find "replace" here :key (lambda (st) (json-get st "how")) :test #'equal)))
+                            (if r
+                                (let ((copy (copy-object m)))
+                                  (setf (gethash "content" copy) (vector (json-object "type" "text" "text" (json-get r "text"))))
+                                  copy)
+                                m))))
                    (push (if (or before after) (with-text m before after) m) out)))))
     (coerce (nreverse out) 'vector)))
 

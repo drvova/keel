@@ -140,7 +140,7 @@ The sizes are those of a ~128K–200K window; they follow the model's ([The wind
 
 ## Turns out whole
 
-Instead of a summary over the oldest part of the window, old turns leave the request whole. Nothing is summarized or rewritten; the session keeps every word. A turn is a request the user made and everything after it, so a call never leaves without its result; the running turn's older steps can leave too, its request and newest step never.
+Instead of a summary over the oldest part of the window, old turns leave the request whole. Nothing is summarized or rewritten; the session keeps every word. A turn is a request the user made and everything after it, so a call never leaves without its result; the running turn's older steps can leave too, its request and newest step never. In a long running turn, a big tool result (a sixteenth of the trigger or more) leaves on its own before any step does: its call stays, its content becomes one line (`[#12 out of context: this read result, on its own; its call stays. It reads back word for word with keel_recall expand:[12].]`), so the turn's reasoning stays in view.
 
 **You** take turns out with `/keel-evict` at any time, with eviction on or off:
 

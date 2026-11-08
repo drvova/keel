@@ -30,6 +30,8 @@
 
 (defparameter +evict-at-share+ (/ +evict-at-percent+ 100d0) "Past this share of the host's trigger, the oldest finished turns leave.")
 (defparameter +evict-to-share+ 0.5d0 "They leave until the context is estimated at this share of the trigger.")
+(defparameter +big-result-share+ 1/16 "A tool result this share of the trigger or more leaves on its own first, its call kept.")
+(defparameter +big-result-min-tokens+ 2000 "And at least this many tokens: below it, a result leaves with its turn.")
 (defstruct (payback (:constructor make-payback (share cache write ahead measured)))
   "When an eviction by the agent pays, worked out from the session: SHARE, how
 much of what it makes the provider read again it must free; CACHE and WRITE, a
@@ -223,11 +225,11 @@ turns), and any step holding a steer, the user's own words mid-run."
 (defun ranges-in (units outs)
   "The #N of UNITS still in the context, as (FROM . TO) ranges of consecutive #N:
 what an eviction of them records, so a range never overlaps one already out."
-  (let ((ranges '()))
-    (dolist (u units (nreverse ranges))
-      (loop for n from (turn-from u) to (turn-to u)
-            unless (out-of n outs)
-              do (if (and ranges (= n (1+ (cdr (first ranges))))) (setf (cdr (first ranges)) n) (push (cons n n) ranges))))))
+  (let ((ranges '())
+        (ns (sort (remove-duplicates (loop for u in units nconc (loop for n from (turn-from u) to (turn-to u) collect n))) #'<)))
+    (dolist (n ns (nreverse ranges))
+      (unless (out-of n outs)
+        (if (and ranges (= n (1+ (cdr (first ranges))))) (setf (cdr (first ranges)) n) (push (cons n n) ranges))))))
 
 ;;; --- sizes and the line left in their place -------------------------------------------
 
@@ -381,6 +383,15 @@ out) the pinned notes stand first, in one block (NOTES-BLOCK)."
           for n = (and (json-object-p m) (gethash (message-key m) key-n))
           when n do (setf (aref n-of i) n (gethash n by-n) m) (incf (gethash n chars 0) (message-chars m)))
     (labels ((out-p (n outs) (and (out-of n outs) (notany (lambda (st) (<= (turn-from st) n (turn-to st))) protected)))
+             ;; The request's message that holds the call a tool result answers.
+             (holder (i)
+               (let ((id (json-get (aref messages i) "toolCallId")))
+                 (and (stringp id)
+                      (loop for j from (1- i) downto 0
+                            for m = (aref messages j)
+                            when (and (json-object-p m) (equal (json-get m "role") "assistant")
+                                      (some (lambda (c) (equal (call-id c) id)) (tool-calls-of m)))
+                              return j))))
              ;; A message not tied to an entry (a custom one) goes with the entries around it: out when both are.
              (dropped (outs)
                (let ((v (make-array (length messages) :initial-element nil)))
@@ -392,6 +403,12 @@ out) the pinned notes stand first, in one block (NOTES-BLOCK)."
                                     (let ((before (loop for j from (1- i) downto 0 when (aref n-of j) return (aref n-of j)))
                                           (after (loop for j from (1+ i) below (length messages) when (aref n-of j) return (aref n-of j))))
                                       (and before (out-p before outs) (or (null after) (out-p after outs)))))))
+                 ;; A result out while its call stays in keeps its place, its content a line
+                 ;; (:replace): a call is never sent without its result.
+                 (loop for i from 0 below (length messages)
+                       for m = (aref messages i)
+                       when (and (eq (aref v i) t) (aref n-of i) (json-object-p m) (equal (json-get m "role") "toolResult"))
+                         do (let ((j (holder i))) (when (and j (not (aref v j))) (setf (aref v i) :replace))))
                  v))
              (chars-kept (outs &optional (below (length messages)))
                (let ((v (dropped outs))) (loop for i from 0 below below unless (aref v i) sum (message-chars (aref messages i))))))
@@ -436,12 +453,21 @@ out) the pinned notes stand first, in one block (NOTES-BLOCK)."
               ;; 2.4 times the prompt tokens).
               (let* ((finished (multiple-value-bind (held free) (partition (lambda (u) (held-turn-p u recent)) (turns-in turns outs))
                                  (append free held)))
-                     (candidates (append finished (nthcdr (length (turns-in turns outs)) (units-in turns branch index outs))))
-                     (leaving '()))
+                     ;; Then the running turn: first each of its tool results big enough to
+                     ;; matter on its own, its call kept, so the turn's reasoning stays in view
+                     ;; (VISTA, arXiv:2606.30005: a few large blocks hold most of a long
+                     ;; context); only then its older steps, whole.
+                     (candidates (append finished
+                                         (mapcar (lambda (n) (make-turn n n)) (big-results turns branch index outs by-n chars per-token trigger protected))
+                                         (nthcdr (length (turns-in turns outs)) (units-in turns branch index outs))))
+                     (leaving '()) (counted (make-hash-table)))
                 (dolist (u candidates)
                   (when (<= after (* +evict-to-share+ trigger)) (return))
                   (push u leaving)
-                  (decf after (tokens-from-chars (turn-chars u chars outs) per-token)))
+                  ;; A step whose big result left before it is counted without it.
+                  (loop for n from (turn-from u) to (turn-to u)
+                        unless (or (out-of n outs) (gethash n counted))
+                          do (setf (gethash n counted) t) (decf after (tokens-from-chars (gethash n chars 0) per-token))))
                 (setf leaving (nreverse leaving))
                 ;; The cut never falls inside a chain of linked turns (links.lisp).
                 (when (and leaving (<= (length leaving) (length finished)) (member (car (last leaving)) finished))
@@ -452,6 +478,8 @@ out) the pinned notes stand first, in one block (NOTES-BLOCK)."
                 (setf outs (sort outs #'< :key #'out-from) after (+ overhead (tokens-from-chars (chars-kept outs) per-token)))))))
         ;; Each block of messages that leave gets one line, where the block was.
         (let* ((v (dropped outs)) (drop '()) (stubs '())
+               ;; What the request leaves out altogether; a result replaced by its line stays in it.
+               (gone (map 'vector (lambda (x) (eq x t)) v))
                ;; The originals of what leaves (only that), which the lines read.
                (originals (let ((h (make-hash-table))
                                 (ns (sort (remove-duplicates (loop for i from 0 below (length messages)
@@ -468,21 +496,25 @@ out) the pinned notes stand first, in one block (NOTES-BLOCK)."
               (let ((text (cond ((and mirror shown) (format nil "~a~%~a" (mirror-header mirror) (notes-block shown as-of)))
                                 (mirror (mirror-header mirror))
                                 (shown (notes-block shown as-of))))
-                    (place (notes-place messages v)))
+                    (place (notes-place messages gone)))
                 (when (and text place) (push (cons place text) stubs)))))
           (loop with i = 0
                 while (< i (length messages))
-                do (if (not (aref v i))
-                       (incf i)
+                do (cond
+                     ((not (aref v i)) (incf i))
+                     ((eq (aref v i) :replace)
+                      (push (cons (cons i "replace") (result-stub-text (aref n-of i) (aref messages i))) stubs)
+                      (incf i))
+                     (t
                        (let ((start i) (lo nil) (hi nil))
-                         (loop while (and (< i (length messages)) (aref v i))
+                         (loop while (and (< i (length messages)) (eq (aref v i) t))
                                do (let ((n (aref n-of i))) (when n (setf lo (min (or lo n) n) hi (max (or hi n) n))))
                                   (push i drop) (incf i))
-                         (when lo (push (cons (stub-place messages v start (1- i)) (stub-text lo hi turns outs by-n originals)) stubs)))))
+                         (when lo (push (cons (stub-place messages gone start (1- i)) (stub-text lo hi turns outs by-n originals)) stubs))))))
           ;; The agent's notes put after an entry in its context's file, after that entry's message.
           (loop for (n . text) in (read-inserts branch)
                 for i = (position n n-of)
-                when (and i (not (aref v i))) do (push (cons (cons i "append") text) stubs))
+                when (and i (not (aref gone i))) do (push (cons (cons i "append") text) stubs))
           (when mark
             (let ((starts (make-hash-table)))
               (dolist (tr turns) (setf (gethash (turn-from tr) starts) t))
@@ -491,12 +523,33 @@ out) the pinned notes stand first, in one block (NOTES-BLOCK)."
                     when (and n (not (aref v i)) (gethash n starts) (equal (json-get (aref messages i) "role") "user"))
                       do (push (cons (cons i "prepend") (turn-mark n)) stubs)))
             ;; The dashboard, at the very end of the request (dashboard, below).
-            (let ((last-in (position nil v :from-end t)))
+            (let ((last-in (position nil gone :from-end t)))
               (when (and last-in (realp trigger) (> trigger 0))
                 (push (cons (cons last-in "append") (dashboard after trigger turns outs chars per-token)) stubs))))
           (values (nreverse drop) (nreverse stubs) (nreverse ops) before after n-of v outs turns fit reread reread-trials))))))
 
 (defun turn-mark (n) (format nil "[#~d]" n))
+
+(defun big-results (turns branch index outs by-n chars per-token trigger protected)
+  "The running turn's tool results that can leave on their own, oldest first: in
+an older step (never its request or newest step), still in the context, and at
+least +BIG-RESULT-SHARE+ of TRIGGER and +BIG-RESULT-MIN-TOKENS+. A step is a
+call and what follows it, so its result is the step's last message but one at most."
+  (let ((floor (max +big-result-min-tokens+ (* +big-result-share+ trigger))))
+    (loop for st in (older-steps turns branch index)
+          nconc (loop for n from (turn-from st) to (turn-to st)
+                      when (and (not (out-of n outs))
+                                (notany (lambda (p) (<= (turn-from p) n (turn-to p))) protected)
+                                (equal (json-get (gethash n by-n) "role") "toolResult")
+                                (>= (tokens-from-chars (gethash n chars 0) per-token) floor))
+                        collect n))))
+
+(defun result-stub-text (n m)
+  "The line a tool result out on its own leaves as its content: its call stays
+in the request. The same on every request, for the provider's cache."
+  (let ((tool (json-get m "toolName")))
+    (format nil "[#~d out of context: this~@[ ~a~] result, on its own; its call stays. It reads back word for word with ~a.]"
+            n (and (stringp tool) tool) (recall-expand-call n))))
 
 (defparameter +dashboard-largest+ 3 "The largest turns in the context the dashboard names.")
 
