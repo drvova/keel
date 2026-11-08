@@ -48,10 +48,7 @@ recalls would bring it back on every request (a real run did: 171 restores in
   (let ((outs (read-evictions branch)))
     (loop for tr in (finished-turns turns)
           for left = (and (turn-out-p tr outs) (out-at (out-of (turn-to tr) outs)))
-          for k = (and left (length (remove-duplicates
-                                     (loop for (n . at) in recent
-                                           when (and (<= (turn-from tr) n (turn-to tr)) (> at left))
-                                             collect at))))
+          for k = (and left (length (recalls-while-out (turn-from tr) (turn-to tr) left nil recent)))
           when (and k (plusp k)) collect (cons tr k))))
 
 ;;; --- whether bringing a turn back pays, for this model -----------------------------
@@ -76,19 +73,15 @@ recalls would bring it back on every request (a real run did: 171 restores in
 
 (defun reread-evidence (branch turns recalls)
   "(values CONTINUED TRIALS) for the chance of recalling a turn out of the context again, from RECALLS ((N . AT)) on BRANCH."
-  (let ((continued 0) (trials 0)
-        (turn-at (lambda (at) (or (position-if (lambda (tr) (<= (turn-from tr) at)) turns :from-end t) 0))))
+  (let ((continued 0) (trials 0))
     (dolist (p (out-periods branch))
       (destructuring-bind (from to start end) p
-        (let ((ats (sort (remove-duplicates (loop for (n . at) in recalls
-                                                  when (and (<= from n to) (> at start) (or (null end) (<= at end)))
-                                                    collect at))
-                         #'<)))
+        (let ((ats (recalls-while-out from to start end recalls)))
           (loop for (at next) on ats
-                for i = (funcall turn-at at)
-                do (cond ((and next (<= (- (funcall turn-at next) i) +recall-hold-turns+)) (incf continued) (incf trials))
+                for i = (turn-index-at at turns)
+                do (cond ((and next (<= (- (turn-index-at next turns) i) +recall-hold-turns+)) (incf continued) (incf trials))
                          ;; Cut short by a restore before its window passed: unknown.
-                         ((and end (<= (- (funcall turn-at end) i) +recall-hold-turns+)))
+                         ((and end (<= (- (turn-index-at end turns) i) +recall-hold-turns+)))
                          ;; Its window has passed with no recall: a stop.
                          ((> (- (1- (length turns)) i) +recall-hold-turns+) (incf trials)))))))
     (values continued trials)))

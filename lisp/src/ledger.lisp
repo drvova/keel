@@ -120,6 +120,18 @@ an #N standing, an empty one taking it away. An alist (N . TEXT)."
 
 ;;; --- turns --------------------------------------------------------------------------
 
+(defun turn-index-at (at turns)
+  "The index in TURNS of the turn the #N count AT fell in."
+  (or (position-if (lambda (tr) (<= (turn-from tr) at)) turns :from-end t) 0))
+
+(defun recalls-while-out (from to start end recalls)
+  "The #N counts, oldest first and each once, at which RECALLS ((N . AT)) read any of
+#FROM–#TO while it was out: after START, the count it left at, and by END, the
+one it came back at (NIL while it is out)."
+  (sort (remove-duplicates (loop for (n . at) in recalls
+                                 when (and (<= from n to) (> at start) (or (null end) (<= at end))) collect at))
+        #'<))
+
 (defun branch-turns (branch index)
   "The whole turns of BRANCH's live window by #N, oldest first: each starts at a
 request the user made (not one another extension sent in the user's name, and

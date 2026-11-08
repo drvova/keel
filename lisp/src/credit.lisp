@@ -30,17 +30,15 @@
 took out whole, how many the agent recalled (RECALLS, (N . AT)) while they were
 out. One out with no recall counts once its window (+recall-hold-turns+ turns)
 has passed; one brought back before then without a recall, not at all."
-  (let ((credit (make-hash-table :test 'equal)) (traits (memo-traits by-n))
-        (turn-at (lambda (at) (or (position-if (lambda (tr) (<= (turn-from tr) at)) turns :from-end t) 0))))
+  (let ((credit (make-hash-table :test 'equal)) (traits (memo-traits by-n)))
     (dolist (p (out-periods branch) credit)
       (destructuring-bind (from to start end) p
         (dolist (tr (finished-turns turns))
           (when (<= from (turn-from tr) (turn-to tr) to)
             (let* ((kind (turn-kind (funcall traits tr)))
-                   (hit (some (lambda (r) (and (<= (turn-from tr) (car r) (turn-to tr)) (> (cdr r) start) (or (null end) (<= (cdr r) end))))
-                              recalls))
-                   (left (funcall turn-at start))
-                   (until (if end (funcall turn-at end) (1- (length turns))))
+                   (hit (recalls-while-out (turn-from tr) (turn-to tr) start end recalls))
+                   (left (turn-index-at start turns))
+                   (until (if end (turn-index-at end turns) (1- (length turns))))
                    (cell (or (gethash kind credit) (setf (gethash kind credit) (cons 0 0)))))
               (cond (hit (incf (car cell)) (incf (cdr cell)))
                     ((> (- until left) +recall-hold-turns+) (incf (cdr cell)))))))))))
