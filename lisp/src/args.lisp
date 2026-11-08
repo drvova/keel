@@ -4,7 +4,7 @@
 ;;;;
 ;;;; `/keel keep:N` becomes customInstructions carrying a marker, so the
 ;;;; hook knows the pass is the command's; `/compact` text may end or start with
-;;;; keep:N and carry a prompt to send once it is done. src/core/compact-args.ts
+;;;; keep:N and carry a prompt to send once it is done. src/compaction.ts
 ;;;; asks for both.
 
 (in-package #:keel)

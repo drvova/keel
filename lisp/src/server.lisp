@@ -4,7 +4,7 @@
 ;;;;
 ;;;; The executable reads one JSON object from stdin and writes one to stdout,
 ;;;; then exits; with --serve it answers the same requests one after another
-;;;; in one long-lived process (live.lisp), which is how src/core/lisp-core.ts
+;;;; in one long-lived process (live.lisp), which is how src/core.ts
 ;;;; runs it where the system has named pipes. Either way the callers stay
 ;;;; synchronous. A start costs ~5 ms (the dumped image is mapped, not loaded).
 ;;;;
@@ -24,7 +24,7 @@
 ;;;; summarize: a compaction's summary (summary.lisp compile-summary), for tests/support/compile.ts
 ;;;;   {"op":"summarize","input":COMPILE-INPUT} -> {"ok":true,"text":T,"state":STATE,"sections":[S...]}
 ;;;;
-;;;; compact: a session_before_compact, in two calls (src/hooks/compaction.ts; host.lisp compact-for-host)
+;;;; compact: a session_before_compact, in two calls (src/compaction.ts; host.lisp compact-for-host)
 ;;;;   {"op":"compact","host":SNAPSHOT,"event":EVENT,"converted":[MESSAGE...]?}
 ;;;;   -> {"ok":true,"kind":"pass"} when the pass is not keel's; without
 ;;;;   CONVERTED, {"ok":true,"kind":"convert","messages":[M...]}, what the host's
@@ -47,35 +47,43 @@
 ;;;;   -> {"ok":true,"request":{scope, session?, action:{kind,...}, ignored:[PARAM...]},"note":N,
 ;;;;       "params":{...},"dropped":[D...]} (params and dropped for the tool's params)
 ;;;;
-;;;; names: keel's own names and the limits its tools state (names.lisp), which src/names.ts copies
+;;;; names: keel's own names and the limits its tools state (names.lisp), for the tests
 ;;;;   {"op":"names"} -> {"ok":true,"names":{recallTool, recallParams, pinTool, ..., sessionRefMinChars}}
 ;;;;
 ;;;; context-edits: a branch as Pi's context holds it (context-edits.lisp), for the parity test
 ;;;;   {"op":"context-edits","branch":[ENTRY...]} -> {"ok":true,"entries":[ENTRY...]}
 ;;;;   (op compact applies the same projection to its BRANCH and NOTES)
 ;;;;
-;;;; settings: keel's config file (src/core/settings.ts), which the core reads and scaffolds itself
+;;;; settings: keel's config file (src/settings.ts), which the core reads and scaffolds itself
 ;;;;   {"op":"settings","path":P,"legacy":L|null,"scaffold":B}
 ;;;;   -> {"ok":true,"settings":SETTINGS}; with scaffold, the file is made whole
-;;;;   first (from LEGACY, pi-vcc's file, when given and there is none at P).
+;;;;   first (from LEGACY, an earlier name's file, when given and there is none at P).
 ;;;;
-;;;; pin: one keel_pin call or /…-pin, /…-unpin command (src/core/pins.ts)
-;;;;   {"op":"pin","host":SNAPSHOT,"call":{surface:"tool",params}|{surface:"command",name:"pin"|"unpin",args}}
-;;;;   -> {"ok":true,"pin":{done, text, op?, severity?, agentNote?}}; OP is the
-;;;;   keel.pin entry's data for the host to append.
+;;;; surface: the tools and commands a binding registers (surface.lisp), which src/surface.ts holds
+;;;;   {"op":"surface"} -> {"ok":true,"surface":{command, tools:[...], commands:[...], dataEntryTypes:[...]}}
 ;;;;
-;;;; raw-capture: copy what omp may rewrite (src/hooks/raw-capture.ts)
+;;;; tool, command, session-start, message-end, context: the host's calls and events
+;;;; (src/register.ts), each answered with what to do (surface.lisp: EFFECTS, done in order)
+;;;;   {"op":"tool","host":SNAPSHOT,"name":TOOL,"params":P,"projectFiles":[F...]} -> {"ok":true,"text":T,"effects":[...]}
+;;;;   {"op":"command","host":SNAPSHOT,"suffix":"recall"|"pin"|"unpin"|"evict","args":TEXT,"projectFiles":[F...]}
+;;;;   {"op":"session-start","host":SNAPSHOT,"projectFiles":[F...]} (the last session's named notes carried)
+;;;;   {"op":"message-end","host":SNAPSHOT,"message":M} (a limit an error states, or the prompt accepted, learned)
+;;;;   {"op":"context","host":SNAPSHOT,"messages":[M...],"tool":B (keel_context is registered)}
+;;;;   -> also "messages": the request to send instead, or null to send it as it is
+;;;;   (projectFiles: the project's other session files, newest first, which only the host orders to the millisecond)
+;;;;
+;;;; raw-capture: copy what omp may rewrite (src/raw-capture.ts)
 ;;;;   {"op":"raw-capture","input":{file, entries:[the message entries since the last call],
 ;;;;    kept:[ids of them the binding keeps], lineage:B}}
 ;;;;   -> {"ok":true,"written":[ID...],"stored":B,"lineage":[ID...]?}; the core appends
 ;;;;   <file>.keel-raw itself (STORED false: the write failed), and with LINEAGE
 ;;;;   reads the ids the file's and its parents' stores hold.
 ;;;;
-;;;; placeholders: pointers on omp's placeholders (src/hooks/raw-capture.ts)
+;;;; placeholders: pointers on omp's placeholders (src/raw-capture.ts)
 ;;;;   {"op":"placeholders","host":SNAPSHOT,"candidates":[{i, callId, text}...],"kept":[ID...]}
 ;;;;   -> {"ok":true,"replace":[{i, text}...]}
 ;;;;
-;;;; args: a compaction command's text and the instructions the hook reads (src/core/compact-args.ts)
+;;;; args: /keel's text and the instructions the hook reads (src/compaction.ts)
 ;;;;   {"op":"args","command":TEXT} -> {"ok":true,"followUpPrompt":P,"instructions":I} (keep:N in I)
 ;;;;   {"op":"args","instructions":TEXT|null} -> {"ok":true,"fromCommand":B,"keepUserTurns":N|null,"followUpPrompt":P|null}
 ;;;;
@@ -85,13 +93,10 @@
 ;;;;   {"op":"limits","action":"learn","model":M,"dir":D,"window":N,"now":ISO?} -> {"ok":true,"recorded":B}
 ;;;;   {"op":"limits","action":"learned","model":M,"dir":D} -> {"ok":true,"window":N?}
 ;;;;
-;;;; learn-limit: an assistant message that ended in an error (src/hooks/window-limits.ts)
-;;;;   {"op":"learn-limit","host":SNAPSHOT,"errors":[TEXT...]} -> {"ok":true,"recorded":B}
-;;;;
-;;;; settled: a run that settled (src/hooks/window-limits.ts)
+;;;; settled: a run that settled (src/compaction.ts)
 ;;;;   {"op":"settled","host":SNAPSHOT} -> {"ok":true,"settled":{trigger, notice}?}
 ;;;;
-;;;; outcome: what a compaction's outcome is told as (outcome.lisp; src/commands/compact-feedback.ts)
+;;;; outcome: what a compaction's outcome is told as (outcome.lisp; src/compaction.ts)
 ;;;;   {"op":"outcome","stats":S} -> {"ok":true,"line":L}
 ;;;;   {"op":"outcome","host":SNAPSHOT,"error":{message, mode, cancelNotice}} -> {"ok":true,"text":T?,"severity":S?}
 ;;;;   {"op":"outcome","details":D} -> {"ok":true,"own":DETAILS?}
@@ -102,24 +107,8 @@
 ;;;;    recovering, tokensBefore, overheadTokens, workingSet}...]}
 ;;;;   -> {"ok":true,"results":[{"limit":N?} | {policy?, trigger?, autoCompacts, budgets}...]}
 ;;;;
-;;;; context: the host's next request with what is out of the context left out (src/hooks/eviction.ts)
-;;;;   {"op":"context","host":SNAPSHOT,"messages":[M...],"tool":B (keel_context is registered)}
-;;;;   -> {"ok":true,"drop":[I...],"stubs":[{at,how,text,message?}...],"ops":[OP...],"note":T?,"notice":T?}:
-;;;;   drop the messages at I; put each stub's text on message AT as HOW says (prepend, append, or
-;;;;   insert MESSAGE before it); append each OP (one keel.evict entry); send NOTE to the model
-;;;;   as a message of its own (keel-budget); tell the user NOTICE.
-;;;;
-;;;; evict: one keel_context call or evict command (src/core/evict.ts)
-;;;;   {"op":"evict","host":SNAPSHOT,"call":{surface:"tool",params}|{surface:"command",args}}
-;;;;   -> {"ok":true,"text":T,"ops":[OP...]}
-;;;;
-;;;; recall: one keel_recall call or /…-recall command (src/core/recall-run.ts)
-;;;;   {"op":"recall","host":SNAPSHOT,"call":{surface:"tool",params}|{surface:"command",name,args},
-;;;;    "projectFiles":[F...] (newest first)}
-;;;;   -> {"ok":true,"recall":{"ok":B,"text":T,"severity":S?}}
-;;;;
 ;;;; Any error is answered {"ok":false,"error":MESSAGE}, never thrown past MAIN:
-;;;; src/core/lisp-core.ts throws it as the core's failure, with the message.
+;;;; src/core.ts throws it as the core's failure, with the message.
 
 (in-package #:keel)
 
@@ -347,11 +336,6 @@ compact, it first asks for what the host's convertToLlm makes of the messages."
           ((equal action "learned") (json-object "ok" :true "window" (learned-window dir key)))
           (t (json-object "ok" :false "error" "limits: unknown action")))))
 
-(defun handle-learn-limit (request)
-  "An assistant message that ended in an error: the limit it states, kept for the model when below the host's window."
-  (json-object "ok" :true "recorded" (bool (learn-limit (read-snapshot (json-get request "host")) (strings-of (json-get request "errors"))
-                                                       (let ((p (json-get request "promptTokens"))) (and (realp p) (> p 0) p))))))
-
 (defun handle-settled (request)
   "A run that settled: whether keel compacts in the host's stead, and the note that says so."
   (json-object "ok" :true "settled" (settled-check (read-snapshot (json-get request "host")))))
@@ -381,16 +365,17 @@ compact, it first asks for what the host's convertToLlm makes of the messages."
           ((equal op "names") (json-object "ok" :true "names" (names-json)))
           ((equal op "request") (handle-request-parse request))
           ((equal op "working-set") (handle-working-set request))
-          ((equal op "recall") (handle-recall request))
+          ((equal op "surface") (json-object "ok" :true "surface" (surface-json)))
+          ((equal op "tool") (handle-tool request))
+          ((equal op "command") (handle-command request))
+          ((equal op "session-start") (handle-session-start request))
+          ((equal op "message-end") (handle-message-end request))
           ((equal op "window") (handle-window request))
           ((equal op "settings") (handle-settings request))
-          ((equal op "pin") (handle-pin request))
-          ((equal op "context") (with-ok (context-for-host (read-snapshot (json-get request "host")) (json-get request "messages" #()) (eq (json-get request "tool") :true))))
-          ((equal op "evict") (with-ok (evict-for-host (read-snapshot (json-get request "host")) (json-get request "call"))))
+          ((equal op "context") (handle-request-context request))
           ((equal op "raw-capture") (handle-raw-capture request))
           ((equal op "args") (handle-args request))
           ((equal op "limits") (handle-limits request))
-          ((equal op "learn-limit") (handle-learn-limit request))
           ((equal op "settled") (handle-settled request))
           ((equal op "outcome") (handle-outcome request))
           ((equal op "placeholders") (handle-placeholders request))

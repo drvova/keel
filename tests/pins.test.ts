@@ -2,12 +2,9 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { PIN_CHARS } from "../src/names";
-import { PIN_ENTRY_TYPE } from "../src/names";
-import { executePin, ompBinding } from "./support/binding";
-import { registerPinCommands } from "../src/commands/pin";
+import { PIN_CHARS, PIN_ENTRY_TYPE } from "./support/names";
+import { executePin, fakeHost } from "./support/binding";
 import { registerHook } from "./support/host";
-import { carryPins } from "../src/core/pins";
 import { writeJsonl, freshDir } from "./support/session-files";
 import { utimesSync } from "fs";
 
@@ -113,9 +110,8 @@ describe("named notes", () => {
 
   it("the command names a note with name:NAME", async () => {
     const s = session([message("m1")]);
-    const commands = new Map<string, (args: string, ctx: any) => Promise<void>>();
+    const { commands } = fakeHost({ appendEntry: s.host.appendEntry });
     const notices: string[] = [];
-    registerPinCommands({ registerCommand: (name: string, c: any) => commands.set(name, c.handler), appendEntry: s.host.appendEntry, sendMessage: () => {} } as any, ompBinding);
     const ctx = { sessionManager: s.sm, ui: { notify: (m: string) => notices.push(m) } };
     await commands.get("keel-pin")!("name:test-cmd bun test tests/auth", ctx);
     expect(notices.at(-1)).toBe("Pinned [1] test-cmd: bun test tests/auth (user, #0).");
@@ -129,8 +125,7 @@ describe("named notes", () => {
 describe("the user's notes", () => {
   it("stay as the user pinned them: the agent can neither define their name again nor unpin them", async () => {
     const s = session([message("m1")]);
-    const commands = new Map<string, (args: string, ctx: any) => Promise<void>>();
-    registerPinCommands({ registerCommand: (name: string, c: any) => commands.set(name, c.handler), appendEntry: s.host.appendEntry, sendMessage: () => {} } as any, ompBinding);
+    const { commands } = fakeHost({ appendEntry: s.host.appendEntry });
     const ctx = { sessionManager: s.sm, ui: { notify: () => {} } };
     await commands.get("keel-pin")!("name:deploy only from main", ctx);
     expect(executePin({ note: "deploy from any branch", name: "deploy" }, s.host, s.sm))
@@ -161,40 +156,40 @@ describe("named notes across sessions", () => {
     writeJsonl(file, [{ type: "session", id: "bbbb2222-0000", cwd: "/x" }]);
     const s = session();
     const sm = { ...s.sm, getSessionFile: () => file, getSessionDir: () => dir };
+    /** A session starting on keel: what the user is told of the notes carried into it. */
+    const start = (host: { appendEntry: (t: string, d?: unknown) => void }, sessionManager: any) => {
+      const notices: string[] = [];
+      fakeHost({ appendEntry: host.appendEntry }).fire("session_start", {}, { sessionManager, ui: { notify: (m: string) => notices.push(m) } });
+      return notices.at(-1);
+    };
     // The user's named notes only: the agent's stay with their session (it can read them there and pin again).
-    expect(carryPins(s.host, ompBinding, { sessionManager: sm } as any)).toBe("Carried from the last session: [1] deploy: only from main (user, from session aaaa1111).");
+    expect(start(s.host, sm)).toBe("keel: Carried from the last session: [1] deploy: only from main (user, from session aaaa1111).");
     expect(readPins(s.entries)).toEqual([[1, "deploy: only from main", "user"]]);
     // Carried once: the session has pins now.
-    expect(carryPins(s.host, ompBinding, { sessionManager: sm } as any)).toBeUndefined();
+    expect(start(s.host, sm)).toBeUndefined();
     // A session with a message in it already (resumed, forked) carries nothing.
     const t = session([message("m9")]);
-    expect(carryPins(t.host, ompBinding, { sessionManager: { ...t.sm, getSessionFile: () => file, getSessionDir: () => dir } } as any)).toBeUndefined();
+    expect(start(t.host, { ...t.sm, getSessionFile: () => file, getSessionDir: () => dir })).toBeUndefined();
   });
 });
 
 describe("/keel-pin and /keel-unpin", () => {
   it("pin, tell the agent on its next turn, list, unpin", async () => {
     const s = session([message("m1")]);
-    const commands = new Map<string, (args: string, ctx: any) => Promise<void>>();
-    const sent: any[] = [];
+    const { commands, sent } = fakeHost({ appendEntry: s.host.appendEntry });
     const notices: string[] = [];
-    registerPinCommands({
-      registerCommand: (name: string, c: any) => commands.set(name, c.handler),
-      appendEntry: s.host.appendEntry,
-      sendMessage: (m: any, o: any) => sent.push({ m, o }),
-    } as any, ompBinding);
     const ctx = { sessionManager: s.sm, ui: { notify: (m: string) => notices.push(m) } };
     await commands.get("keel-pin")!("never edit migrations/", ctx);
     expect(notices.at(-1)).toBe("Pinned [1] never edit migrations/ (user, #0).");
     expect(sent[0]).toEqual({
-      m: { customType: "keel-pin", content: "The user pinned [1] never edit migrations/ (user, #0). It stays at the top of every summary.", display: true },
-      o: { deliverAs: "nextTurn" },
+      message: { customType: "keel-pin", content: "The user pinned [1] never edit migrations/ (user, #0). It stays at the top of every summary.", display: true },
+      options: { deliverAs: "nextTurn" },
     });
     await commands.get("keel-pin")!("", ctx);
     expect(notices.at(-1)).toContain("- [1] never edit migrations/");
     await commands.get("keel-unpin")!("1", ctx);
     expect(readPins(s.entries)).toEqual([]);
-    expect(sent.at(-1).m.content).toContain("The user unpinned [1]");
+    expect(sent.at(-1)!.message.content).toContain("The user unpinned [1]");
   });
 });
 

@@ -81,6 +81,8 @@
      ;; host: the snapshot of what the host knows, which every op for a host event reads.
      (:file "host")
      (:file "server")
+     ;; surface: the tools and commands, and the effects a call through them answers with.
+     (:file "surface")
      ;; live: the same requests one after another in one long-lived process.
      (:file "live"))))
   :in-order-to ((test-op (test-op "keel-core/test"))))

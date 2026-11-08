@@ -269,7 +269,7 @@ Every size follows the model's real window, learned from what the provider prove
 
 ## The core: Common Lisp on SBCL
 
-Everything keel decides is decided in one core, `lisp/`, written in Common Lisp and compiled by [SBCL](https://www.sbcl.org/). The hosts load only JavaScript and TypeScript extensions, so `index.ts`, `pi.ts` and `src/` are thin bindings: they do what only the host can (its events, its session manager, its message conversion) and hand everything else to the core, one JSON request and one JSON answer.
+Everything keel decides is decided in one core, `lisp/`, written in Common Lisp and compiled by [SBCL](https://www.sbcl.org/). The hosts load only JavaScript and TypeScript extensions, so `index.ts`, `pi.ts` and `src/` are a thin binding that decides nothing: they do what only the host can (its events, its session manager, its message conversion) and hand everything else to the core, one JSON request and one JSON answer. Even the tools' text and the commands are defined in the core; its answer says what the host should do (append an entry, tell the user, send a message), and the binding does it.
 
 **How it runs.** On first load keel compiles the sources into one executable (~40 MB, linking only libc and libm). Where the system has named pipes, one core process stays up beside the host and answers every request in about 0.4 ms, keeping the session files it read parsed and only reading the lines they gained; on Windows each request starts its own process (about 5 ms). A core that dies is replaced; one that cannot be built yet leaves the host to compact as it would without keel.
 

@@ -11,7 +11,7 @@
 ;;;; `<session>.jsonl.keel-raw` beside it (not a `.jsonl`: omp lists those as
 ;;;; sessions), and points omp's placeholders at the copy; session.lisp reads
 ;;;; the store. What a binding has seen and kept is its own state, in
-;;;; src/hooks/raw-capture.ts: the core gets the entries that arrived since,
+;;;; src/raw-capture.ts: the core gets the entries that arrived since,
 ;;;; appends the store itself, and on a new session file reads the ids the
 ;;;; file's lineage already keeps.
 

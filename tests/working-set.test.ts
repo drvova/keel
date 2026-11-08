@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { core } from "../src/core/lisp-core";
+import { core } from "../src/core";
 import { compactionBudgets, ompDefaultTrigger } from "./support/window";
 import { registerHook } from "./support/host";
 

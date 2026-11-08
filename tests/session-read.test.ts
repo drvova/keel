@@ -2,7 +2,7 @@ import { describe, it, expect } from "bun:test";
 import { mkdtempSync, writeFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { core } from "../src/core/lisp-core";
+import { core } from "../src/core";
 
 // A session file as recall reads it (lisp/src/session.lisp, op load): the
 // entries on the branch given (all of them without one), each with its #N.

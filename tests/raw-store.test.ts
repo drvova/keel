@@ -1,8 +1,8 @@
 // keel_recall keeps the originals of what omp rewrites in the session file
-// (<session>.jsonl.keel-raw: src/hooks/raw-capture.ts, lisp/src/raw-capture.lisp and
+// (<session>.jsonl.keel-raw: src/raw-capture.ts, lisp/src/raw-capture.lisp and
 // session.lisp), with no omp setting changed. Putting an original back is held
 // to its rules in lisp/test/store.lisp.
-import { ompBinding } from "./support/binding";
+import { ompBinding, recallTool } from "./support/binding";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
@@ -22,8 +22,7 @@ const readRawStore = (file: string, ids: Set<string>): Map<string, unknown> => {
   }
   return kept;
 };
-import { captureNewEntries, createRawCaptureState, pointPlaceholders, registerRawCapture } from "../src/hooks/raw-capture";
-import { registerRecallTool } from "../src/tools/recall";
+import { captureNewEntries, createRawCaptureState, pointPlaceholders, registerRawCapture } from "../src/raw-capture";
 
 let dir: string;
 const prev = process.env.KEEL_CONFIG_PATH;
@@ -73,8 +72,7 @@ describe("what is kept", () => {
 
 describe("with omp's own session manager", () => {
   const recallOn = async (sm: any, params: Record<string, unknown>) => {
-    let tool: any;
-    registerRecallTool({ registerTool: (t: any) => { tool = t; } } as any, ompBinding);
+    const tool = recallTool();
     const result = await tool.execute("call", params, undefined, undefined, { sessionManager: sm });
     return result.content[0].text as string;
   };
@@ -277,8 +275,7 @@ describe("a fork reads its parent's originals", () => {
     // Its capture knows the parent's copy, so nothing is copied twice.
     expect(captureNewEntries(state, sm)).toBe(0);
 
-    let tool: any;
-    registerRecallTool({ registerTool: (t: any) => { tool = t; } } as any, ompBinding);
+    const tool = recallTool();
     const found = (await tool.execute("f", { query: "pelican healthcheck" }, undefined, undefined, { sessionManager: sm })).content[0].text;
     expect(found).toContain("deploy aborted: pelican-7 healthcheck timed out");
   });

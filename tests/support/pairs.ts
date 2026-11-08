@@ -1,7 +1,7 @@
 // A search over these messages, or a keel_recall call on them, as recall runs
 // it: written as a session file and read by the core, each entry's index its #N.
 import { join } from "path";
-import { core } from "../../src/core/lisp-core";
+import { core } from "../../src/core";
 import { freshDir, writeJsonl } from "./session-files";
 
 export interface SearchHit { index: number; role: string; summary: string; files?: string[]; snippet?: string }

@@ -1,11 +1,11 @@
 // The live core: one core process answering every request (lisp/src/live.lisp,
-// src/core/lisp-core.ts), with what it read kept for the next request. It must
+// src/core.ts), with what it read kept for the next request. It must
 // answer as a process per request does, also after the file it read grew or
 // was rewritten, and a core that dies is replaced without the caller noticing.
 import { describe, expect, it } from "bun:test";
 import { appendFileSync, writeFileSync } from "fs";
 import { join } from "path";
-import { core, liveCorePid } from "../src/core/lisp-core";
+import { core, liveCorePid } from "../src/core";
 import { freshDir, writeJsonl } from "./support/session-files";
 
 const entries = (n: number, word = "alpha") => {

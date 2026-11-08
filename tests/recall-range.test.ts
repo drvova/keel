@@ -1,7 +1,6 @@
-import { ompBinding } from "./support/binding";
+import { recallTool } from "./support/binding";
 import { describe, it, expect } from "bun:test";
 import { sessionFileOfEntries } from "./support/session-files";
-import { registerRecallTool } from "../src/tools/recall";
 
 const writeSession = (entries: any[]) => sessionFileOfEntries(entries).file;
 
@@ -9,8 +8,7 @@ const msg = (id: string, role: string, content: unknown, extra: Record<string, u
   ({ type: "message", id, message: { role, content, ...extra } });
 
 const recall = async (file: string, params: Record<string, unknown>, branch?: string[], model?: { contextWindow: number }) => {
-  let tool: any;
-  registerRecallTool({ registerTool: (t: any) => { tool = t; } } as any, ompBinding);
+  const tool = recallTool();
   const ids = branch ?? [];
   const result = await tool.execute("call", params, undefined, undefined, {
     sessionManager: {
@@ -242,8 +240,7 @@ describe("keel_recall search skips the current turn", () => {
 
   it("skips nothing once the context was compacted inside the turn", async () => {
     const file = writeSession(entries);
-    let tool: any;
-    registerRecallTool({ registerTool: (t: any) => { tool = t; } } as any, ompBinding);
+    const tool = recallTool();
     const branch = [
       ...["u0", "a1", "u4", "a5"].map((id) => ({ id })),
       { id: "u6", type: "message", message: { role: "user" } },

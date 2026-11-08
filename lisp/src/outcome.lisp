@@ -3,7 +3,7 @@
 ;;;; SPDX-License-Identifier: MIT
 ;;;;
 ;;;; The outcome line a compaction is told with, what /keel says when the
-;;;; compaction it asked for did not happen (src/commands/compact-feedback.ts
+;;;; compaction it asked for did not happen (src/compaction.ts
 ;;;; asks), and whether keel handles the host's compactions at all (the
 ;;;; user's opt-outs).
 

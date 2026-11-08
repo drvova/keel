@@ -1,7 +1,7 @@
 // The window rules as the core applies them (lisp/src/window.lisp, op window):
 // an overflow error's limit, each host's trigger under the policy it hands the
 // hook, and the budgets below a trigger, with the defaults those make.
-import { core } from "../../src/core/lisp-core";
+import { core } from "../../src/core";
 import type { CompactionBudgets, SummaryLimits, TriggerRule } from "./window-shapes";
 
 const one = (c: Record<string, unknown>): any => (core({ op: "window", cases: [c] }).results as any[])[0];

@@ -1,8 +1,7 @@
-import { ompBinding } from "./support/binding";
+import { recallTool } from "./support/binding";
 import { describe, it, expect } from "bun:test";
 import { validateToolArguments } from "@oh-my-pi/pi-ai";
-import { registerRecallTool } from "../src/tools/recall";
-import { core } from "../src/core/lisp-core";
+import { core } from "../src/core";
 
 // A recall call's params, or a command's text, as the core reads them (lisp/src/request.lisp, op request).
 interface Request { scope: string; session?: string; action: { kind: string } & Record<string, unknown>; ignored: string[]; note: string }
@@ -110,8 +109,7 @@ describe("the tool's params repaired", () => {
   });
 
   it("omp's own validator lets the loose forms through, for normalizeToolParams to repair", () => {
-    let tool: any;
-    registerRecallTool({ registerTool: (t: any) => { tool = t; } } as any, ompBinding);
+    const tool = recallTool();
     const raw = { query: "jpeg", mode: "all", expand: "459", limit: 20 };
     const args = validateToolArguments(tool, { id: "1", name: "keel_recall", arguments: raw } as any);
     expect(normalizeToolParams(args)).toMatchObject({ params: { query: "jpeg", scope: "all", expand: [459] }, dropped: ["limit 20 (not a keel_recall param)"] });

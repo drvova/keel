@@ -10,11 +10,9 @@
 // read a newer read supersedes is an older one), so a message is copied well
 // before omp could rewrite it.
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
-import { hostEntries, type SessionManagerLike } from "../core/session-file";
-import type { Config } from "../core/settings";
-import { core } from "../core/lisp-core";
-import { whenCore } from "../core/core-wait";
-import { hostSnapshot, type HostCtx } from "../core/host-snapshot";
+import type { Config } from "./settings";
+import { core, whenCore } from "./core";
+import { hostEntries, hostSnapshot, type HostCtx, type SessionManagerLike } from "./host";
 
 /** One binding's place in its session: which file, how many entries it has looked at, which are kept. */
 interface RawCaptureState {

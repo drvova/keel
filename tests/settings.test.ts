@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { openConfig } from "../src/core/settings";
+import { openConfig } from "../src/settings";
 
 /** What a fresh config holds, in its order. */
 const DEFAULT_SETTINGS = {

@@ -2,19 +2,14 @@
 // tests that drive the hook or the cut helpers without a running omp.
 import { DEFAULT_BUDGETS } from "./window";
 import { convertToLlm } from "@oh-my-pi/pi-coding-agent/session/messages";
-import { createCompactionState, registerCompactionHook, type CompactionHost, type CompactionState } from "../../src/hooks/compaction";
-import { createWindowState } from "../../src/hooks/window-limits";
+import { createCompactionState, registerCompaction, type CompactionState } from "../../src/compaction";
 import { testConfig } from "./binding";
-import { core } from "../../src/core/lisp-core";
-import { ompHost } from "../../src/hooks/omp-host";
-import { bind, MANUAL_TRIGGER, OMP_HOST } from "../../src/host";
-import type { CompactionReason } from "../../src/host";
+import { core } from "../../src/core";
+import { ompHost, type CompactionReason } from "../../src/host";
 
 /** omp's convertToLlm, as pi.pi.convertToLlm hands it to the hook. */
 export const ompConvertToLlm = (messages: any[]): any[] => convertToLlm(messages);
 
-/** omp, every compaction a manual one. */
-export const testHost: CompactionHost = bind({ ...OMP_HOST, convertToLlm: ompConvertToLlm, triggerOf: () => MANUAL_TRIGGER }, testConfig);
 
 /** Where a compaction cuts, as the core's cut has it (lisp/src/compaction.lisp). */
 export type OwnCutResult =
@@ -91,12 +86,13 @@ export const registerHook = (pi: any): RegisteredHook => {
   const bound = {
     ...pi,
     on: (name: string, handler: any) => (name.startsWith("auto_compaction_") ? auto.set(name, handler) : pi.on(name, handler)),
+    registerCommand: (...args: any[]) => pi.registerCommand?.(...args),
     sendUserMessage: (...args: any[]) => pi.sendUserMessage?.(...args),
     sendMessage: (...args: any[]) => pi.sendMessage?.(...args),
     pi: { ...pi.pi, convertToLlm: ompConvertToLlm },
   };
   const state = createCompactionState();
-  registerCompactionHook(bound, bind(ompHost(bound), testConfig), state, createWindowState());
+  registerCompaction(bound, { ...ompHost(bound), config: testConfig }, state);
   lastRegistered = {
     state,
     autoCompactionStart: (reason) =>

@@ -1,11 +1,11 @@
-// Where keel's core comes from (src/core/lisp-core.ts): KEEL_CORE when it
+// Where keel's core comes from (src/core.ts): KEEL_CORE when it
 // names one, else the build of this copy's sources with
 // the user's SBCL, named by their hash; without SBCL it says so.
 import { afterEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildCoreNow, coreStatus } from "../src/core/lisp-core";
+import { buildCoreNow, coreStatus } from "../src/core";
 
 const saved = { core: process.env.KEEL_CORE, sbcl: process.env.SBCL, dir: process.env.KEEL_CORE_BUILD_DIR };
 afterEach(() => {

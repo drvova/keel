@@ -7,9 +7,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { registerHook } from "./support/host";
-import { registerRecallTool } from "../src/tools/recall";
-import { registerPinTool } from "../src/tools/pin";
-import { ompBinding } from "./support/binding";
+import { fakeHost } from "./support/binding";
 
 const saved = { core: process.env.KEEL_CORE, sbcl: process.env.SBCL, dir: process.env.KEEL_CORE_BUILD_DIR };
 let dir: string;
@@ -57,12 +55,8 @@ describe("while the core cannot run", () => {
   });
 
   it("keel_recall and keel_pin answer with the reason", async () => {
-    const tools: any[] = [];
-    const pi: any = { registerTool: (t: any) => tools.push(t), appendEntry: () => {} };
-    registerRecallTool(pi, ompBinding);
-    registerPinTool(pi, ompBinding);
     const ctx = { sessionManager: { getEntries: () => [], getBranch: () => [] }, model: undefined };
-    for (const t of tools) {
+    for (const t of fakeHost().tools.values()) {
       const out = await t.execute("x", t.name === "keel_pin" ? { note: "keep this" } : { query: "anything" }, undefined, undefined, ctx);
       expect({ tool: t.name, text: out.content[0].text }).toEqual({ tool: t.name, text: expect.stringContaining("install SBCL") });
     }

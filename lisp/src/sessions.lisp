@@ -3,7 +3,7 @@
 ;;;; SPDX-License-Identifier: MIT
 ;;;;
 ;;;; The files themselves, newest first by last write and the current one left
-;;;; out, come from the TS side (src/core/sessions.ts): listing a
+;;;; out, come from the TS side (src/host.ts, projectFiles): listing a
 ;;;; directory by modification time to the millisecond is the host's, and SBCL
 ;;;; reads it to the second. Everything else (headers, ids and their short forms,
 ;;;; each file's scan by line heads, its pins on its active branch) is here.

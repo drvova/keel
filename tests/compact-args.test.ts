@@ -1,10 +1,15 @@
 // What /keel makes of its text, and what the hook reads back from a
-// compaction's customInstructions (the core's op args; src/core/compact-args.ts for the command):
+// compaction's customInstructions (the core's op args, which /keel asks in src/compaction.ts):
 // keep:N first or last, the rest a prompt to send after; the marker says the
 // pass is the command's.
 import { describe, expect, it } from "bun:test";
-import { commandArgs } from "../src/core/compact-args";
-import { core } from "../src/core/lisp-core";
+import { core } from "../src/core";
+
+/** /keel's text as the command hands it to the core. */
+const commandArgs = (args?: string) => {
+  const reply = core({ op: "args", command: args ?? null });
+  return { followUpPrompt: reply.followUpPrompt as string, instructions: reply.instructions as string };
+};
 import { COMPACT_INSTRUCTION as M } from "./support/names";
 
 /** A compaction's customInstructions as the core reads them for op compact. */

@@ -6,10 +6,8 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { dirname, join } from "path";
-import { evict, evictRequest, type EvictCall } from "../src/core/evict";
-import { registerEviction } from "../src/hooks/eviction";
-import { EVICT_ENTRY_TYPE, PIN_ENTRY_TYPE } from "../src/names";
-import { executePin, ompBinding } from "./support/binding";
+import { EVICT_ENTRY_TYPE, PIN_ENTRY_TYPE } from "./support/names";
+import { callCommand, callTool, executePin, fakeHost, requestContext } from "./support/binding";
 import { writeJsonl, freshDir } from "./support/session-files";
 
 let dir: string;
@@ -64,9 +62,14 @@ const sessionOf = (messages: any[]) => {
   return { entries, appended, host, ctx, request, file };
 };
 
-const call = (s: ReturnType<typeof session>, c: EvictCall) => evict(s.host, ompBinding, s.ctx() as any, c);
+/** A keel_context call, or the text of /keel-evict. */
+type EvictCall = { surface: "tool"; params: unknown } | { surface: "command"; args: string };
+/** The call through keel, its entries appended through HOST: what the agent or the user is told. */
+const evict = (host: { appendEntry: (t: string, d?: unknown) => void }, ctx: any, c: EvictCall): string =>
+  c.surface === "tool" ? callTool("keel_context", c.params, ctx, host) : callCommand("evict", c.args, ctx, host)!;
+const call = (s: ReturnType<typeof session>, c: EvictCall) => evict(s.host, s.ctx(), c);
 const tool = (s: ReturnType<typeof session>, params: unknown) => call(s, { surface: "tool", params });
-const sent = (s: ReturnType<typeof session>, window?: number, tool = false) => evictRequest(s.host, ompBinding, s.ctx(window) as any, s.request(), tool);
+const sent = (s: ReturnType<typeof session>, window?: number, tool = false) => requestContext(s.request(), s.ctx(window), s.host, tool);
 const record = (s: ReturnType<typeof session>, op: Record<string, unknown>) => s.host.appendEntry(EVICT_ENTRY_TYPE, { v: 1, by: "agent", at: 99, ...op });
 /** The line the request starts with while keel_context is there: where the context's file is. */
 const header = (s: { file: string }) => `[Your context is mirrored in ${s.file}.keel-context.md, block by block as this request sends it. Edit that file to change what you hold: delete a [[CTX_TURN]] block to take its turn out, replace its text with what to keep of it, or write notes of your own between blocks. The next request sends what the file says. The session keeps every word (keel_recall expand:[N] reads any original back); the running turn stays as it is.]`;
@@ -162,7 +165,7 @@ describe("the line in place of what is out", () => {
     const first = texts(sent(s).messages)[0];
     // As omp's prune does: the old result blanked in place.
     const blanked = s.request().map((m: any) => (m.toolCallId === "b1" ? { ...m, content: [{ type: "text", text: "[Output truncated - 9 tokens]" }] } : m));
-    expect(texts(evictRequest(s.host, ompBinding, s.ctx() as any, blanked).messages)[0]).toBe(first);
+    expect(texts(requestContext(blanked, s.ctx(), s.host).messages)[0]).toBe(first);
   });
 });
 
@@ -236,7 +239,7 @@ describe("where the line goes", () => {
     request.splice(2, 0, inside);
     request.splice(5, 0, edge);
     tool(s, { drop: "#0" });
-    const out = evictRequest(s.host, ompBinding, s.ctx() as any, request).messages as any[];
+    const out = requestContext(request, s.ctx(), s.host).messages as any[];
     expect(out.some((m) => m.content === "inside")).toBe(false);
     // The edge message stays, and carries the line (it is sent as the user's).
     const kept = out.find((m) => Array.isArray(m.content) && m.content.some((p: any) => p.text === "edge"));
@@ -383,8 +386,8 @@ describe("the context's size on keel's own results", () => {
     const ctx = { ...s.ctx(100_000), getContextUsage: () => ({ tokens: 41_808 }) } as any;
     const readout = "[context: ~41808 tokens, 50% of where the host compacts (~83616); ~41808 left]";
     setEvict(true);
-    expect(evict(s.host, ompBinding, ctx, { surface: "tool", params: null })).toEndWith(`\n${readout}`);
-    expect(evict(s.host, ompBinding, ctx, { surface: "command", args: "list" })).not.toContain("[context:");
+    expect(evict(s.host, ctx, { surface: "tool", params: null })).toEndWith(`\n${readout}`);
+    expect(evict(s.host, ctx, { surface: "command", args: "list" })).not.toContain("[context:");
     expect(executePin({ note: "a note" }, s.host, ctx.sessionManager, ctx)).toEndWith(`\n${readout}`);
     setEvict(false);
     expect(executePin({ note: "another note" }, s.host, ctx.sessionManager, ctx)).not.toContain("[context:");
@@ -433,7 +436,7 @@ describe("chars per token, measured on the request", () => {
     const limits = JSON.parse(readFileSync(join(dirname(process.env.KEEL_CONFIG_PATH!), "keel-models.json"), "utf8"));
     expect(limits["p/m"].charsPerToken).toBe(3);
     // The listing reads it: a turn of 3,000 chars is ~1,000 tokens, not the 750 of 4 chars a token.
-    expect(evict(s.host, ompBinding, s.ctx(100_000) as any, { surface: "tool", params: null })).toContain("#16–#17 ~1000 tokens");
+    expect(evict(s.host, s.ctx(100_000), { surface: "tool", params: null })).toContain("#16–#17 ~1000 tokens");
     // What this model measured stays with this test.
     rmSync(join(dirname(process.env.KEEL_CONFIG_PATH!), "keel-models.json"), { force: true });
   });
@@ -517,17 +520,17 @@ describe("the request hook", () => {
     setEvict(false);
     const s = session(4);
     expect(call(s, { surface: "command", args: "2" })).toContain("#0–#7 (2 turns");
-    let handler: any;
-    registerEviction({ on: (name: string, fn: any) => { if (name === "context") handler = fn; }, appendEntry: s.host.appendEntry, sendMessage: () => {} } as any, ompBinding as any, { registered: false });
-    const result = await handler({ type: "context", messages: s.request() }, { ...s.ctx(), ui: { notify: () => {} } });
+    const h = fakeHost({ appendEntry: s.host.appendEntry });
+    const result = h.fire("context", { messages: s.request() }, { ...s.ctx(), ui: { notify: () => {} } });
     expect(texts(result.messages)[0]).toStartWith("[#0–#7 out of context: 2 turns, by the user.");
   });
 
   it("leaves the request alone without reading the session for it, with the setting off and nothing recorded", async () => {
     setEvict(false);
     const s = session(4);
-    let handler: any;
-    registerEviction({ on: (name: string, fn: any) => { if (name === "context") handler = fn; }, appendEntry: s.host.appendEntry, sendMessage: () => {} } as any, ompBinding as any, { registered: false });
+    const h = fakeHost({ appendEntry: s.host.appendEntry });
+    // The eviction's context handler, registered last (omp's raw capture reads the session on its own).
+    const handler = (event: any, ctx: any) => h.handlers.get("context")!.at(-1)!({ type: "context", ...event }, ctx);
     // The request's snapshot reads the session file; here nothing may need it.
     let read = 0;
     const ctx = () => ({ ...s.ctx(), sessionManager: { ...s.ctx().sessionManager, getSessionFile: () => { read++; return undefined; } } });

@@ -4,7 +4,7 @@
 ;;;;
 ;;;; Every action (a range, expand, search, #N:path, mode:'touched', the
 ;;;; project's sessions) and the views they read through, for the tool and the
-;;;; command alike (src/core/recall-run.ts asks). The host's part comes in with
+;;;; command alike (src/register.ts asks, op tool or command). The host's part comes in with
 ;;;; the call: the session file and its directory, the
 ;;;; project's other session files newest first, the working directory, and the
 ;;;; session manager's current branch (its ids, and its entries' types and roles

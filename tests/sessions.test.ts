@@ -4,10 +4,9 @@ import { tmpdir } from "os";
 import { join } from "path";
 // The project's other sessions (lisp/src/sessions.lisp): listed by mode:'sessions',
 // searched by scope:'project', read by session:'id'.
-import { executeRecall, ompBinding } from "./support/binding";
-import { recall } from "../src/core/recall-run";
-import { core } from "../src/core/lisp-core";
-import { PIN_ENTRY_TYPE } from "../src/names";
+import { executeRecall, fakeHost } from "./support/binding";
+import { core } from "../src/core";
+import { PIN_ENTRY_TYPE } from "./support/names";
 import { writeJsonl } from "./support/session-files";
 
 /** How many sessions a listing shows (lisp/src/sessions.lisp). */
@@ -207,11 +206,12 @@ describe("keel_recall across sessions", () => {
     }
   });
 
-  it("the command, which has no read-around hint, gives none for a hit in an earlier session either", () => {
-    const args = "rolled back release tag scope:project";
-    const result = recall(ompBinding, { sessionManager: sm(currentBranch) }, { surface: "command", name: "keel-recall", args });
-    expect(result.ok && result.text).toMatch(/\[session aaaa1111\] #1 \[assistant\]/);
-    expect(result.ok && result.text).not.toContain("Read around a hit");
+  it("the command, which has no read-around hint, gives none for a hit in an earlier session either", async () => {
+    const h = fakeHost();
+    await h.command("keel-recall", "rolled back release tag scope:project", { sessionManager: sm(currentBranch) });
+    const text = h.sent.at(-1)?.message.content;
+    expect(text).toMatch(/\[session aaaa1111\] #1 \[assistant\]/);
+    expect(text).not.toContain("Read around a hit");
   });
 
   it("an entry that does not exist is only that: not also off the current path", () => {
