@@ -141,7 +141,7 @@ read once."
   (let ((lines '()) (start 0))
     (loop for i from 0 below (length text)
           for code = (char-code (char text i))
-          when (member code '(10 13 #x2028 #x2029))
+          when (line-terminator-p code)
             do (push (subseq text start i) lines) (setf start (1+ i)))
     (push (subseq text start) lines)
     (nreverse lines)))

@@ -64,7 +64,13 @@
 
 (defun space-unit-p (u) (js-whitespace-p (code-char u)))
 
-(defun line-terminator-p (u) (member u '(10 13 #x2028 #x2029)))
+(defun word-char-p (c) "Whether C is a word character to \\w: A-Z, a-z, 0-9, _." (word-unit-p (char-code c)))
+
+(defun line-terminator-p (u) "Whether code unit U ends a line to JavaScript." (member u '(10 13 #x2028 #x2029)))
+
+(defparameter +regex-metachars+ ".*+?^${}()|[]\\" "The characters a regex reads as syntax.")
+
+(defun regex-metachar-p (char) (find char +regex-metachars+))
 
 (defvar *ignore-case* t "The /i flag, read while a pattern is parsed and compiled.")
 (defvar *multiline* nil "The /m flag, read while a pattern is compiled.")
@@ -584,7 +590,7 @@ when given, is that vector to reuse, cleared here."
   "STRING with every regex metacharacter escaped, to match as text."
   (with-output-to-string (out)
     (loop for c across string
-          do (when (find c ".*+?^${}()|[]\\") (write-char #\\ out))
+          do (when (regex-metachar-p c) (write-char #\\ out))
              (write-char c out))))
 
 (defun unbounded-repeat-p (node) (and (eq (first node) :repeat) (null (third node))))

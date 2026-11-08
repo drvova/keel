@@ -58,9 +58,6 @@
   '("ations" "ation" "ings" "ing" "ures" "ure" "ies" "ers" "er" "ed" "es" "ly" "s"))
 (defparameter +min-stem+ 4)
 
-(defun regex-metachar-p (char)
-  (find char "|*+?{}()[]\\^$."))
-
 (defun ascii-letter-p (char)
   (or (char<= #\a char #\z) (char<= #\A char #\Z)))
 
@@ -340,8 +337,6 @@ without it each hit is ranked alone, as [Working Set] wants its few picks."
 (defparameter +interference-from+ 0.5d0 "Below this cosine two hits do not interfere.")
 (defparameter +interference-words+ 600 "A hit's words read for its likeness to another, from its start.")
 (defparameter +interference-candidates+ 40 "Only this many of the best hits are re-ranked: eight pages of five.")
-
-(defun word-char-p (c) (or (char<= #\A c #\Z) (char<= #\a c #\z) (char<= #\0 c #\9) (char= c #\_)))
 
 (defun words-of (text limit)
   "TEXT's words (runs of letters A-Z or a-z, digits and _, two chars or more), the first LIMIT of them. TEXT is folded already (FOLD maps to upper case, as JavaScript's /i does)."
