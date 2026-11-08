@@ -451,7 +451,7 @@ params or the command's text) and the host's part. SHOWN is the #N of this
 session's entries it showed (another session's #N are its own, so a call with
 session:'id' shows none)."
   (let* ((call (json-get input "call"))
-         (surface (if (equal (json-get call "surface") "command") (list :command (json-get call "name")) (list :tool)))
+         (surface (if (equal (json-get call "surface") "command") (list :command (format nil "~a-~a" +command+ (json-get call "name"))) (list :tool)))
          (request (if (eq (first surface) :tool) (parse-tool-request (json-get call "params")) (parse-command-request (string-or (json-get call "args") ""))))
          (file (json-get input "sessionFile"))
          (files (strings-of (json-get input "projectFiles")))

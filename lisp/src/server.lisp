@@ -298,15 +298,6 @@ compact, it first asks for what the host's convertToLlm makes of the messages."
           (setf (gethash "params" out) p (gethash "dropped" out) (coerce dropped 'vector)))))
     out))
 
-(defun handle-recall (request)
-  "One recall call (recall.lisp run-recall) in the session REQUEST's snapshot names."
-  (let ((s (read-snapshot (json-get request "host"))) (call (json-get request "call")))
-    (multiple-value-bind (ok text severity shown) (run-recall (recall-input s call (json-get request "projectFiles" #())))
-      (json-object "ok" :true "recall" (json-object "ok" (bool ok) "text" (if (equal (json-get call "surface") "tool") (with-readout s text) text)
-                                                    "severity" severity
-                                                    ;; What it showed of this session, and the #N count then (feedback.lisp).
-                                                    "shown" (coerce shown 'vector) "at" (snapshot-count s))))))
-
 (defun handle-context-edits (request)
   "The branch REQUEST carries, Pi's context edits applied (context-edits.lisp)."
   (let ((branch (coerce (json-get request "branch" #()) 'vector)))
@@ -319,13 +310,6 @@ compact, it first asks for what the host's convertToLlm makes of the messages."
     (when (eq (json-get request "scaffold") :true)
       (scaffold-settings path (let ((l (json-get request "legacy"))) (and (stringp l) l))))
     (json-object "ok" :true "settings" (load-settings path))))
-
-(defun handle-pin (request)
-  "A pin call (pins.lisp run-pin): what to tell, and the op the host appends."
-  (let* ((s (read-snapshot (json-get request "host"))) (call (json-get request "call")))
-    (multiple-value-bind (done text op severity note) (run-pin (pin-input s call))
-      (json-object "ok" :true "pin" (json-object "done" (bool done) "text" (if (equal (json-get call "surface") "tool") (with-readout s text) text)
-                                                 "op" op "severity" severity "agentNote" note)))))
 
 (defun handle-raw-capture (request)
   "Copy the entries REQUEST carries that omp may rewrite into the store (raw-capture.lisp)."

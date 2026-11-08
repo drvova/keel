@@ -443,20 +443,6 @@ describe("undo", () => {
   });
 });
 
-describe("the context's size on keel's own results", () => {
-  it("ends the agent's keel_context, keel_recall and keel_pin results while eviction is on, not the user's commands", () => {
-    const s = session(3);
-    const ctx = { ...s.ctx(100_000), getContextUsage: () => ({ tokens: 41_808 }) } as any;
-    const readout = "[context: ~41808 tokens, 50% of where the host compacts (~83616); ~41808 left]";
-    setEvict(true);
-    expect(evict(s.host, ctx, { surface: "tool", params: null })).toEndWith(`\n${readout}`);
-    expect(evict(s.host, ctx, { surface: "command", args: "list" })).not.toContain("[context:");
-    expect(executePin({ note: "a note" }, s.host, ctx.sessionManager, ctx)).toEndWith(`\n${readout}`);
-    setEvict(false);
-    expect(executePin({ note: "another note" }, s.host, ctx.sessionManager, ctx)).not.toContain("[context:");
-  });
-});
-
 describe("when an eviction pays, by the session's own prices", () => {
   /** SESSION(10)'s messages, every assistant message with this usage. */
   const priced = (usage: Record<string, unknown>) => {
@@ -690,32 +676,6 @@ describe("as the context fills", () => {
     const plain = Number(sent(session(10, 30_000, 80_000), 100_000).notice!.match(/Context ~(\d+)/)![1]);
     // Turn 0 (about 7,500 tokens) was not in the 80,000, so the context now holds that much more.
     expect(restored - plain).toBeGreaterThan(7_000);
-  });
-
-  it("tells the model how full the context is once per tenth of the trigger past half, as a message of its own", () => {
-    setEvict(true);
-    // 10 turns of 20,000 chars, 50,000 tokens counted: past half of 83,616, short of 85%.
-    const s = session(10, 20_000, 50_000);
-    const first = sent(s, 100_000, true);
-    // Nothing leaves the request (its turns only gain their #N): the note is stored and sent before the next model call.
-    expect((first.messages as any[]).length).toBe(s.request().length);
-    expect(first.note).toMatch(/^\[keel: the context is past \d0% of where the host compacts \(~83616 tokens\); past 85% the oldest turns leave by themselves\. keel_context lists what is in it and takes old turns out, with a note of what to keep\.\]$/);
-    expect(s.appended.map((e) => e.data.op)).toEqual(["budget"]);
-    // The same tenth again: nothing more is said.
-    expect(sent(s, 100_000, true).note).toBeUndefined();
-    // Without keel_context the note would name a tool that is not there; below half nothing is said.
-    expect(sent(session(10, 20_000, 50_000), 100_000, false).note).toBeUndefined();
-    expect(sent(session(10, 1_000, 20_000), 100_000, true).note).toBeUndefined();
-  });
-
-  it("tells again from half once the agent or the user shrank the context, not after keel's own eviction", () => {
-    setEvict(true);
-    const s = session(10, 20_000, 50_000);
-    expect(sent(s, 100_000, true).note).toBeDefined();
-    record(s, { op: "evict", from: 0, to: 3, by: "auto" });
-    expect(sent(s, 100_000, true).note).toBeUndefined();
-    record(s, { op: "evict", from: 4, to: 7, by: "agent" });
-    expect(sent(s, 100_000, true).note).toBeDefined();
   });
 
   it("says nothing of the context's size when nothing can leave it", () => {

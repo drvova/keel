@@ -176,8 +176,7 @@ What the request then carries, each part written to read the same on every reque
 - **The line for what is out** says what it was and did, from the originals keel kept, and how to read it back.
 - **Turn numbers** (`[#21]`) let the agent name turns without listing them.
 - **The pinned notes** stand first, brought up to date only when turns leave or come back: an edit at the start of a request makes the provider read all of it again (7.7 appended turns, by the paper's count).
-- **The dashboard** ends every request: how full the context is, the largest turns in it by `#N`, and what is out. It is the design of VISTA ([LightSpeed, Tencent, arXiv:2606.30005](https://arxiv.org/abs/2606.30005)), whose agents misjudged their own context by 43–84% without one and not at all with it, and lost 13 points of accuracy without it even with archiving and recovery kept. It is made again for each request and never kept, so it costs the provider's cache only its own few dozen tokens.
-- **The size readout** ends each of keel's tool results: models misjudge their own context's length (the paper's appendix G), and read a remaining budget better than a share ([Liu et al.](https://arxiv.org/abs/2511.17006)). Past half the trigger the model is also told once per tenth, while something can leave.
+- **The dashboard** ends every request: how full the context is, the largest turns in it by `#N`, and what is out. It is the design of VISTA ([LightSpeed, Tencent, arXiv:2606.30005](https://arxiv.org/abs/2606.30005)), whose agents misjudged their own context by 43–84% without one and not at all with it, and lost 13 points of accuracy without it even with archiving and recovery kept. It is made again for each request and never kept, so it costs the provider's cache only its own few dozen tokens. Models misjudge their own context's length (Context Language Models, appendix G) and read a remaining budget better than a share ([Liu et al.](https://arxiv.org/abs/2511.17006)), so it says what is left.
 
 Every edit is an `keel.evict` entry, replayed along the branch, so a branch keeps its own and `/tree` back past one undoes it. Turns leave in large runs from the oldest end, since every edit makes the provider read all that follows it again. Whether a drop pays is worked out from the session itself: the cache's price from each request's usage and cost, over as many requests ahead as the session has made.
 
@@ -313,7 +312,7 @@ omp's own compaction, which writes its summary with the model, answered most re-
 
 | Paper | What keel does with it |
 |---|---|
-| [Context Language Models](https://arxiv.org/abs/2609.37725), Shao et al., 2026 | The model edits its own context: `keel_context` and the context as a file; one large edit from the oldest end; notes that stand first; the size readout |
+| [Context Language Models](https://arxiv.org/abs/2609.37725), Shao et al., 2026 | The model edits its own context: `keel_context` and the context as a file; one large edit from the oldest end; notes that stand first |
 | [Agentic Context Engineering](https://arxiv.org/abs/2510.04618), Zhang et al., 2025 | Rewriting a context erodes it: sections merge from stored data, never rewritten |
 | [The Complexity Trap](https://arxiv.org/abs/2508.21433), Lindenbauer et al., 2025 | Masking is as effective as LLM summarization: compaction without an LLM call |
 | [Towards Reliable Context Compression](https://arxiv.org/abs/2608.06503), Min et al., 2026 | Agents repeat steps after compaction: failed calls marked and ranked up, `[Task State]` |
@@ -327,7 +326,7 @@ omp's own compaction, which writes its summary with the model, answered most re-
 | [Beyond Compaction: Structured Context Eviction](https://arxiv.org/abs/2606.11213), Semenov et al., 2026 | Evicting what the agent needs makes it re-explore: `[Working Set]`, originals kept |
 | [Context as an Environment](https://arxiv.org/abs/2608.21690), Lin et al., 2026 | Evicted spans recoverable by exact addresses: originals by `#N` |
 | [TRACER](https://arxiv.org/abs/2608.29363), Lin et al., 2026 | Calls made again after compression are its cost: `[Working Set]` brings their results back |
-| [Budget-Aware Tool-Use](https://arxiv.org/abs/2511.17006), Liu et al., 2025 | A remaining-budget signal: the readout's `~N left` |
+| [Budget-Aware Tool-Use](https://arxiv.org/abs/2511.17006), Liu et al., 2025 | A remaining-budget signal: the dashboard's `~N left` |
 
 Also read: [LLMs Get Lost In Multi-Turn Conversation](https://arxiv.org/abs/2505.06120), [Evaluating Goal Drift](https://arxiv.org/abs/2505.02709), [Generative Agents](https://arxiv.org/abs/2304.03442), [Recursively Summarizing](https://arxiv.org/abs/2308.15022), [Slipstream](https://arxiv.org/abs/2605.08580), and [nodecode](https://nodecode.ai/docs/context)'s context design.
 

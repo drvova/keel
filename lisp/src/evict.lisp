@@ -102,13 +102,6 @@ the cache, the turn written once, and the turn carried on the requests ahead."
               (and (/= (payback-write p) 1d0) (round (* 100 (payback-write p)))) (payback-ahead p))))
 (defparameter +stub-requests-shown+ 3 "Requests a stub names of the turns it stands for.")
 (defparameter +turns-listed+ 40 "Turns a listing shows, newest last.")
-(defparameter +budget-note-from+ 5
-  "From this tenth of the host's trigger on, the model is told how full its context
-is and that keel_context makes room, once per tenth: the paper's harness and
-pi-clm keep the model budget-aware, or it never edits. The note is a message of
-its own, stored in the session, so the provider's cache keeps it, unlike a line
-that would change at the end of every request.")
-
 ;;; --- sizes and the line left in their place -------------------------------------------
 
 (defun request-words (message)
@@ -504,30 +497,6 @@ it is sent as the user's and can carry text, else a message of its own before it
         (cons i (if (and (member (json-get m "role") +user-side-roles+ :test #'equal)
                          (let ((c (json-get m "content"))) (or (stringp c) (json-array-p c))))
                     "prepend" "insert"))))))
-
-(defun budget-noted (branch)
-  "The tenth of the trigger the model was last told of since the context last shrank
-(a compaction, or turns the agent or the user took out; the auto eviction's own
-shrink is what the note warns of, so it starts nothing again), 0 for none."
-  (let ((level 0))
-    (loop for i from (live-window-start branch) below (length branch)
-          for e = (aref branch i)
-          when (evict-entry-p e)
-            do (let ((op (json-get e "data")))
-                 (cond ((equal (json-get op "op") "budget") (setf level (let ((l (json-get op "level"))) (if (js-integer-p l) (as-integer l) 0))))
-                       ((and (equal (json-get op "op") "evict") (member (json-get op "by") '("user" "agent") :test #'equal)) (setf level 0)))))
-    level))
-
-(defun budget-note (branch index after trigger tool count)
-  "The note telling the model how full its context is and the op that records it,
-when AFTER has reached a tenth of TRIGGER past +BUDGET-NOTE-FROM+ it was not yet
-told of, TOOL (keel_context) is there, and something can leave: (values NOTE OP), or NIL."
-  (when (and tool (realp trigger) (> trigger 0))
-    (let ((level (min 9 (floor (* 10 after) trigger))))
-      (when (and (>= level +budget-note-from+) (> level (budget-noted branch)) (room-to-evict-p branch index))
-        (values (format nil "[keel: the context is past ~d0% of where the host compacts (~~~a tokens); past ~d% the oldest turns leave by themselves. keel_context lists what is in it and takes old turns out, with a note of what to keep.]"
-                        level (js-string-of trigger) +evict-at-percent+)
-                (json-object "v" 1 "op" "budget" "level" level "at" count))))))
 
 (defun auto-notice (ops before after)
   "What the user is told when keel took turns out as the context filled, or brought back turns the agent kept recalling."
