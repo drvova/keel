@@ -223,13 +223,21 @@ tool's definition is part of the prompt the provider caches."
           (t (json-object "ok" :false "error" (format nil "command: no command ~a" suffix))))))
 
 (defun handle-session-start (request)
-  "A session starting: the named notes of the project's last session carried into it (pins.lisp)."
+  "A session starting: the named notes of the project's last session carried into
+it (pins.lisp), and where that session stopped told to the agent with the first
+prompt (resume.lisp)."
   (let ((files (json-get request "projectFiles" #())))
     (if (zerop (length files))
         (call-answer nil nil)
         (let* ((pin (pin-call request (json-object "surface" "carry" "files" files))) (ops (json-get pin "op")))
-          (call-answer nil (and (plusp (length (or ops #())))
-                           (append (appends +pin-entry-type+ ops) (list (tell-effect (format nil "keel: ~a" (json-get pin "text")))))))))))
+          ;; Read before the pins land: a session with nothing in it yet.
+          (let ((briefing (resume-briefing (coerce (snapshot-tree (read-snapshot (json-get request "host"))) 'list)
+                                           (coerce files 'list))))
+            (call-answer nil (append (and (plusp (length (or ops #())))
+                                          (append (appends +pin-entry-type+ ops) (list (tell-effect (format nil "keel: ~a" (json-get pin "text"))))))
+                                     (and briefing
+                                          (list (send-effect "where the last session stopped" +resume-notice-type+ briefing
+                                                             (json-object "deliverAs" "nextTurn")))))))))))
 
 (defun handle-message-end (request)
   "A message the host finished: from an assistant's, the limit an error states or the prompt the provider accepted (limits.lisp)."

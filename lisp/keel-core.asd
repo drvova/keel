@@ -67,6 +67,8 @@
      ;; settings and pins: the config file, and pinning and unpinning notes.
      (:file "settings")
      (:file "pins")
+     ;; resume: where the last session stopped, told to the next one.
+     (:file "resume")
      ;; raw-capture: the originals of what omp rewrites, kept as they land.
      (:file "raw-capture")
      ;; args: what /keel hands the hook, and the hook reads back.
