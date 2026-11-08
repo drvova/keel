@@ -25,7 +25,8 @@ const walk = async (dir: string): Promise<string[]> => {
 };
 
 const pickLargest = async (limit: number, root: string): Promise<string[]> => {
-  const files = await walk(root);
+  // A host with no sessions here has none to sample.
+  const files = await walk(root).catch(() => [] as string[]);
   const sized = await Promise.all(
     files.map(async (file) => ({ file, size: (await stat(file)).size })),
   );
