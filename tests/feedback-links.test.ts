@@ -88,7 +88,7 @@ describe("what keel_recall showed", () => {
 });
 
 describe("eviction, as the context fills", () => {
-  it("leaves a turn the agent recalled lately in the context, and takes the next ones", () => {
+  it("takes a turn the agent recalled lately out after the others: the next ones go first", () => {
     const plain = session(reads(10), 30_000, 80_000);
     sent(plain);
     expect(ops(plain)[0]).toMatchObject({ op: "evict", from: 0, by: "auto" });
@@ -101,6 +101,17 @@ describe("eviction, as the context fills", () => {
     expect(out.length).toBeGreaterThan(0);
     expect(out.every((o) => o.from > 3)).toBe(true);
     expect(out[0].from).toBe(4);
+  });
+
+  it("a turn recalled lately still leaves before the running turn is cut into: it leaves last, it is not held outright", () => {
+    const s = session(reads(10), 30_000, 80_000);
+    // Every finished turn recalled just now.
+    recalled(s, [0, 4, 8, 12, 16, 20, 24, 28, 32], 39);
+    sent(s);
+    const out = ops(s).filter((o) => o.op === "evict");
+    expect(out[0]).toMatchObject({ from: 0, by: "auto" });
+    // Nothing of the running turn (#36 on).
+    expect(out.every((o) => o.to < 36)).toBe(true);
   });
 
   it("forgets a recall a few turns on: the turn can leave again", () => {
@@ -172,7 +183,7 @@ describe("the evict command and keel_context", () => {
     recalled(s, [5], 19);
     const list = callTool("keel_context", null, s.ctx(), s.host);
     expect(list).toContain("#4–#7 ~");
-    expect(list.split("\n").find((l) => l.includes("#4–#7"))).toEndWith("(you recalled it lately: it stays)");
+    expect(list.split("\n").find((l) => l.includes("#4–#7"))).toEndWith("(you recalled it lately: it leaves last)");
     expect(list.split("\n").find((l) => l.includes("#0–#3"))).not.toContain("recalled");
   });
 });

@@ -414,9 +414,15 @@ out) the pinned notes stand first, in one block (NOTES-BLOCK)."
                   (setf outs (remove-if (lambda (o) (overlaps-p (out-from o) (out-to o) (turn-from tr) (turn-to tr))) outs)))
                 (setf before (+ overhead (tokens-from-chars (chars-kept outs) per-token)) after before)))
             (when (and (realp trigger) (> trigger 0) (> before (* +evict-at-share+ trigger)))
-              ;; What can leave, oldest first, but a turn the agent recalled lately stays.
-              (let* ((candidates (remove-if (lambda (u) (held-turn-p u recent)) (units-in turns branch index outs)))
-                     (finished (remove-if (lambda (u) (held-turn-p u recent)) (turns-in turns outs)))
+              ;; What can leave, oldest first, a turn the agent recalled lately after
+              ;; the others: it leaves last of the finished turns, but before the
+              ;; running turn's own steps are cut into. Held outright, it kept the
+              ;; context at the trigger and every request took a sliver of the
+              ;; running turn (a real 60-turn run: 285 evictions against 60, and
+              ;; 2.4 times the prompt tokens).
+              (let* ((finished (multiple-value-bind (held free) (partition (lambda (u) (held-turn-p u recent)) (turns-in turns outs))
+                                 (append free held)))
+                     (candidates (append finished (nthcdr (length (turns-in turns outs)) (units-in turns branch index outs))))
                      (leaving '()))
                 (dolist (u candidates)
                   (when (<= after (* +evict-to-share+ trigger)) (return))
@@ -555,7 +561,7 @@ told of, TOOL (keel_context) is there, and something can leave: (values NOTE OP)
 
 (defun turn-line (tr chars per-token messages-by-n outs &optional recent)
   (let ((m (gethash (turn-from tr) messages-by-n)))
-    (format nil "~a ~~~a tokens~@[ \"~a\"~]~:[~; (older steps out)~]~:[~; (you recalled it lately: it stays)~]" (range-text (turn-from tr) (turn-to tr))
+    (format nil "~a ~~~a tokens~@[ \"~a\"~]~:[~; (older steps out)~]~:[~; (you recalled it lately: it leaves last)~]" (range-text (turn-from tr) (turn-to tr))
             (js-string-of (tokens-from-chars (turn-chars tr chars outs) per-token))
             (and m (equal (json-get m "role") "user") (request-words m))
             (some (lambda (o) (overlaps-p (out-from o) (out-to o) (turn-from tr) (turn-to tr))) outs)

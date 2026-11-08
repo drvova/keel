@@ -9,8 +9,9 @@
 ;;;; when it was made; the ledger is that, replayed along the branch since its
 ;;;; last /clear. Three things read it:
 ;;;;
-;;;;   - eviction (evict.lisp) leaves a turn the agent recalled in the last
-;;;;     +recall-hold-turns+ turns in the context, whatever its age;
+;;;;;   - eviction (evict.lisp) takes a turn the agent recalled in the last
+;;;;     +recall-hold-turns+ turns out last of the finished turns, whatever its
+;;;;     age (before the running turn's own steps, though);
 ;;;;   - a turn out of the context that the agent recalled twice in that time
 ;;;;     comes back (the first recall answers itself; a second says the eviction
 ;;;;     was wrong, and each recall costs a call and repeats the text);
@@ -64,8 +65,12 @@
                    0)))
     (remove-if (lambda (r) (< (cdr r) since)) recalls)))
 
+(defun partition (pred list)
+  "LIST's elements PRED holds for, and the others, each in LIST's order: (values YES NO)."
+  (values (remove-if-not pred list) (remove-if pred list)))
+
 (defun held-turn-p (turn recent)
-  "Whether the agent recalled any of TURN recently (RECENT-RECALLS): it stays in the context."
+  "Whether the agent recalled any of TURN recently (RECENT-RECALLS): it leaves last."
   (some (lambda (r) (<= (turn-from turn) (car r) (turn-to turn))) recent))
 
 (defun reread-turns (turns branch recent)
