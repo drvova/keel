@@ -467,6 +467,33 @@ describe("chars per token, measured on the request", () => {
   });
 });
 
+describe("the dashboard at the end of every request", () => {
+  /** The text the request ends with. */
+  const tail = (messages: unknown[] | undefined) => {
+    const last: any = (messages ?? []).at(-1);
+    return typeof last?.content === "string" ? last.content : last?.content?.at(-1)?.text ?? "";
+  };
+
+  it("says how full the context is, what fills it and what is out, with keel_context there", () => {
+    setEvict(true);
+    const s = session(6, 4_000, 20_000);
+    const first = tail(sent(s, 100_000, true).messages);
+    expect(first).toMatch(/^\[context: ~\d+ tokens, \d+% of where the host compacts \(~83616\), ~\d+ left · 6 turns in, largest #\d+–#\d+ ~\d+, #\d+–#\d+ ~\d+, #\d+–#\d+ ~\d+ · nothing out · keel_context drops or restores turns by #N\]$/);
+    // A turn out: the dashboard says so, and counts it out of what is in.
+    record(s, { op: "evict", from: 0, to: 3 });
+    expect(tail(sent(s, 100_000, true).messages)).toContain("· 5 turns in, largest ");
+    expect(tail(sent(s, 100_000, true).messages)).toContain("· 1 turn out (#0–#3) ·");
+  });
+
+  it("is not there without keel_context, and is never kept: the session file has none", () => {
+    setEvict(true);
+    const s = session(6, 4_000, 20_000);
+    expect(tail(sent(s, 100_000, false).messages ?? s.request())).not.toContain("[context:");
+    sent(s, 100_000, true);
+    expect(JSON.stringify(s.entries)).not.toContain("[context:");
+  });
+});
+
 describe("turn numbers in view", () => {
   it("each request in the context starts with its turn's #N while keel_context is there, the same on every request", () => {
     setEvict(true);

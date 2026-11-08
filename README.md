@@ -169,12 +169,13 @@ What the request then carries, each part written to read the same on every reque
 [#0–#20 out of context: 7 turns, by keel as the context filled. Requests: "fix the auth bug"; … It changed 5 files in auth, billing; 2 commits, last 3f2a1c9 fix refresh; 1 failed call. Each entry reads back word for word with keel_recall expand:[0]; keel_recall query searches them.]
 [#21] add the refresh test
 …
-[context: ~41808 tokens, 50% of where the host compacts (~83616); ~41808 left]
+[context: ~41808 tokens, 50% of where the host compacts (~83616), ~41808 left · 12 turns in, largest #88–#97 ~6120, #60–#71 ~4410, #72–#87 ~3980 · 7 turns out (#0–#20) · keel_context drops or restores turns by #N]
 ```
 
 - **The line for what is out** says what it was and did, from the originals keel kept, and how to read it back.
 - **Turn numbers** (`[#21]`) let the agent name turns without listing them.
 - **The pinned notes** stand first, brought up to date only when turns leave or come back: an edit at the start of a request makes the provider read all of it again (7.7 appended turns, by the paper's count).
+- **The dashboard** ends every request: how full the context is, the largest turns in it by `#N`, and what is out. It is the design of VISTA ([LightSpeed, Tencent, arXiv:2606.30005](https://arxiv.org/abs/2606.30005)), whose agents misjudged their own context by 43–84% without one and not at all with it, and lost 13 points of accuracy without it even with archiving and recovery kept. It is made again for each request and never kept, so it costs the provider's cache only its own few dozen tokens.
 - **The size readout** ends each of keel's tool results: models misjudge their own context's length (the paper's appendix G), and read a remaining budget better than a share ([Liu et al.](https://arxiv.org/abs/2511.17006)). Past half the trigger the model is also told once per tenth, while something can leave.
 
 Every edit is an `keel.evict` entry, replayed along the branch, so a branch keeps its own and `/tree` back past one undoes it. Turns leave in large runs from the oldest end, since every edit makes the provider read all that follows it again. Whether a drop pays is worked out from the session itself: the cache's price from each request's usage and cost, over as many requests ahead as the session has made.

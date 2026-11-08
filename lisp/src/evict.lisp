@@ -489,10 +489,43 @@ out) the pinned notes stand first, in one block (NOTES-BLOCK)."
               (loop for i from 0 below (length messages)
                     for n = (aref n-of i)
                     when (and n (not (aref v i)) (gethash n starts) (equal (json-get (aref messages i) "role") "user"))
-                      do (push (cons (cons i "prepend") (turn-mark n)) stubs))))
+                      do (push (cons (cons i "prepend") (turn-mark n)) stubs)))
+            ;; The dashboard, at the very end of the request (dashboard, below).
+            (let ((last-in (position nil v :from-end t)))
+              (when (and last-in (realp trigger) (> trigger 0))
+                (push (cons (cons last-in "append") (dashboard after trigger turns outs chars per-token)) stubs))))
           (values (nreverse drop) (nreverse stubs) (nreverse ops) before after n-of v outs turns fit reread reread-trials))))))
 
 (defun turn-mark (n) (format nil "[#~d]" n))
+
+(defparameter +dashboard-largest+ 3 "The largest turns in the context the dashboard names.")
+
+(defun dashboard (tokens trigger turns outs chars per-token)
+  "How full the context is and what fills it, one line at the end of every request
+while keel_context is there: models are blind to their own context's size (VISTA,
+LightSpeed at Tencent, arXiv:2606.30005, measured a 43-84% median error without such
+a dashboard and none with it, and its ablation lost 13 points of accuracy without
+it, archiving and recovery kept). It is regenerated each request, as theirs is
+after every tool result: the budget (tokens, the share of where the host compacts,
+what is left), the largest turns in the context by #N, and what is out. At the end
+of the request and not kept, it costs the provider's cache only its own tokens."
+  (let* ((in (remove-if (lambda (tr) (turn-out-p tr outs)) turns))
+         (largest (subseq (sort (copy-list in) #'> :key (lambda (tr) (turn-chars tr chars outs)))
+                          0 (min +dashboard-largest+ (length in))))
+         (out-turns (remove-if-not (lambda (tr) (turn-out-p tr outs)) turns))
+         (tok (lambda (n) (js-string-of (round n)))))
+    (format nil "[context: ~~~a tokens, ~d% of where the host compacts (~~~a), ~~~a left · ~a in~@[, largest ~{~a~^, ~}~] · ~a · ~a drops or restores turns by #N]"
+            (funcall tok tokens) (round (* 100 tokens) trigger) (funcall tok trigger) (funcall tok (max 0 (- trigger tokens)))
+            (plural (length in) "turn")
+            (and largest (mapcar (lambda (tr) (format nil "~a ~~~a" (range-text (turn-from tr) (turn-to tr))
+                                                      (funcall tok (tokens-from-chars (turn-chars tr chars outs) per-token))))
+                                 largest))
+            (if out-turns
+                (let ((ranges (mapcar (lambda (o) (range-text (out-from o) (out-to o))) outs)))
+                  (format nil "~a out (~{~a~^, ~})" (plural (length out-turns) "turn")
+                          (if (> (length ranges) 2) (list (first ranges) "…" (car (last ranges))) ranges)))
+                "nothing out")
+            +context-tool+)))
 
 (defparameter +user-side-roles+
   '("user" "custom" "hookMessage" "bashExecution" "pythonExecution" "fileMention" "branchSummary" "compactionSummary" "developer")
