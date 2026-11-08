@@ -32,7 +32,8 @@ describe.skipIf(!piInstalled())("Pi shapes", () => {
     for (const key of ["KEEL_CONFIG_PATH", "PI_CODING_AGENT_DIR"]) saved[key] = process.env[key];
     process.env.KEEL_CONFIG_PATH = join(dir, "keel-config.json");
     writeFileSync(process.env.KEEL_CONFIG_PATH, JSON.stringify({ overrideDefaultCompaction: true, smartKeepTail: false, evict: false }));
-  });
+    // Importing Pi takes seconds on a loaded machine, past bun's 5 s for a hook.
+  }, 30_000);
 
   afterAll(() => {
     for (const [key, value] of Object.entries(saved)) {
