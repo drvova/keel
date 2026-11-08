@@ -15,17 +15,6 @@
 ;;; Japanese, Thai, Lao, Khmer, Myanmar), UAX #29 makes each ideograph a word
 ;;; and a run of Thai one, where ICU finds the dictionary's words.
 
-(defun word-segments (text)
-  "TEXT's segments as (SEGMENT START END), START and END in code units."
-  (let ((at 0))
-    (mapcar (lambda (seg) (prog1 (list seg at (+ at (js-length seg))) (incf at (js-length seg))))
-            (sb-unicode:words text))))
-
-(defun letter-or-number-p (c)
-  (member (sb-unicode:general-category c) '(:lu :ll :lt :lm :lo :nd :nl :no)))
-
-(defun wordish-p (segment) (some #'letter-or-number-p segment))
-
 ;;; --- [User Messages] and [Early Session Requests] ---------------------------------
 
 (defparameter +user-message-chars+ 300 "Each user message is clipped to this many characters.")

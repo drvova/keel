@@ -301,8 +301,6 @@ budgets' growthMarginChars), or this share of what it replaces.")
   (let ((roles (mapcar #'item-role items)))
     (if (<= (length roles) 30) roles (append (subseq roles 0 10) (list "...") (last roles 10)))))
 
-(defun budget (budgets key) (json-get budgets key))
-
 (defstruct (assembly (:constructor make-assembly (text state sections summarized history shown growth)))
   "A summary written for a cut: its TEXT, the STATE to store and the SECTIONS it
 shows; how many messages it SUMMARIZED; the HISTORY ranges to store; the #N
@@ -351,7 +349,7 @@ sections and brief that would replace it."
                                                   (if (> (range-from window-range) 0) (list (unindexed-range (1- (range-from window-range)))) '())
                                                   stored-index)
                                               window-range
-                                              (json-get (budget budgets "summary") "historyRanges"))))
+                                              (json-get (json-get budgets "summary") "historyRanges"))))
            (working-lines nil) (working-shown nil)
            ;; Every message since /clear, as the original keel kept where omp rewrote it: (BRANCH-POS MESSAGE #N).
            (since (loop for i from (1+ (last-reset-index branch)) below (length branch)
@@ -361,7 +359,7 @@ sections and brief that would replace it."
       ;; (what this compaction summarizes and what earlier ones did), so the agent
       ;; does not spend its next requests fetching it again. The budgets give it
       ;; no room when the setting is off.
-      (when (> (budget budgets "workingSetTokens") 0)
+      (when (> (json-get budgets "workingSetTokens") 0)
         (let* ((kept-at (if (plusp (length (cut-first-kept cut)))
                             (or (position (cut-first-kept cut) branch :key (lambda (e) (json-get e "id")) :test #'equal) -1)
                             -1))
@@ -369,7 +367,7 @@ sections and brief that would replace it."
                (past (remove-if (lambda (s) (and (>= kept-at 0) (>= (first s) kept-at))) since)))
           (multiple-value-bind (lines shown)
               (build-working-set (mapcar #'second past) (mapcar #'third past) kept
-                                 (* (budget budgets "workingSetTokens") per-token) removed (recalled-of input))
+                                 (* (json-get budgets "workingSetTokens") per-token) removed (recalled-of input))
             (when lines (setf working-lines lines working-shown shown)))))
       (let* ((task-lines
                ;; [Task State], from everything since /clear: what is summarized, then what stays.
@@ -389,15 +387,15 @@ sections and brief that would replace it."
                 :task-state task-lines
                 :file-ops (json-get input "fileOps")
                 :track-commands (strings-of (json-get (json-get input "settings") "trackCommands"))
-                :limits (budget budgets "summary")
-                :ranking (json-object "maxBriefChars" (js-round (* (budget budgets "briefTokens") per-token))
-                                      "maxBriefCharsCeiling" (js-round (* (budget budgets "briefCeilingTokens") per-token))
-                                      "briefCharsPerBlock" (js-round (* (budget budgets "briefTokensPerBlock") per-token))
-                                      "maxBlocks" (budget budgets "briefMaxBlocks")))))
+                :limits (json-get budgets "summary")
+                :ranking (json-object "maxBriefChars" (js-round (* (json-get budgets "briefTokens") per-token))
+                                      "maxBriefCharsCeiling" (js-round (* (json-get budgets "briefCeilingTokens") per-token))
+                                      "briefCharsPerBlock" (js-round (* (json-get budgets "briefTokensPerBlock") per-token))
+                                      "maxBlocks" (json-get budgets "briefMaxBlocks")))))
         (multiple-value-bind (text state sections) (compile-summary summary-input)
           (make-assembly text state sections summarized history working-shown
                          (make-growth (- (js-length text) (if previous-summary (js-length previous-summary) 0) removed)
-                                      (max (budget budgets "growthMarginChars") (js-round (* removed +growth-margin-share+))))))))))
+                                      (max (json-get budgets "growthMarginChars") (js-round (* removed +growth-margin-share+))))))))))
 
 (defparameter +cut-reasons+
   '((:no-live-messages "no_live_messages" "keel: Nothing to compact (no live messages)")
@@ -451,7 +449,7 @@ and what it was sized from (for debugging a compaction that kept too much or too
          (per-token (json-get (json-get sizing "tokenEstimate") "charsPerToken"))
          (requested (let ((k (json-get input "keepUserTurns"))) (and (realp k) k)))
          (recovering (eq (json-get input "recovering") :true))
-         (max-tail (budget budgets "maxTailTokens")))
+         (max-tail (json-get budgets "maxTailTokens")))
     ;; A pass keel started itself went by the policy as last recorded; this one
     ;; carries the current policy, which may since say no: compaction off, or a
     ;; trigger the context (measured as the end-of-run check measured it) is under.
@@ -474,7 +472,7 @@ and what it was sized from (for debugging a compaction that kept too much or too
       (return-from plan-sized (json-object "kind" "cancel" "why" "evict")))
     (multiple-value-bind (keep adjusted)
         (resolve-smart-keep branch notes requested (eq (json-get settings "smartKeepTail") :true) skip
-                            (budget budgets "minTailTokens") max-tail per-token)
+                            (json-get budgets "minTailTokens") max-tail per-token)
       (let ((cut (build-own-cut branch notes keep skip)))
         (when (and (cut-p cut) (null requested)) (setf cut (apply-tail-budget branch notes cut max-tail per-token skip)))
         ;; An automatic pass on a turn still running (its last message is a tool

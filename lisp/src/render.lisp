@@ -60,6 +60,17 @@ a text part's text is a string."
 
 (defun skill-block-regex () (rx "<skill\\s+name=\"([^\"]+)\"[^>]*>[\\s\\S]*?(?:<\\/skill>|$)"))
 
+(defun letter-or-number-p (c)
+  (member (sb-unicode:general-category c) '(:lu :ll :lt :lm :lo :nd :nl :no)))
+
+(defun word-segments (text)
+  "TEXT's segments as (SEGMENT START END), START and END in code units."
+  (let ((at 0))
+    (mapcar (lambda (seg) (prog1 (list seg at (+ at (js-length seg))) (incf at (js-length seg))))
+            (sb-unicode:words text))))
+
+(defun wordish-p (segment) (some #'letter-or-number-p segment))
+
 (defun segment-word-count (text)
   "TEXT's words as Intl.Segmenter counts them: segments holding a letter or a number."
   (count-if (lambda (s) (wordish-p (first s))) (word-segments text)))

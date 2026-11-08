@@ -1,15 +1,15 @@
-;;;; ledger.lisp --- what is out of the context, and the turns it is counted in.
+;;;; ledger.lisp --- what keel records in the session, and the turns it counts in.
 ;;;;
 ;;;; SPDX-License-Identifier: MIT
 ;;;;
-;;;; keel's context edits are custom entries in the session file, never in the
-;;;; context and not counted in #N: keel.evict (evict, restore, insert) and
-;;;; keel.recall (what a keel_recall call showed). Each is replayed along the
-;;;; branch since its last /clear, so a branch keeps its own and an edited turn
-;;;; drops the ones made after it. The unit they count in is the turn: a request
-;;;; the user made and every call and result after it. Eviction (evict.lisp), the
-;;;; recall feedback (feedback.lisp), links and credit read the ledger here; only
-;;;; evict.lisp and the context's file (mirror.lisp) write it.
+;;;; keel's records are custom entries in the session file, never in the context
+;;;; and not counted in #N: keel.evict (a context edit: evict, restore, insert),
+;;;; keel.recall (what a keel_recall call showed) and keel.pin (a note pinned or
+;;;; unpinned). Each is replayed along the branch since its last /clear, so a
+;;;; branch keeps its own and an edited turn drops the ones made after it. The
+;;;; unit edits count in is the turn: a request the user made and every call and
+;;;; result after it. Everything reads them here; evict.lisp, mirror.lisp, the
+;;;; surface and pins.lisp decide what is recorded.
 
 (in-package #:keel)
 
@@ -181,3 +181,58 @@ what an eviction of them records, so a range never overlaps one already out."
 (defun turn-chars (turn chars &optional outs)
   "The chars of TURN's messages (CHARS by #N), only those still in the context when OUTS is given."
   (loop for n from (turn-from turn) to (turn-to turn) unless (and outs (out-of n outs)) sum (gethash n chars 0)))
+
+;;; --- pinned notes ---------------------------------------------------------------
+
+(defun js-id (n)
+  "An id as JavaScript holds it: an integer past 2^53 is the nearest double."
+  (if (and (integerp n) (> (abs n) +double-exact+)) (coerce n 'double-float) n))
+
+(defun pin-name (n) (let ((name (json-get n "name"))) (and (stringp name) name)))
+
+(defun pin-name-of (value)
+  "A note's name as given: trimmed and lowercased, letters, digits and . _ - only,
+starting with a letter or digit, up to +PIN-NAME-CHARS+; NIL for anything else."
+  (when (stringp value)
+    (let ((name (string-downcase (js-trim value))))
+      (and (<= 1 (length name) +pin-name-chars+)
+           (rx-test (rx "^[a-z0-9][a-z0-9._-]*$") name)
+           name))))
+
+(defun format-pin (n)
+  "A note as it is shown, in a listing and in [Pinned Notes]: [ID] NAME: TEXT (BY, #AT), NAME only for a named one."
+  (let ((at (let ((a (json-get n "at"))) (and (not (eq a :null)) a))))
+    (format nil "[~a] ~@[~a: ~]~a (~a~a)" (js-string-of (js-id (json-get n "id"))) (pin-name n) (json-get n "text") (json-get n "by")
+            (cond (at (format nil ", #~a" (js-string-of (js-id at))))
+                  ((stringp (json-get n "from")) (format nil ", from session ~a" (json-get n "from")))
+                  (t "")))))
+
+(defun pin-entry-p (e)
+  "A pin or unpin entry: keel's custom entry, its data an object (an array is one to JavaScript too)."
+  (and (equal (json-get e "type") "custom") (pin-entry-type-p (json-get e "customType"))
+       (let ((d (json-get e "data"))) (or (json-object-p d) (json-array-p d)))))
+
+(defun read-pins (branch)
+  "The notes pinned on BRANCH since its last /clear, oldest first, as JSON: each
+pin and unpin replayed along it, so a branch keeps the pins made on it."
+  (let ((notes (make-hash-table)))
+    (loop for i from (1+ (last-reset-index branch)) below (length branch)
+          for e = (aref branch i)
+          do (let ((op (json-get e "data")))
+               (when (and (pin-entry-p e) (json-object-p op) (js-integer-p (json-get op "id")))
+                 (let ((id (as-integer (json-get op "id"))) (text (json-get op "text")))
+                   (cond ((and (equal (json-get op "op") "add") (stringp text) (plusp (length (js-trim text))))
+                          (let ((name (pin-name-of (json-get op "name"))))
+                            ;; A name defined again replaces the note it named.
+                            (when name
+                              (loop for k being the hash-keys of notes using (hash-value n)
+                                    when (equal (pin-name n) name) do (remhash k notes)))
+                            (setf (gethash id notes)
+                                  (let ((note (json-object "id" id "text" text "by" (if (equal (json-get op "by") "agent") "agent" "user")
+                                                           "at" (and (js-integer-p (json-get op "at")) (as-integer (json-get op "at"))))))
+                                    (when name (setf (gethash "name" note) name))
+                                    (when (stringp (json-get op "from")) (setf (gethash "from" note) (json-get op "from")))
+                                    note))))
+                         ((equal (json-get op "op") "remove") (remhash id notes)))))))
+    (let ((ids (sort (loop for k being the hash-keys of notes collect k) #'<)))
+      (mapcar (lambda (id) (gethash id notes)) ids))))

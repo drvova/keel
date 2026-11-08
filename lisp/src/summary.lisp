@@ -187,19 +187,17 @@ A list it lacks is empty; earlySlots it lacks is what the requests it holds leav
                                                   (setf out (add-commit out c))))
                       :tracked tracked
                       :user-messages (append-touched (state-user-messages prev) (state-user-messages fresh))
-                      :brief (merge-brief (state-brief prev) (state-brief fresh) (limit limits "briefLines")))))))
-
-(defun limit (limits key) (json-get limits key))
+                      :brief (merge-brief (state-brief prev) (state-brief fresh) (json-get limits "briefLines")))))))
 
 (defun cap-state (s limits)
   "What a summary shows of each list, which is what it stores."
-  (let ((per (limit limits "filesPerCategory")))
+  (let ((per (json-get limits "filesPerCategory")))
     (make-state :early-requests (subseq (state-early-requests s) 0 (min +early-requests-kept+ (length (state-early-requests s))))
                 :early-slots (state-early-slots s)
                 :modified (last-n (state-modified s) per) :created (last-n (state-created s) per) :read (last-n (state-read s) per)
-                :commits (last-n (state-commits s) (limit limits "commits"))
-                :tracked (mapcar (lambda (tr) (cons (car tr) (last-n (cdr tr) (limit limits "commandsPerName")))) (state-tracked s))
-                :user-messages (last-n (state-user-messages s) (limit limits "userMessages"))
+                :commits (last-n (state-commits s) (json-get limits "commits"))
+                :tracked (mapcar (lambda (tr) (cons (car tr) (last-n (cdr tr) (json-get limits "commandsPerName")))) (state-tracked s))
+                :user-messages (last-n (state-user-messages s) (json-get limits "userMessages"))
                 :brief (state-brief s))))
 
 ;;; --- the text ----------------------------------------------------------------------
@@ -216,12 +214,12 @@ A list it lacks is empty; earlySlots it lacks is what the requests it holds leav
   (let* ((parts (list (list "Pinned Notes" (section "Pinned Notes" pins))
                       (list "Task State" (section "Task State" task-state))
                       (list "Early Session Requests" (section "Early Session Requests" (state-early-requests s)))
-                      (list "Files And Changes" (section "Files And Changes" (file-lines s (limit limits "filesPerCategory"))))
+                      (list "Files And Changes" (section "Files And Changes" (file-lines s (json-get limits "filesPerCategory"))))
                       (list "Commits" (section "Commits" (mapcar (lambda (c) (if (commit-hash c) (format nil "~a: ~a" (commit-hash c) (commit-message c)) (commit-message c)))
-                                                                 (last-n (state-commits s) (limit limits "commits")))))
-                      (list "Tracked Commands" (section "Tracked Commands" (mapcar (lambda (tr) (format nil "~a: ~a" (car tr) (cap-items (mapcar #'tracked-entry (cdr tr)) (limit limits "commandsPerName") +command-separator+)))
+                                                                 (last-n (state-commits s) (json-get limits "commits")))))
+                      (list "Tracked Commands" (section "Tracked Commands" (mapcar (lambda (tr) (format nil "~a: ~a" (car tr) (cap-items (mapcar #'tracked-entry (cdr tr)) (json-get limits "commandsPerName") +command-separator+)))
                                                                                    (state-tracked s))))
-                      (list "User Messages" (section "User Messages" (last-n (state-user-messages s) (limit limits "userMessages"))))
+                      (list "User Messages" (section "User Messages" (last-n (state-user-messages s) (json-get limits "userMessages"))))
                       (list "History Index" (section "History Index" history))))
          (shown (remove-if (lambda (p) (zerop (length (second p)))) parts))
          (ws (if working-set (format nil "[Working Set]~%~a" (join-strings working-set (nl))) ""))
