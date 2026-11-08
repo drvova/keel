@@ -1,7 +1,7 @@
 /**
  * Phase 2 (keel_recall noise floor + hard cap) constant selection evidence.
  *
- * Runs the REAL production search (the core's, op search-sessions, with its
+ * Runs the REAL production search (the core's, op search, with its
  * floor and cap overridden) against real session transcripts, comparing candidate
  * relative-floor and hard-cap values. Not a duplicate scoring
  * implementation — this exercises the exact code path that ships.
