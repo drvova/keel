@@ -4,7 +4,7 @@
 // is called: keel's summary is local, and Pi only needs a catalog model to
 // build the session.
 //
-// Runs only where @earendil-works/pi-coding-agent is installed (`bun run setup:pi`).
+// Runs only where @earendil-works/pi-coding-agent is installed (`bun run setup:hosts`).
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { assertRealPi, piInstalled } from "./support/pi";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";

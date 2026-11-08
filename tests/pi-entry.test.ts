@@ -1,6 +1,6 @@
 // The Pi entry (pi.ts) against a fake Pi extension API. pi.ts takes convertToLlm
 // and getAgentDir from Pi's own package, so these run where Pi is installed
-// (`bun run setup:pi`); tests/pi-host.test.ts runs the same entry inside a real Pi.
+// (`bun run setup:hosts`); tests/pi-host.test.ts runs the same entry inside a real Pi.
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { assertRealPi, piInstalled } from "./support/pi";
 import { mkdtempSync, rmSync, writeFileSync } from "fs";

@@ -28,10 +28,11 @@
     "url": "git+https://github.com/drvova/keel.git"
   },
   "scripts": {
-    "setup:omp": "npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @oh-my-pi/pi-coding-agent@${OMP_VERSION:-latest}",
-    "setup:pi": "npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-coding-agent@${PI_VERSION:-latest}",
+    "setup:omp": "bun run scripts/setup-host.ts omp",
+    "setup:pi": "bun run scripts/setup-host.ts pi",
     "typecheck": "tsc --ignoreConfig --noEmit --skipLibCheck --module preserve --moduleResolution bundler --target ES2022 --types node index.ts pi.ts",
-    "test": "bun test --isolate"
+    "test": "bun test --isolate",
+    "setup:hosts": "bun run scripts/setup-host.ts"
   },
   "devDependencies": {
     "@types/node": "26.6.5",

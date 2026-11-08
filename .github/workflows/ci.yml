@@ -53,19 +53,19 @@ jobs:
       # --ignore-scripts: dependency postinstall code does not run in CI.
       - run: bun install --frozen-lockfile --ignore-scripts
 
-      - name: Install omp (${{ matrix.omp }})
+      - name: Install the hosts (omp at ${{ matrix.omp }}, Pi at ${{ matrix.pi }})
+        # One step, one npm call: npm reconciles node_modules against
+        # package.json, so a second install would prune what the first put
+        # there. Each pin is set only for the host this job tests at its floor;
+        # the other is installed at latest.
         run: |
           if [ "${{ matrix.omp }}" = minimum ]; then
             export OMP_VERSION=$(bun -e "console.log(require('./package.json').peerDependencies['@oh-my-pi/pi-coding-agent'].match(/\d+\.\d+\.\d+/)[0])")
           fi
-          bun run setup:omp
-
-      - name: Install Pi (${{ matrix.pi }})
-        run: |
           if [ "${{ matrix.pi }}" = minimum ]; then
             export PI_VERSION=$(bun -e "console.log(require('./package.json').peerDependencies['@earendil-works/pi-coding-agent'].match(/\d+\.\d+\.\d+/)[0])")
           fi
-          bun run setup:pi
+          bun run setup:hosts
 
       # Both hosts load after both installs (one npm install must not prune the other).
       - name: Host versions

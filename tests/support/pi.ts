@@ -19,13 +19,13 @@ const resolvedPiManifest = (): string | undefined => {
   }
 };
 
-/** Pi is installed (`bun run setup:pi`). */
+/** Pi is installed (`bun run setup:hosts`). */
 export const piInstalled = (): boolean => resolvedPiManifest() !== undefined;
 
 /** Fail unless Pi's name resolves to Pi itself, not omp's shim for it. */
 export const assertRealPi = (): void => {
   const manifest = resolvedPiManifest();
-  if (!manifest) throw new Error(`${PI_PACKAGE} is not installed: bun run setup:pi`);
+  if (!manifest) throw new Error(`${PI_PACKAGE} is not installed: bun run setup:hosts`);
   const name = JSON.parse(readFileSync(manifest, "utf8")).name;
   if (name !== PI_PACKAGE) {
     throw new Error(
