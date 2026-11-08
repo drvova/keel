@@ -53,6 +53,8 @@
      (:file "history")
      (:file "summary")
      ;; The compaction: its cut, the working set, and the plan the hook acts on.
+     ;; ledger: the context edits keel records, and the turns they count in.
+     (:file "ledger")
      ;; feedback and links: what the agent recalled, read back as a signal, and
      ;; turns that carry on one another; eviction and [Working Set] read them.
      (:file "feedback")

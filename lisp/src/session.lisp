@@ -28,6 +28,38 @@
   "BYTES as text; a malformed sequence reads as U+FFFD, as Buffer.toString does."
   (sb-ext:octets-to-string bytes :external-format '(:utf-8 :replacement #\REPLACEMENT_CHARACTER)))
 
+(defun native-path (path) (sb-ext:parse-native-namestring path))
+
+(defun path-directory (path)
+  "PATH's directory, as Node's dirname writes it: both separators
+count, since a Windows path is written with `\` and a host's settings
+may carry either."
+  (let ((at (position-if (lambda (c) (or (char= c #\/) (char= c #\\))) path :from-end t)))
+    (cond ((null at) ".")
+          ((zerop at) (subseq path 0 1))
+          (t (subseq path 0 at)))))
+
+(defun path-separator (path)
+  "The separator PATH is written with: `\` when it uses one, else `/`."
+  (if (find #\\ path) #\\ #\/))
+
+(defun join-path (dir name)
+  "DIR and NAME joined with DIR's own separator, a trailing one not doubled."
+  (concatenate 'string (string-right-trim "/\\" dir) (string (path-separator dir)) name))
+
+(defun directory-files (dir)
+  "DIR's files, as names, listed without SBCL's pathname syntax: a Windows
+path handed to DIRECTORY comes back in a namestring with `/`, which then
+matches no path written the way the host writes it."
+  (let ((names '()) (seen (make-hash-table :test 'equal)))
+    (dolist (pattern (list (merge-pathnames "*.*" (native-path (concatenate 'string dir "/")))))
+      (ignore-errors
+       (dolist (file (directory pattern))
+         (let ((name (file-namestring file)))
+           (unless (nth-value 1 (gethash name seen))
+             (setf (gethash name seen) t) (push name names))))))
+    (nreverse names)))
+
 (defun parse-jsonl (text)
   "The JSON value of each line of TEXT that parses, in order."
   ;; Each line is parsed where it lies in the decoded text, not copied out first.
@@ -218,7 +250,6 @@ it forked, and their originals are in the parent's store."
           (when (= (hash-table-count found) (hash-table-count wanted)) (return)))))
     found))
 
-
 (defun restore-originals (messages ids file)
   "MESSAGES with the original content keel kept in FILE's raw store put back
 where omp rewrote them (IDS parallel to MESSAGES)."
@@ -281,3 +312,40 @@ no content (KEPT NIL) leaves MESSAGE as it is."
                                              p))
                            'vector))
              copy)))))
+
+(defun last-index-of-type (branch type &optional stop-at)
+  "The index of the last entry of TYPE, -1 for none; with STOP-AT, -1 also when an entry of that type comes after it."
+  (loop for i from (1- (length branch)) downto 0
+        for ty = (json-get (aref branch i) "type")
+        when (equal ty type) return i
+        when (and stop-at (equal ty stop-at)) return -1
+        finally (return -1)))
+
+(defun last-reset-index (branch) (last-index-of-type branch +reset-entry-type+))
+
+(defun last-compaction-index (branch) (last-index-of-type branch "compaction" +reset-entry-type+))
+
+(defun live-window-start (branch)
+  "The index of the first branch entry still in the model's context.
+With no compaction, the whole branch (after omp's /clear). After one, its
+firstKeptEntryId; when that is \"\" (a compact-all's sentinel) or no longer on
+the branch, right after the compaction, or right after an omp native-replay
+compaction's providerReplayThroughEntryId, where omp's own kept tail starts. A
+reset_boundary (omp's /clear) after the latest compaction starts the window
+after it, and one before it bounds where the kept id is looked for, as omp's
+prepareCompaction does."
+  (let ((reset (last-reset-index branch)) (compaction (last-compaction-index branch)))
+    (if (< compaction 0)
+        (1+ reset)
+        (let ((c (aref branch compaction)))
+          (flet ((find-after-reset (id)
+                   (if (and (stringp id) (plusp (length id)))
+                       (or (loop for i from (1+ reset) below (length branch)
+                                 when (equal (json-get (aref branch i) "id") id) return i)
+                           -1)
+                       -1)))
+            (let ((kept (find-after-reset (json-get c "firstKeptEntryId"))))
+              (if (>= kept 0)
+                  kept
+                  (let ((replay (find-after-reset (json-get c "providerReplayThroughEntryId"))))
+                    (if (and (>= replay 0) (< replay compaction)) (1+ replay) (1+ compaction))))))))))

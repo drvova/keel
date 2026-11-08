@@ -21,17 +21,6 @@
 
 (in-package #:keel)
 
-;;; A turn as eviction counts them (evict.lisp branch-turns), which this file and links.lisp read.
-(defstruct (turn (:constructor make-turn (from to))) "A turn's first and last #N." from to)
-
-;;; A run of #N out of the context, as the ledger replays it (evict.lisp read-evictions).
-(defstruct (out (:constructor make-out (from to by note at &optional text)))
-  "A run of #N out of the context: FROM to TO inclusive, by \"agent\", \"user\" or
-\"auto\", the agent's NOTE, AT the #N count when it was recorded (requests
-made after that left it out), and TEXT, what the agent rewrote it as in its
-context's file (mirror.lisp), which stands in its place instead of the line."
-  from to by note at text)
-
 (defparameter +recall-hold-turns+ 3 "A recall counts for this many turns after it: the turn it was in, and the next ones.")
 (defparameter +recall-max-shown+ 50 "The #N one recall entry holds at most.")
 
@@ -50,21 +39,6 @@ context's file (mirror.lisp), which stands in its place instead of the line."
       (let ((ns (remove-duplicates (reverse *shown-entries*) :from-end t)))
         (subseq ns 0 (min (length ns) +recall-max-shown+)))
       '()))
-
-(defun recall-op (ns at) (json-object "v" 1 "ns" (coerce ns 'vector) "at" at))
-
-(defun recall-entry-p (e)
-  (and (equal (json-get e "type") "custom") (recall-entry-type-p (json-get e "customType"))
-       (json-object-p (json-get e "data"))))
-
-(defun read-recalls (branch)
-  "Every #N the agent recalled on BRANCH since its last /clear, as (N . AT), AT the #N count then, oldest first."
-  (loop for i from (1+ (last-reset-index branch)) below (length branch)
-        for e = (aref branch i)
-        when (recall-entry-p e)
-          nconc (let ((at (op-at (json-get e "data"))) (ns (json-get (json-get e "data") "ns")))
-                  (and (json-array-p ns)
-                       (loop for n across ns when (js-integer-p n) collect (cons (as-integer n) at))))))
 
 (defun recent-recalls (recalls turns)
   "RECALLS made in the last +recall-hold-turns+ of TURNS (the running one counts)."
@@ -116,22 +90,6 @@ recalls would bring it back on every request (a real run did: 171 restores in
 (defparameter +reread-prior-weight+ 4 "How many recalls that prior counts as.")
 (defparameter +reread-max+ 0.95d0 "Q is capped here, so a run of continuations never reads as certainty.")
 
-(defun out-periods (branch)
-  "Each run of #N the ledger took out on BRANCH since its last /clear, as
-(FROM TO START END): START the #N count it left at, END the one it came back at, NIL while it is out."
-  (let ((periods '()))
-    (loop for i from (1+ (last-reset-index branch)) below (length branch)
-          for e = (aref branch i)
-          when (evict-entry-p e)
-            do (let* ((op (json-get e "data")) (from (json-get op "from")) (to (json-get op "to")))
-                 (when (and (js-integer-p from) (js-integer-p to))
-                   (let ((from (as-integer from)) (to (as-integer to)) (at (op-at op)))
-                     (cond ((equal (json-get op "op") "evict") (push (list from to at nil) periods))
-                           ((equal (json-get op "op") "restore")
-                            (dolist (p periods)
-                              (when (and (null (fourth p)) (overlaps-p (first p) (second p) from to)) (setf (fourth p) at)))))))))
-    (nreverse periods)))
-
 (defun reread-evidence (branch turns recalls)
   "(values CONTINUED TRIALS) for the chance of recalling a turn out of the context again, from RECALLS ((N . AT)) on BRANCH."
   (let ((continued 0) (trials 0)
@@ -156,7 +114,6 @@ recalls would bring it back on every request (a real run did: 171 restores in
   (multiple-value-bind (continued trials) (reread-evidence branch turns recalls)
     (values (min +reread-max+ (/ (+ continued (* (or prior +reread-prior+) +reread-prior-weight+)) (+ trials +reread-prior-weight+)))
             trials)))
-
 
 ;;; What [Working Set] reads: the entries recalled, newest recall first.
 (defvar *recalled* '())

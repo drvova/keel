@@ -37,36 +37,6 @@
                     :tree (coerce (json-get json "tree" #()) 'vector)
                     :branch-ids (strings-of (json-get json "branch")))))
 
-(defun path-directory (path)
-  "PATH's directory, as Node's dirname writes it: both separators
-count, since a Windows path is written with `\` and a host's settings
-may carry either."
-  (let ((at (position-if (lambda (c) (or (char= c #\/) (char= c #\\))) path :from-end t)))
-    (cond ((null at) ".")
-          ((zerop at) (subseq path 0 1))
-          (t (subseq path 0 at)))))
-
-(defun path-separator (path)
-  "The separator PATH is written with: `\` when it uses one, else `/`."
-  (if (find #\\ path) #\\ #\/))
-
-(defun join-path (dir name)
-  "DIR and NAME joined with DIR's own separator, a trailing one not doubled."
-  (concatenate 'string (string-right-trim "/\\" dir) (string (path-separator dir)) name))
-
-(defun directory-files (dir)
-  "DIR's files, as names, listed without SBCL's pathname syntax: a Windows
-path handed to DIRECTORY comes back in a namestring with `/`, which then
-matches no path written the way the host writes it."
-  (let ((names '()) (seen (make-hash-table :test 'equal)))
-    (dolist (pattern (list (merge-pathnames "*.*" (native-path (concatenate 'string dir "/")))))
-      (ignore-errors
-       (dolist (file (directory pattern))
-         (let ((name (file-namestring file)))
-           (unless (nth-value 1 (gethash name seen))
-             (setf (gethash name seen) t) (push name names))))))
-    (nreverse names)))
-
 (defun snapshot-config-dir (s)
   "Where keel keeps what it learns, beside its config file."
   (path-directory (snapshot-config-path s)))

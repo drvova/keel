@@ -33,8 +33,6 @@
     (loop for (key . value) in +default-settings+ do (setf (gethash key settings) (default-setting value)))
     settings))
 
-(defun native-path (path) (sb-ext:parse-native-namestring path))
-
 (defun read-json-file (path)
   "JSON.parse(readFileSync(PATH, \"utf-8\")), or NIL when it does not read or parse."
   (ignore-errors

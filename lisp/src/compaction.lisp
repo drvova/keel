@@ -178,42 +178,6 @@ MESSAGES-TO-CONVERT, in that order."
 (defun item-id (item) (json-get (item-entry item) "id"))
 (defun item-role (item) (json-get (item-live item) "role"))
 
-(defun last-index-of-type (branch type &optional stop-at)
-  "The index of the last entry of TYPE, -1 for none; with STOP-AT, -1 also when an entry of that type comes after it."
-  (loop for i from (1- (length branch)) downto 0
-        for ty = (json-get (aref branch i) "type")
-        when (equal ty type) return i
-        when (and stop-at (equal ty stop-at)) return -1
-        finally (return -1)))
-
-(defun last-reset-index (branch) (last-index-of-type branch +reset-entry-type+))
-(defun last-compaction-index (branch) (last-index-of-type branch "compaction" +reset-entry-type+))
-
-(defun live-window-start (branch)
-  "The index of the first branch entry still in the model's context.
-With no compaction, the whole branch (after omp's /clear). After one, its
-firstKeptEntryId; when that is \"\" (a compact-all's sentinel) or no longer on
-the branch, right after the compaction, or right after an omp native-replay
-compaction's providerReplayThroughEntryId, where omp's own kept tail starts. A
-reset_boundary (omp's /clear) after the latest compaction starts the window
-after it, and one before it bounds where the kept id is looked for, as omp's
-prepareCompaction does."
-  (let ((reset (last-reset-index branch)) (compaction (last-compaction-index branch)))
-    (if (< compaction 0)
-        (1+ reset)
-        (let ((c (aref branch compaction)))
-          (flet ((find-after-reset (id)
-                   (if (and (stringp id) (plusp (length id)))
-                       (or (loop for i from (1+ reset) below (length branch)
-                                 when (equal (json-get (aref branch i) "id") id) return i)
-                           -1)
-                       -1)))
-            (let ((kept (find-after-reset (json-get c "firstKeptEntryId"))))
-              (if (>= kept 0)
-                  kept
-                  (let ((replay (find-after-reset (json-get c "providerReplayThroughEntryId"))))
-                    (if (and (>= replay 0) (< replay compaction)) (1+ replay) (1+ compaction))))))))))
-
 (defun live-items (branch notes)
   (loop for i from (live-window-start branch) below (length branch)
         for live = (live-message (aref branch i))
