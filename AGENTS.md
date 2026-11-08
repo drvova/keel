@@ -1,6 +1,6 @@
 # AGENTS.md
 
-keel is an extension for omp (oh-my-pi) and Pi: algorithmic compaction (no LLM call), pinned notes, and `keel_recall` over the raw session history and the project's other sessions. A fork of pi-vcc. Each host has its own entry written against that host's own code, which is its API (`index.ts` for omp, `pi.ts` for Pi), over one shared core. User-facing docs are in `README.md`; keep it short and put contributor notes here.
+keel is an extension for omp (oh-my-pi) and Pi: algorithmic compaction (no LLM call), pinned notes, and `keel_recall` over the raw session history and the project's other sessions. It grew out of pi-vcc and is its own project now. Each host has its own entry written against that host's own code, which is its API (`index.ts` for omp, `pi.ts` for Pi), over one shared core. User-facing docs are in `README.md`; keep it short and put contributor notes here.
 
 ## Checks
 

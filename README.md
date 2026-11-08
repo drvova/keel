@@ -9,9 +9,9 @@ Either way the session file keeps everything, and the agent reads any of it back
 
 ![Old turns leave the request whole as the context fills; the session file keeps them, and keel_recall reads one back.](media/readme/evict.gif)
 
-keel was called omp-vcc. Sessions, configs and commands from that name still work ([coming from omp-vcc or pi-vcc](#coming-from-omp-vcc-or-pi-vcc)).
+Earlier releases were called omp-vcc and, before that, pi-vcc. Sessions, configs and commands written under those names still work ([coming from an earlier release](#coming-from-omp-vcc-or-pi-vcc)).
 
-A fork of [pi-vcc](https://github.com/sting8k/pi-vcc) by [@sting8k](https://github.com/sting8k), inspired by [VCC](https://github.com/lllyasviel/VCC) (View-oriented Conversation Compiler), with a native entry for each host (`index.ts` for omp, `pi.ts` for Pi) over one core in Common Lisp ([why](#the-core-common-lisp-on-sbcl)).
+keel grew out of [pi-vcc](https://github.com/sting8k/pi-vcc) by [@sting8k](https://github.com/sting8k), inspired by [VCC](https://github.com/lllyasviel/VCC) (View-oriented Conversation Compiler). It is its own project now: a native entry for each host (`index.ts` for omp, `pi.ts` for Pi) over one core in Common Lisp ([why](#the-core-common-lisp-on-sbcl)).
 
 |  | The host's own summary | keel |
 |---|---|---|
@@ -36,11 +36,11 @@ Size and latency were measured by pi-vcc over 1,884 real sessions, before `[Work
 ## Install
 
 ```bash
-omp install https://github.com/drvova/omp-vcc
+omp install https://github.com/drvova/keel
 ```
 
 ```bash
-pi install git:github.com/drvova/omp-vcc
+pi install git:github.com/drvova/keel
 ```
 
 It needs omp 18.14+ or Pi 1.0+, and [SBCL](https://www.sbcl.org/) (Steel Bank Common Lisp) on the `PATH` (or named by `SBCL`):
@@ -328,15 +328,17 @@ Also read: [LLMs Get Lost In Multi-Turn Conversation](https://arxiv.org/abs/2505
 
 ## Coming from omp-vcc or pi-vcc
 
+keel is those releases, renamed. Nothing you wrote under either name is stranded:
 - The commands are `/keel`, `/keel-recall`, `/keel-pin`, `/keel-unpin` and `/keel-evict` on both hosts. The old names still run them: `/omp-vcc…` on omp, `/pi-vcc…` on Pi.
 - The tools are `keel_recall`, `keel_pin` and `keel_context` (they were `vcc_…`). A summary written before the rename still names `vcc_recall`; the next compaction rewrites it from its stored state with the new name.
 - What omp-vcc wrote into sessions is read as keel's: its summaries (`compactor: "omp-vcc"`, and pi-vcc's `"pi-vcc"`), so their history index carries on; its pinned notes and the turns it took out (`omp-vcc.pin`, `omp-vcc.evict`); and the originals it kept beside omp's sessions (`.vcc-raw`).
 - The config is `keel-config.json`, copied once from `omp-vcc-config.json` (else `pi-vcc-config.json`) in the same directory. `OMP_VCC_CONFIG_PATH`, `OMP_VCC_CORE`, `OMP_VCC_CORE_BUILD_DIR` and `OMP_VCC_CORE_LIVE` are still read when the `KEEL_` name is not set. What it learned of models moves to `keel-models.json`, read from `omp-vcc-models.json` until then.
 - From pi-vcc: `continueAfterThresholdCompact` is gone, as both hosts resume the run on their own.
+- The package is `@drvova/keel`, from [drvova/keel](https://github.com/drvova/keel), its own repository. The earlier `drvova/pi-vcc` repository is archived and its README points here.
 
 ## Acknowledgments
 
-- [pi-vcc](https://github.com/sting8k/pi-vcc) by [@sting8k](https://github.com/sting8k) and its contributors, which this is forked from.
+- [pi-vcc](https://github.com/sting8k/pi-vcc) by [@sting8k](https://github.com/sting8k) and its contributors, which keel grew out of, and whose 0.11.2 release is where its history starts.
 - [VCC](https://github.com/lllyasviel/VCC), the original transcript-preserving conversation compiler.
 - Recall's `mode:"touched"` and `#N:path` drill-down from [pi-blackhole](https://github.com/k0valik/pi-blackhole) by [@k0valik](https://github.com/k0valik), who also suggested them.
 
