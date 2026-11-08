@@ -26,13 +26,6 @@
 
 (defun wordish-p (segment) (some #'letter-or-number-p segment))
 
-(defun two-words-p (text)
-  "TEXT holds two words or more, as Intl.Segmenter counts them. Two runs of ASCII
-letters or digits with whitespace between are two words under any segmenter,
-which settles most text without segmenting it."
-  (or (rx-test (rx "[A-Za-z0-9]\\s+[A-Za-z0-9]") text)
-      (>= (segment-word-count text) 2)))
-
 (defun segment-word-count (text)
   "TEXT's words as Intl.Segmenter counts them: segments holding a letter or a number."
   (count-if (lambda (s) (wordish-p (first s))) (word-segments text)))
@@ -41,23 +34,6 @@ which settles most text without segmenting it."
 
 (defparameter +user-message-chars+ 300 "Each user message is clipped to this many characters.")
 (defparameter +early-requests-kept+ 3 "[Early Session Requests] keeps this many of the first messages.")
-
-(defun collapse-whitespace (text)
-  "TEXT with each run of whitespace one space: replace(/\\s+/g, \" \")."
-  (rx-replace (rx "\\s+") text " " :all t))
-
-(defun user-words (text)
-  "The user's own words in a message on one line, and the skills it expanded:
-(values WORDS SKILLS), WORDS \"\" when there are none. An expanded skill alone is
-not the user's words; text that opens with a tag (`<peer_message …>`) was put
-there by a tool, and one-word replies (\"ok\") say little: both are none."
-  (let* ((skills '())
-         (rest (js-trim (collapse-whitespace
-                         (rx-replace (skill-block-regex) text
-                                     (lambda (m) (push (rx-group m 1) skills) " ")
-                                     :all t)))))
-    (values (if (or (starts-with "<" rest) (not (two-words-p rest))) "" rest)
-            (nreverse skills))))
 
 (defun user-line (text index)
   "A user message as the summary lists it, behind a `[skill: name]` tag when it

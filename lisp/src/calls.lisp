@@ -58,9 +58,30 @@ position's #N is its element in INDICES."
 (defparameter +line-selector+ "L?\\d+(?:(?:-|\\.\\.|\\+)L?\\d*)?|-\\d+(?:[-+]\\d+)?"
   "omp's read selector for lines: `50-100`, `L50-L60`, `50+10`, `50..60`, `-20` (the last 20).")
 
-
 (defun lines-selector-p (chunk)
   (rx-test (rx (format nil "^(?:~a)$" +line-selector+) "i") chunk))
+
+(defun url-path-p (path) (rx-test (rx "^[a-z][a-z0-9+.-]*:\\/\\/" "i") path))
+
+(defun read-selector-regex ()
+  "A read path's selector: `:raw`, `:img`, `:conflicts` or lines, several joined by `,` or `:`."
+  (rx (format nil ":(?:raw|img|conflicts|~a)(?:[,:](?:raw|img|conflicts|~a))*$" +line-selector+ +line-selector+) "i"))
+
+(defun strip-read-selector (path)
+  "A read's path without omp's selector (`:50-100`, `:raw`)."
+  (let ((m (rx-exec (read-selector-regex) path)))
+    (if (and m (plusp (rx-match-start m))) (js-slice path 0 (rx-match-start m)) path)))
+
+(defun files-of (call)
+  "The files a call works on: its named paths less URLs, a read's selector dropped; none for a search or a shell."
+  (when (eq (call-files call) :unset)
+    (setf (call-files call)
+          (let ((kind (call-kind call)))
+            (if (member kind '(:search :shell))
+                '()
+                (let ((paths (remove-if #'url-path-p (named-paths (call-args call)))))
+                  (if (eq kind :read) (mapcar #'strip-read-selector paths) paths))))))
+  (call-files call))
 
 (defun reads-part-p (c)
   "A read of part of a file, by omp's line selector (`path:L10-20`) or Pi's offset and limit."
@@ -131,13 +152,20 @@ run, so nothing fixes it."
   "The #N of the message holding R's call, or NIL."
   (let ((c (result-call r))) (and c (let ((n (nth (call-pos c) indices))) (and (realp n) n)))))
 
+(defun request-text (m)
+  "M's text without the host's injected blocks, when M is a request the user made;
+NIL otherwise: another role, a message another extension sent in the user's name,
+or one that holds no words of the user's own (only injected text or a skill's expansion)."
+  (when (and (json-object-p m) (equal (json-get m "role") "user") (not (extension-user-p m)))
+    (let ((text (rx-replace (host-block-regex) (text-of (json-get m "content")) "" :all t)))
+      (and (plusp (length (user-words text))) text))))
+
+(defun request-words (m)
+  "The user's own words of request M on one line, \"\" when M is no request."
+  (let ((text (request-text m))) (if text (values (user-words text)) "")))
 
 (defun latest-request (messages)
-  "The user's latest request in MESSAGES: (values POS TEXT), TEXT the message's text
-without the host's injected blocks; NIL when there is none. A user message that holds
-no words of the user's own (only injected text or a skill's expansion) is no request,
-nor is one another extension sent in the user's name."
+  "The user's latest request in MESSAGES: (values POS TEXT), TEXT as REQUEST-TEXT reads it; NIL when there is none."
   (loop for m in (reverse messages) for pos downfrom (1- (length messages))
-        when (and (json-object-p m) (equal (json-get m "role") "user") (not (extension-user-p m)))
-          do (let ((text (rx-replace (host-block-regex) (text-of (json-get m "content")) "" :all t)))
-               (when (plusp (length (user-words text))) (return (values pos text))))))
+        for text = (request-text m)
+        when text return (values pos text)))

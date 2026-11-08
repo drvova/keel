@@ -104,9 +104,9 @@ the cache, the turn written once, and the turn carried on the requests ahead."
 (defparameter +turns-listed+ 40 "Turns a listing shows, newest last.")
 ;;; --- sizes and the line left in their place -------------------------------------------
 
-(defun request-words (message)
-  (let ((words (user-words (rx-replace (host-block-regex) (text-of (json-get message "content")) "" :all t))))
-    (and (plusp (length words)) (js-clip words 60))))
+(defun request-line (message)
+  "A request's words as a stub or a listing names it, clipped; NIL for no request."
+  (let ((words (request-words message))) (and (plusp (length words)) (js-clip words 60))))
 
 (defun by-words (bys)
   (let ((names (mapcar (lambda (b) (cond ((equal b "user") "the user") ((equal b "auto") "keel as the context filled") (t "the agent")))
@@ -144,7 +144,7 @@ context's file: its text, under a line saying what it stands for."
 (defun plain-stub-text (from to turns covering messages-by-n originals)
   (let* ((requests (loop for n from from to to
                          for m = (gethash n messages-by-n)
-                         for w = (and m (equal (json-get m "role") "user") (not (extension-user-p m)) (request-words m))
+                         for w = (and m (request-line m))
                          when w collect w))
          (shown (subseq requests 0 (min +stub-requests-shown+ (length requests))))
          (ns (loop for n from from to to when (gethash n originals) collect n))
@@ -536,7 +536,7 @@ it is sent as the user's and can carry text, else a message of its own before it
   (let ((m (gethash (turn-from tr) messages-by-n)))
     (format nil "~a ~~~a tokens~@[ \"~a\"~]~:[~; (older steps out)~]~:[~; (you recalled it lately: it leaves last)~]" (range-text (turn-from tr) (turn-to tr))
             (js-string-of (tokens-from-chars (turn-chars tr chars outs) per-token))
-            (and m (equal (json-get m "role") "user") (request-words m))
+            (and m (request-line m))
             (some (lambda (o) (overlaps-p (out-from o) (out-to o) (turn-from tr) (turn-to tr))) outs)
             (held-turn-p tr recent))))
 

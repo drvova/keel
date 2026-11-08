@@ -56,6 +56,34 @@ a text part's text is a string."
         (first parts)
         (join-strings parts (string #\Newline)))))
 
+(defun host-block-regex () (rx "<system-reminder\\b[^>]*>[\\s\\S]*?<\\/system-reminder>"))
+
+(defun skill-block-regex () (rx "<skill\\s+name=\"([^\"]+)\"[^>]*>[\\s\\S]*?(?:<\\/skill>|$)"))
+
+(defun two-words-p (text)
+  "TEXT holds two words or more, as Intl.Segmenter counts them. Two runs of ASCII
+letters or digits with whitespace between are two words under any segmenter,
+which settles most text without segmenting it."
+  (or (rx-test (rx "[A-Za-z0-9]\\s+[A-Za-z0-9]") text)
+      (>= (segment-word-count text) 2)))
+
+(defun collapse-whitespace (text)
+  "TEXT with each run of whitespace one space: replace(/\\s+/g, \" \")."
+  (rx-replace (rx "\\s+") text " " :all t))
+
+(defun user-words (text)
+  "The user's own words in a message on one line, and the skills it expanded:
+(values WORDS SKILLS), WORDS \"\" when there are none. An expanded skill alone is
+not the user's words; text that opens with a tag (`<peer_message …>`) was put
+there by a tool, and one-word replies (\"ok\") say little: both are none."
+  (let* ((skills '())
+         (rest (js-trim (collapse-whitespace
+                         (rx-replace (skill-block-regex) text
+                                     (lambda (m) (push (rx-group m 1) skills) " ")
+                                     :all t)))))
+    (values (if (or (starts-with "<" rest) (not (two-words-p rest))) "" rest)
+            (nreverse skills))))
+
 ;;; --- tool calls --------------------------------------------------------------
 
 (defstruct (call (:constructor make-call (name args &optional id pos)))
