@@ -71,22 +71,26 @@
 
 (defparameter +chars-per-token-seen+ 8 "The measured chars per token kept per model, newest last.")
 
-(defun record-evidence (dir key &key prompt chars-per-token)
+(defun record-evidence (dir key &key prompt chars-per-token reread)
   "Keep what a request proved of KEY's window and tokens: PROMPT, the largest prompt
 the provider accepted (the window is at least that), and CHARS-PER-TOKEN, the
 latest calibration of the session's messages against the provider's count
 (a model's tokenizer is its own: Claude 4.7 counts about 30% more tokens than
 4.6 for the same text). Written only when the largest prompt grew or the
-calibration moved by more than 5%; each value it moved to is kept too, the last
+calibration moved by more than 5%, or REREAD, how often the model recalls a turn
+again (feedback.lisp), moved by more than 0.05; each chars-per-token value it moved to is kept, the last
 +chars-per-token-seen+ of them (LEARNED-CHARS-PER-TOKEN reads the lowest)."
   (when key
     (let* ((limits (read-limits dir)) (known (limit-of limits key))
            (was-prompt (json-get known "maxPromptTokens")) (was-cpt (json-get known "charsPerToken"))
            (grew (and (realp prompt) (> prompt 0) (or (not (realp was-prompt)) (> prompt was-prompt))))
-           (moved (and (realp chars-per-token) (or (not (realp was-cpt)) (> (abs (- chars-per-token was-cpt)) (* 0.05 was-cpt))))))
-      (when (and (or grew moved) (hash-table-p limits))
+           (moved (and (realp chars-per-token) (or (not (realp was-cpt)) (> (abs (- chars-per-token was-cpt)) (* 0.05 was-cpt)))))
+           (was-reread (json-get known "rereadContinue"))
+           (reread-moved (and (realp reread) (or (not (realp was-reread)) (> (abs (- reread was-reread)) 0.05d0)))))
+      (when (and (or grew moved reread-moved) (hash-table-p limits))
         (let ((entry (spread-any known)))
           (when grew (setf (gethash "maxPromptTokens" entry) prompt))
+          (when reread-moved (setf (gethash "rereadContinue" entry) (/ (round (* reread 100)) 100d0)))
           (when moved
             (let ((value (/ (round (* chars-per-token 100)) 100d0))
                   (seen (let ((v (json-get known "charsPerTokenSeen"))) (if (json-array-p v) (remove-if-not #'realp (coerce v 'list)) '()))))
@@ -94,6 +98,10 @@ calibration moved by more than 5%; each value it moved to is kept too, the last
                     (gethash "charsPerTokenSeen" entry) (coerce (last (append seen (list value)) +chars-per-token-seen+) 'vector))))
           (setf (gethash key limits) entry)
           (write-limits dir limits))))))
+
+(defun learned-reread (dir key)
+  "How often KEY's model recalls a turn out of the context again, having recalled it once, as its last session showed (feedback.lisp), or NIL."
+  (let ((q (json-get (limit-of (read-limits dir) key) "rereadContinue"))) (and (realp q) (<= 0 q 1) q)))
 
 (defun learned-chars-per-token (dir key)
   "KEY's chars per token, from the low side: the fewest chars a token of the values

@@ -4,7 +4,7 @@
 // turn re-read twice, never cuts a linked chain, and [Working Set] brings back
 // what was recalled first.
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { core } from "../src/core";
@@ -122,37 +122,66 @@ describe("eviction, as the context fills", () => {
     expect(ops(s)[0]).toMatchObject({ op: "evict", from: 0 });
   });
 
-  it("brings back a turn out of the context that the agent recalled twice since it left, and says so", () => {
+  /** What keel has learned of the test's model ("p/m"): how often it recalls a turn again; none, a model not seen yet. */
+  const model = (rereadContinue?: number) => {
+    const file = join(dir, "keel-models.json");
+    if (rereadContinue === undefined) rmSync(file, { force: true });
+    else writeFileSync(file, JSON.stringify({ "p/m": { rereadContinue } }));
+  };
+
+  it("brings back a turn the agent recalled since it left when this model keeps going back, and says so", () => {
+    model(0.95);
     const s = session(reads(10), 200, 2_000);
     s.host.appendEntry(EVICT_ENTRY_TYPE, { v: 1, op: "evict", from: 0, to: 3, by: "auto", at: 8 });
     recalled(s, [1], 37);
-    // Once: the recall answered itself.
-    expect(sent(s).notice).toBeUndefined();
-    expect(ops(s).filter((o) => o.op === "restore")).toEqual([]);
-    recalled(s, [2], 39);
     const { notice } = sent(s);
     expect(ops(s).filter((o) => o.op === "restore")).toEqual([expect.objectContaining({ op: "restore", from: 0, to: 3, by: "auto" })]);
-    expect(notice).toBe("keel: #0–#3 back in context · the agent recalled it twice since it left.");
+    expect(notice).toBe("keel: #0–#3 back in context · the agent keeps recalling it, and keeping it costs less than recalling it again.");
+    model();
+  });
+
+  it("leaves it out for a model keel has not seen go back, where the same recalls do not pay for it", () => {
+    model();
+    const s = session(reads(10), 200, 2_000);
+    s.host.appendEntry(EVICT_ENTRY_TYPE, { v: 1, op: "evict", from: 0, to: 3, by: "auto", at: 8 });
+    recalled(s, [1], 37);
+    recalled(s, [2], 39);
+    expect(sent(s).notice).toBeUndefined();
+    expect(ops(s).filter((o) => o.op === "restore")).toEqual([]);
   });
 
   it("counts only the recalls since a turn last left: brought back and taken out again, it starts over", () => {
+    model(0.95);
     const s = session(reads(10), 200, 2_000);
     s.host.appendEntry(EVICT_ENTRY_TYPE, { v: 1, op: "evict", from: 0, to: 3, by: "auto", at: 8 });
     recalled(s, [1], 30);
-    recalled(s, [2], 32);
     sent(s);
     expect(ops(s).filter((o) => o.op === "restore")).toHaveLength(1);
-    // Taken out again after those two recalls.
+    // Taken out again after that recall: it does not come back on it again.
     s.host.appendEntry(EVICT_ENTRY_TYPE, { v: 1, op: "evict", from: 0, to: 3, by: "auto", at: 34 });
     sent(s);
-    // The same two recalls do not bring it back again; one more is not two either.
+    sent(s);
     expect(ops(s).filter((o) => o.op === "restore")).toHaveLength(1);
+    // A recall since it left again does.
     recalled(s, [1], 36);
     sent(s);
-    expect(ops(s).filter((o) => o.op === "restore")).toHaveLength(1);
-    recalled(s, [1], 38);
-    sent(s);
     expect(ops(s).filter((o) => o.op === "restore")).toHaveLength(2);
+    model();
+  });
+
+  it("learns how often the model recalls a turn again from the session, and keeps it for the model", () => {
+    model();
+    const s = session(reads(10), 200, 2_000);
+    for (const [from, to] of [[0, 3], [4, 7]]) s.host.appendEntry(EVICT_ENTRY_TYPE, { v: 1, op: "evict", from, to, by: "auto", at: 16 });
+    // Each out turn recalled twice in a row (a continuation), then left alone for more than three turns (a stop):
+    // 2 continuations in 4 trials, smoothed toward 0.3 over 4 more: 0.4.
+    recalled(s, [1], 17);
+    recalled(s, [1], 18);
+    recalled(s, [5], 17);
+    recalled(s, [5], 18);
+    sent(s);
+    expect(JSON.parse(readFileSync(join(dir, "keel-models.json"), "utf8"))["p/m"].rereadContinue).toBe(0.4);
+    model();
   });
 
   it("never cuts a chain of linked turns: the turn that carries on the last one leaving leaves with it", () => {

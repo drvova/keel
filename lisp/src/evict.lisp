@@ -79,6 +79,18 @@ any eviction pays. Before enough requests, a cache at a tenth of the price and
                (make-payback (max 0d0 (/ (- write-share cache) (* cache ahead))) cache write-share ahead
                              (and measured input-price (plusp read-cost) t))))))))
 
+(defun restore-pays-p (q payback before turn-tokens after-tokens)
+  "Whether bringing back a turn of TURN-TOKENS, with AFTER-TOKENS in the context
+after it and BEFORE tokens in all, costs less than the recalls it would still
+take: Q / (1 - Q) of them, each a request with the context at the cache price
+and the turn's text sent again; against reading AFTER-TOKENS again written to
+the cache, the turn written once, and the turn carried on the requests ahead."
+  (let* ((cache (payback-cache payback)) (write (payback-write payback)) (ahead (payback-ahead payback))
+         (recalls (/ q (- 1 q)))
+         (benefit (* recalls (+ (* before cache) turn-tokens)))
+         (cost (+ (* after-tokens (max 0 (- write cache))) (* turn-tokens write) (* turn-tokens cache ahead))))
+    (>= benefit cost)))
+
 (defun payback-words (p)
   (if (zerop (payback-share p))
       "this provider has cached nothing this session, so nothing is read again at a premium"
@@ -340,7 +352,7 @@ replaced, so they are left out. NIL without two requests far enough apart."
           (clamp-chars-per-token (/ (dbl (- (car b) (car a))) (- (cdr b) (cdr a)))
                                  (cjk-share (loop for m across messages when (json-object-p m) collect (text-of (json-get m "content"))))))))))
 
-(defun evict-request (branch index messages &key trigger auto (count 0) file mark mirror)
+(defun evict-request (branch index messages &key trigger auto (count 0) file mark mirror reread-prior)
   "What leaves REQUEST MESSAGES (a vector, the host's next request): the indices
 to drop, the stubs (index . text) to put before them, the evict ops keel
 records itself (AUTO and past +EVICT-AT-SHARE+ of TRIGGER), and the estimate
@@ -359,7 +371,7 @@ out) the pinned notes stand first, in one block (NOTES-BLOCK)."
          (outs (read-evictions branch))
          (n-of (make-array (length messages) :initial-element nil))
          (chars (make-hash-table)) (by-n (make-hash-table))
-         (per-token +default-chars-per-token+) (fit nil) (ops '()))
+         (per-token +default-chars-per-token+) (fit nil) (ops '()) (reread nil) (reread-trials 0))
     (loop for i from (live-window-start branch) below (length branch)
           for e = (aref branch i)
           when (counted-entry-p e)
@@ -397,10 +409,19 @@ out) the pinned notes stand first, in one block (NOTES-BLOCK)."
              (before (+ overhead (tokens-from-chars (chars-kept outs) per-token)))
              (after before))
         (when auto
-          (let ((recent (recent-recalls (read-recalls branch) turns)))
-            ;; A turn the agent recalled twice while it was out comes back: the
-            ;; eviction was wrong (feedback.lisp), and so do the turns linked to it (links.lisp).
-            (let ((back (reread-turns turns branch recent)))
+          (let* ((recalls (read-recalls branch)) (recent (recent-recalls recalls turns)))
+            ;; A turn the agent recalled since it left comes back when that costs less than
+            ;; the recalls it would still take, by how often this model recalls a turn
+            ;; again and the session's prices (feedback.lisp); so do the turns linked to it (links.lisp).
+            (multiple-value-setq (reread reread-trials) (reread-chance branch turns recalls reread-prior))
+            (let* ((payback (eviction-payback (coerce messages 'list)))
+                   (back (loop for (tr) in (recalled-out-turns turns branch recent)
+                               when (restore-pays-p reread payback before
+                                                    (tokens-from-chars (turn-chars tr chars) per-token)
+                                                    (tokens-from-chars (loop for n being the hash-keys of chars using (hash-value c)
+                                                                             when (and (> n (turn-to tr)) (not (out-of n outs))) sum c)
+                                                                       per-token))
+                                 collect tr)))
               (when back
                 (dolist (tr (append back (linked-out back turns outs by-n)))
                   (push (evict-op "restore" (turn-from tr) (turn-to tr) "auto" count) ops)
@@ -469,7 +490,7 @@ out) the pinned notes stand first, in one block (NOTES-BLOCK)."
                     for n = (aref n-of i)
                     when (and n (not (aref v i)) (gethash n starts) (equal (json-get (aref messages i) "role") "user"))
                       do (push (cons (cons i "prepend") (turn-mark n)) stubs))))
-          (values (nreverse drop) (nreverse stubs) (nreverse ops) before after n-of v outs turns fit))))))
+          (values (nreverse drop) (nreverse stubs) (nreverse ops) before after n-of v outs turns fit reread reread-trials))))))
 
 (defun turn-mark (n) (format nil "[#~d]" n))
 
@@ -533,7 +554,7 @@ told of, TOOL (keel_context) is there, and something can leave: (values NOTE OP)
   (let ((ranges (lambda (kind) (loop for op in ops when (equal (json-get op "op") kind) collect (range-text (json-get op "from") (json-get op "to"))))))
     (join-strings
      (remove nil (list (let ((back (funcall ranges "restore")))
-                         (and back (format nil "keel: ~{~a~^, ~} back in context · the agent recalled ~:[it~;them~] twice since ~:*~:[it~;they~] left." back (rest back))))
+                         (and back (format nil "keel: ~{~a~^, ~} back in context · the agent keeps recalling ~:[it~;them~], and keeping ~:*~:[it~;them~] costs less than recalling ~:*~:[it~;them~] again." back (rest back))))
                        (let ((out (funcall ranges "evict")))
                          (and out (format nil "keel: Context ~~~a → ~~~a tokens · ~{~a~^, ~} out · by keel as the context filled; keel_recall expand reads any of it back."
                                           (js-string-of before) (js-string-of after) out)))))
