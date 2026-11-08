@@ -1,12 +1,11 @@
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
+import { describe, expect, it } from "bun:test";
 import { join } from "path";
 import { PIN_CHARS, PIN_ENTRY_TYPE, PIN_NOTICE_TYPE, COMPACT_INSTRUCTION } from "./support/names";
 import { executePin, fakeHost } from "./support/binding";
 import { registerHook } from "./support/host";
 import { writeJsonl, freshDir } from "./support/session-files";
 import { utimesSync } from "fs";
+import { tempConfig } from "./support/config";
 
 /** A session whose branch is an array; appendEntry adds to it, as the hosts do. */
 const session = (initial: any[] = []) => {
@@ -194,18 +193,7 @@ describe("/keel-pin and /keel-unpin", () => {
 });
 
 describe("pinned notes in summaries", () => {
-  let dir: string;
-  const prev = process.env.KEEL_CONFIG_PATH;
-  beforeAll(() => {
-    dir = mkdtempSync(join(tmpdir(), "keel-pins-"));
-    process.env.KEEL_CONFIG_PATH = join(dir, "c.json");
-    writeFileSync(process.env.KEEL_CONFIG_PATH, JSON.stringify({ overrideDefaultCompaction: true, smartKeepTail: false, evict: false }));
-  });
-  afterAll(() => {
-    if (prev === undefined) delete process.env.KEEL_CONFIG_PATH;
-    else process.env.KEEL_CONFIG_PATH = prev;
-    rmSync(dir, { recursive: true, force: true });
-  });
+  tempConfig("keel-pins-", { overrideDefaultCompaction: true, smartKeepTail: false, evict: false });
 
   it("come first in the summary, verbatim", () => {
     const s = session([message("m1", "user", "first request here"), message("m2", "assistant", "ok"), message("m3", "user", "second request here"), message("m4", "assistant", "ok")]);

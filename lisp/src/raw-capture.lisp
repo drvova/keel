@@ -19,8 +19,6 @@
 
 (defparameter +shakeable-text-chars+ 1200
   "omp shakes fenced and XML blocks of 400+ tokens out of a message's text: about this many chars.")
-(defparameter +max-kept-chars+ 1000000
-  "One message's kept text is clipped here, so a stray multi-megabyte result cannot double the session's size alone.")
 
 (defun text-part-p (p) (and (equal (json-get p "type") "text") (stringp (json-get p "text"))))
 

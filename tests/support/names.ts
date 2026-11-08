@@ -16,3 +16,6 @@ export const PIN_CHARS: number = names.pinChars;
 export const RECALL_OUTPUT_CHARS: number = names.recallOutputChars;
 /** What /keel puts first in the customInstructions it hands the host. */
 export const COMPACT_INSTRUCTION: string = names.compactInstruction;
+/** How many earlier sessions mode:'sessions' lists, and how many chars of one message the raw store keeps. */
+export const MAX_LISTED_SESSIONS: number = names.maxListedSessions;
+export const MAX_KEPT_CHARS: number = names.maxKeptChars;

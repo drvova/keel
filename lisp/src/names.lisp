@@ -59,6 +59,11 @@
 (defparameter +search-page-size+ 5 "Hits on one page of a search.")
 (defparameter +range-page-size+ 20 "Entries on one page of a range.")
 (defparameter +recall-output-chars+ (* 50 1024) "One recall result's ceiling, 50 KB like a read tool's; less on a small window (recall-output-chars).")
+
+(defparameter +max-listed-sessions+ 50 "The earlier sessions mode:'sessions' lists.")
+
+(defparameter +max-kept-chars+ 1000000
+  "One message's kept text is clipped here, so a stray multi-megabyte result cannot double the session's size alone.")
 (defparameter +pin-chars+ 300 "A pinned note is clipped to this many characters.")
 (defparameter +pin-name-chars+ 40 "A pinned note's name is at most this many characters.")
 (defparameter +context-note-chars+ 300 "A keel_context note is clipped to this many characters.")
@@ -69,4 +74,5 @@
   "The names and limits tests write into sessions, instructions and expectations, as op names hands them over."
   (json-object "pinEntryType" +pin-entry-type+ "evictEntryType" +evict-entry-type+ "recallEntryType" +recall-entry-type+
                "pinNoticeType" +pin-notice-type+ "resumeNoticeType" +resume-notice-type+ "rawStoreSuffix" +raw-store-suffix+
-               "compactInstruction" +compact-instruction+ "pinChars" +pin-chars+ "recallOutputChars" +recall-output-chars+))
+               "compactInstruction" +compact-instruction+ "pinChars" +pin-chars+ "recallOutputChars" +recall-output-chars+
+               "maxListedSessions" +max-listed-sessions+ "maxKeptChars" +max-kept-chars+))

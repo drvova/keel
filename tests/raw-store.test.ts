@@ -22,7 +22,7 @@ const readRawStore = (file: string, ids: Set<string>): Map<string, unknown> => {
   return kept;
 };
 import { captureNewEntries, createRawCaptureState, pointPlaceholders, registerRawCapture } from "../src/raw-capture";
-import { RAW_STORE_SUFFIX } from "./support/names";
+import { MAX_KEPT_CHARS, RAW_STORE_SUFFIX } from "./support/names";
 import { tempConfig } from "./support/config";
 
 const config = tempConfig("keel-raw-");
@@ -54,10 +54,10 @@ describe("what is kept", () => {
   it("keeps text (clipped) and drops image data", () => {
     const kept = keptOf("what", [
       { role: "toolResult", content: [{ type: "text", text: "a" }, { type: "image", mimeType: "image/png", data: "QUJD".repeat(1000) }] },
-      { role: "toolResult", content: text("b".repeat(1_000_010)) },
+      { role: "toolResult", content: text("b".repeat(MAX_KEPT_CHARS + 10)) },
     ]);
     expect(kept.get("k0")).toEqual([{ type: "text", text: "a" }, { type: "image", mimeType: "image/png" }]);
-    expect((kept.get("k1") as any[])[0].text).toEndWith("...[keel kept the first 1000000 of 1000010 chars]");
+    expect((kept.get("k1") as any[])[0].text).toEndWith(`...[keel kept the first ${MAX_KEPT_CHARS} of ${MAX_KEPT_CHARS + 10} chars]`);
   });
 });
 
