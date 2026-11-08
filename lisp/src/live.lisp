@@ -51,11 +51,7 @@
 
 (defun answer (request-text)
   "One request's response, as the one-shot executable would write it."
-  (handler-case
-      (sb-ext:with-timeout +live-request-seconds+
-        (handle-request (parse-json request-text)))
-    (sb-ext:timeout () (json-object "ok" :false "error" (format nil "the core ran past ~d s on this request" +live-request-seconds+)))
-    (serious-condition (e) (json-object "ok" :false "error" (princ-to-string e)))))
+  (respond request-text +live-request-seconds+))
 
 (defun serve (dir)
   "Answer requests from DIR/req on DIR/resp until the host is gone or idle too long."

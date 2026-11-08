@@ -398,6 +398,16 @@ when stdin is a pipe, which is how every host runs the core."
         (incf at (cdr c)))
       (sb-ext:octets-to-string bytes :external-format :utf-8))))
 
+(defun respond (request-text &optional seconds)
+  "REQUEST-TEXT's response, within SECONDS when given (the live core's bound,
+live.lisp). Anything that fails, the heap or the stack running out too, is an
+answer that says so: the caller tells the core failed."
+  (handler-case (if seconds
+                    (sb-ext:with-timeout seconds (handle-request (parse-json request-text)))
+                    (handle-request (parse-json request-text)))
+    (sb-ext:timeout () (json-object "ok" :false "error" (format nil "the core ran past ~d s on this request" seconds)))
+    (serious-condition (e) (json-object "ok" :false "error" (princ-to-string e)))))
+
 (defun main ()
   "Entry point of the dumped executable: one request on stdin, or with --serve DIR
 requests one after another (live.lisp)."
@@ -405,10 +415,7 @@ requests one after another (live.lisp)."
     (when (equal (first args) "--serve")
       (handler-case (serve (second args)) (serious-condition () nil))
       (sb-ext:exit :code 0 :abort t)))
-  (let ((response (handler-case
-                      (handle-request (parse-json (read-stdin)))
-                    ;; The heap or the stack running out too: the caller says the core failed.
-                    (serious-condition (e) (json-object "ok" :false "error" (princ-to-string e))))))
+  (let ((response (respond (read-stdin))))
     (write-json response *standard-output*)
     (terpri *standard-output*)
     (finish-output *standard-output*)
