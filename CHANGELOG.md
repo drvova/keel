@@ -30,6 +30,9 @@ All notable changes to `@drvova/keel` (formerly `@drvova/omp-vcc`, and before th
 
 ### Added
 
+- **Recall steers eviction** — each `keel_recall` call notes which of this session's entries it showed (a `keel.recall` custom entry, never in the context). A turn the agent recalled in the last three turns stays in the context whatever its age, and `keel_context` marks it ("you recalled it lately: it stays"). A turn out of the context that the agent recalled twice since it left comes back by itself, and the user is told. At a compaction, `[Working Set]` brings back up to two entries recalled lately before its ranking's picks.
+- **Linked turns stay together** — a turn is linked to an earlier one when it changes a file that turn changed, or a run that failed there (the same command, or the same tool on the same file) succeeds in it. keel's own cut, as the context fills and for `/keel-evict` with no text, never splits such a chain (it moves on to the chain's end, at most three turns), and restoring a turn restores the out turns linked to it on either side. Ranges the agent or the user names are taken as given.
+
 - **The README, reorganized** — what omp-vcc does and its two ways of making room up front, then install, a quick start, the commands and tools in tables, the summary, turns out whole, recall, pinned notes, the window and tokens, config as a table, each host's details folded away, and a section on the Lisp core: how it runs and why Common Lisp on SBCL.
 
 - **The window and the tokens, learned from the provider** — catalogs disagree (one DeepSeek model is listed at 131K to 1.05M across providers, and one Claude model moved from 1M to 200K between two Pi releases), so omp-vcc keeps, per model in `omp-vcc-models.json`, what the provider proved:

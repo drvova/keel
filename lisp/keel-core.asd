@@ -53,6 +53,10 @@
      (:file "history")
      (:file "summary")
      ;; The compaction: its cut, the working set, and the plan the hook acts on.
+     ;; feedback and links: what the agent recalled, read back as a signal, and
+     ;; turns that carry on one another; eviction and [Working Set] read them.
+     (:file "feedback")
+     (:file "links")
      (:file "working-set")
      (:file "task-state")
      ;; context-edits: Pi's context edits, applied before the cut reads the branch.

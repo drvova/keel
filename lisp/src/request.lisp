@@ -180,7 +180,9 @@
 (defun outside-page (page total what) (format nil "Page ~d is outside the available range 1-~d (~a)." page total what))
 
 (defun format-recall-output (entries &optional query header)
-  "ENTRIES (plists :index :role :summary :files :session :snippet) under a header."
+  "ENTRIES (plists :index :role :summary :files :session :snippet) under a header.
+Those of this session (no :session) are noted as shown (feedback.lisp)."
+  (note-shown (loop for e in entries unless (getf e :session) collect (getf e :index)))
   (if (null entries)
       (if query (format nil "No matches for \"~a\" in session history." query) "No entries in session history.")
       (format nil "~a~%~%~a"

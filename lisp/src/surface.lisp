@@ -160,7 +160,7 @@ tool's definition is part of the prompt the provider caches."
    "command" +command+
    "tools" (vector (recall-tool) (pin-tool) (context-tool))
    "commands" (map 'vector (lambda (c) (json-object "suffix" (first c) "description" (second c))) +commands+)
-   "dataEntryTypes" (vector +pin-entry-type+ +legacy-pin-entry-type+ +evict-entry-type+ +legacy-evict-entry-type+)
+   "dataEntryTypes" (vector +pin-entry-type+ +legacy-pin-entry-type+ +evict-entry-type+ +legacy-evict-entry-type+ +recall-entry-type+)
    ;; With eviction off, a request is left as it is unless one of these is on its branch.
    "evictEntryTypes" (vector +evict-entry-type+ +legacy-evict-entry-type+)))
 
@@ -190,7 +190,10 @@ tool's definition is part of the prompt the provider caches."
   "One call of a keel tool: its text for the agent, and the entries it records."
   (let* ((name (json-get request "name"))
          (call (json-object "surface" "tool" "params" (json-get request "params" :null))))
-    (cond ((equal name +recall-tool+) (call-answer (json-get (recall-call request call) "text") nil))
+    (cond ((equal name +recall-tool+)
+           ;; What the agent recalled is kept as a signal of what it needs (feedback.lisp).
+           (let* ((r (recall-call request call)) (shown (json-get r "shown")))
+             (call-answer (json-get r "text") (and (plusp (length shown)) (list (append-effect +recall-entry-type+ (recall-op shown (json-get r "at"))))))))
           ((equal name +pin-tool+)
            (let ((pin (pin-call request call)))
              (call-answer (json-get pin "text") (and (truthy-p (json-get pin "op")) (list (append-effect +pin-entry-type+ (json-get pin "op")))))))

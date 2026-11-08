@@ -22,6 +22,7 @@
 
 ;;; What keel writes into a session.
 (defparameter +pin-entry-type+ "keel.pin" "Custom entries that hold a pin or unpin: in the session file, never in the context.")
+(defparameter +recall-entry-type+ "keel.recall" "Custom entries that hold what one keel_recall call showed of this session (feedback.lisp): in the session file, never in the context.")
 (defparameter +evict-entry-type+ "keel.evict" "Custom entries that take turns out of the context or bring them back: in the session file, never in the context.")
 (defparameter +budget-notice-type+ "keel-budget" "The custom message telling the agent how full its context is; a summary leaves it out.")
 (defparameter +pin-notice-type+ "keel-pin" "The custom message telling the agent of a pin the user made; [Pinned Notes] carries the note, so a summary leaves it out.")
@@ -40,6 +41,7 @@
 
 (defun pin-entry-type-p (type) (member type (list +pin-entry-type+ +legacy-pin-entry-type+) :test #'equal))
 (defun evict-entry-type-p (type) (member type (list +evict-entry-type+ +legacy-evict-entry-type+) :test #'equal))
+(defun recall-entry-type-p (type) (equal type +recall-entry-type+))
 (defun notice-type-p (type)
   "Whether TYPE is a notice keel sent the agent: a summary leaves those out."
   (member type (list* +pin-notice-type+ +budget-notice-type+ +legacy-notice-types+) :test #'equal))

@@ -19,7 +19,8 @@
 ;;;; It is chosen again at every compaction and never carried (the merge with
 ;;;; the previous summary keeps only the sections it knows), so it stays bounded
 ;;;; and is never rewritten. Nothing depends on wording: paths, failure flags,
-;;;; recency and recall's own ranking.
+;;;; recency, recall's own ranking, and what the agent recalled itself lately
+;;;; (feedback.lisp *recalled*), which says what it needs more surely than any of them.
 
 (in-package #:keel)
 
@@ -27,6 +28,7 @@
 (defparameter +max-item-share+ 0.6d0
   "One item takes at most this share of the section, so a big file leaves room for the failure.")
 (defparameter +max-relevant+ 3)
+(defparameter +max-recalled+ 2 "Entries the agent recalled lately that come back, newest recall first.")
 (defparameter +max-relevant-candidates+ 400
   "Recall ranks only the newest this many results, so a long session costs a compaction no more.")
 (defparameter +head-allowance+ 200 "Room for an item's head line (`- #N read \"path\", note:`) when sizing its body.")
@@ -134,7 +136,22 @@
                               "its end" (result-text open) t)
                 items)
           (setf (gethash (result-index open) used) t)))
-      ;; 3. What recall ranks highest for the latest request.
+      ;; 3. What the agent recalled lately: it went looking for these, so the
+      ;; next step is likelier to need them than what a ranking guesses.
+      (let ((taken 0))
+        (dolist (n *recalled*)
+          (when (>= taken +max-recalled+) (return))
+          (let ((r (find-if (lambda (r) (and (result-index r) (not (gethash (result-index r) used)) (not (result-error r))
+                                              (plusp (length (js-trim (result-text r))))
+                                              ;; The entry itself, or the call whose result it is.
+                                              (or (eql (result-index r) n)
+                                                  (and (result-call r) (eql (nth (call-pos (result-call r)) indices) n)))))
+                            results)))
+            (when r
+              (push (make-ws-item (result-index r) (title-of (result-call r)) "recalled lately" (result-text r) nil) items)
+              (setf (gethash (result-index r) used) t)
+              (incf taken)))))
+      ;; 4. What recall ranks highest for the latest request.
       (when (plusp (length (js-trim request)))
         (let ((latest-run (make-hash-table :test 'equal)) (candidates '()))
           ;; Each run's latest result only: an earlier one is out of date. An edit's

@@ -389,6 +389,7 @@
          (all (equal (view-scope v) "all")))
     (ecase (first action)
       (:drill (destructuring-bind (index path full offset limit) (rest action)
+                (note-shown (list index))
                 (let* ((message (view-message v index))
                        (off (and message (not all) (notany (lambda (e) (eql (getf e :index) index)) (view-load v nil)))))
                   (concatenate 'string (if off +off-path-note+ "")
@@ -407,7 +408,10 @@
                             (format-recall-output (last-n (view-load v nil) +recent-count+)))))))
 
 (defun run-recall (input)
-  "One recall: (values OK TEXT SEVERITY). INPUT carries the call (the tool's params or the command's text) and the host's part."
+  "One recall: (values OK TEXT SEVERITY SHOWN). INPUT carries the call (the tool's
+params or the command's text) and the host's part. SHOWN is the #N of this
+session's entries it showed (another session's #N are its own, so a call with
+session:'id' shows none)."
   (let* ((call (json-get input "call"))
          (surface (if (equal (json-get call "surface") "command") (list :command (json-get call "name")) (list :tool)))
          (request (if (eq (first surface) :tool) (parse-tool-request (json-get call "params")) (parse-command-request (string-or (json-get call "args") ""))))
@@ -433,5 +437,7 @@
                            (v (open-session-view target (getf request :scope) :max-chars (- max (js-length header) (js-length note)) :detail-chars detail)))
                       (values t (concatenate 'string header (cap-output (concatenate 'string note (run-action request v surface skip-turn cwd)) (max 0 (- max (js-length header)))))))))
               (let ((v (open-view file (getf request :scope) lineage :project project :max-chars (- max (js-length note)) :detail-chars detail
-                                  :turn-fn (current-turn-fn host-branch lineage))))
-                (values t (cap-output (concatenate 'string note (run-action request v surface skip-turn cwd)) max))))))))
+                                  :turn-fn (current-turn-fn host-branch lineage)))
+                    (*shown-entries* '()))
+                (let ((text (cap-output (concatenate 'string note (run-action request v surface skip-turn cwd)) max)))
+                  (values t text nil (shown-entries)))))))))

@@ -297,6 +297,9 @@ pass is not keel's to answer; with it, what the hook returns."
               (return-from compact-for-host (json-object "kind" "convert" "messages" (coerce wanted 'vector))))
             (let* ((reason (json-get event "reason"))
                    (will-retry (json-get event "willRetry"))
+                   ;; What the agent recalled lately, which [Working Set] brings back first (feedback.lisp).
+                   (*recalled* (let ((b (snapshot-branch s)))
+                                 (recalled-newest-first (recent-recalls (read-recalls b) (branch-turns b (snapshot-index s))))))
                    (window (snapshot-window s))
                    (input (json-object "settings" settings
                                        "keepUserTurns" (or keep :null)
