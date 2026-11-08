@@ -86,13 +86,17 @@ describe("Lisp core regex", () => {
     let compared = 0;
     let unsupported = 0;
     const r = rng(7);
+    // Every pattern generated before the first call, so the cases run in one
+    // core call: a process per pattern is what that would otherwise cost where
+    // there is no live core (Windows).
     const patterns = [...HAND_PICKED, ...Array.from({ length: 1500 }, () => pattern(r))];
+    const textsOf = patterns.map(() => Array.from({ length: 12 }, () => text(r)));
+    const answers = callCore({ op: "regex", cases: patterns.map((pattern, i) => ({ pattern, texts: textsOf[i] })) }).cases as any[];
     for (const [i, p] of patterns.entries()) {
-      const texts = Array.from({ length: 12 }, () => text(r));
-      const lisp = callCore({ op: "regex", pattern: p, texts }) as any;
+      const lisp = answers[i];
       if (lisp.status === "unsupported") { unsupported++; continue; }
       const { ok: _ok, ...got } = lisp;
-      expect({ i, p, ...got }).toEqual({ i, p, ...jsSide(p, texts) });
+      expect({ i, p, ...got }).toEqual({ i, p, ...jsSide(p, textsOf[i]) });
       compared++;
     }
     for (const [p, texts] of TARGETED) {
@@ -101,13 +105,18 @@ describe("Lisp core regex", () => {
       const { ok: _ok, ...got } = lisp;
       expect({ p, ...got }).toEqual({ p, ...jsSide(p, texts) });
     }
-    expect(compared).toBeGreaterThan(1200);
-    expect(unsupported / patterns.length).toBeLessThan(0.01);
+    // The last few are single calls by nature; they share one batched round trip.
+    const shapes = [["(?<Ⅻ>x)\\k<Ⅻ>", true], ["(?<aⅫ>x)", true], ["(?<a·>x)", true], ["(?<℘>x)", true], ["(?<·a>x)", false], ["(?<a-b>x)", false]] as const;
+    const shapeAnswers = callCore({ op: "regex", cases: [...shapes.map(([p]) => ({ pattern: p, texts: ["x"] })), ...BACKWARDS.map((p) => ({ pattern: p, texts: ["ab"] }))] }).cases as any[];
     // Group names by the spec's ID_Start and ID_Continue, as V8 (Node, where Pi runs) reads them;
     // JavaScriptCore (Bun, where these tests run) refuses letter numbers and the Other_ID_* code points.
-    for (const [p, ok] of [["(?<Ⅻ>x)\\k<Ⅻ>", true], ["(?<aⅫ>x)", true], ["(?<a·>x)", true], ["(?<℘>x)", true], ["(?<·a>x)", false], ["(?<a-b>x)", false]] as const) {
-      expect({ p, status: (callCore({ op: "regex", pattern: p, texts: ["x"] }) as any).status }).toEqual({ p, status: ok ? "ok" : "syntax" });
+    for (const [k, [p, ok]] of shapes.entries()) {
+      expect({ p, status: shapeAnswers[k].status }).toEqual({ p, status: ok ? "ok" : "syntax" });
     }
-    for (const p of BACKWARDS) expect({ p, status: (callCore({ op: "regex", pattern: p, texts: ["ab"] }) as any).status }).toEqual({ p, status: "unsupported" });
+    for (const [k, p] of BACKWARDS.entries()) {
+      expect({ p, status: shapeAnswers[shapes.length + k].status }).toEqual({ p, status: "unsupported" });
+    }
+    expect(compared).toBeGreaterThan(1200);
+    expect(unsupported / patterns.length).toBeLessThan(0.01);
   }, 120_000);
 });

@@ -20,6 +20,8 @@
 ;;;;   {"op":"regex","pattern":P,"texts":[T...]}
 ;;;;   -> {"ok":true,"status":"ok","results":[{"test":B,"search":I,"count":N}...]}
 ;;;;      or "status":"syntax" (JavaScript throws) or "unsupported" (a back-reference into a look-behind)
+;;;;   {"op":"regex","cases":[{"pattern":P,"texts":[T...]}...]}
+;;;;   -> {"ok":true,"cases":[the answer above, one per case in order]}
 ;;;;
 ;;;; summarize: a compaction's summary (summary.lisp compile-summary), for tests/support/compile.ts
 ;;;;   {"op":"summarize","input":COMPILE-INPUT} -> {"ok":true,"text":T,"state":STATE,"sections":[S...]}
@@ -161,21 +163,31 @@ less the indices it skips."
                                                        "message" message)))
                               (source-entries (json-get request "source")))))
 
-(defun handle-regex (request)
-  "A pattern compiled as `new RegExp(P, \"i\")` and run on texts: what the regex
+(defun regex-answer (pattern texts)
+  "PATTERN compiled as `new RegExp(P, \"i\")` and run on TEXTS: what the regex
 parity test compares with JavaScript's own."
-  (let ((pattern (json-get request "pattern")) (texts (json-get request "texts" #())))
-    (handler-case
-        (let ((regex (compile-regex pattern)))
-          (json-object "ok" :true "status" "ok"
-                       "results" (map 'vector (lambda (text)
-                                                (let ((units (string-units text)))
-                                                  (json-object "test" (bool (regex-test regex units))
-                                                               "search" (or (regex-search regex units) -1)
-                                                               "count" (regex-count regex units))))
-                                      texts)))
-      (regex-syntax-error () (json-object "ok" :true "status" "syntax"))
-      (regex-unsupported () (json-object "ok" :true "status" "unsupported")))))
+  (handler-case
+      (let ((regex (compile-regex pattern)))
+        (json-object "ok" :true "status" "ok"
+                     "results" (map 'vector (lambda (text)
+                                              (let ((units (string-units text)))
+                                                (json-object "test" (bool (regex-test regex units))
+                                                             "search" (or (regex-search regex units) -1)
+                                                             "count" (regex-count regex units))))
+                                    texts)))
+    (regex-syntax-error () (json-object "ok" :true "status" "syntax"))
+    (regex-unsupported () (json-object "ok" :true "status" "unsupported"))))
+
+(defun handle-regex (request)
+  "One pattern, or every case in REQUEST's `cases` answered in one call: a
+parity test runs thousands of them, and a process per pattern is what that
+costs where there is no live core."
+  (let ((cases (json-get request "cases")))
+    (if (json-array-p cases)
+        (json-object "ok" :true
+                     "cases" (map 'vector (lambda (c) (regex-answer (json-get c "pattern") (json-get c "texts" #())))
+                                  cases))
+        (regex-answer (json-get request "pattern") (json-get request "texts" #())))))
 
 (defun handle-summarize (request)
   "The summary of the CompileInput REQUEST carries in \"input\" (tests/support/compile.ts)."
