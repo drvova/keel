@@ -135,6 +135,26 @@ describe("eviction, as the context fills", () => {
     expect(notice).toBe("keel: #0–#3 back in context · the agent recalled it twice since it left.");
   });
 
+  it("counts only the recalls since a turn last left: brought back and taken out again, it starts over", () => {
+    const s = session(reads(10), 200, 2_000);
+    s.host.appendEntry(EVICT_ENTRY_TYPE, { v: 1, op: "evict", from: 0, to: 3, by: "auto", at: 8 });
+    recalled(s, [1], 30);
+    recalled(s, [2], 32);
+    sent(s);
+    expect(ops(s).filter((o) => o.op === "restore")).toHaveLength(1);
+    // Taken out again after those two recalls.
+    s.host.appendEntry(EVICT_ENTRY_TYPE, { v: 1, op: "evict", from: 0, to: 3, by: "auto", at: 34 });
+    sent(s);
+    // The same two recalls do not bring it back again; one more is not two either.
+    expect(ops(s).filter((o) => o.op === "restore")).toHaveLength(1);
+    recalled(s, [1], 36);
+    sent(s);
+    expect(ops(s).filter((o) => o.op === "restore")).toHaveLength(1);
+    recalled(s, [1], 38);
+    sent(s);
+    expect(ops(s).filter((o) => o.op === "restore")).toHaveLength(2);
+  });
+
   it("never cuts a chain of linked turns: the turn that carries on the last one leaving leaves with it", () => {
     // Where the cut falls with nothing linked.
     const plain = session(reads(10), 30_000, 80_000);

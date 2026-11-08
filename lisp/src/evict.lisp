@@ -100,13 +100,6 @@ that would change at the end of every request.")
   (and (equal (json-get e "type") "custom") (evict-entry-type-p (json-get e "customType"))
        (json-object-p (json-get e "data"))))
 
-(defstruct (out (:constructor make-out (from to by note at &optional text)))
-  "A run of #N out of the context: FROM to TO inclusive, by \"agent\", \"user\" or
-\"auto\", the agent's NOTE, AT the #N count when it was recorded (requests
-made after that left it out), and TEXT, what the agent rewrote it as in its
-context's file (mirror.lisp), which stands in its place instead of the line."
-  from to by note at text)
-
 (defun op-at (op) (let ((at (json-get op "at"))) (if (js-integer-p at) (as-integer at) 0)))
 
 (defun overlaps-p (from to other-from other-to) (and (<= from other-to) (>= to other-from)))

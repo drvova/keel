@@ -23,6 +23,14 @@
 ;;; A turn as eviction counts them (evict.lisp branch-turns), which this file and links.lisp read.
 (defstruct (turn (:constructor make-turn (from to))) "A turn's first and last #N." from to)
 
+;;; A run of #N out of the context, as the ledger replays it (evict.lisp read-evictions).
+(defstruct (out (:constructor make-out (from to by note at &optional text)))
+  "A run of #N out of the context: FROM to TO inclusive, by \"agent\", \"user\" or
+\"auto\", the agent's NOTE, AT the #N count when it was recorded (requests
+made after that left it out), and TEXT, what the agent rewrote it as in its
+context's file (mirror.lisp), which stands in its place instead of the line."
+  from to by note at text)
+
 (defparameter +recall-hold-turns+ 3 "A recall counts for this many turns after it: the turn it was in, and the next ones.")
 (defparameter +recall-reads-to-restore+ 2 "Recalled this many times while out of the context, a turn comes back.")
 (defparameter +recall-max-shown+ 50 "The #N one recall entry holds at most.")
@@ -75,14 +83,17 @@
 
 (defun reread-turns (turns branch recent)
   "The finished TURNS out of the context now that the agent recalled at least
-+recall-reads-to-restore+ times while they were out, counting the RECENT
-recalls (each recall call once per turn)."
++recall-reads-to-restore+ times since they last left, counting the RECENT
+recalls (each recall call once per turn). Only since they last left: a turn
+brought back and taken out again starts over, or the same two recalls would
+bring it back on every request (a real run did: 171 restores in 60 turns)."
   (let ((outs (read-evictions branch)))
     (loop for tr in (finished-turns turns)
-          when (and (turn-out-p tr outs)
+          for left = (and (turn-out-p tr outs) (out-at (out-of (turn-to tr) outs)))
+          when (and left
                     (>= (length (remove-duplicates
                                  (loop for (n . at) in recent
-                                       when (and (<= (turn-from tr) n (turn-to tr)) (out-of n (read-evictions branch at)))
+                                       when (and (<= (turn-from tr) n (turn-to tr)) (> at left))
                                          collect at)))
                         +recall-reads-to-restore+))
             collect tr)))
