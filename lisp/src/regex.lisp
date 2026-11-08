@@ -602,3 +602,21 @@ matches backwards)."
       (handler-case (compile-regex pattern)
         ((or regex-syntax-error regex-unsupported) () (values nil nil)))
     (if (and regex (not (nested-quantifier-p tree))) regex (compile-regex (escape-regex pattern)))))
+
+;;; The one string type the core makes: passes over it are declared on it (search.lisp).
+(deftype text () '(simple-array character (*)))
+
+(defun as-text (string)
+  "STRING as a TEXT, copied only when it is some other kind of string."
+  (if (typep string 'text) string (coerce string 'text)))
+
+(defun fold (string)
+  "STRING with every character as a non-unicode /i regex compares it."
+  (let* ((s (as-text string)) (n (length s)) (out (make-string n)))
+    (declare (text s out) (fixnum n) (optimize speed))
+    (dotimes (i n out)
+      (let* ((c (schar s i)) (code (char-code c)))
+        (setf (schar out i) (cond ((< code 97) c)
+                                  ((<= code 122) (code-char (- code 32)))
+                                  ((< code 128) c)
+                                  (t (js-canonical c))))))))

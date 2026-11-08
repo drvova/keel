@@ -20,90 +20,10 @@
 
 ;;; --- token estimates ---------------------------------------------------------------
 
-(defparameter +image-content-chars+ 4800)
-(defparameter +default-chars-per-token+ 4)
-
-(defun js-json-length (value)
-  "The length of JSON.stringify(VALUE ?? \"\")."
-  (js-length (json-string (if (or (null value) (eq value :null)) "" value))))
-
-(defun content-chars (content)
-  "The chars of every token-bearing part of a message's content."
-  (cond ((stringp content) (js-length content))
-        ((not (json-array-p content)) 0)
-        (t (loop for part across content
-                 sum (if (not (json-object-p part))
-                         0
-                         (let ((type (json-get part "type")) (text (json-get part "text")))
-                           (cond ((equal type "text") (if (stringp text) (js-length text) 0))
-                                 ((equal type "thinking") (let ((th (json-get part "thinking"))) (if (stringp th) (js-length th) 0)))
-                                 ((equal type "toolCall")
-                                  (let* ((a (json-get part "arguments"))
-                                         (args (if (or (null a) (eq a :null)) (json-get part "input") a))
-                                         (name (json-get part "name")))
-                                    (+ (if (stringp name) (js-length name) 0)
-                                       (if (stringp args) (js-length args) (js-json-length args)))))
-                                 ((equal type "toolResult")
-                                  (let ((c (json-get part "content"))) (if (stringp c) (js-length c) (js-json-length c))))
-                                 ((equal type "image") +image-content-chars+)
-                                 (t (if (stringp text) (js-length text) 0)))))))))
-
-(defun message-chars (m)
-  "The chars of one message, whatever its shape."
-  (if (not (json-object-p m))
-      0
-      (flet ((len (v) (if (stringp v) (js-length v) 0)))
-        (let ((role (json-get m "role")))
-          (cond ((equal role "bashExecution") (+ (len (json-get m "command")) (len (json-get m "output"))))
-                ((equal role "pythonExecution") (+ (len (json-get m "code")) (len (json-get m "output"))))
-                ((member role '("branchSummary" "compactionSummary") :test #'equal) (len (json-get m "summary")))
-                ((equal role "fileMention")
-                 (let ((files (json-get m "files")))
-                   (if (json-array-p files)
-                       (loop for f across files
-                             sum (+ (len (json-get f "path")) (len (json-get f "content"))
-                                    (if (truthy-p (json-get f "image")) +image-content-chars+ 0)))
-                       0)))
-                (t (content-chars (json-get m "content"))))))))
-
-(defun tokens-from-chars (chars &optional (per-token +default-chars-per-token+))
-  "Math.ceil(chars / charsPerToken)."
-  (ceiling (/ (coerce chars 'double-float) per-token)))
-
-(defun message-tokens (m per-token) (tokens-from-chars (message-chars m) (or per-token +default-chars-per-token+)))
-
 ;;; --- the live window ----------------------------------------------------------------
 ;;;
 ;;; An item of the window is (ENTRY LIVE NOTE): the branch entry, its message as
 ;;; the context holds it, and its note from HOST-NOTES.
-
-(defun js-date-ms (v)
-  "new Date(V).getTime() for the timestamps the hosts write (an ISO string or milliseconds), or NIL."
-  (cond ((realp v) v)
-        ((stringp v)
-         (let ((m (rx-exec (rx "^(\\d{4})-(\\d{2})-(\\d{2})T(\\d{2}):(\\d{2}):(\\d{2})(?:\\.(\\d{1,3})\\d*)?Z$") v)))
-           (when m
-             (flet ((g (i) (parse-integer (rx-group m i))))
-               (+ (* 1000 (- (encode-universal-time (g 6) (g 5) (g 4) (g 3) (g 2) (g 1) 0) 2208988800))
-                  (let ((ms (rx-group m 7))) (if ms (* (parse-integer ms) (expt 10 (- 3 (length ms)))) 0)))))))))
-
-(defun live-message (entry)
-  "A branch entry's message in the context, or NIL: a message entry's own; a
-custom_message or a branch summary as the host's context builds it, with what
-the host's convertToLlm reads of it (an extension's attribution and details)."
-  (let ((type (json-get entry "type")))
-    (cond ((and (equal type "message") (truthy-p (json-get entry "message"))) (json-get entry "message"))
-          ((equal type "custom_message")
-           (let ((m (json-object "role" "custom" "customType" (json-get entry "customType") "content" (json-get entry "content")
-                                 "display" (json-get entry "display") "details" (json-get entry "details")
-                                 "timestamp" (js-date-ms (json-get entry "timestamp")))))
-             (multiple-value-bind (a present) (gethash "attribution" entry)
-               (when present (setf (gethash "attribution" m) a)))
-             m))
-          ((equal type "branch_summary")
-           (json-object "role" "branchSummary" "summary" (json-get entry "summary") "fromId" (json-get entry "fromId")
-                        "timestamp" (js-date-ms (json-get entry "timestamp"))))
-          (t nil))))
 
 ;;; --- what the host's convertToLlm makes of each message, for the summary ---------
 

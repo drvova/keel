@@ -60,6 +60,10 @@ a text part's text is a string."
 
 (defun skill-block-regex () (rx "<skill\\s+name=\"([^\"]+)\"[^>]*>[\\s\\S]*?(?:<\\/skill>|$)"))
 
+(defun segment-word-count (text)
+  "TEXT's words as Intl.Segmenter counts them: segments holding a letter or a number."
+  (count-if (lambda (s) (wordish-p (first s))) (word-segments text)))
+
 (defun two-words-p (text)
   "TEXT holds two words or more, as Intl.Segmenter counts them. Two runs of ASCII
 letters or digits with whitespace between are two words under any segmenter,

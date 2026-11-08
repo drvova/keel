@@ -45,6 +45,8 @@
      (:file "render")
      ;; calls: tool calls and their results, read one way for every section.
      (:file "calls")
+     ;; estimate: how many tokens a message holds, by its chars.
+     (:file "estimate")
      ;; The summary pipeline: blocks,
      ;; the section extractors, the brief and its ranking, the summary itself.
      (:file "blocks")

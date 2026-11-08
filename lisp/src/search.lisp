@@ -91,22 +91,6 @@
 ;;; the core makes: untyped, a pass reads each character through SBCL's
 ;;; generic array access, and a search over 5,000 entries cost half a second.
 
-(deftype text () '(simple-array character (*)))
-
-(defun as-text (string)
-  "STRING as a TEXT, copied only when it is some other kind of string."
-  (if (typep string 'text) string (coerce string 'text)))
-
-(defun fold (string)
-  "STRING with every character as a non-unicode /i regex compares it."
-  (let* ((s (as-text string)) (n (length s)) (out (make-string n)))
-    (declare (text s out) (fixnum n) (optimize speed))
-    (dotimes (i n out)
-      (let* ((c (schar s i)) (code (char-code c)))
-        (setf (schar out i) (cond ((< code 97) c)
-                                  ((<= code 122) (code-char (- code 32)))
-                                  ((< code 128) c)
-                                  (t (js-canonical c))))))))
 
 (defstruct (term (:constructor make-term
                      (text &aux (stem (stem-of text)) (word (fold text)) (folded-stem (and stem (fold stem)))
@@ -301,7 +285,6 @@ list of terms, or a regex (the regex path's one pattern)."
 (defparameter +search-too-deep+
   "Search aborted: query too deeply nested to search. Use fewer or more specific words; for a regex, avoid nested quantifiers such as (a+)+."
   "What a search that ran out of stack says: a regex that recurses that deep is one too costly to search.")
-
 
 (defun search-docs (query docs &key (floor +relative-floor+) (cap +result-cap+) (interference t))
   "Rank DOCS, a vector of (ROLE TEXT FILES), for QUERY. Returns the hits as a list of (INDEX . SNIPPET) best first, the

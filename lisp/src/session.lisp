@@ -361,3 +361,31 @@ prepareCompaction does."
                   kept
                   (let ((replay (find-after-reset (json-get c "providerReplayThroughEntryId"))))
                     (if (and (>= replay 0) (< replay compaction)) (1+ replay) (1+ compaction))))))))))
+
+(defun js-date-ms (v)
+  "new Date(V).getTime() for the timestamps the hosts write (an ISO string or milliseconds), or NIL."
+  (cond ((realp v) v)
+        ((stringp v)
+         (let ((m (rx-exec (rx "^(\\d{4})-(\\d{2})-(\\d{2})T(\\d{2}):(\\d{2}):(\\d{2})(?:\\.(\\d{1,3})\\d*)?Z$") v)))
+           (when m
+             (flet ((g (i) (parse-integer (rx-group m i))))
+               (+ (* 1000 (- (encode-universal-time (g 6) (g 5) (g 4) (g 3) (g 2) (g 1) 0) 2208988800))
+                  (let ((ms (rx-group m 7))) (if ms (* (parse-integer ms) (expt 10 (- 3 (length ms)))) 0)))))))))
+
+(defun live-message (entry)
+  "A branch entry's message in the context, or NIL: a message entry's own; a
+custom_message or a branch summary as the host's context builds it, with what
+the host's convertToLlm reads of it (an extension's attribution and details)."
+  (let ((type (json-get entry "type")))
+    (cond ((and (equal type "message") (truthy-p (json-get entry "message"))) (json-get entry "message"))
+          ((equal type "custom_message")
+           (let ((m (json-object "role" "custom" "customType" (json-get entry "customType") "content" (json-get entry "content")
+                                 "display" (json-get entry "display") "details" (json-get entry "details")
+                                 "timestamp" (js-date-ms (json-get entry "timestamp")))))
+             (multiple-value-bind (a present) (gethash "attribution" entry)
+               (when present (setf (gethash "attribution" m) a)))
+             m))
+          ((equal type "branch_summary")
+           (json-object "role" "branchSummary" "summary" (json-get entry "summary") "fromId" (json-get entry "fromId")
+                        "timestamp" (js-date-ms (json-get entry "timestamp"))))
+          (t nil))))

@@ -22,8 +22,6 @@
 
 ;;; --- the tools ---------------------------------------------------------------------
 
-(defun lines (&rest strings) (join-strings strings (string #\Newline)))
-
 (defparameter +refs-schema+
   '(:any-of ((:array (:any-of (:number :string))) :number :string))
   "#N refs or ranges: a list of numbers or strings, or one of either.")

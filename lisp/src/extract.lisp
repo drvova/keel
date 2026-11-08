@@ -26,10 +26,6 @@
 
 (defun wordish-p (segment) (some #'letter-or-number-p segment))
 
-(defun segment-word-count (text)
-  "TEXT's words as Intl.Segmenter counts them: segments holding a letter or a number."
-  (count-if (lambda (s) (wordish-p (first s))) (word-segments text)))
-
 ;;; --- [User Messages] and [Early Session Requests] ---------------------------------
 
 (defparameter +user-message-chars+ 300 "Each user message is clipped to this many characters.")

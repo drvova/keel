@@ -91,7 +91,6 @@ leaves an empty string at that edge, and \"\" splits into (\"\")."
     (push (subseq string start) parts)
     (nreverse parts)))
 
-
 ;;; --- Canonicalize --------------------------------------------------------------
 ;;;
 ;;; How a non-unicode /i regex compares characters (the spec's Canonicalize):
@@ -145,6 +144,8 @@ the BMP are compared as their code units, which no case maps."
     (loop for (s . rest) on strings
           do (write-string s out)
              (when rest (write-string separator out)))))
+
+(defun lines (&rest strings) (join-strings strings (string #\Newline)))
 
 (defun js-code-unit (string unit)
   "The UTF-16 code unit at UNIT of STRING, or NIL past its end."
