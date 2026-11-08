@@ -104,6 +104,7 @@ All notable changes to `@drvova/keel` (formerly `@drvova/omp-vcc`, and before th
 
 ### Fixes
 
+- **The core runs on Windows** — the built core was named `keel-core-<hash>` with no `.exe`, so Windows found no executable and every call failed; it is named `keel-core-<hash>.exe` there now. And the core read its request with a fresh fd-stream on descriptor 0, which SBCL on Windows refuses with `Access is denied` when stdin is a pipe, the way every host runs it; it reads `*standard-input*`, so a request arrives the same on every system.
 - **The debug record goes beside the config** — with `debug` on, each compaction's decisions are written to `omp-vcc-debug.json` next to `omp-vcc-config.json`, not to a fixed `/tmp/omp-vcc-debug.json` that every session and subagent shared and overwrote.
 - **A compaction's outcome line belongs to that compaction** — the line omp-vcc tells after a compaction is the one of the compaction the host applied, matched by its summary; a pass the host did not apply, or one another extension's compaction replaced, leaves nothing behind for a later one.
 - **The core's build is tried again** — without SBCL, or after a failed build, omp-vcc said so for the rest of the session; it now tries again a minute later, so installing SBCL takes effect without a new session. A session waiting on another session's build no longer runs `sbcl --version` on every event.

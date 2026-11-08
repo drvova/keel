@@ -385,9 +385,10 @@ compact, it first asks for what the host's convertToLlm makes of the messages."
 (defun read-stdin ()
   "Everything on stdin, decoded from UTF-8. Read as bytes and decoded at once:
 a character stream decodes one character at a time, ten times slower on a
-large request."
-  (let ((in (sb-sys:make-fd-stream 0 :input t :element-type '(unsigned-byte 8) :buffering :full))
-        (chunks '()) (total 0))
+large request. *standard-input* rather than a fresh fd-stream on descriptor 0:
+on Windows SBCL's fd-stream on that descriptor fails with `Access is denied`
+when stdin is a pipe, which is how every host runs the core."
+  (let ((in *standard-input*) (chunks '()) (total 0))
     (loop for chunk = (make-array 1048576 :element-type '(unsigned-byte 8))
           for n = (read-sequence chunk in)
           while (plusp n)

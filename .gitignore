@@ -9,3 +9,6 @@ research/
 benchmarks/out/
 demo.cast
 lisp/build/
+keel-config.json
+keel-models.json
+keel-debug.json

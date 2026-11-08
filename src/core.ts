@@ -195,11 +195,14 @@ const sourceFiles = (dir: string): string[] =>
 let sourcesHash: string | undefined;
 /** The build of these sources: its path is named by their hash, so an update builds again. */
 const buildOfSources = (): { hash: string; path: string } => {
-  if (sourcesHash) return { hash: sourcesHash, path: join(buildDir(), `keel-core-${sourcesHash}`) };
-  const h = createHash("sha256");
-  for (const f of sourceFiles(LISP_DIR)) h.update(relative(LISP_DIR, f)).update("\0").update(readFileSync(f)).update("\0");
-  sourcesHash = h.digest("hex").slice(0, 16);
-  return buildOfSources();
+  if (!sourcesHash) {
+    const h = createHash("sha256");
+    for (const f of sourceFiles(LISP_DIR)) h.update(relative(LISP_DIR, f)).update("\0").update(readFileSync(f)).update("\0");
+    sourcesHash = h.digest("hex").slice(0, 16);
+  }
+  // Windows runs no executable without `.exe`.
+  const ext = process.platform === "win32" ? ".exe" : "";
+  return { hash: sourcesHash, path: join(buildDir(), `keel-core-${sourcesHash}${ext}`) };
 };
 
 /** A core that could not be built is tried again after this: SBCL may have been installed since, or a full disk freed. */
@@ -234,7 +237,7 @@ const hasSbcl = (sbcl: string): boolean => spawnSync(sbcl, ["--version"], { stdi
 const install = (out: string, path: string): void => {
   renameSync(out, path);
   const dir = buildDir();
-  for (const f of readdirSync(dir)) if (/^keel-core-[0-9a-f]+$/.test(f) && join(dir, f) !== path) rmSync(join(dir, f), { force: true });
+  for (const f of readdirSync(dir)) if (/^keel-core-[0-9a-f]+(\.exe)?$/.test(f) && join(dir, f) !== path) rmSync(join(dir, f), { force: true });
 };
 
 /**
