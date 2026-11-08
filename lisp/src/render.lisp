@@ -234,6 +234,15 @@ argument it came from (NIL for the files in an omp edit's `input`)."
 
 ;;; --- one message, rendered -----------------------------------------------------
 
+(defun execution-of (message)
+  "A command the user ran in the host (omp's ! and $ prompts) as MESSAGE holds it:
+(values COMMAND OUTPUT PROMPT LABEL LANG), or NIL for any other message."
+  (let ((role (json-get message "role")))
+    (cond ((equal role "bashExecution")
+           (values (or-empty (json-get message "command")) (or-empty (json-get message "output")) "$" "bash" nil))
+          ((equal role "pythonExecution")
+           (values (or-empty (json-get message "code")) (or-empty (json-get message "output")) ">>>" "python" "python")))))
+
 (defun file-mention-paths (message)
   (let ((files (json-get message "files")))
     (when (json-array-p files)
@@ -306,10 +315,9 @@ Worked out once for each message and these arguments."
       (cond ((equal role "user") (list "user" (clipped 300) nil))
             ((equal role "toolResult")
              (list "tool_result" (format nil "[~a] ~a" (js-string-of (json-get message "toolName")) (clipped 200)) nil))
-            ((equal role "bashExecution")
-             (list "bash" (maybe-clip (format nil "$ ~a~%~a" (or-empty (json-get message "command")) (or-empty (json-get message "output"))) 300) nil))
-            ((equal role "pythonExecution")
-             (list "python" (maybe-clip (format nil ">>> ~a~%~a" (or-empty (json-get message "code")) (or-empty (json-get message "output"))) 300) nil))
+            ((execution-of message)
+             (multiple-value-bind (command output prompt label) (execution-of message)
+               (list label (maybe-clip (format nil "~a ~a~%~a" prompt command output) 300) nil)))
             ((equal role "fileMention")
              (let ((paths (file-mention-paths message)))
                (list "file" (join-strings (mapcar (lambda (p) (concatenate 'string "@" p)) paths) " ") paths)))
@@ -335,10 +343,8 @@ Worked out once for each message and these arguments."
 
 (defun search-text-anew (message)
   (let ((role (json-get message "role")))
-    (cond ((equal role "bashExecution")
-           (format nil "~a ~a" (or-empty (json-get message "command")) (or-empty (json-get message "output"))))
-          ((equal role "pythonExecution")
-           (format nil "~a ~a" (or-empty (json-get message "code")) (or-empty (json-get message "output"))))
+    (cond ((execution-of message)
+           (multiple-value-bind (command output) (execution-of message) (format nil "~a ~a" command output)))
           ((equal role "fileMention") (join-strings (file-mention-paths message) " "))
           ((and (equal role "toolResult") (own-tool-p (json-get message "toolName") +recall-tool+)) "")
           (t

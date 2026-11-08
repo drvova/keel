@@ -46,8 +46,7 @@
       0
       (flet ((len (v) (if (stringp v) (js-length v) 0)))
         (let ((role (json-get m "role")))
-          (cond ((equal role "bashExecution") (+ (len (json-get m "command")) (len (json-get m "output"))))
-                ((equal role "pythonExecution") (+ (len (json-get m "code")) (len (json-get m "output"))))
+          (cond ((execution-of m) (multiple-value-bind (command output) (execution-of m) (+ (js-length command) (js-length output))))
                 ((member role '("branchSummary" "compactionSummary") :test #'equal) (len (json-get m "summary")))
                 ((equal role "fileMention")
                  (let ((files (json-get m "files")))
