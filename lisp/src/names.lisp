@@ -66,15 +66,7 @@
 (defparameter +session-ref-min-chars+ 4 "The shortest id prefix session:'id' takes.")
 
 (defun names-json ()
-  "Every name and limit above, as op names hands them over."
-  (json-object "recallTool" +recall-tool+ "recallParams" (coerce +recall-params+ 'vector)
-               "pinTool" +pin-tool+ "pinParams" (coerce +pin-params+ 'vector)
-               "contextTool" +context-tool+ "contextParams" (coerce +context-params+ 'vector)
-               "pinEntryType" +pin-entry-type+ "evictEntryType" +evict-entry-type+ "pinNoticeType" +pin-notice-type+ "budgetNoticeType" +budget-notice-type+
-               "recallCommandMessageType" +recall-command-message-type+
-               "compactor" +compactor+ "legacyCompactors" (coerce +legacy-compactors+ 'vector)
-               "legacyPinEntryType" +legacy-pin-entry-type+ "legacyEvictEntryType" +legacy-evict-entry-type+
-               "compactInstruction" +compact-instruction+
-               "searchPageSize" +search-page-size+ "rangePageSize" +range-page-size+
-               "recallOutputChars" +recall-output-chars+ "pinChars" +pin-chars+ "pinNameChars" +pin-name-chars+ "evictAtPercent" +evict-at-percent+ "contextNoteChars" +context-note-chars+
-               "sessionRefMinChars" +session-ref-min-chars+))
+  "The names and limits tests write into sessions, instructions and expectations, as op names hands them over."
+  (json-object "pinEntryType" +pin-entry-type+ "evictEntryType" +evict-entry-type+ "recallEntryType" +recall-entry-type+
+               "pinNoticeType" +pin-notice-type+ "resumeNoticeType" +resume-notice-type+ "rawStoreSuffix" +raw-store-suffix+
+               "compactInstruction" +compact-instruction+ "pinChars" +pin-chars+ "recallOutputChars" +recall-output-chars+))

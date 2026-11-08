@@ -107,8 +107,6 @@ merged, never the newest range, which stays on its own as the latest work."
 
 ;;; --- the lines ------------------------------------------------------------------
 
-(defun plural (n one) (format nil "~d ~a~a" n one (if (= n 1) "" "s")))
-
 (defun history-files (files)
   (if (<= (length files) 3)
       (format nil "changed ~a" (join-strings (mapcar (lambda (p) (join-strings (last (split-string p #\/) 2) "/")) files) ", "))

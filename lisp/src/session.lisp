@@ -155,6 +155,10 @@ hash set; empty for a file without ids (an old format)."
                 last id))))
     (walk-to-root parent-of last)))
 
+(defun position-of-id (id entries)
+  "The position in ENTRIES of the entry with ID, or NIL."
+  (position id entries :key (lambda (e) (json-get e "id")) :test #'equal))
+
 (defun file-branch (path)
   "The entries on PATH's active branch, in file order."
   (let* ((entries (jsonl-values path)) (ids (active-branch-ids entries)))

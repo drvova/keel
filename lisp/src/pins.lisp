@@ -53,8 +53,7 @@ the new note replaces the one it named."
         (return-from add-pin (values nil (users-note named "defined again") nil)))
       (let* ((counted (count-if #'counted-entry-p entries))
              (at (and (plusp counted) (1- counted)))
-             (op (json-object "v" 1 "op" "add" "id" (next-pin-id branch) "text" text "by" by "at" at)))
-        (when name (setf (gethash "name" op) name))
+             (op (pin-op "add" (next-pin-id branch) :text text :by by :at at :name name)))
         (values t (format nil "~:[Pinned~;Redefined~] ~a~a.~@[ It replaces ~a.~]" named (format-pin op)
                           (if clipped (format nil " (clipped to ~d chars)" +pin-chars+) "")
                           (and named (format-pin named)))
@@ -77,7 +76,7 @@ AGENT: the agent's call, which leaves a note the user pinned as it is."
       ((and note agent (equal (json-get note "by") "user"))
        (values nil (users-note note "unpinned") nil))
       (note
-        (values t (format nil "Unpinned ~a." (format-pin note)) (json-object "v" 1 "op" "remove" "id" (json-get note "id"))))
+        (values t (format nil "Unpinned ~a." (format-pin note)) (pin-op "remove" (json-get note "id"))))
       (t
         (values nil (format nil "No pinned note ~a. ~a"
                             (if id (format nil "[~a]" (js-string-of id)) (json-string value))
@@ -103,10 +102,7 @@ forked, or carried into once)."
            (id 0))
       (loop for n in (read-pins (file-branch previous))
             when (and (pin-name n) (equal (json-get n "by") "user"))
-              collect (let ((op (json-object "v" 1 "op" "add" "id" (incf id) "name" (pin-name n) "text" (json-get n "text")
-                                             "by" (json-get n "by") "at" :null)))
-                        (setf (gethash "from" op) from)
-                        op)))))
+              collect (pin-op "add" (incf id) :text (json-get n "text") :by (json-get n "by") :at :null :name (pin-name n) :from from)))))
 
 (defun run-pin (input)
   "One keel_pin call or /…-pin, /…-unpin command: (values DONE TEXT OP SEVERITY AGENT-NOTE).

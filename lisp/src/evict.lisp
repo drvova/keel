@@ -663,7 +663,7 @@ OPS). An undo is an edit too, so a second one does the first again."
                             (loop for n in (sort notes #'<)
                                   for before = (or (cdr (assoc n notes-was)) "")
                                   unless (equal before (or (cdr (assoc n notes-now)) ""))
-                                    collect (json-object "v" 1 "op" "insert" "after" n "text" before "by" by "at" count)))))
+                                    collect (insert-op n before by count)))))
           (values (format nil "Undone:~@[ ~{~a~^, ~} back in context~]~@[;~*~]~@[ ~{~a~^, ~} out of context again~]~@[;~*~]~@[ ~d note~:p as ~:*~[~;it was~:;they were~]~] from the next request."
                           (and back (mapcar (lambda (o) (range-text (out-from o) (out-to o))) back))
                           (and back (or again (plusp (length (remove-if-not (lambda (op) (equal (json-get op "op") "insert")) ops)))))

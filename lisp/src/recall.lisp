@@ -351,7 +351,7 @@ and where (calls.lisp STALE-READ and FIXES-OF): the call and its result alike."
         (incf searched)))
     (let ((covered (if (zerop searched)
                        "this session (no earlier sessions in this project)"
-                       (format nil "this session and ~d earlier session~a~a" searched (if (= searched 1) "" "s")
+                       (format nil "this session and ~a~a" (plural searched "earlier session")
                                (if (< searched (length all)) (format nil " (the newest ~d of ~d; session:'id' reads an older one)" searched (length all)) "")))))
       (multiple-value-bind (hits total truncated) (search-loaded corpus query)
         (cond ((eq hits :aborted) (format nil "~a Searching ~a: narrow the query, or read one session with session:'id' (mode:'sessions' lists them)." total covered))

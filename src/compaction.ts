@@ -18,7 +18,7 @@ import { compactAndWait, deliver, hostSnapshot, registerCommand, tell, tellLater
 import { SURFACE } from "./surface";
 
 /** The compaction keel wrote on the last pass, until the host has applied it. */
-export interface WrittenCompaction {
+interface WrittenCompaction {
   summary: string;
   /** The outcome line, told once the host has applied it. */
   statsLine: string;

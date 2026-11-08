@@ -71,6 +71,19 @@ an #N standing, an empty one taking it away. An alist (N . TEXT)."
 
 (defun out-of (n outs) (find-if (lambda (o) (<= (out-from o) n (out-to o))) outs))
 
+(defun insert-op (after text by at)
+  "The ledger op putting the agent's note TEXT after #AFTER in its context's file (an empty TEXT takes it away)."
+  (json-object "v" 1 "op" "insert" "after" after "text" text "by" by "at" at))
+
+(defun pin-op (kind id &key text by at name from)
+  "The ledger op of a note: KIND \"add\" (its TEXT, BY, AT the #N count, and NAME and FROM when it has them) or \"remove\"."
+  (let ((op (if (equal kind "add")
+                (json-object "v" 1 "op" "add" "id" id "text" text "by" by "at" at)
+                (json-object "v" 1 "op" "remove" "id" id))))
+    (when name (setf (gethash "name" op) name))
+    (when from (setf (gethash "from" op) from))
+    op))
+
 (defun evict-op (kind from to by at &optional note)
   (json-object "v" 1 "op" kind "from" from "to" to "by" by "at" at "note" note))
 

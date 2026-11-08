@@ -250,7 +250,7 @@ last assistant message, would then have nothing. A kept user-turn tail over
 
 (defun branch-from (branch id)
   "The entries of BRANCH from the one whose id is ID, or NIL when there is none."
-  (let ((at (position id branch :key (lambda (e) (json-get e "id")) :test #'equal)))
+  (let ((at (position-of-id id branch)))
     (and at (coerce (subseq branch at) 'list))))
 
 (defun tail-tokens-for-keep (branch notes keep skip per-token)
@@ -258,7 +258,7 @@ last assistant message, would then have nothing. A kept user-turn tail over
 everything, so smart keep-tail stops growing instead of losing the tail."
   (let ((cut (build-own-cut branch notes keep skip)))
     (when (and (cut-p cut) (not (cut-compact-all cut)))
-      (let ((kept (position (cut-first-kept cut) branch :key (lambda (e) (json-get e "id")) :test #'equal)))
+      (let ((kept (position-of-id (cut-first-kept cut) branch)))
         (and kept (tokens-from-chars (kept-chars (coerce (subseq branch kept) 'list)) per-token))))))
 
 (defun resolve-smart-keep (branch notes requested smart skip min-tokens max-tokens per-token)
@@ -359,7 +359,7 @@ sections and brief that would replace it."
       ;; no room when the setting is off.
       (when (> (json-get budgets "workingSetTokens") 0)
         (let* ((kept-at (if (plusp (length (cut-first-kept cut)))
-                            (or (position (cut-first-kept cut) branch :key (lambda (e) (json-get e "id")) :test #'equal) -1)
+                            (or (position-of-id (cut-first-kept cut) branch) -1)
                             -1))
                (kept (if (>= kept-at 0) (remove nil (map 'list #'live-message (subseq branch kept-at))) '()))
                (past (remove-if (lambda (s) (and (>= kept-at 0) (>= (first s) kept-at))) since)))
