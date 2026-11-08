@@ -2,11 +2,16 @@
 // src/core.ts), with what it read kept for the next request. It must
 // answer as a process per request does, also after the file it read grew or
 // was rewritten, and a core that dies is replaced without the caller noticing.
+// Where keel keeps no live core, a process per request is the only path there
+// is (Windows, where there are no named pipes), so these skip.
 import { describe, expect, it } from "bun:test";
 import { appendFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import { core, liveCorePid } from "../src/core";
 import { freshDir, writeJsonl } from "./support/session-files";
+
+/** Where keel keeps one core for every request: src/core.ts's liveWanted. */
+const LIVE = process.platform !== "win32";
 
 const entries = (n: number, word = "alpha") => {
   const out: unknown[] = [{ type: "session", id: "s", cwd: "/x" }];
@@ -24,7 +29,7 @@ const both = (request: object) => {
 };
 
 describe("the live core", () => {
-  it("answers as a process per request does, as the file it read grows and is rewritten", () => {
+  it.skipIf(!LIVE)("answers as a process per request does, as the file it read grows and is rewritten", () => {
     const file = join(freshDir(), "s.jsonl");
     writeJsonl(file, entries(6));
     const search = { op: "search", file, query: "alpha entry" };
@@ -48,7 +53,7 @@ describe("the live core", () => {
     expect(live.hits).toEqual([]);
   });
 
-  it("is replaced when it dies, and the request is still answered", () => {
+  it.skipIf(!LIVE)("is replaced when it dies, and the request is still answered", () => {
     core({ op: "regex", pattern: "a", texts: ["a"] });
     const pid = liveCorePid()!;
     process.kill(pid, "SIGKILL");
@@ -66,7 +71,7 @@ describe("the live core", () => {
     expect(liveCorePid()).toBe(pid);
   });
 
-  it("is not used with KEEL_CORE_LIVE=off", () => {
+  it.skipIf(!LIVE)("is not used with KEEL_CORE_LIVE=off", () => {
     core({ op: "regex", pattern: "a", texts: ["a"] });
     const pid = liveCorePid()!;
     process.kill(pid, "SIGKILL");

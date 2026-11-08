@@ -1,0 +1,11 @@
+# Line endings are the repo's, not the checkout's. Two files are compared byte
+# for byte with what keel writes: src/surface.ts with the core's surface op
+# (tests/surface.test.ts), and the golden fixtures with a recorded session. A
+# Windows checkout with core.autocrlf would give them CRLF in the working tree
+# while the core and the generator write LF, and those tests would fail for a
+# line ending alone.
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.gif binary
+*.png binary
