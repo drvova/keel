@@ -301,7 +301,6 @@ out) the pinned notes stand first, in one block (NOTES-BLOCK)."
                  v))
              (chars-kept (outs &optional (below (length messages)))
                (let ((v (dropped outs))) (loop for i from 0 below below unless (aref v i) sum (message-chars (aref messages i))))))
-      ;; Chars per token measured on this request's own messages, or the model's last measure.
       (setf fit (fit-chars-per-token messages n-of branch #'chars-kept) per-token (or fit chars-per-token))
       ;; The context now, estimated: what the provider counted for the latest
       ;; request, less what was sent then, is what the request holds besides the
@@ -381,8 +380,8 @@ out) the pinned notes stand first, in one block (NOTES-BLOCK)."
                                                                               (mapcar (lambda (n) (gethash n id-of)) ns) file)
                                       do (setf (gethash n h) m))
                                 h)))
-          ;; The pinned notes first, in view whatever has left (with keel_context there, or anything out).
-          ;; First in the request: where the context's file is (MIRROR, its path), and the pinned notes.
+          ;; First in the request, in view whatever has left (with keel_context there, or anything out):
+          ;; where the context's file is (MIRROR, its path), and the pinned notes.
           (when (or mark outs)
             (multiple-value-bind (shown as-of) (notes-as-of branch index ops)
               (let ((text (cond ((and mirror shown) (format nil "~a~%~a" (mirror-header mirror) (notes-block shown as-of)))

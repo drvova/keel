@@ -14,7 +14,6 @@
 
 (defun sanitize (text)
   "TEXT with CRLF and CR as LF, ANSI escapes and other control characters removed."
-  ;; Most text holds no control character at all, and is its own answer.
   (when (notany (lambda (c) (let ((code (char-code c))) (and (< code 32) (/= code 9) (/= code 10)))) text)
     (return-from sanitize text))
   (let ((s (rx-replace (rx "\\r\\n") text (string #\Newline) :all t)))

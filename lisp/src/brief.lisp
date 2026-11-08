@@ -448,7 +448,6 @@ a small one stays at the floor."
                        (unless (or (gethash i selected) (eq (block-kind b) :tool-result))
                          (let ((key (dedup-key b)))
                            (unless (and key (gethash key seen))
-                             ;; Skipped, not stopped at, so smaller high-value blocks still fit.
                              (unless (and costs (> (+ used (aref costs i)) budget))
                                (when costs (incf used (aref costs i)))
                                (setf (gethash i selected) t)
