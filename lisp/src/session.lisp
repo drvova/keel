@@ -51,14 +51,8 @@ may carry either."
   "DIR's files, as names, listed without SBCL's pathname syntax: a Windows
 path handed to DIRECTORY comes back in a namestring with `/`, which then
 matches no path written the way the host writes it."
-  (let ((names '()) (seen (make-hash-table :test 'equal)))
-    (dolist (pattern (list (merge-pathnames "*.*" (native-path (concatenate 'string dir "/")))))
-      (ignore-errors
-       (dolist (file (directory pattern))
-         (let ((name (file-namestring file)))
-           (unless (nth-value 1 (gethash name seen))
-             (setf (gethash name seen) t) (push name names))))))
-    (nreverse names)))
+  ;; A directory that is not there (or not readable) has no files.
+  (mapcar #'file-namestring (ignore-errors (directory (merge-pathnames "*.*" (native-path (concatenate 'string dir "/")))))))
 
 (defun parse-jsonl (text)
   "The JSON value of each line of TEXT that parses, in order."

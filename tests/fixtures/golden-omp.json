@@ -90,10 +90,7 @@
       "to": 117,
       "requests": 10,
       "asks": [
-       "Please look at src/upload/service.ts and explain the upload flow, then tighten",
-       "Fix the login bug: users cannot log in after a password reset. Never touch",
-       "Turn 1: update billing so that retries back off exponentially",
-       "Turn 5: update billing so that retries back off exponentially"
+       "Please look at src/upload/service.ts and explain the upload flow, then tighten"
       ],
       "files": [
        "src/auth/service.ts",
@@ -221,10 +218,7 @@
       "to": 117,
       "requests": 10,
       "asks": [
-       "Please look at src/upload/service.ts and explain the upload flow, then tighten",
-       "Fix the login bug: users cannot log in after a password reset. Never touch",
-       "Turn 1: update billing so that retries back off exponentially",
-       "Turn 5: update billing so that retries back off exponentially"
+       "Please look at src/upload/service.ts and explain the upload flow, then tighten"
       ],
       "files": [
        "src/auth/service.ts",
@@ -387,10 +381,7 @@
       "to": 117,
       "requests": 10,
       "asks": [
-       "Please look at src/upload/service.ts and explain the upload flow, then tighten",
-       "Fix the login bug: users cannot log in after a password reset. Never touch",
-       "Turn 1: update billing so that retries back off exponentially",
-       "Turn 5: update billing so that retries back off exponentially"
+       "Please look at src/upload/service.ts and explain the upload flow, then tighten"
       ],
       "files": [
        "src/auth/service.ts",
@@ -427,10 +418,7 @@
       "to": 241,
       "requests": 10,
       "asks": [
-       "Please look at src/billing/service.ts and explain the billing flow, then tighten",
-       "Turn 13: update billing so that retries back off exponentially",
-       "Turn 11: update upload so that retries back off exponentially",
-       "Turn 14: update search so that retries back off exponentially"
+       "Please look at src/billing/service.ts and explain the billing flow, then tighten"
       ],
       "files": [
        "src/upload/service.ts",
@@ -596,10 +584,7 @@
       "to": 117,
       "requests": 10,
       "asks": [
-       "Please look at src/upload/service.ts and explain the upload flow, then tighten",
-       "Fix the login bug: users cannot log in after a password reset. Never touch",
-       "Turn 1: update billing so that retries back off exponentially",
-       "Turn 5: update billing so that retries back off exponentially"
+       "Please look at src/upload/service.ts and explain the upload flow, then tighten"
       ],
       "files": [
        "src/auth/service.ts",
@@ -636,10 +621,7 @@
       "to": 241,
       "requests": 10,
       "asks": [
-       "Please look at src/billing/service.ts and explain the billing flow, then tighten",
-       "Turn 13: update billing so that retries back off exponentially",
-       "Turn 11: update upload so that retries back off exponentially",
-       "Turn 14: update search so that retries back off exponentially"
+       "Please look at src/billing/service.ts and explain the billing flow, then tighten"
       ],
       "files": [
        "src/upload/service.ts",
@@ -660,10 +642,7 @@
       "to": 323,
       "requests": 7,
       "asks": [
-       "Please look at src/auth/service.ts and explain the auth flow, then tighten the",
-       "Turn 21: update billing so that retries back off exponentially",
-       "Turn 25: update billing so that retries back off exponentially",
-       "Turn 22: update search so that retries back off exponentially"
+       "Please look at src/auth/service.ts and explain the auth flow, then tighten the"
       ],
       "files": [
        "src/billing/service.ts",

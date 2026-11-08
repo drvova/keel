@@ -49,5 +49,5 @@ command's of its text (\"command\": the prompt, and the instructions it hands th
       (multiple-value-bind (prompt keep) (parse-keep-and-prompt (json-get request "command"))
         (json-object "ok" :true "followUpPrompt" prompt "instructions" (keel-custom-instructions keep)))
       (multiple-value-bind (from-command keep prompt) (parse-instructions (json-get request "instructions"))
-        (json-object "ok" :true "fromCommand" (if from-command :true :false)
+        (json-object "ok" :true "fromCommand" (bool from-command)
                      "keepUserTurns" (or keep :null) "followUpPrompt" (or prompt :null)))))

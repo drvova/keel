@@ -208,10 +208,10 @@ costs where there is no live core."
                                  "messages" (map 'vector #'item-live (cut-items cut))
                                  "selectedIds" (map 'vector #'item-id (cut-items cut))
                                  "firstKeptEntryId" (cut-first-kept cut)
-                                 "compactAll" (if (cut-compact-all cut) :true :false)
+                                 "compactAll" (bool (cut-compact-all cut))
                                  "keptUserTurns" (cut-kept-user-turns cut)
                                  "totalUserTurns" (cut-total-user-turns cut)
-                                 "keepFallbackToCompactAll" (if (cut-fallback cut) :true :false))))
+                                 "keepFallbackToCompactAll" (bool (cut-fallback cut)))))
              (when (cut-budget-cut cut) (setf (gethash "budgetCut" o) (cut-budget-cut cut)))
              o))))
 
@@ -275,7 +275,7 @@ compact, it first asks for what the host's convertToLlm makes of the messages."
       ((:touched :sessions) (json-object "kind" (string-downcase (symbol-name kind)) "page" (first rest)))
       (:recent (json-object "kind" "recent"))
       (:drill (destructuring-bind (index path full offset limit) rest
-                (json-object "kind" "drill" "target" (json-object "index" index "pathPattern" path "full" (if full :true :false)
+                (json-object "kind" "drill" "target" (json-object "index" index "pathPattern" path "full" (bool full)
                                                                    "offset" offset "limit" limit))))
       (t (json-object "kind" (string-downcase (symbol-name kind)))))))
 
@@ -313,7 +313,7 @@ compact, it first asks for what the host's convertToLlm makes of the messages."
 (defun handle-raw-capture (request)
   "Copy the entries REQUEST carries that omp may rewrite into the store (raw-capture.lisp)."
   (multiple-value-bind (written stored lineage) (capture-entries (json-get request "input"))
-    (json-object "ok" :true "written" (coerce written 'vector) "stored" (if stored :true :false)
+    (json-object "ok" :true "written" (coerce written 'vector) "stored" (bool stored)
                  "lineage" (and lineage (coerce lineage 'vector)))))
 
 (defun handle-placeholders (request)

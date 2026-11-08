@@ -299,5 +299,5 @@ alone, so a token budget maps to the chars the messages take."
                                        (let ((v (json-get c "tokensBefore"))) (and (realp v) v)) policy rule)))
              (overhead (let ((v (json-get c "overheadTokens"))) (if (realp v) v 0))))
         (json-object "policy" policy "trigger" trigger
-                     "autoCompacts" (if (rule-auto-compacts-p rule policy) :true :false)
+                     "autoCompacts" (bool (rule-auto-compacts-p rule policy))
                      "budgets" (compaction-budgets trigger overhead (working-set-on-p (json-get c "workingSet")))))))

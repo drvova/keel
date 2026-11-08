@@ -68,7 +68,7 @@ describe("a window's range", () => {
     ], { keep: 0 });
     expect(c.details.historyIndex).toEqual([{
       from: 0, to: 8, requests: 2,
-      asks: ["a much longer ask that carries the actual requirement", "short ask here"],
+      asks: ["a much longer ask that carries the actual requirement"],
       files: ["src/auth/session.ts"], commits: ["abc1234 fix: auth"], commitCount: 1, failed: 1,
     }]);
   });

@@ -289,8 +289,6 @@ cut would summarize everything."
     (let ((own (if (own-p details) details (json-get details "hookDetails"))))
       (and (own-p own) own))))
 
-;;; --- restoring the originals keel kept ------------------------------------------------
-
 ;;; --- the plan --------------------------------------------------------------------------------
 
 (defparameter +growth-margin-share+ 0.25d0
@@ -427,7 +425,7 @@ and what it was sized from (for debugging a compaction that kept too much or too
      "sections" (json-get plan "sections")
      "summaryState" (json-get plan "summaryState")
      "sourceMessageCount" (json-get plan "summarized")
-     "previousSummaryUsed" (if (truthy-p (json-get input "previousSummary")) :true :false)
+     "previousSummaryUsed" (bool (truthy-p (json-get input "previousSummary")))
      "reason" (json-get input "reason")
      "willRetry" (json-get input "willRetry")
      "historyIndex" (json-get plan "historyIndex")
@@ -529,7 +527,7 @@ and what it was sized from (for debugging a compaction that kept too much or too
                                                 "keptUserTurns" (cut-kept-user-turns cut)
                                                 "totalUserTurns" (cut-total-user-turns cut)
                                                 "keptTokensEst" (tokens-from-chars (kept-chars kept) per-token)
-                                                "smartKeepAdjusted" (if adjusted :true :false)
+                                                "smartKeepAdjusted" (bool adjusted)
                                                 "budgetCut" (cut-budget-cut cut))
                            ;; A recovery writes a summary that grows when it keeps part of the window.
                            "growth" (growth-json growth))))))))
