@@ -158,9 +158,9 @@ tool's definition is part of the prompt the provider caches."
    "command" +command+
    "tools" (vector (recall-tool) (pin-tool) (context-tool))
    "commands" (map 'vector (lambda (c) (json-object "suffix" (first c) "description" (second c))) +commands+)
-   "dataEntryTypes" (vector +pin-entry-type+ +legacy-pin-entry-type+ +evict-entry-type+ +legacy-evict-entry-type+ +recall-entry-type+)
+   "dataEntryTypes" (coerce (append (pin-entry-types) (evict-entry-types) (list +recall-entry-type+)) 'vector)
    ;; With eviction off, a request is left as it is unless one of these is on its branch.
-   "evictEntryTypes" (vector +evict-entry-type+ +legacy-evict-entry-type+)))
+   "evictEntryTypes" (coerce (evict-entry-types) 'vector)))
 
 ;;; --- effects -----------------------------------------------------------------------
 

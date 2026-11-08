@@ -30,6 +30,8 @@
 (defparameter +mirror-last-suffix+ ".keel-context.last")
 
 (defun mirror-path (session-file) (concatenate 'string session-file +mirror-suffix+))
+(defun mirror-last-path (session-file) "The copy of the file as written, which the agent's edit is compared with." (concatenate 'string session-file +mirror-last-suffix+))
+(defun note-marker (n) "The marker of the agent's note after #N." (format nil "[[CTX_NOTE after #~d]]" n))
 
 (defun mirror-header (path)
   "The line that tells the agent where its context's file is: the first in every
@@ -80,7 +82,7 @@ run of what is out and each of the agent's notes, in request order."
                                                  (message-mirror-text m n))))
                         (let ((note (and n (cdr (assoc n inserts)))))
                           (when note
-                            (format out "~%~a~%~a~%" (format nil "[[CTX_NOTE after #~d]]" n) note)
+                            (format out "~%~a~%~a~%" (note-marker n) note)
                             (setf current (list :note n)))))))))
     (get-output-stream-string out)))
 
@@ -200,7 +202,7 @@ an edit that names a block twice is one edit of it."
   "The ops the agent's edit of its context's file makes, and whether it changed the
 running turn: (values OPS IGNORED). Nothing when the file is as it was written."
   (let* ((path (mirror-path session-file))
-         (written (read-text-file (concatenate 'string session-file +mirror-last-suffix+)))
+         (written (read-text-file (mirror-last-path session-file)))
          (edited (read-text-file path)))
     (if (and written edited (string/= written edited))
         (mirror-ops written edited branch index count)
@@ -209,7 +211,7 @@ running turn: (values OPS IGNORED). Nothing when the file is as it was written."
 (defun write-mirror (session-file text)
   "Write the file for this request, and the copy the next request compares the agent's edit with."
   (write-text-file (mirror-path session-file) text)
-  (write-text-file (concatenate 'string session-file +mirror-last-suffix+) text))
+  (write-text-file (mirror-last-path session-file) text))
 
 (defun mirror-notice (ops ignored)
   "What the user is told of the agent's edit of its context's file."

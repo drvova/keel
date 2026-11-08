@@ -289,9 +289,7 @@ count before the cap, and whether the cap cut it; or (values :ABORTED MESSAGE)
 past the time budget or the stack, MESSAGE saying which. With INTERFERENCE (the
 default, for a page of results someone reads) near-copies push each other down;
 without it each hit is ranked alone, as [Working Set] wants its few picks."
-  (let ((*regex-deadline* (+ (get-internal-real-time)
-                             (* +search-budget-ms+ (/ internal-time-units-per-second 1000))))
-        (*steps* 0))
+  (with-regex-deadline (+search-budget-ms+)
     (handler-case (search-docs-within query docs floor cap interference)
       (regex-aborted () (values :aborted +search-aborted+))
       (storage-condition () (values :aborted +search-too-deep+)))))

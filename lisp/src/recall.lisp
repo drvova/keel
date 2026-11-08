@@ -23,9 +23,11 @@
 (defparameter +off-path-note+
   (format nil "Nothing on the current conversation path; showing edited or retried branches (scope:'all').~%~%"))
 
+(defun page-of (items page size) "Page PAGE (from 1) of ITEMS, SIZE a page; empty past the end." (subseq items (min (length items) (* (1- page) size)) (min (length items) (* page size))))
+
 (defun recall-output-chars (window)
   (if (and (realp window) (> window 0))
-      (max +min-recall-output-chars+ (min +recall-output-chars+ (js-round (* window 4 0.1d0))))
+      (max +min-recall-output-chars+ (min +recall-output-chars+ (js-round (* window +default-chars-per-token+ 0.1d0))))
       +recall-output-chars+))
 
 (defun expand-detail-chars (max) (max 1 (js-round (/ (* max +expand-detail-chars+) +recall-output-chars+))))
@@ -265,7 +267,7 @@ and where (calls.lisp STALE-READ and FIXES-OF): the call and its result alike."
       (let ((total (ceiling (length touched) +touched-page-size+)))
         (if (> page total)
             (outside-page page total (format nil "~d files touched" (length touched)))
-            (let* ((files (subseq touched (* (1- page) +touched-page-size+) (min (length touched) (* page +touched-page-size+))))
+            (let* ((files (page-of touched page +touched-page-size+))
                    (header (if (> total 1) (format nil "Page ~d/~d (~d total files)" page total (length touched)) (format nil "~d files touched" (length touched))))
                    (lines (mapcar (lambda (tf) (format nil "  ~a    ~a" (short-touched-path (car tf) cwd)
                                                        (join-strings (mapcar (lambda (e) (format nil "#~d (~a)" (first e) (second e))) (cdr tf)) ", ")))
@@ -306,7 +308,7 @@ and where (calls.lisp STALE-READ and FIXES-OF): the call and its result alike."
     (if (and hits (> page pages))
         (format nil "~a ~a" (outside-page page pages (format nil "~d matches~a~a" (length hits) where note))
                 (funcall (getf hints :out-of-range) query scope pages truncated))
-        (let* ((shown (subseq hits (min (length hits) (* (1- page) +search-page-size+)) (min (length hits) (* page +search-page-size+))))
+        (let* ((shown (page-of hits page +search-page-size+))
                (header (if (> pages 1) (format nil "Page ~d/~d (~d total matches~a~a)" page pages (length hits) where note)
                            (format nil "~d matches~a~a" (length hits) where note))))
           (concatenate 'string (format-recall-output v shown query header)
@@ -422,7 +424,7 @@ and where (calls.lisp STALE-READ and FIXES-OF): the call and its result alike."
               (if (> page pages)
                   (format nil "~a Use a page between 1 and ~d." (outside-page page pages (format nil "#~d..#~d: ~a" lo hi counts)) pages)
                   (concatenate 'string
-                               (format-recall-output v (subseq entries (* (1- page) +range-page-size+) (min (length entries) (* page +range-page-size+))) nil
+                               (format-recall-output v (page-of entries page +range-page-size+) nil
                                                      (if (> pages 1) (format nil "Range #~d..#~d, page ~d/~d (~a)" lo hi page pages counts) (format nil "Range #~d..#~d (~a)" lo hi counts)))
                                (if (< page pages)
                                    (format nil "~%--- Use range:[~d, ~d] page:~d~a for the next ~d ---" lo hi (1+ page)

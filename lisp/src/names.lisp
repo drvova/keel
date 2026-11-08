@@ -16,9 +16,7 @@
 (defparameter +recall-tool+ "keel_recall")
 (defparameter +recall-params+ '("query" "range" "expand" "page" "scope" "mode" "session"))
 (defparameter +pin-tool+ "keel_pin")
-(defparameter +pin-params+ '("note" "name" "unpin"))
 (defparameter +context-tool+ "keel_context")
-(defparameter +context-params+ '("drop" "oldest" "restore" "note" "undo" "force"))
 
 ;;; What keel writes into a session.
 (defparameter +pin-entry-type+ "keel.pin" "Custom entries that hold a pin or unpin: in the session file, never in the context.")
@@ -40,8 +38,10 @@
 (defparameter +legacy-notice-types+ '("omp-vcc-pin" "omp-vcc-budget"))
 (defparameter +legacy-raw-store-suffix+ ".vcc-raw")
 
-(defun pin-entry-type-p (type) (member type (list +pin-entry-type+ +legacy-pin-entry-type+) :test #'equal))
-(defun evict-entry-type-p (type) (member type (list +evict-entry-type+ +legacy-evict-entry-type+) :test #'equal))
+(defun pin-entry-types () (list +pin-entry-type+ +legacy-pin-entry-type+))
+(defun evict-entry-types () (list +evict-entry-type+ +legacy-evict-entry-type+))
+(defun pin-entry-type-p (type) (member type (pin-entry-types) :test #'equal))
+(defun evict-entry-type-p (type) (member type (evict-entry-types) :test #'equal))
 (defun recall-entry-type-p (type) (equal type +recall-entry-type+))
 (defun notice-type-p (type)
   "Whether TYPE is a notice keel sent the agent: a summary leaves those out."

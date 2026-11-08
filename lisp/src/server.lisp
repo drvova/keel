@@ -50,7 +50,7 @@
 ;;;;       "params":{...},"dropped":[D...]} (params and dropped for the tool's params)
 ;;;;
 ;;;; names: keel's own names and the limits its tools state (names.lisp), for the tests
-;;;;   {"op":"names"} -> {"ok":true,"names":{recallTool, recallParams, pinTool, ..., sessionRefMinChars}}
+;;;;   {"op":"names"} -> {"ok":true,"names":{pinEntryType, evictEntryType, recallEntryType, ..., recallOutputChars}}
 ;;;;
 ;;;; context-edits: a branch as Pi's context holds it (context-edits.lisp), for the parity test
 ;;;;   {"op":"context-edits","branch":[ENTRY...]} -> {"ok":true,"entries":[ENTRY...]}
@@ -218,7 +218,7 @@ costs where there is no live core."
 (defun json-cut (v live)
   "The cut a test hands back (cut-json's shape) on the LIVE items it was made of."
   (if (not (eq (json-get v "ok") :true))
-      (if (equal (json-get v "reason") "no_live_messages") :no-live-messages :too-few-live-messages)
+      (first (find (json-get v "reason") +cut-reasons+ :key #'second :test #'equal))
       (%make-cut :items (subseq live 0 (length (json-get v "messages" #())))
                  :first-kept (json-get v "firstKeptEntryId")
                  :compact-all (eq (json-get v "compactAll") :true)
@@ -413,7 +413,10 @@ answer that says so: the caller tells the core failed."
 requests one after another (live.lisp)."
   (let ((args (rest sb-ext:*posix-argv*)))
     (when (equal (first args) "--serve")
-      (handler-case (serve (second args)) (serious-condition () nil))
+      ;; A core that cannot serve says why and exits failed: the host falls back to one process a request.
+      (handler-case (serve (second args))
+        (serious-condition (e) (format *error-output* "keel's core could not serve: ~a~%" e) (finish-output *error-output*)
+          (sb-ext:exit :code 1 :abort t)))
       (sb-ext:exit :code 0 :abort t)))
   (let ((response (respond (read-stdin))))
     (write-json response *standard-output*)

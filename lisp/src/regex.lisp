@@ -419,6 +419,12 @@ name and index. A name used twice is a syntax error."
 (defvar *regex-deadline* nil "Internal real time past which a match is abandoned, or NIL.")
 (defvar *steps* 0)
 
+(defmacro with-regex-deadline ((ms) &body body)
+  "BODY with every match in it abandoned past MS milliseconds (it signals REGEX-ABORTED)."
+  `(let ((*regex-deadline* (+ (get-internal-real-time) (* ,ms (/ internal-time-units-per-second 1000))))
+         (*steps* 0))
+     ,@body))
+
 (declaim (type units *input*) (type fixnum *steps*))
 
 (defun tick ()

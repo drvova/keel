@@ -49,10 +49,6 @@
                  (incf at n))))
     t))
 
-(defun answer (request-text)
-  "One request's response, as the one-shot executable would write it."
-  (respond request-text +live-request-seconds+))
-
 (defun serve (dir)
   "Answer requests from DIR/req on DIR/resp until the host is gone or idle too long."
   (let* ((req (concatenate 'string dir "/req")) (resp (concatenate 'string dir "/resp"))
@@ -73,7 +69,7 @@
                        for byte = (aref buffer i)
                        do (if (= byte 10)
                               (let* ((text (sb-ext:octets-to-string (coerce pending '(simple-array (unsigned-byte 8) (*))) :external-format :utf-8))
-                                     (reply (with-output-to-string (s) (write-json (answer text) s) (terpri s))))
+                                     (reply (with-output-to-string (s) (write-json (respond text +live-request-seconds+) s) (terpri s))))
                                 (setf (fill-pointer pending) 0)
                                 (unless (write-all out (sb-ext:string-to-octets reply :external-format :utf-8)) (return-from serve)))
                               (vector-push-extend byte pending)))))
