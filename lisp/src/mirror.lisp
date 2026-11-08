@@ -58,7 +58,7 @@ and each of the agent's notes, in request order."
       (loop for i from 0 below (length messages)
             for m = (aref messages i)
             for n = (aref n-of i)
-            do (cond ((aref dropped i)
+            do (cond ((eq (aref dropped i) t)
                       (let ((o (and n (out-of n outs))))
                         (when (and o (not (equal current (list :out (out-from o)))))
                           (setf current (list :out (out-from o)))
@@ -73,7 +73,10 @@ and each of the agent's notes, in request order."
                           (setf current (list :turn (turn-from tr))))
                         ;; The running turn's messages are left out: it grows with every request,
                         ;; and a file that changes under the agent's edit is an edit misread.
-                        (unless (and tr (eq tr running)) (format out "~a~%" (message-mirror-text m n)))
+                        (unless (and tr (eq tr running))
+                          (format out "~a~%" (if (eq (aref dropped i) :replace)
+                                                 (format nil "[toolResult #~d] ~a" n (result-stub-text n m))
+                                                 (message-mirror-text m n))))
                         (let ((note (and n (cdr (assoc n inserts)))))
                           (when note
                             (format out "~%~a~%~a~%" (format nil "[[CTX_NOTE after #~d]]" n) note)

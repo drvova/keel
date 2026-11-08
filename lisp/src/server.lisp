@@ -41,7 +41,7 @@
 ;;;;   none, null from running-turn and whole-window), or "keep" and "adjusted" for smart-keep.
 ;;;;
 ;;;; working-set: [Working Set] alone (working-set.lisp), for its tests
-;;;;   {"op":"working-set","history":[MESSAGE...],"indices":[N...],"kept":[MESSAGE...],"maxChars":C}
+;;;;   {"op":"working-set","history":[MESSAGE...],"indices":[N...],"kept":[MESSAGE...],"maxChars":C,"recalled":[N...]?}
 ;;;;   -> {"ok":true,"items":[{index,title,note,text}...],"lines":[L...],"shown":[N...]}
 ;;;;
 ;;;; request: a recall call's params or text as the core reads them (request.lisp), for its tests
@@ -255,6 +255,8 @@ compact, it first asks for what the host's convertToLlm makes of the messages."
 (defun handle-working-set (request)
   "The items [Working Set] picks of REQUEST's history, and the section's lines."
   (let* ((max (json-get request "maxChars"))
+         ;; What the agent recalled lately, newest first (feedback.lisp), as a compaction reads it from the session.
+         (*recalled* (loop for n across (coerce (json-get request "recalled" #()) 'vector) when (js-integer-p n) collect (as-integer n)))
          (items (select-working-set (coerce (json-get request "history" #()) 'list) (coerce (json-get request "indices" #()) 'list)
                                     (coerce (json-get request "kept" #()) 'list) max)))
     (multiple-value-bind (lines shown) (format-working-set items max)
@@ -299,9 +301,11 @@ compact, it first asks for what the host's convertToLlm makes of the messages."
 (defun handle-recall (request)
   "One recall call (recall.lisp run-recall) in the session REQUEST's snapshot names."
   (let ((s (read-snapshot (json-get request "host"))) (call (json-get request "call")))
-    (multiple-value-bind (ok text severity) (run-recall (recall-input s call (json-get request "projectFiles" #())))
+    (multiple-value-bind (ok text severity shown) (run-recall (recall-input s call (json-get request "projectFiles" #())))
       (json-object "ok" :true "recall" (json-object "ok" (bool ok) "text" (if (equal (json-get call "surface") "tool") (with-readout s text) text)
-                                                    "severity" severity)))))
+                                                    "severity" severity
+                                                    ;; What it showed of this session, and the #N count then (feedback.lisp).
+                                                    "shown" (coerce shown 'vector) "at" (snapshot-count s))))))
 
 (defun handle-context-edits (request)
   "The branch REQUEST carries, Pi's context edits applied (context-edits.lisp)."

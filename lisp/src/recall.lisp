@@ -62,6 +62,44 @@
                       collect (destructuring-bind (role summary files) (render-entry message full index (view-detail-chars v) (via v))
                                 (list :index index :id id :message message :role role :summary summary :files files)))))))
 
+;;; --- superseded entries ------------------------------------------------------------
+;;;
+;;; A read of a file that was changed later shows content that no longer
+;;; holds; a failed run that later passed is no longer open. DCPM (Hy-Memory 1.0,
+;;; Tencent, arXiv:2606.09483) links a fact to the one that supersedes it
+;;; instead of deleting it, and removing those links cost it 2.9 points; it has
+;;; an LLM decide what supersedes what. Here the key decides, with no model: the
+;;; same file changed later (calls.lisp files-of, changes-p), the same run passed
+;;; later (run-of). Recall says so on the entry's line.
+
+(defun superseded-notes (v)
+  "Each entry of V's session that something later superseded, to a note saying what and where."
+  (let ((notes (make-hash-table)) (by-id (make-hash-table :test 'equal)) (result-of (make-hash-table :test 'equal))
+        (changes '()) (passes '()) (on-file '()) (fails '()))
+    (dolist (e (view-load v nil))
+      (let ((n (getf e :index)) (m (getf e :message)))
+        (cond ((equal (json-get m "role") "assistant")
+               (dolist (c (tool-calls-of m))
+                 (when (call-id c) (setf (gethash (call-id c) by-id) (cons n c)))
+                 (when (changes-p c) (dolist (p (files-of c)) (push (cons p n) changes)))
+                 (when (on-file-p c) (dolist (p (files-of c)) (push (list p n (call-id c)) on-file)))))
+              ((equal (json-get m "role") "toolResult")
+               (let ((hit (gethash (json-get m "toolCallId") by-id)))
+                 (when hit
+                   (setf (gethash (json-get m "toolCallId") result-of) n)
+                   (if (eq (json-get m "isError") :true)
+                       (push (list (run-of (cdr hit)) n (car hit)) fails)
+                       (push (cons (run-of (cdr hit)) n) passes))))))))
+    (flet ((note (ns text) (dolist (n ns) (when (and n (not (gethash n notes))) (setf (gethash n notes) text))))
+           (first-after (n pairs key) (loop for (k . at) in pairs when (and (equal k key) (> at n)) minimize at)))
+      (loop for (path n id) in on-file
+            for m = (first-after n changes path)
+            when (plusp m) do (note (list n (gethash id result-of)) (format nil "superseded: ~a changed at #~d" path m)))
+      (loop for (run n call-n) in fails
+            for m = (first-after n passes run)
+            when (plusp m) do (note (list n call-n) (format nil "fixed: passed at #~d" m))))
+    notes))
+
 (defun view-message (v index)
   (third (find index (first (view-read v)) :key #'first)))
 
@@ -389,6 +427,7 @@
          (all (equal (view-scope v) "all")))
     (ecase (first action)
       (:drill (destructuring-bind (index path full offset limit) (rest action)
+                (note-shown (list index))
                 (let* ((message (view-message v index))
                        (off (and message (not all) (notany (lambda (e) (eql (getf e :index) index)) (view-load v nil)))))
                   (concatenate 'string (if off +off-path-note+ "")
@@ -407,7 +446,10 @@
                             (format-recall-output (last-n (view-load v nil) +recent-count+)))))))
 
 (defun run-recall (input)
-  "One recall: (values OK TEXT SEVERITY). INPUT carries the call (the tool's params or the command's text) and the host's part."
+  "One recall: (values OK TEXT SEVERITY SHOWN). INPUT carries the call (the tool's
+params or the command's text) and the host's part. SHOWN is the #N of this
+session's entries it showed (another session's #N are its own, so a call with
+session:'id' shows none)."
   (let* ((call (json-get input "call"))
          (surface (if (equal (json-get call "surface") "command") (list :command (json-get call "name")) (list :tool)))
          (request (if (eq (first surface) :tool) (parse-tool-request (json-get call "params")) (parse-command-request (string-or (json-get call "args") ""))))
@@ -431,7 +473,9 @@
                     (values nil (second target) "warning")
                     (let* ((header (format nil "Session ~a~%~%" (describe-session target)))
                            (v (open-session-view target (getf request :scope) :max-chars (- max (js-length header) (js-length note)) :detail-chars detail)))
-                      (values t (concatenate 'string header (cap-output (concatenate 'string note (run-action request v surface skip-turn cwd)) (max 0 (- max (js-length header)))))))))
+                      (values t (concatenate 'string header (cap-output (concatenate 'string note (let ((*entry-notes* (superseded-notes v))) (run-action request v surface skip-turn cwd))) (max 0 (- max (js-length header)))))))))
               (let ((v (open-view file (getf request :scope) lineage :project project :max-chars (- max (js-length note)) :detail-chars detail
-                                  :turn-fn (current-turn-fn host-branch lineage))))
-                (values t (cap-output (concatenate 'string note (run-action request v surface skip-turn cwd)) max))))))))
+                                  :turn-fn (current-turn-fn host-branch lineage)))
+                    (*shown-entries* '()))
+                (let ((text (cap-output (concatenate 'string note (let ((*entry-notes* (superseded-notes v))) (run-action request v surface skip-turn cwd))) max)))
+                  (values t text nil (shown-entries)))))))))

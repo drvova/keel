@@ -302,14 +302,18 @@ list of terms, or a regex (the regex path's one pattern)."
   "Search aborted: query too deeply nested to search. Use fewer or more specific words; for a regex, avoid nested quantifiers such as (a+)+."
   "What a search that ran out of stack says: a regex that recurses that deep is one too costly to search.")
 
-(defun search-docs (query docs &key (floor +relative-floor+) (cap +result-cap+))
+(defvar *interference* t "Whether the search running now re-ranks for interference.")
+
+(defun search-docs (query docs &key (floor +relative-floor+) (cap +result-cap+) (interference t))
   "Rank DOCS, a vector of (ROLE TEXT FILES), for QUERY. Returns the hits as a list of (INDEX . SNIPPET) best first, the
 count before the cap, and whether the cap cut it; or (values :ABORTED MESSAGE)
-past the time budget or the stack, MESSAGE saying which."
+past the time budget or the stack, MESSAGE saying which. With INTERFERENCE (the
+default, for a page of results someone reads) near-copies push each other down;
+without it each hit is ranked alone, as [Working Set] wants its few picks."
   (let ((*regex-deadline* (+ (get-internal-real-time)
                              (* +search-budget-ms+ (/ internal-time-units-per-second 1000))))
         (*steps* 0))
-    (handler-case (search-docs-within query docs floor cap)
+    (handler-case (let ((*interference* interference)) (search-docs-within query docs floor cap))
       (regex-aborted () (values :aborted +search-aborted+))
       (storage-condition () (values :aborted +search-too-deep+)))))
 
@@ -338,6 +342,78 @@ past the time budget or the stack, MESSAGE saying which."
                               collect (cons i (line-snippet (aref texts i) regex)))))
             (when hits (return-from search-docs-within (cap-hits hits cap))))))
       (search-terms raw-query texts hays floor cap))))
+
+;;; --- interference: near-duplicate hits push each other down ------------------------
+;;;
+;;; BM25 scores each entry alone, so ten copies of the same test output or the
+;;; same file read rank side by side and fill a page with one thing. The quantum
+;;; probability ranking principle (Zuccon, Azzopardi and van Rijsbergen, ICTIR
+;;; 2009; surveyed in arXiv:2007.04357) ranks the next result by its relevance
+;;; plus its interference with the results above it: redundant results interfere
+;;; destructively, 2 sqrt(p_i p_j) cos(theta) taken off. Here p is a hit's score
+;;; over the top score and cos(theta) how alike two hits are past what the query
+;;; makes them share, counted only from +interference-from+ up, so entries that
+;;; are related but not repeats keep BM25's order and only near-copies sink.
+
+(defparameter +interference-from+ 0.5d0 "Below this cosine two hits do not interfere.")
+(defparameter +interference-words+ 600 "A hit's words read for its likeness to another, from its start.")
+(defparameter +interference-candidates+ 40 "Only this many of the best hits are re-ranked: eight pages of five.")
+
+(defun word-char-p (c) (or (char<= #\A c #\Z) (char<= #\a c #\z) (char<= #\0 c #\9) (char= c #\_)))
+
+(defun words-of (text limit)
+  "TEXT's words (runs of letters A-Z or a-z, digits and _, two chars or more), the first LIMIT of them. TEXT is folded already (FOLD maps to upper case, as JavaScript's /i does)."
+  (let ((words '()) (start nil) (count 0))
+    (flet ((end-word (i) (when (and start (> (- i start) 1)) (push (subseq text start i) words) (incf count)) (setf start nil)))
+      (loop for i from 0 below (length text)
+            while (< count limit)
+            do (if (word-char-p (char text i)) (unless start (setf start i)) (end-word i))
+            finally (when (< count limit) (end-word (length text)))))
+    words))
+
+(defun word-bag (hay)
+  "HAY's folded words and their counts, the first +interference-words+ of them."
+  (derived hay :bag
+           (lambda ()
+             (let ((bag (make-hash-table :test 'equal)))
+               (dolist (w (words-of (hay-folded hay) +interference-words+) bag) (incf (gethash w bag 0)))))))
+
+(defun likeness (a b skip)
+  "The cosine of bags A and B, the words in SKIP left out."
+  (let ((dot 0) (na 0) (nb 0))
+    (maphash (lambda (w c) (unless (gethash w skip) (incf na (* c c)) (let ((d (gethash w b))) (when d (incf dot (* c d)))))) a)
+    (maphash (lambda (w c) (unless (gethash w skip) (incf nb (* c c)))) b)
+    (if (or (zerop na) (zerop nb)) 0d0 (/ dot (sqrt (* (coerce na 'double-float) nb))))))
+
+(defun with-interference (scored hays terms)
+  "SCORED ((INDEX SCORE SNIPPET) best first) re-ranked greedily by score less its
+interference with the hits ranked above it; past +interference-candidates+ as it was."
+  (let* ((head (subseq scored 0 (min (length scored) +interference-candidates+)))
+         (tail (nthcdr (length head) scored))
+         (top (if head (second (first head)) 0d0))
+         (skip (let ((h (make-hash-table :test 'equal)))
+                 (dolist (term terms h) (dolist (w (words-of (fold (term-text term)) 100)) (setf (gethash w h) t)))))
+         (picked '())
+         (pairs (make-hash-table :test 'equal)))
+    (when (or (not *interference*) (<= top 0d0) (< (length head) 2)) (return-from with-interference scored))
+    (loop while head
+          do (let ((best nil) (best-value nil))
+               (dolist (s head)
+                 (let* ((p (/ (second s) top))
+                        (value (- p (loop for q in picked
+                                          ;; Each pair once: a greedy pass asks again on every pick.
+                                          for cos = (let ((key (cons (first s) (first q))))
+                                                      (multiple-value-bind (c found) (gethash key pairs)
+                                                        (if found c (setf (gethash key pairs)
+                                                                          (likeness (word-bag (aref hays (first s))) (word-bag (aref hays (first q))) skip)))))
+                                          when (>= cos +interference-from+)
+                                            sum (* 2 (sqrt (* p (/ (second q) top)))
+                                                   (/ (- cos +interference-from+) (- 1 +interference-from+)))))))
+                   ;; Ties keep BM25's order.
+                   (when (or (null best-value) (> value best-value)) (setf best s best-value value))))
+               (push best picked)
+               (setf head (remove best head :test #'eq :count 1))))
+    (append (nreverse picked) tail)))
 
 (defun search-terms (raw-query texts hays floor cap)
   "The term search: BM25 over HAYS for RAW-QUERY's meaningful words."
@@ -379,5 +455,5 @@ past the time budget or the stack, MESSAGE saying which."
                          (remove-if (lambda (s) (< (second s) (* top floor))) scored)
                          scored))
 )
-          (multiple-value-bind (hits total truncated) (cap-hits kept cap)
+          (multiple-value-bind (hits total truncated) (cap-hits (with-interference kept hays terms) cap)
             (values (mapcar (lambda (s) (cons (first s) (third s))) hits) total truncated)))))))

@@ -181,20 +181,49 @@ describe("the running turn", () => {
     return sessionOf(messages);
   };
 
-  it("lets its older steps leave as the context fills, keeping its request and its newest step", () => {
+  it("lets its big results leave on their own as the context fills, each call kept, its request and newest step whole", () => {
     setEvict(true);
     const s = long();
     const { messages } = sent(s, 100_000);
+    // Each result is ~7,500 tokens, past a sixteenth of the 83,616 trigger: results go, one #N each, oldest first.
+    const ops = s.appended.map((e) => e.data);
+    expect(ops.length).toBeGreaterThan(0);
+    expect(ops.every((op: any) => op.op === "evict" && op.by === "auto" && op.from === op.to && op.from % 2 === 0)).toBe(true);
+    expect(ops[0].from).toBe(2);
+    // Every call stays, each with its result: the ones out hold a line in place of their content.
+    const all = messages as any[];
+    expect(all.filter((m) => m.role === "assistant")).toHaveLength(12);
+    expect(all.filter((m) => m.role === "toolResult")).toHaveLength(12);
+    const out = all.find((m) => m.toolCallId === "r0");
+    expect(out.content).toEqual([{ type: "text", text: "[#2 out of context: this read result, on its own; its call stays. It reads back word for word with keel_recall expand:[2].]" }]);
+    expect(all[0].content).toBe("audit every module in the repository");
+    // The newest step stays whole.
+    expect(all.at(-1).toolCallId).toBe("r11");
+    expect(all.at(-1).content[0].text).toStartWith("11:x");
+    // Once the turn has finished, the context's file shows the line too, inside the turn's block.
+    s.entries.push({ type: "message", id: "next", parentId: s.entries.at(-1).id, message: { role: "user", content: "now the tests", timestamp: 1_800_000_000_000 } });
+    sent(s, 100_000, true);
+    expect(readFileSync(`${s.file}.keel-context.md`, "utf8")).toContain("[toolResult #2] [#2 out of context: this read result, on its own;");
+  });
+
+  it("lets its older steps leave whole when no result is big on its own", () => {
+    setEvict(true);
+    // Sixty reads of 5,000 chars: none near a sixteenth of the trigger, together past 85% of it.
+    const messages: any[] = [{ role: "user", content: "audit every module in the repository" }];
+    for (let i = 0; i < 60; i++) {
+      messages.push({ role: "assistant", content: [{ type: "toolCall", id: `r${i}`, name: "read", arguments: { path: `m${i}.ts` } }] });
+      messages.push({ role: "toolResult", toolCallId: `r${i}`, toolName: "read", content: [{ type: "text", text: `${i}:`.padEnd(5_000, "x") }] });
+    }
+    messages.at(-2).usage = { input: 80_000, output: 10, cacheRead: 0, cacheWrite: 0 };
+    const s = sessionOf(messages);
+    const { messages: request } = sent(s, 100_000);
     expect(s.appended.map((e) => e.data)).toEqual([expect.objectContaining({ op: "evict", from: 1, by: "auto" })]);
-    // The line ends the request it follows, so no two user messages stand in a row.
-    const request = (messages as any[])[0].content.map((p: any) => p.text);
-    expect(request[0]).toBe("audit every module in the repository");
-    expect(request[1]).toStartWith(`[#1–#${s.appended[0].data.to} out of context: older steps of the turn at #0, by keel as the context filled.`);
-    expect((messages as any[])[1].role).toBe("assistant");
+    const first = (request as any[])[0].content.map((p: any) => p.text);
+    expect(first[1]).toStartWith(`[#1–#${s.appended[0].data.to} out of context: older steps of the turn at #0, by keel as the context filled.`);
     // The newest step stays, and every result that stays has its call.
-    expect((messages as any[]).at(-1).toolCallId).toBe("r11");
-    const calls = new Set((messages as any[]).flatMap((m) => (m.role === "assistant" ? m.content.map((p: any) => p.id) : [])));
-    expect((messages as any[]).filter((m) => m.role === "toolResult").every((m) => calls.has(m.toolCallId))).toBe(true);
+    expect((request as any[]).at(-1).toolCallId).toBe("r59");
+    const calls = new Set((request as any[]).flatMap((m) => (m.role === "assistant" ? m.content.map((p: any) => p.id) : [])));
+    expect((request as any[]).filter((m) => m.role === "toolResult").every((m) => calls.has(m.toolCallId))).toBe(true);
   });
 
   it("gives the compaction no room once only its request and newest step are left", () => {
@@ -439,6 +468,58 @@ describe("chars per token, measured on the request", () => {
     expect(evict(s.host, s.ctx(100_000), { surface: "tool", params: null })).toContain("#16–#17 ~1000 tokens");
     // What this model measured stays with this test.
     rmSync(join(dirname(process.env.KEEL_CONFIG_PATH!), "keel-models.json"), { force: true });
+  });
+
+  it("is read from the low side of what was measured lately, so the tokens it estimates are an upper bound", () => {
+    setEvict(true);
+    const file = join(dirname(process.env.KEEL_CONFIG_PATH!), "keel-models.json");
+    // Measured at 4 chars a token now, at 2 a while ago (text in another script, say).
+    writeFileSync(file, JSON.stringify({ "p/m": { charsPerToken: 4, charsPerTokenSeen: [2, 4] } }));
+    const s = session(4, 3_000);
+    // A turn of ~3,000 chars counts as ~1,500 tokens, not the 750 the latest value alone would say.
+    expect(evict(s.host, s.ctx(100_000), { surface: "tool", params: null })).toMatch(/#0–#3 ~15\d\d tokens/);
+    rmSync(file, { force: true });
+  });
+
+  it("keeps each value it moved to, the last eight", () => {
+    setEvict(true);
+    const file = join(dirname(process.env.KEEL_CONFIG_PATH!), "keel-models.json");
+    writeFileSync(file, JSON.stringify({ "p/m": { charsPerToken: 4, charsPerTokenSeen: [5, 5.5, 6, 4.5, 5, 6, 5.5, 4] } }));
+    const messages: any[] = [];
+    for (let i = 0; i < 10; i++) {
+      messages.push({ role: "user", content: `request ${i} `.padEnd(1000, "x") });
+      messages.push({ role: "assistant", content: [{ type: "text", text: "".padEnd(2000, "y") }], usage: { input: 5000 + 1000 * i, cacheRead: 0, cacheWrite: 0, output: 1 } });
+    }
+    sent(sessionOf(messages), 100_000, true);
+    expect(JSON.parse(readFileSync(file, "utf8"))["p/m"]).toMatchObject({ charsPerToken: 3, charsPerTokenSeen: [5.5, 6, 4.5, 5, 6, 5.5, 4, 3] });
+    rmSync(file, { force: true });
+  });
+});
+
+describe("the dashboard at the end of every request", () => {
+  /** The text the request ends with. */
+  const tail = (messages: unknown[] | undefined) => {
+    const last: any = (messages ?? []).at(-1);
+    return typeof last?.content === "string" ? last.content : last?.content?.at(-1)?.text ?? "";
+  };
+
+  it("says how full the context is, what fills it and what is out, with keel_context there", () => {
+    setEvict(true);
+    const s = session(6, 4_000, 20_000);
+    const first = tail(sent(s, 100_000, true).messages);
+    expect(first).toMatch(/^\[context: ~\d+ tokens, \d+% of where the host compacts \(~83616\), ~\d+ left · 6 turns in, largest #\d+–#\d+ ~\d+, #\d+–#\d+ ~\d+, #\d+–#\d+ ~\d+ · nothing out · keel_context drops or restores turns by #N\]$/);
+    // A turn out: the dashboard says so, and counts it out of what is in.
+    record(s, { op: "evict", from: 0, to: 3 });
+    expect(tail(sent(s, 100_000, true).messages)).toContain("· 5 turns in, largest ");
+    expect(tail(sent(s, 100_000, true).messages)).toContain("· 1 turn out (#0–#3) ·");
+  });
+
+  it("is not there without keel_context, and is never kept: the session file has none", () => {
+    setEvict(true);
+    const s = session(6, 4_000, 20_000);
+    expect(tail(sent(s, 100_000, false).messages ?? s.request())).not.toContain("[context:");
+    sent(s, 100_000, true);
+    expect(JSON.stringify(s.entries)).not.toContain("[context:");
   });
 });
 

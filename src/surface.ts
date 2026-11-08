@@ -218,7 +218,8 @@ export const SURFACE = {
     "keel.pin",
     "omp-vcc.pin",
     "keel.evict",
-    "omp-vcc.evict"
+    "omp-vcc.evict",
+    "keel.recall"
   ],
   "evictEntryTypes": [
     "keel.evict",

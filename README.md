@@ -140,7 +140,7 @@ The sizes are those of a ~128K–200K window; they follow the model's ([The wind
 
 ## Turns out whole
 
-Instead of a summary over the oldest part of the window, old turns leave the request whole. Nothing is summarized or rewritten; the session keeps every word. A turn is a request the user made and everything after it, so a call never leaves without its result; the running turn's older steps can leave too, its request and newest step never.
+Instead of a summary over the oldest part of the window, old turns leave the request whole. Nothing is summarized or rewritten; the session keeps every word. A turn is a request the user made and everything after it, so a call never leaves without its result; the running turn's older steps can leave too, its request and newest step never. In a long running turn, a big tool result (a sixteenth of the trigger or more) leaves on its own before any step does: its call stays, its content becomes one line (`[#12 out of context: this read result, on its own; its call stays. It reads back word for word with keel_recall expand:[12].]`), so the turn's reasoning stays in view.
 
 **You** take turns out with `/keel-evict` at any time, with eviction on or off:
 
@@ -156,6 +156,8 @@ Instead of a summary over the oldest part of the window, old turns leave the req
 
 - **The agent** decides too, with `keel_context`: no params lists; `drop`, `oldest`, `restore`, `undo`, a `note` kept in their place. A drop that would cost more than it saves is held back with the run that would pay, and `force: true` takes it out anyway.
 - **keel** takes the oldest finished turns out by itself past 85% of the host's trigger, down to half of it, and turns the host's threshold and idle passes down while a finished turn is left to take out. An overflow recovery, `/compact` and `/keel` still summarize.
+- **What the agent recalls steers it.** Each `keel_recall` call notes the entries it showed. A turn the agent recalled in the last three turns leaves last of the finished turns, whatever its age (but before the running turn is cut into), and `keel_context` marks it. A turn that is out and that the agent recalled since it left comes back by itself when that costs less than the recalls it would still take. That depends on the model, so keel learns it: how often this model recalls a turn again having recalled it once, measured in each session and kept per model in `keel-models.json`, weighed at the session's own prices. A model that keeps going back gets its turns back; one that reads a turn once and moves on never pays for it. At a compaction, `[Working Set]` brings back what was recalled lately before anything its ranking guesses.
+- **Linked turns stay together.** A turn that changes a file an earlier turn changed, or passes a command or test that failed in it, carries that turn on. Where keel picks the cut (as the context fills, and `/keel-evict` with no text), it never falls inside such a chain, so a fix never stays without its failure. Bringing a turn back brings back the turns linked to it. A range the agent or the user names is taken as given.
 - **The context as a file**, the design of [Context Language Models](https://arxiv.org/abs/2609.37725): each request is mirrored beside the session (`<session>.jsonl.keel-context.md`), one block per turn under a `[[CTX_TURN #12–#19]]` line, its path the first line of the context. The agent edits it with its own tools: delete a block and the turn leaves, rewrite it and what it wrote stands in its place, write between blocks and it stays as a note. The next request sends what the file says; the running turn is not in the file, so it holds still while the agent edits it.
 
 What the request then carries, each part written to read the same on every request so the provider's prompt cache keeps it:
@@ -167,12 +169,13 @@ What the request then carries, each part written to read the same on every reque
 [#0–#20 out of context: 7 turns, by keel as the context filled. Requests: "fix the auth bug"; … It changed 5 files in auth, billing; 2 commits, last 3f2a1c9 fix refresh; 1 failed call. Each entry reads back word for word with keel_recall expand:[0]; keel_recall query searches them.]
 [#21] add the refresh test
 …
-[context: ~41808 tokens, 50% of where the host compacts (~83616); ~41808 left]
+[context: ~41808 tokens, 50% of where the host compacts (~83616), ~41808 left · 12 turns in, largest #88–#97 ~6120, #60–#71 ~4410, #72–#87 ~3980 · 7 turns out (#0–#20) · keel_context drops or restores turns by #N]
 ```
 
 - **The line for what is out** says what it was and did, from the originals keel kept, and how to read it back.
 - **Turn numbers** (`[#21]`) let the agent name turns without listing them.
 - **The pinned notes** stand first, brought up to date only when turns leave or come back: an edit at the start of a request makes the provider read all of it again (7.7 appended turns, by the paper's count).
+- **The dashboard** ends every request: how full the context is, the largest turns in it by `#N`, and what is out. It is the design of VISTA ([LightSpeed, Tencent, arXiv:2606.30005](https://arxiv.org/abs/2606.30005)), whose agents misjudged their own context by 43–84% without one and not at all with it, and lost 13 points of accuracy without it even with archiving and recovery kept. It is made again for each request and never kept, so it costs the provider's cache only its own few dozen tokens.
 - **The size readout** ends each of keel's tool results: models misjudge their own context's length (the paper's appendix G), and read a remaining budget better than a share ([Liu et al.](https://arxiv.org/abs/2511.17006)). Past half the trigger the model is also told once per tenth, while something can leave.
 
 Every edit is an `keel.evict` entry, replayed along the branch, so a branch keeps its own and `/tree` back past one undoes it. Turns leave in large runs from the oldest end, since every edit makes the provider read all that follows it again. Whether a drop pays is worked out from the session itself: the cache's price from each request's usage and cost, over as many requests ahead as the session has made.
@@ -193,7 +196,7 @@ keel_recall({ query: "auth token", scope: "project" })  // search them too
 keel_recall({ session: "01a194d8", expand: [12] })      // inside another session (its own #N)
 ```
 
-Results come 5 a page (`page`). One result is capped at 50 KB, or a tenth of the model's window when that is smaller. The tool repairs the loose forms agents send (`"#12"`, `"10-20"`), and names a param it cannot use instead of dropping it. `/keel-recall auth token scope:all` runs the same search for you.
+An entry something later replaced says so: a read or edit of a file changed afterwards `(superseded: src/auth.ts changed at #52)`, a failed run that later passed `(fixed: passed at #61)`. Results come 5 a page (`page`). Near-copies push each other down, so a page shows five things rather than one test's output five times: a hit's score is lowered by its likeness to the hits above it, as in the quantum probability ranking principle ([Zuccon et al.](https://arxiv.org/abs/2007.04357), surveyed), counted only past half alike, so related but different entries keep their order. One result is capped at 50 KB, or a tenth of the model's window when that is smaller. The tool repairs the loose forms agents send (`"#12"`, `"10-20"`), and names a param it cannot use instead of dropping it. `/keel-recall auth token scope:all` runs the same search for you.
 
 ## Pinned notes
 
@@ -202,13 +205,14 @@ What must survive everything: a decision and its reason, a constraint, the comma
 - **Named notes:** `keel_pin {note, name: "auth-plan"}` (or `/keel-pin name:auth-plan …`). Pinning the name again replaces its note, so a plan stays current under one name.
 - **Yours stay yours:** the agent cannot redefine or unpin a note you pinned; it is told to ask you.
 - **Into the next session:** your named notes carry into the project's next session (a restart, `/new`). The agent's do not: a note it pinned may hold what a page told it, and an instruction carried into every later session is how an injection persists (the paper's section 6). It finds them with `keel_recall` sessions and pins again what still holds.
+- **Where the last session stopped:** a new session in the project (a restart, `/new`) gets one message with your first prompt: the last session's request, the calls since and what they changed, the failure it left open, and the failures it fixed with what fixed them (`Fixed: bash "bun test tests/auth" failed (#2); passed (#6) after src/auth.ts changed.`), read from its transcript by rule, with no model, and a `keel_recall session:` pointer to read any of it. What a tool printed is not carried, only the calls and their `#N`. Nothing is sent into a resumed or forked session.
 
 ## The window and the tokens
 
 Every size follows the model's real window, learned from what the provider proves rather than trusted from a catalog. Catalogs disagree: one DeepSeek model is listed at 131K to 1.05M across providers, and one Claude model changed from 1M to 200K between two Pi releases.
 
 - **The window** is the host's (on omp the provider's when its discovery is configured, else its catalog or `models.yml`; on Pi its catalog or `models.json`), lowered to a limit an overflow error stated ("maximum context length is 32768 tokens", in the shapes of OpenAI, Anthropic, Google, DeepSeek, OpenRouter, vLLM, LiteLLM, Together, Mistral, Kimi, Qwen and others). If the provider later accepts a prompt larger than that limit, the limit was wrong and is dropped.
-- **Tokens** are counted at the model's own chars per token, measured on each request from two of the provider's counts (the messages added between them over the tokens they added). Code runs about 3.8 chars a token, English prose 5.4, Chinese and Japanese 1–2.
+- **Tokens** are counted at the model's own chars per token, measured on each request from two of the provider's counts (the messages added between them over the tokens they added). Code runs about 3.8 chars a token, English prose 5.4, Chinese and Japanese 1–2. keel sizes from the lowest of the last eight values it measured for the model, so its estimate errs high: too high and a turn leaves a little early, too low and the request overflows.
 - **What it learns is kept** per model in `keel-models.json` beside the config, so the next session starts with it. keel makes no network call of its own.
 - **The trigger** is where the host compacts, from the host's own settings for the model, applied as the host applies them (omp's threshold, reserve and per-model thresholds; Pi's `reserveTokens`).
 - **The budgets** are shares of the trigger: the kept tail (25k), the summary and its sections, `[Working Set]` and recall's cap are their usual size on a ~128K window, smaller on a small one, larger on ~1M. Each compaction records what it sized from (`details.limits`).

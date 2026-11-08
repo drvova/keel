@@ -53,6 +53,10 @@
      (:file "history")
      (:file "summary")
      ;; The compaction: its cut, the working set, and the plan the hook acts on.
+     ;; feedback and links: what the agent recalled, read back as a signal, and
+     ;; turns that carry on one another; eviction and [Working Set] read them.
+     (:file "feedback")
+     (:file "links")
      (:file "working-set")
      (:file "task-state")
      ;; context-edits: Pi's context edits, applied before the cut reads the branch.
@@ -63,6 +67,8 @@
      ;; settings and pins: the config file, and pinning and unpinning notes.
      (:file "settings")
      (:file "pins")
+     ;; resume: where the last session stopped, told to the next one.
+     (:file "resume")
      ;; raw-capture: the originals of what omp rewrites, kept as they land.
      (:file "raw-capture")
      ;; args: what /keel hands the hook, and the hook reads back.

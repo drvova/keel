@@ -210,12 +210,16 @@ registered), and what to tell the user."
       (when edit-ops
         (setf branch (concatenate 'vector branch
                                   (mapcar (lambda (op) (json-object "type" "custom" "customType" +evict-entry-type+ "data" op)) edit-ops)))))
-    (multiple-value-bind (drop stubs ops before after n-of dropped outs turns fit)
+    (multiple-value-bind (drop stubs ops before after n-of dropped outs turns fit reread reread-trials)
         (let ((*chars-per-token* (model-chars-per-token s)))
           (evict-request branch (snapshot-index s) (coerce messages 'vector) :file file
-                         :trigger trigger :auto auto :count count :mark tool :mirror mirror))
-      ;; What this request measured of the model's tokens, kept for the next session and for keel_context.
-      (when fit (record-evidence (snapshot-config-dir s) (model-key (snapshot-model s)) :chars-per-token fit))
+                         :trigger trigger :auto auto :count count :mark tool :mirror mirror
+                         :reread-prior (learned-reread (snapshot-config-dir s) (model-key (snapshot-model s)))))
+      ;; What this request measured of the model's tokens, kept for the next session and for keel_context;
+      ;; and, once the session has shown enough of it, how often the model recalls a turn again (feedback.lisp).
+      (when (or fit (and reread (>= reread-trials +reread-prior-weight+)))
+        (record-evidence (snapshot-config-dir s) (model-key (snapshot-model s)) :chars-per-token fit
+                         :reread (and (>= reread-trials +reread-prior-weight+) reread)))
       (stamp-call ops branch)
       (when mirror
         (write-mirror file (render-mirror (coerce messages 'vector) n-of dropped outs turns (read-inserts branch))))
@@ -297,6 +301,9 @@ pass is not keel's to answer; with it, what the hook returns."
               (return-from compact-for-host (json-object "kind" "convert" "messages" (coerce wanted 'vector))))
             (let* ((reason (json-get event "reason"))
                    (will-retry (json-get event "willRetry"))
+                   ;; What the agent recalled lately, which [Working Set] brings back first (feedback.lisp).
+                   (*recalled* (let ((b (snapshot-branch s)))
+                                 (recalled-newest-first (recent-recalls (read-recalls b) (branch-turns b (snapshot-index s))))))
                    (window (snapshot-window s))
                    (input (json-object "settings" settings
                                        "keepUserTurns" (or keep :null)

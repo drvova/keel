@@ -160,7 +160,7 @@ tool's definition is part of the prompt the provider caches."
    "command" +command+
    "tools" (vector (recall-tool) (pin-tool) (context-tool))
    "commands" (map 'vector (lambda (c) (json-object "suffix" (first c) "description" (second c))) +commands+)
-   "dataEntryTypes" (vector +pin-entry-type+ +legacy-pin-entry-type+ +evict-entry-type+ +legacy-evict-entry-type+)
+   "dataEntryTypes" (vector +pin-entry-type+ +legacy-pin-entry-type+ +evict-entry-type+ +legacy-evict-entry-type+ +recall-entry-type+)
    ;; With eviction off, a request is left as it is unless one of these is on its branch.
    "evictEntryTypes" (vector +evict-entry-type+ +legacy-evict-entry-type+)))
 
@@ -190,7 +190,10 @@ tool's definition is part of the prompt the provider caches."
   "One call of a keel tool: its text for the agent, and the entries it records."
   (let* ((name (json-get request "name"))
          (call (json-object "surface" "tool" "params" (json-get request "params" :null))))
-    (cond ((equal name +recall-tool+) (call-answer (json-get (recall-call request call) "text") nil))
+    (cond ((equal name +recall-tool+)
+           ;; What the agent recalled is kept as a signal of what it needs (feedback.lisp).
+           (let* ((r (recall-call request call)) (shown (json-get r "shown")))
+             (call-answer (json-get r "text") (and (plusp (length shown)) (list (append-effect +recall-entry-type+ (recall-op shown (json-get r "at"))))))))
           ((equal name +pin-tool+)
            (let ((pin (pin-call request call)))
              (call-answer (json-get pin "text") (and (truthy-p (json-get pin "op")) (list (append-effect +pin-entry-type+ (json-get pin "op")))))))
@@ -220,13 +223,21 @@ tool's definition is part of the prompt the provider caches."
           (t (json-object "ok" :false "error" (format nil "command: no command ~a" suffix))))))
 
 (defun handle-session-start (request)
-  "A session starting: the named notes of the project's last session carried into it (pins.lisp)."
+  "A session starting: the named notes of the project's last session carried into
+it (pins.lisp), and where that session stopped told to the agent with the first
+prompt (resume.lisp)."
   (let ((files (json-get request "projectFiles" #())))
     (if (zerop (length files))
         (call-answer nil nil)
         (let* ((pin (pin-call request (json-object "surface" "carry" "files" files))) (ops (json-get pin "op")))
-          (call-answer nil (and (plusp (length (or ops #())))
-                           (append (appends +pin-entry-type+ ops) (list (tell-effect (format nil "keel: ~a" (json-get pin "text")))))))))))
+          ;; Read before the pins land: a session with nothing in it yet.
+          (let ((briefing (resume-briefing (coerce (snapshot-tree (read-snapshot (json-get request "host"))) 'list)
+                                           (coerce files 'list))))
+            (call-answer nil (append (and (plusp (length (or ops #())))
+                                          (append (appends +pin-entry-type+ ops) (list (tell-effect (format nil "keel: ~a" (json-get pin "text"))))))
+                                     (and briefing
+                                          (list (send-effect "where the last session stopped" +resume-notice-type+ briefing
+                                                             (json-object "deliverAs" "nextTurn")))))))))))
 
 (defun handle-message-end (request)
   "A message the host finished: from an assistant's, the limit an error states or the prompt the provider accepted (limits.lisp)."
@@ -256,14 +267,22 @@ tool's definition is part of the prompt the provider caches."
 
 (defun splice-request (messages drop stubs)
   "MESSAGES without the indices DROP, each stub line put where the core placed it:
-before or after a message's content, or as a message of its own."
+before or after a message's content, in place of it (a tool result out on its
+own), or as a message of its own."
   (let ((drop (coerce drop 'list)) (out '()))
     (loop for m across messages for i from 0
           do (let ((here (remove-if-not (lambda (st) (eql (json-get st "at") i)) stubs)))
                (dolist (st here) (when (equal (json-get st "how") "insert") (push (json-get st "message") out)))
                (unless (member i drop)
                  (let ((before (loop for st in here when (equal (json-get st "how") "prepend") collect (json-get st "text")))
-                       (after (loop for st in here when (equal (json-get st "how") "append") collect (json-get st "text"))))
+                       (after (loop for st in here when (equal (json-get st "how") "append") collect (json-get st "text")))
+                       ;; A result out on its own: its line in place of its content, the message kept for its call.
+                       (m (let ((r (find "replace" here :key (lambda (st) (json-get st "how")) :test #'equal)))
+                            (if r
+                                (let ((copy (copy-object m)))
+                                  (setf (gethash "content" copy) (vector (json-object "type" "text" "text" (json-get r "text"))))
+                                  copy)
+                                m))))
                    (push (if (or before after) (with-text m before after) m) out)))))
     (coerce (nreverse out) 'vector)))
 

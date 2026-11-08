@@ -179,15 +179,21 @@
 (defun scope-param (scope) (if (equal scope "lineage") nil (format nil "scope:'~a'" scope)))
 (defun outside-page (page total what) (format nil "Page ~d is outside the available range 1-~d (~a)." page total what))
 
+(defvar *entry-notes* nil "#N to the note recall puts on that entry's line (recall.lisp superseded-notes), bound while a recall runs.")
+
 (defun format-recall-output (entries &optional query header)
-  "ENTRIES (plists :index :role :summary :files :session :snippet) under a header."
+  "ENTRIES (plists :index :role :summary :files :session :snippet) under a header.
+Those of this session (no :session) are noted as shown (feedback.lisp)."
+  (note-shown (loop for e in entries unless (getf e :session) collect (getf e :index)))
   (if (null entries)
       (if query (format nil "No matches for \"~a\" in session history." query) "No entries in session history.")
       (format nil "~a~%~%~a"
               (if header (format nil "~a~@[ for \"~a\"~]:" header query) (format nil "Session history (~d entries):" (length entries)))
               (join-strings (mapcar (lambda (e)
-                                      (format nil "~@[[session ~a] ~]#~a [~a]~a ~a"
+                                      (format nil "~@[[session ~a] ~]#~a [~a]~@[ (~a)~]~a ~a"
                                               (getf e :session) (getf e :index) (getf e :role)
+                                              ;; What superseded it (recall.lisp superseded-notes), in this session only.
+                                              (and (hash-table-p *entry-notes*) (not (getf e :session)) (gethash (getf e :index) *entry-notes*))
                                               (if (getf e :files) (format nil " files:[~a]" (join-strings (getf e :files) ", ")) "")
                                               (if (and query (getf e :snippet)) (getf e :snippet) (getf e :summary))))
                                     entries)
