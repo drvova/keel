@@ -12,7 +12,7 @@
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import type { Config } from "./settings";
 import { core, whenCore } from "./core";
-import { hostEntries, hostSnapshot, type HostCtx, type SessionManagerLike } from "./host";
+import { hostEntries, hostSnapshot, sessionFileOf, type HostCtx, type SessionManagerLike } from "./host";
 
 /** One binding's place in its session: which file, how many entries it has looked at, which are kept. */
 interface RawCaptureState {
@@ -25,7 +25,7 @@ export const createRawCaptureState = (): RawCaptureState => ({ seen: 0, kept: ne
 
 /** Copy what arrived since the last call. Returns the number of messages kept. */
 export const captureNewEntries = (state: RawCaptureState, sessionManager: SessionManagerLike | undefined): number => {
-  const file = sessionManager?.getSessionFile?.();
+  const file = sessionFileOf(sessionManager);
   if (!file) return 0;
   // Another session (a switch, /new, a resume, a fork): start from its first
   // entry, after what its store and its parents' stores hold (a fork carries

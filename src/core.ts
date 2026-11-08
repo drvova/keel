@@ -59,7 +59,7 @@ const sleep = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(
 const code = (e: unknown) => (e as NodeJS.ErrnoException)?.code;
 
 /** KEEL_<NAME>, or OMP_VCC_<NAME> as keel read it under its earlier name. */
-const env = (name: string): string | undefined => process.env[`KEEL_${name}`] ?? process.env[`OMP_VCC_${name}`];
+export const env = (name: string): string | undefined => process.env[`KEEL_${name}`] ?? process.env[`OMP_VCC_${name}`];
 
 /** Whether this host process runs one core for every request: not on Windows (no named pipes there), not with KEEL_CORE_LIVE=off. */
 const liveWanted = () => process.platform !== "win32" && env("CORE_LIVE") !== "off";

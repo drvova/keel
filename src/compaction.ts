@@ -147,8 +147,6 @@ export const registerCompaction = (pi: ExtensionAPI, host: Binding, state: Compa
             if (typeof r.text === "string") tell(ctx, r.text, r.severity as "warning" | "error");
           },
         });
-      } catch {
-        // A compact() that throws has reported through onError.
       } finally {
         state.pendingManualInstructions = null;
       }

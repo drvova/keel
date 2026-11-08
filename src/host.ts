@@ -119,6 +119,13 @@ const listOf = (read: (() => unknown) | undefined): any[] | undefined => {
   } catch { return undefined; }
 };
 export const hostBranch = (sm: SessionManagerLike | undefined) => listOf(sm?.getBranch?.bind(sm));
+/** The session's file, or undefined: a closed session throws on every read, this one too. */
+export const sessionFileOf = (sm: SessionManagerLike | undefined): string | undefined => {
+  try {
+    const file = sm?.getSessionFile?.();
+    return typeof file === "string" ? file : undefined;
+  } catch { return undefined; }
+};
 export const hostEntries = (sm: SessionManagerLike | undefined) => listOf(sm?.getEntries?.bind(sm));
 
 const DATA_ENTRY_TYPES = new Set<string>(SURFACE.dataEntryTypes);
@@ -167,7 +174,7 @@ export const hostSnapshot = (host: SnapshotHost, ctx: HostCtx | undefined) => {
     displayName: host.displayName,
     modelsFile: host.modelsFile,
     configPath: host.config.path(),
-    sessionFile: sm?.getSessionFile?.() ?? null,
+    sessionFile: sessionFileOf(sm) ?? null,
     cwd: ctx?.cwd ?? process.cwd(),
     model: m ? { provider: m.provider, id: m.id, contextWindow: m.contextWindow } : null,
     contextTokens: tokens,
@@ -187,7 +194,7 @@ const sameFile = (a: string, b: string): boolean => {
  */
 export const projectFiles = (ctx: HostCtx | undefined): string[] => {
   const sm = ctx?.sessionManager;
-  const file = sm?.getSessionFile?.();
+  const file = sessionFileOf(sm);
   if (!file) return [];
   let dir = dirname(file);
   try { const d = sm?.getSessionDir?.(); if (typeof d === "string" && d) dir = d; } catch {}
@@ -259,6 +266,7 @@ export const act = (pi: Pick<ExtensionAPI, "appendEntry" | "sendMessage">, ctx: 
     if (e.do === "append") pi.appendEntry(e.customType, e.data);
     else if (e.do === "tell") tell(ctx, e.text, e.severity);
     else if (e.do === "send") sent.push(deliver(ctx, e.what, () => pi.sendMessage(e.message as any, e.options as any)));
+    else throw new Error(`keel's core answered an effect this binding does not know: ${JSON.stringify(e)}`);
   }
   return Promise.all(sent).then(() => {});
 };
@@ -273,12 +281,20 @@ export const compactAndWait = (
   options: { customInstructions?: string; suppressContinuation?: boolean; onComplete?: () => void; onError?: (err: Error) => void } = {},
 ): Promise<void> =>
   new Promise<void>((resolve) => {
-    const returned = ctx.compact({
-      ...options,
-      onComplete: () => { options.onComplete?.(); resolve(); },
-      onError: (err: Error) => { options.onError?.(err); resolve(); },
-    });
-    if (returned && typeof (returned as Promise<unknown>).then === "function") (returned as Promise<unknown>).then(() => resolve(), () => resolve());
+    // compact() throwing, or settling rejected, is told through onError as the host's own errors are, once.
+    // The callbacks always run: Pi's compact() settles before they do.
+    let told = false;
+    const fail = (err: unknown) => {
+      if (!told) { told = true; options.onError?.(err instanceof Error ? err : new Error(String(err))); }
+      resolve();
+    };
+    let returned: unknown;
+    try {
+      returned = ctx.compact({ ...options, onComplete: () => { options.onComplete?.(); resolve(); }, onError: (err: Error) => fail(err) });
+    } catch (err) {
+      return fail(err);
+    }
+    if (returned && typeof (returned as Promise<unknown>).then === "function") (returned as Promise<unknown>).then(() => resolve(), (err) => fail(err));
   });
 
 /**

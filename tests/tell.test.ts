@@ -1,7 +1,7 @@
 // What keel says to the user (src/host.ts): a UI that is gone is no error,
 // and a message the host refuses to send is told, not lost.
 import { describe, expect, it } from "bun:test";
-import { deliver, tell } from "../src/host";
+import { compactAndWait, deliver, tell } from "../src/host";
 
 const ui = () => {
   const told: Array<[string, string]> = [];
@@ -30,5 +30,27 @@ describe("deliver", () => {
       ["keel: could not send the follow-up prompt: busy", "warning"],
       ["keel: could not send the pin to the agent: closed", "warning"],
     ]);
+  });
+});
+
+describe("compactAndWait", () => {
+  const run = async (compact: (o: any) => unknown) => {
+    const told: string[] = [];
+    await compactAndWait({ compact }, { onError: (err) => told.push(err.message), onComplete: () => told.push("done") });
+    return told;
+  };
+
+  it("tells a compact() that throws, or settles rejected, as the host's own errors, once", async () => {
+    expect(await run(() => { throw new Error("no session"); })).toEqual(["no session"]);
+    expect(await run(() => Promise.reject(new Error("cancelled")))).toEqual(["cancelled"]);
+    expect(await run((o) => { o.onError(new Error("too small")); return Promise.reject(new Error("too small")); })).toEqual(["too small"]);
+  });
+
+  it("runs the callbacks however compact() settles: Pi's settles before them", async () => {
+    let complete: () => void = () => {};
+    const told: string[] = [];
+    await compactAndWait({ compact: (o: any) => { complete = o.onComplete; return Promise.resolve(); } }, { onComplete: () => told.push("done") });
+    complete();
+    expect(told).toEqual(["done"]);
   });
 });
