@@ -196,7 +196,7 @@ keel_recall({ query: "auth token", scope: "project" })  // search them too
 keel_recall({ session: "01a194d8", expand: [12] })      // inside another session (its own #N)
 ```
 
-Results come 5 a page (`page`). Near-copies push each other down, so a page shows five things rather than one test's output five times: a hit's score is lowered by its likeness to the hits above it, as in the quantum probability ranking principle ([Zuccon et al.](https://arxiv.org/abs/2007.04357), surveyed), counted only past half alike, so related but different entries keep their order. One result is capped at 50 KB, or a tenth of the model's window when that is smaller. The tool repairs the loose forms agents send (`"#12"`, `"10-20"`), and names a param it cannot use instead of dropping it. `/keel-recall auth token scope:all` runs the same search for you.
+An entry something later replaced says so: a read or edit of a file changed afterwards `(superseded: src/auth.ts changed at #52)`, a failed run that later passed `(fixed: passed at #61)`. Results come 5 a page (`page`). Near-copies push each other down, so a page shows five things rather than one test's output five times: a hit's score is lowered by its likeness to the hits above it, as in the quantum probability ranking principle ([Zuccon et al.](https://arxiv.org/abs/2007.04357), surveyed), counted only past half alike, so related but different entries keep their order. One result is capped at 50 KB, or a tenth of the model's window when that is smaller. The tool repairs the loose forms agents send (`"#12"`, `"10-20"`), and names a param it cannot use instead of dropping it. `/keel-recall auth token scope:all` runs the same search for you.
 
 ## Pinned notes
 
