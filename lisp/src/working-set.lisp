@@ -169,7 +169,7 @@
                     (push (list (result-index r) role (search-text message) files) candidates))))))
           (setf candidates (nreverse candidates))
           (when candidates
-            (multiple-value-bind (hits) (search-docs (js-slice request 0 2000) (map 'vector #'rest candidates) :cap +max-relevant+)
+            (multiple-value-bind (hits) (search-docs (js-slice request 0 2000) (map 'vector #'rest candidates) :cap +max-relevant+ :interference nil)
               (unless (eq hits :aborted)
                 (dolist (hit hits)
                   (let* ((index (first (nth (car hit) candidates)))

@@ -195,7 +195,7 @@ keel_recall({ query: "auth token", scope: "project" })  // search them too
 keel_recall({ session: "01a194d8", expand: [12] })      // inside another session (its own #N)
 ```
 
-Results come 5 a page (`page`). One result is capped at 50 KB, or a tenth of the model's window when that is smaller. The tool repairs the loose forms agents send (`"#12"`, `"10-20"`), and names a param it cannot use instead of dropping it. `/keel-recall auth token scope:all` runs the same search for you.
+Results come 5 a page (`page`). Near-copies push each other down, so a page shows five things rather than one test's output five times: a hit's score is lowered by its likeness to the hits above it, as in the quantum probability ranking principle ([Zuccon et al.](https://arxiv.org/abs/2007.04357), surveyed), counted only past half alike, so related but different entries keep their order. One result is capped at 50 KB, or a tenth of the model's window when that is smaller. The tool repairs the loose forms agents send (`"#12"`, `"10-20"`), and names a param it cannot use instead of dropping it. `/keel-recall auth token scope:all` runs the same search for you.
 
 ## Pinned notes
 
@@ -210,7 +210,7 @@ What must survive everything: a decision and its reason, a constraint, the comma
 Every size follows the model's real window, learned from what the provider proves rather than trusted from a catalog. Catalogs disagree: one DeepSeek model is listed at 131K to 1.05M across providers, and one Claude model changed from 1M to 200K between two Pi releases.
 
 - **The window** is the host's (on omp the provider's when its discovery is configured, else its catalog or `models.yml`; on Pi its catalog or `models.json`), lowered to a limit an overflow error stated ("maximum context length is 32768 tokens", in the shapes of OpenAI, Anthropic, Google, DeepSeek, OpenRouter, vLLM, LiteLLM, Together, Mistral, Kimi, Qwen and others). If the provider later accepts a prompt larger than that limit, the limit was wrong and is dropped.
-- **Tokens** are counted at the model's own chars per token, measured on each request from two of the provider's counts (the messages added between them over the tokens they added). Code runs about 3.8 chars a token, English prose 5.4, Chinese and Japanese 1–2.
+- **Tokens** are counted at the model's own chars per token, measured on each request from two of the provider's counts (the messages added between them over the tokens they added). Code runs about 3.8 chars a token, English prose 5.4, Chinese and Japanese 1–2. keel sizes from the lowest of the last eight values it measured for the model, so its estimate errs high: too high and a turn leaves a little early, too low and the request overflows.
 - **What it learns is kept** per model in `keel-models.json` beside the config, so the next session starts with it. keel makes no network call of its own.
 - **The trigger** is where the host compacts, from the host's own settings for the model, applied as the host applies them (omp's threshold, reserve and per-model thresholds; Pi's `reserveTokens`).
 - **The budgets** are shares of the trigger: the kept tail (25k), the summary and its sections, `[Working Set]` and recall's cap are their usual size on a ~128K window, smaller on a small one, larger on ~1M. Each compaction records what it sized from (`details.limits`).

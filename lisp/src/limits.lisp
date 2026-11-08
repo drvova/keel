@@ -69,13 +69,16 @@
         ;; An array keeps no property by that name: JSON.stringify writes it as it was.
         (write-limits dir limits)))))
 
+(defparameter +chars-per-token-seen+ 8 "The measured chars per token kept per model, newest last.")
+
 (defun record-evidence (dir key &key prompt chars-per-token)
   "Keep what a request proved of KEY's window and tokens: PROMPT, the largest prompt
 the provider accepted (the window is at least that), and CHARS-PER-TOKEN, the
 latest calibration of the session's messages against the provider's count
 (a model's tokenizer is its own: Claude 4.7 counts about 30% more tokens than
 4.6 for the same text). Written only when the largest prompt grew or the
-calibration moved by more than 5%."
+calibration moved by more than 5%; each value it moved to is kept too, the last
++chars-per-token-seen+ of them (LEARNED-CHARS-PER-TOKEN reads the lowest)."
   (when key
     (let* ((limits (read-limits dir)) (known (limit-of limits key))
            (was-prompt (json-get known "maxPromptTokens")) (was-cpt (json-get known "charsPerToken"))
@@ -84,12 +87,27 @@ calibration moved by more than 5%."
       (when (and (or grew moved) (hash-table-p limits))
         (let ((entry (spread-any known)))
           (when grew (setf (gethash "maxPromptTokens" entry) prompt))
-          (when moved (setf (gethash "charsPerToken" entry) (/ (round (* chars-per-token 100)) 100d0)))
+          (when moved
+            (let ((value (/ (round (* chars-per-token 100)) 100d0))
+                  (seen (let ((v (json-get known "charsPerTokenSeen"))) (if (json-array-p v) (remove-if-not #'realp (coerce v 'list)) '()))))
+              (setf (gethash "charsPerToken" entry) value
+                    (gethash "charsPerTokenSeen" entry) (coerce (last (append seen (list value)) +chars-per-token-seen+) 'vector))))
           (setf (gethash key limits) entry)
           (write-limits dir limits))))))
 
 (defun learned-chars-per-token (dir key)
-  (let ((c (json-get (limit-of (read-limits dir) key) "charsPerToken"))) (and (realp c) (> c 0) c)))
+  "KEY's chars per token, from the low side: the fewest chars a token of the values
+measured lately, so the tokens estimated from it are an upper bound. A wrong
+estimate costs unevenly: too high and a turn leaves a little early, too low and
+the request overflows; a fixed ratio undercounts most where the text changes, as
+CJK text does against code (GenericAgent, arXiv:2604.17091, budgets
+conservatively for the same reason). A measure of the request itself (evict.lisp
+FIT-CHARS-PER-TOKEN) is used as it is."
+  (let* ((known (limit-of (read-limits dir) key))
+         (latest (json-get known "charsPerToken"))
+         (seen (let ((v (json-get known "charsPerTokenSeen"))) (if (json-array-p v) (coerce v 'list) '())))
+         (all (remove-if-not (lambda (c) (and (realp c) (> c 0))) (cons latest seen))))
+    (and all (reduce #'min all))))
 
 (defun learned-host-policy (dir key)
   (let ((policy (json-get (limit-of (read-limits dir) key) "hostPolicy")))

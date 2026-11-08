@@ -440,6 +440,31 @@ describe("chars per token, measured on the request", () => {
     // What this model measured stays with this test.
     rmSync(join(dirname(process.env.KEEL_CONFIG_PATH!), "keel-models.json"), { force: true });
   });
+
+  it("is read from the low side of what was measured lately, so the tokens it estimates are an upper bound", () => {
+    setEvict(true);
+    const file = join(dirname(process.env.KEEL_CONFIG_PATH!), "keel-models.json");
+    // Measured at 4 chars a token now, at 2 a while ago (text in another script, say).
+    writeFileSync(file, JSON.stringify({ "p/m": { charsPerToken: 4, charsPerTokenSeen: [2, 4] } }));
+    const s = session(4, 3_000);
+    // A turn of ~3,000 chars counts as ~1,500 tokens, not the 750 the latest value alone would say.
+    expect(evict(s.host, s.ctx(100_000), { surface: "tool", params: null })).toMatch(/#0–#3 ~15\d\d tokens/);
+    rmSync(file, { force: true });
+  });
+
+  it("keeps each value it moved to, the last eight", () => {
+    setEvict(true);
+    const file = join(dirname(process.env.KEEL_CONFIG_PATH!), "keel-models.json");
+    writeFileSync(file, JSON.stringify({ "p/m": { charsPerToken: 4, charsPerTokenSeen: [5, 5.5, 6, 4.5, 5, 6, 5.5, 4] } }));
+    const messages: any[] = [];
+    for (let i = 0; i < 10; i++) {
+      messages.push({ role: "user", content: `request ${i} `.padEnd(1000, "x") });
+      messages.push({ role: "assistant", content: [{ type: "text", text: "".padEnd(2000, "y") }], usage: { input: 5000 + 1000 * i, cacheRead: 0, cacheWrite: 0, output: 1 } });
+    }
+    sent(sessionOf(messages), 100_000, true);
+    expect(JSON.parse(readFileSync(file, "utf8"))["p/m"]).toMatchObject({ charsPerToken: 3, charsPerTokenSeen: [5.5, 6, 4.5, 5, 6, 5.5, 4, 3] });
+    rmSync(file, { force: true });
+  });
 });
 
 describe("turn numbers in view", () => {
