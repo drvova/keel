@@ -191,10 +191,6 @@ whatever has left the context."
   "What ties a request's message to its session entry: role, time and call id."
   (format nil "~a|~a|~a" (json-get m "role") (js-string-of (json-get m "timestamp")) (or (json-get m "toolCallId") "")))
 
-(defvar *chars-per-token* +default-chars-per-token+
-  "Chars per token where a request is not there to calibrate on (keel_context, the
-evict command): the model's own, as the last request measured it (limits.lisp).")
-
 (defparameter +fit-min-tokens+ 2000 "Two requests' prompts this far apart measure the chars per token between them.")
 
 (defun fit-chars-per-token (messages n-of branch chars-kept)
@@ -221,11 +217,24 @@ replaced, so they are left out. NIL without two requests far enough apart."
           (clamp-chars-per-token (/ (dbl (- (car b) (car a))) (- (cdr b) (cdr a)))
                                  (cjk-share (loop for m across messages when (json-object-p m) collect (text-of (json-get m "content"))))))))))
 
-(defun evict-request (branch index messages &key trigger auto (count 0) file mark mirror reread-prior credit-prior)
+(defstruct (request-plan (:conc-name plan-))
+  "What keel makes of the host's next request (EVICT-REQUEST): the message indices
+to DROP; the STUBS, lines put where the core placed them (((INDEX . HOW) . TEXT));
+the evict OPS keel records itself; the estimate BEFORE and AFTER, in tokens;
+N-OF, each message's #N; SENT-AS, what each message is sent as (NIL as it is, T
+left out, or a string: kept, with that line as its content); the OUTS and TURNS
+it worked from; FIT, the chars per token this request measured (or NIL); and the
+evidence it read for the model: REREAD and REREAD-TRIALS (feedback.lisp), RATES
+and CREDIT (credit.lisp)."
+  drop stubs ops before after n-of sent-as outs turns fit reread reread-trials rates credit)
+
+(defun evict-request (branch index messages &key trigger auto (count 0) file mark mirror reread-prior credit-prior
+                                                 (chars-per-token +default-chars-per-token+))
   "What leaves REQUEST MESSAGES (a vector, the host's next request): the indices
-to drop, the stubs (index . text) to put before them, the evict ops keel
-records itself (AUTO and past +EVICT-AT-SHARE+ of TRIGGER), and the estimate
-before and after: (values DROP STUBS OPS BEFORE AFTER). FILE is the session's,
+to drop, the lines to put in their place, the evict ops keel records itself
+(AUTO and past +EVICT-AT-SHARE+ of TRIGGER), and the estimate before and after,
+as a REQUEST-PLAN. CHARS-PER-TOKEN is the model's, where this request cannot
+measure its own. FILE is the session's,
 whose kept originals the stubs read. With MARK (keel_context is there), each
 request that starts a turn in the context starts with its #N, as `[#12]`, so the
 agent can name turns to drop without listing them first: a turn's first #N
@@ -293,7 +302,7 @@ out) the pinned notes stand first, in one block (NOTES-BLOCK)."
              (chars-kept (outs &optional (below (length messages)))
                (let ((v (dropped outs))) (loop for i from 0 below below unless (aref v i) sum (message-chars (aref messages i))))))
       ;; Chars per token measured on this request's own messages, or the model's last measure.
-      (setf fit (fit-chars-per-token messages n-of branch #'chars-kept) per-token (or fit *chars-per-token*))
+      (setf fit (fit-chars-per-token messages n-of branch #'chars-kept) per-token (or fit chars-per-token))
       ;; The context now, estimated: what the provider counted for the latest
       ;; request, less what was sent then, is what the request holds besides the
       ;; messages (the system prompt, the tools); plus the messages kept now.
@@ -409,7 +418,8 @@ out) the pinned notes stand first, in one block (NOTES-BLOCK)."
             (let ((last-in (position nil gone :from-end t)))
               (when (and last-in (realp trigger) (> trigger 0))
                 (push (cons (cons last-in "append") (dashboard after trigger turns outs chars per-token)) stubs))))
-          (values (nreverse drop) (nreverse stubs) (nreverse ops) before after n-of v outs turns fit reread reread-trials rates credit))))))
+          (make-request-plan :drop (nreverse drop) :stubs (nreverse stubs) :ops (nreverse ops) :before before :after after :n-of n-of :sent-as v
+                             :outs outs :turns turns :fit fit :reread reread :reread-trials reread-trials :rates rates :credit credit))))))
 
 (defun turn-mark (n) (format nil "[#~d]" n))
 
@@ -530,14 +540,14 @@ it is sent as the user's and can carry text, else a message of its own before it
             (some (lambda (o) (overlaps-p (out-from o) (out-to o) (turn-from tr) (turn-to tr))) outs)
             (held-turn-p tr recent))))
 
-(defun list-context (turns outs chars by-n pins &optional recent)
+(defun list-context (turns outs chars by-n pins per-token &optional recent)
   (let* ((in (remove-if (lambda (tr) (turn-out-p tr outs)) turns))
          (shown (last-n in +turns-listed+)))
     (format nil "In context: ~a, ~~~a tokens of messages (the last is the one running, which stays).~@[~%  (+~d older)~]~{~%  ~a~}~%~a~a"
             (plural (length in) "turn")
-            (js-string-of (tokens-from-chars (reduce #'+ (mapcar (lambda (tr) (turn-chars tr chars outs)) in)) *chars-per-token*))
+            (js-string-of (tokens-from-chars (reduce #'+ (mapcar (lambda (tr) (turn-chars tr chars outs)) in)) per-token))
             (and (> (length in) (length shown)) (- (length in) (length shown)))
-            (mapcar (lambda (tr) (turn-line tr chars *chars-per-token* by-n outs recent)) shown)
+            (mapcar (lambda (tr) (turn-line tr chars per-token by-n outs recent)) shown)
             (if outs
                 (format nil "Out of context:~{~%  ~a~}"
                         (mapcar (lambda (o) (format nil "~a (~a)" (range-text (out-from o) (out-to o)) (span-what (out-from o) (out-to o) turns))) outs))
@@ -561,31 +571,31 @@ context after its first #N that stays), in chars: (values FREED READ-AGAIN)."
   (multiple-value-bind (freed again) (eviction-cost leaving turns outs chars)
     (>= freed (* (payback-share payback) again))))
 
-(defun not-worth-it (leaving turns outs chars payback)
+(defun not-worth-it (leaving turns outs chars payback per-token)
   "Why the agent's eviction of LEAVING is refused, with the smallest run from the oldest end that would pay."
   (multiple-value-bind (freed again) (eviction-cost leaving turns outs chars)
     (let* ((in (turns-in turns outs))
            (k (loop for k from 1 to (length in) when (pays-p (subseq in 0 k) turns outs chars payback) return k))
-           (tok (lambda (c) (js-string-of (tokens-from-chars c *chars-per-token*)))))
+           (tok (lambda (c) (js-string-of (tokens-from-chars c per-token)))))
       (format nil "Not worth it: that frees ~~~a tokens but makes the provider read the ~~~a after it again; ~a, a drop must free ~d% of what it makes it read again. ~:[Nothing taken out would pay yet: wait until more of the context is old~;Take out more in one go, from the oldest end (oldest:~:*~d)~], or send force: true to take these out anyway (when you were asked to, or what they hold is done with)."
               (funcall tok freed) (funcall tok again) (payback-words payback) (round (* 100 (payback-share payback))) k))))
 
-(defun evict-turns (leaving turns outs chars by note count &optional payback)
-  "Record LEAVING (turns, oldest first) as out: (values TEXT OPS). With CHECK
-(the agent's call), an eviction that does not pay (PAYBACK, EVICTION-PAYBACK) is refused."
+(defun evict-turns (leaving turns outs chars by note count per-token &optional payback)
+  "Record LEAVING (turns, oldest first) as out: (values TEXT OPS). With PAYBACK
+(the agent's call, EVICTION-PAYBACK), an eviction that does not pay is refused."
   (let ((leaving (intersection leaving (turns-in turns outs))))
     (setf leaving (sort (copy-list leaving) #'< :key #'turn-from))
     (cond
       ((null leaving)
        (values "Nothing to take out: those turns are out already, or one is the turn running, which stays." '()))
       ((and payback (not (pays-p leaving turns outs chars payback)))
-       (values (not-worth-it leaving turns outs chars payback) '()))
+       (values (not-worth-it leaving turns outs chars payback per-token) '()))
       (t
         (let ((ops (mapcar (lambda (r) (evict-op "evict" (car r) (cdr r) by count note)) (ranges-in leaving outs))))
           (values (format nil "Out of context from the next request: ~{~a~^, ~} (~a, ~~~a tokens). ~a reads any entry back word for word."
                           (mapcar (lambda (op) (range-text (json-get op "from") (json-get op "to"))) ops)
                           (plural (length leaving) "turn")
-                          (js-string-of (tokens-from-chars (reduce #'+ (mapcar (lambda (tr) (turn-chars tr chars outs)) leaving)) *chars-per-token*))
+                          (js-string-of (tokens-from-chars (reduce #'+ (mapcar (lambda (tr) (turn-chars tr chars outs)) leaving)) per-token))
                           (recall-expand-call (json-get (first ops) "from")))
                   ops))))))
 
@@ -670,39 +680,54 @@ OPS). An undo is an edit too, so a second one does the first again."
   (let ((back (remove-if-not (lambda (tr) (turn-out-p tr outs)) (turns-touching ranges turns))))
     (append ranges (mapcar (lambda (tr) (cons (turn-from tr) (turn-to tr))) (linked-out back turns outs by-n)))))
 
-(defun run-evict (call branch index chars by-n count)
+(defun evict-action (call)
+  "A keel_context call (the agent's params) or an evict command (the user's words),
+as one action: a plist with :kind (:list :undo :restore :restore-all :drop :oldest
+:half :all :error), its :ranges or :count, the agent's :note and :force, or the :text of an error."
+  (if (equal (json-get call "surface") "tool")
+      (let* ((params (json-get call "params"))
+             (drop (refs-of (json-get params "drop"))) (restore (refs-of (json-get params "restore")))
+             (oldest (let ((k (json-get params "oldest"))) (and (js-integer-p k) (> k 0) (as-integer k))))
+             (extra (list :note (let ((n (json-get params "note"))) (and (stringp n) (plusp (length (js-trim n))) (js-clip (js-trim n) +context-note-chars+)))
+                          ;; The agent was told the drop does not pay, and takes it out anyway.
+                          :force (eq (json-get params "force") :true))))
+        (cond ((eq (json-get params "undo") :true) (list :kind :undo))
+              (restore (list :kind :restore :ranges restore))
+              (drop (list* :kind :drop :ranges drop extra))
+              (oldest (list* :kind :oldest :count oldest extra))
+              (t (list :kind :list))))
+      (let* ((args (js-trim (let ((a (json-get call "args"))) (if (stringp a) a ""))))
+             (words (remove "" (rx-split (rx "\\s+") args) :test #'string=)))
+        (cond ((zerop (length args)) (list :kind :half))
+              ((string-equal args "undo") (list :kind :undo))
+              ((string-equal args "list") (list :kind :list))
+              ((string-equal args "all") (list :kind :all))
+              ((string-equal (first words) "restore")
+               (if (and (second words) (string-equal (second words) "all"))
+                   (list :kind :restore-all)
+                   (list :kind :restore :ranges (refs-of (coerce (rest words) 'vector)))))
+              ((every #'digit-char-p args) (list :kind :oldest :count (parse-integer args)))
+              ((refs-of (coerce words 'vector)) (list :kind :drop :ranges (refs-of (coerce words 'vector))))
+              (t (list :kind :error :text (format nil "Not understood: ~a. Give nothing (the oldest half), a number of turns, all, list, #A-#B, restore #A-#B, or undo." args)))))))
+
+(defun run-evict (call branch index chars by-n count per-token)
   "One keel_context call or evict command on BRANCH: (values TEXT OPS). The agent's
-evictions must pay, by the session's own prices (EVICTION-PAYBACK over BY-N)."
+evictions must pay, by the session's own prices (EVICTION-PAYBACK over BY-N), unless it forces them."
   (let* ((turns (branch-turns branch index)) (outs (read-evictions branch))
-         (by (if (equal (json-get call "surface") "tool") "agent" "user")))
-    (if (equal by "agent")
-        (let* ((params (json-get call "params")) (drop (refs-of (json-get params "drop")))
-               (restore (refs-of (json-get params "restore")))
-               (oldest (let ((k (json-get params "oldest"))) (and (js-integer-p k) (> k 0) (as-integer k))))
-               (note (let ((n (json-get params "note"))) (and (stringp n) (plusp (length (js-trim n))) (js-clip (js-trim n) +context-note-chars+))))
-               ;; The agent was told the drop does not pay, and takes it out anyway.
-               (force (eq (json-get params "force") :true)))
-          (cond ((eq (json-get params "undo") :true) (undo-last branch by count))
-                (restore (restore-turns (with-linked restore turns outs by-n) outs by count))
-                (drop (evict-turns (turns-touching drop turns) turns outs chars by note count (and (not force) (payback-of by-n))))
-                (oldest (let ((in (turns-in turns outs)))
-                          (evict-turns (subseq in 0 (min oldest (length in))) turns outs chars by note count (and (not force) (payback-of by-n)))))
-                (t (values (list-context turns outs chars by-n (read-pins branch) (recent-recalls (read-recalls branch) turns)) '()))))
-        (let* ((args (js-trim (let ((a (json-get call "args"))) (if (stringp a) a ""))))
-               (words (remove "" (rx-split (rx "\\s+") args) :test #'string=)))
-          (cond ((zerop (length args))
-                 ;; keel chooses where the cut falls, so it keeps linked chains whole (links.lisp).
-                 (evict-turns (whole-chains (oldest-half turns outs chars) (turns-in turns outs) by-n) turns outs chars by nil count))
-                ((string-equal args "undo") (undo-last branch by count))
-                ((string-equal args "list") (values (list-context turns outs chars by-n (read-pins branch) (recent-recalls (read-recalls branch) turns)) '()))
-                ((string-equal args "all") (evict-turns (finished-turns turns) turns outs chars by nil count))
-                ((string-equal (first words) "restore")
-                 (restore-turns (if (and (second words) (string-equal (second words) "all"))
-                                    (list (cons 0 most-positive-fixnum))
-                                    (with-linked (refs-of (coerce (rest words) 'vector)) turns outs by-n))
-                                outs by count))
-                ((every #'digit-char-p args)
-                 (let ((in (turns-in turns outs)))
-                   (evict-turns (subseq in 0 (min (parse-integer args) (length in))) turns outs chars by nil count)))
-                ((refs-of (coerce words 'vector)) (evict-turns (turns-touching (refs-of (coerce words 'vector)) turns) turns outs chars by nil count))
-                (t (values (format nil "Not understood: ~a. Give nothing (the oldest half), a number of turns, all, list, #A-#B, restore #A-#B, or undo." args) '())))))))
+         (by (if (equal (json-get call "surface") "tool") "agent" "user"))
+         (action (evict-action call)))
+    (flet ((out (leaving)
+             (evict-turns leaving turns outs chars by (getf action :note) count per-token
+                          (and (equal by "agent") (not (getf action :force)) (payback-of by-n))))
+           (back (ranges) (restore-turns ranges outs by count)))
+      (ecase (getf action :kind)
+        (:list (values (list-context turns outs chars by-n (read-pins branch) per-token (recent-recalls (read-recalls branch) turns)) '()))
+        (:undo (undo-last branch by count))
+        (:restore (back (with-linked (getf action :ranges) turns outs by-n)))
+        (:restore-all (back (list (cons 0 most-positive-fixnum))))
+        (:drop (out (turns-touching (getf action :ranges) turns)))
+        (:oldest (let ((in (turns-in turns outs))) (out (subseq in 0 (min (getf action :count) (length in))))))
+        ;; keel chooses where the cut falls, so it keeps linked chains whole (links.lisp).
+        (:half (out (whole-chains (oldest-half turns outs chars) (turns-in turns outs) by-n)))
+        (:all (out (finished-turns turns)))
+        (:error (values (getf action :text) '()))))))

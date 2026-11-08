@@ -50,10 +50,11 @@ with every request, and its line must hold still while the agent edits the file.
     (declare (ignore files))
     (format nil "[~a~@[ #~d~]] ~a" role n summary)))
 
-(defun render-mirror (messages n-of dropped outs turns inserts)
-  "The file for this request: a block for each turn in it, each run of what is out
-and each of the agent's notes, in request order."
-  (let ((out (make-string-output-stream)) (current nil) (running (car (last turns))))
+(defun render-mirror (messages plan inserts)
+  "The file for this request (PLAN, evict.lisp): a block for each turn in it, each
+run of what is out and each of the agent's notes, in request order."
+  (let* ((n-of (plan-n-of plan)) (dropped (plan-sent-as plan)) (outs (plan-outs plan)) (turns (plan-turns plan))
+         (out (make-string-output-stream)) (current nil) (running (car (last turns))))
     (flet ((open-block (marker) (setf current marker) (format out "~%~a~%" marker)))
       (loop for i from 0 below (length messages)
             for m = (aref messages i)

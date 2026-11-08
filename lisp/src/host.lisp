@@ -145,9 +145,8 @@ accepted."
 (defun context-for-host (s messages tool)
   "The host's next request MESSAGES with what is out of the context left out: the
 indices to drop, the lines to put in their place (where, and as what), the
-evictions keel records itself as the context fills (the evict setting), the
-note telling the model how full its context is (TOOL: keel_context is
-registered), and what to tell the user."
+evictions keel records itself as the context fills (the evict setting), and what
+to tell the user. TOOL: keel_context is registered."
   (let* ((auto (eq (json-get (snapshot-settings s) "evict") :true))
          (trigger (and auto (snapshot-trigger s))) (count (snapshot-count s)) (branch (snapshot-branch s))
          (file (snapshot-session-file s))
@@ -161,23 +160,23 @@ registered), and what to tell the user."
       (when edit-ops
         (setf branch (concatenate 'vector branch
                                   (mapcar (lambda (op) (json-object "type" "custom" "customType" +evict-entry-type+ "data" op)) edit-ops)))))
-    (multiple-value-bind (drop stubs ops before after n-of dropped outs turns fit reread reread-trials rates credit)
-        (let ((*chars-per-token* (model-chars-per-token s)))
-          (evict-request branch (snapshot-index s) (coerce messages 'vector) :file file
-                         :trigger trigger :auto auto :count count :mark tool :mirror mirror
-                         :reread-prior (learned-reread (snapshot-config-dir s) (model-key (snapshot-model s)))
-                         :credit-prior (learned-recall-by-kind (snapshot-config-dir s) (model-key (snapshot-model s)))))
+    (let* ((plan (evict-request branch (snapshot-index s) (coerce messages 'vector) :file file
+                                :trigger trigger :auto auto :count count :mark tool :mirror mirror
+                                :chars-per-token (model-chars-per-token s)
+                                :reread-prior (learned-reread (snapshot-config-dir s) (model-key (snapshot-model s)))
+                                :credit-prior (learned-recall-by-kind (snapshot-config-dir s) (model-key (snapshot-model s)))))
+           (ops (plan-ops plan)) (reread (plan-reread plan)) (reread-trials (plan-reread-trials plan)) (fit (plan-fit plan)))
       ;; What this request measured of the model's tokens, kept for the next session and for keel_context;
       ;; and, once the session has shown enough of it, how often the model recalls a turn again (feedback.lisp).
-      (let ((by-kind (credit-shown rates credit)))
+      (let ((by-kind (credit-shown (plan-rates plan) (plan-credit plan))))
         (when (or fit (and reread (>= reread-trials +reread-prior-weight+)) by-kind)
           (record-evidence (snapshot-config-dir s) (model-key (snapshot-model s)) :chars-per-token fit
                            :reread (and (>= reread-trials +reread-prior-weight+) reread)
                            :recall-by-kind by-kind)))
       (stamp-call ops branch)
       (when mirror
-        (write-mirror file (render-mirror (coerce messages 'vector) n-of dropped outs turns (read-inserts branch))))
-      (json-object "drop" (coerce drop 'vector)
+        (write-mirror file (render-mirror (coerce messages 'vector) plan (read-inserts branch))))
+      (json-object "drop" (coerce (plan-drop plan) 'vector)
                      "stubs" (map 'vector (lambda (st)
                                             (destructuring-bind ((at . how) . text) st
                                               (json-object "at" at "how" how "text" text
@@ -185,20 +184,19 @@ registered), and what to tell the user."
                                                            "message" (and (equal how "insert")
                                                                           (json-object "role" "user" "content" (vector (json-object "type" "text" "text" text))
                                                                                        "timestamp" (json-get (aref (coerce messages 'vector) at) "timestamp"))))))
-                                  stubs)
+                                  (plan-stubs plan))
                      "ops" (coerce (append edit-ops ops) 'vector)
                      "notice" (let ((lines (remove nil (list (and (or edit-ops ignored) (mirror-notice edit-ops ignored))
-                                                             (and ops (auto-notice ops before after))))))
+                                                             (and ops (auto-notice ops (plan-before plan) (plan-after plan)))))))
                                 (and lines (join-strings lines (string #\Newline))))))))
 
 (defun evict-for-host (s call)
   "One keel_context call or evict command: what to tell, and the entries to append. Turn sizes come from the session file."
-  (let ((chars (make-hash-table)) (by-n (make-hash-table)) (file (snapshot-session-file s))
-        (*chars-per-token* (model-chars-per-token s)))
+  (let ((chars (make-hash-table)) (by-n (make-hash-table)) (file (snapshot-session-file s)))
     (when (and file (probe-file (native-path file)))
       (loop for (index nil message) in (read-session file)
             do (setf (gethash index chars) (message-chars message) (gethash index by-n) message)))
-    (multiple-value-bind (text ops) (run-evict call (snapshot-branch s) (snapshot-index s) chars by-n (snapshot-count s))
+    (multiple-value-bind (text ops) (run-evict call (snapshot-branch s) (snapshot-index s) chars by-n (snapshot-count s) (model-chars-per-token s))
       (json-object "text" text
                    "ops" (coerce (stamp-call ops (snapshot-branch s)) 'vector)))))
 
