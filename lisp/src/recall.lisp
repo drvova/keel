@@ -105,32 +105,25 @@ under a header. Those of this session (no :session) are noted as shown
 ;;; same file changed later (calls.lisp files-of, changes-p), the same run passed
 ;;; later (run-of). Recall says so on the entry's line.
 
+
 (defun superseded-notes (v)
-  "Each entry of V's session that something later superseded, to a note saying what and where."
-  (let ((notes (make-hash-table)) (by-id (make-hash-table :test 'equal)) (result-of (make-hash-table :test 'equal))
-        (changes '()) (passes '()) (on-file '()) (fails '()))
-    (dolist (e (view-load v nil))
-      (let ((n (getf e :index)) (m (getf e :message)))
-        (cond ((equal (json-get m "role") "assistant")
-               (dolist (c (tool-calls-of m))
-                 (when (call-id c) (setf (gethash (call-id c) by-id) (cons n c)))
-                 (when (changes-p c) (dolist (p (files-of c)) (push (cons p n) changes)))
-                 (when (on-file-p c) (dolist (p (files-of c)) (push (list p n (call-id c)) on-file)))))
-              ((equal (json-get m "role") "toolResult")
-               (let ((hit (gethash (json-get m "toolCallId") by-id)))
-                 (when hit
-                   (setf (gethash (json-get m "toolCallId") result-of) n)
-                   (if (eq (json-get m "isError") :true)
-                       (push (list (run-of (cdr hit)) n (car hit)) fails)
-                       (push (cons (run-of (cdr hit)) n) passes))))))))
-    (flet ((note (ns text) (dolist (n ns) (when (and n (not (gethash n notes))) (setf (gethash n notes) text))))
-           (first-after (n pairs key) (loop for (k . at) in pairs when (and (equal k key) (> at n)) minimize at)))
-      (loop for (path n id) in on-file
-            for m = (first-after n changes path)
-            when (plusp m) do (note (list n (gethash id result-of)) (format nil "superseded: ~a changed at #~d" path m)))
-      (loop for (run n call-n) in fails
-            for m = (first-after n passes run)
-            when (plusp m) do (note (list n call-n) (format nil "fixed: passed at #~d" m))))
+  "Each entry of V's session that something later superseded, to a note saying what
+and where (calls.lisp STALE-READ and FIXES-OF): the call and its result alike."
+  (let* ((entries (view-load v nil))
+         (messages (mapcar (lambda (e) (getf e :message)) entries))
+         (indices (mapcar (lambda (e) (getf e :index)) entries))
+         (notes (make-hash-table)))
+    (multiple-value-bind (calls results) (read-calls messages :indices indices)
+      (declare (ignore calls))
+      (let ((changes (file-changes messages :indices indices)) (fixes (fixes-of results)))
+        (flet ((note (r text) (dolist (n (list (result-index r) (call-index r indices)))
+                                (when (and n (not (gethash n notes))) (setf (gethash n notes) text)))))
+          (dolist (r results)
+            (multiple-value-bind (p m) (stale-read r changes)
+              (when p (note r (format nil "superseded: ~a changed at #~d" p m)))))
+          (dolist (r results)
+            (let ((fix (gethash r fixes)))
+              (when (and fix (result-index fix)) (note r (format nil "fixed: passed at #~d" (result-index fix)))))))))
     notes))
 
 (defun view-message (v index)

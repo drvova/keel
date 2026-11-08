@@ -21,8 +21,7 @@
 (defun session-since-clear (path)
   "PATH's messages on its active branch since its last /clear: (values MESSAGES INDICES)."
   (let* ((entries (jsonl-values path))
-         (branch (let ((ids (active-branch-ids entries)))
-                   (coerce (remove-if-not (lambda (e) (and (hash-table-p e) (gethash (json-get e "id") ids))) entries) 'vector)))
+         (branch (file-branch path))
          (after (let ((ids (make-hash-table :test 'equal)))
                   (loop for i from (1+ (last-reset-index branch)) below (length branch)
                         do (setf (gethash (json-get (aref branch i) "id") ids) t))
@@ -31,36 +30,25 @@
                               (indexed-messages entries))))
     (values (mapcar #'third kept) (mapcar #'first kept))))
 
+
 (defun fixed-failures (messages indices)
-  "The failures MESSAGES fixed, oldest first, each (CALL FAIL-N PASS-N FILES): a
-failed result whose run (calls.lisp run-of) passed later, and the files changed
-in between. No output text: what a tool printed stays with its session, where
-the #N reads it (an injection carried into the next session is how one persists)."
-  (let ((changes '()) (open '()) (fixes '()) (indices (coerce indices 'vector)))
-    (multiple-value-bind (calls results) (read-calls messages :indices indices)
-      (declare (ignore calls))
-      ;; What each position changed, so a fix can name what changed between its failure and its pass.
-      (loop for m in messages for pos from 0
-            when (equal (json-get m "role") "assistant")
-              do (dolist (c (tool-calls-of m pos))
-                   (when (changes-p c) (dolist (p (files-of c)) (push (cons pos p) changes)))))
-      (setf changes (nreverse changes))
-      (dolist (r results)
-        (let ((run (and (result-call r) (run-of (result-call r)))))
-          (when run
-            (if (result-error r)
-                (push (cons run r) open)
-                (let ((failed (remove run open :key #'car :test-not #'equal)))
-                  (when failed
-                    (let* ((first-fail (cdr (car (last failed))))
-                           (files (remove-duplicates
-                                   (loop for (pos . p) in changes
-                                         when (< (result-pos first-fail) pos (result-pos r)) collect p)
-                                   :test #'string= :from-end t)))
-                      (push (list (result-call first-fail) (result-index first-fail) (result-index r) files)
-                            fixes))
-                    (setf open (remove run open :key #'car :test #'equal)))))))))
-    (nreverse fixes)))
+  "The failures MESSAGES fixed, oldest first, each (CALL FAIL-N PASS-N FILES): the
+first failure of a run that passed later (calls.lisp FIXES-OF), and the files
+changed between it and the pass. No output text: what a tool printed stays with
+its session, where the #N reads it (an injection carried into the next session
+is how one persists)."
+  (multiple-value-bind (calls results) (read-calls messages :indices indices)
+    (declare (ignore calls))
+    (let ((changes (file-changes messages :indices indices)) (by-fix (make-hash-table :test 'eq)))
+      (maphash (lambda (failed fix) (push failed (gethash fix by-fix))) (fixes-of results))
+      (loop for fix in results
+            for failed = (gethash fix by-fix)
+            when failed
+              collect (let ((first (reduce (lambda (a b) (if (< (result-pos a) (result-pos b)) a b)) failed)))
+                        (list (result-call first) (result-index first) (result-index fix)
+                              (remove-duplicates (loop for (p pos) in changes
+                                                       when (< (result-pos first) pos (result-pos fix)) collect p)
+                                                 :test #'string= :from-end t)))))))
 
 (defun fix-line (fix)
   (destructuring-bind (call fail-n pass-n files) fix
@@ -81,9 +69,7 @@ the #N reads it (an injection carried into the next session is how one persists)
 time: what the last session said of them may no longer hold."
   (when ended
     (remove-if-not (lambda (p)
-                     (let ((full (if (or (zerop (length p)) (char= (char p 0) #\/) (not (stringp cwd)))
-                                     p
-                                     (concatenate 'string (string-right-trim "/" cwd) "/" p))))
+                     (let ((full (if (or (absolute-path-p p) (not (stringp cwd)) (zerop (length cwd))) p (join-path cwd p))))
                        (let ((at (write-time full))) (and at (> at ended)))))
                    paths)))
 
@@ -109,10 +95,10 @@ the last one made no request since its /clear."
                             :test #'string= :from-end t))
                    (moved (changed-since worked (json-get header "cwd") (write-time previous))))
               (format nil "Where the last session~@[ (~a)~] stopped, read from its transcript:~%~{~a~%~}~{~a~%~}~@[~a~%~]~a"
-                      (and id (subseq id 0 (min 8 (length id))))
+                      (and id (short-id id))
                       state (mapcar #'fix-line fixes)
                       (and moved (format nil "Changed since it ended: ~a. What it says of ~:[it~;them~] may no longer hold."
                                          (join-strings (subseq moved 0 (min +resume-files+ (length moved))) ", ") (rest moved)))
                       (if id
-                          (format nil "~a with session:~a reads any #N of it." +recall-tool+ (json-string (subseq id 0 (min 8 (length id)))))
+                          (format nil "~a with session:~a reads any #N of it." +recall-tool+ (json-string (short-id id)))
                           (format nil "~a mode:'sessions' finds it." +recall-tool+))))))))))

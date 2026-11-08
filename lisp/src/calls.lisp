@@ -87,16 +87,50 @@ the tool (any read of a file is one run) and the file, else the subject (a shell
             (format nil "~a ~a" (call-name c) (json-string (if (> (js-length arg) 80) (concatenate 'string (js-slice arg 0 80) "…") arg)))
             (call-name c)))))
 
-;;; --- what is still open, and what was asked --------------------------------------
+;;; --- what a later entry superseded, what is still open, and what was asked ---------------
+
+(defun file-changes (messages &key indices)
+  "Every change of a file MESSAGES make, oldest first, as (PATH POS N): N the #N of
+the message making it (its element in INDICES)."
+  (let ((indices (coerce indices 'vector)))
+    (loop for m in messages for pos from 0
+          when (and (json-object-p m) (equal (json-get m "role") "assistant"))
+            nconc (loop for c in (tool-calls-of m pos)
+                        when (changes-p c)
+                          nconc (loop for p in (files-of c)
+                                      collect (list p pos (and (< pos (length indices)) (aref indices pos))))))))
+
+(defun stale-read (r changes)
+  "When the file R's call read or edited was changed after R (CHANGES, FILE-CHANGES):
+(values PATH N), the first such change; what R shows of it no longer holds."
+  (let ((c (result-call r)))
+    (when (and c (on-file-p c))
+      (loop for p in (files-of c)
+            for later = (find-if (lambda (ch) (and (> (second ch) (result-pos r)) (string= (first ch) p))) changes)
+            when later return (values p (third later))))))
+
+(defun fixes-of (results)
+  "Each failed result of RESULTS, to the first later success of the same run (calls
+are the same run by RUN-OF), in an EQ hash. A failure whose call is unknown has no
+run, so nothing fixes it."
+  (let ((fixes (make-hash-table :test 'eq)) (waiting (make-hash-table :test 'equal)))
+    (dolist (r results fixes)
+      (let ((key (and (result-call r) (run-of (result-call r)))))
+        (when key
+          (if (result-error r)
+              (push r (gethash key waiting))
+              (progn (dolist (f (gethash key waiting)) (setf (gethash f fixes) r))
+                     (remhash key waiting))))))))
 
 (defun open-failures (results)
-  "The failed RESULTS no later success of the same run fixed, newest first.
-A failure whose call is unknown has no run, so nothing fixes it."
-  (let ((fixed (make-hash-table :test 'equal)) (open '()))
-    (dolist (r (reverse results) (nreverse open))
-      (let ((key (and (result-call r) (run-of (result-call r)))))
-        (cond ((not (result-error r)) (when key (setf (gethash key fixed) t)))
-              ((not (and key (gethash key fixed))) (push r open)))))))
+  "The failed RESULTS no later success of the same run fixed, newest first."
+  (let ((fixes (fixes-of results)))
+    (reverse (remove-if-not (lambda (r) (and (result-error r) (not (gethash r fixes)))) results))))
+
+(defun call-index (r indices)
+  "The #N of the message holding R's call, or NIL."
+  (let ((c (result-call r))) (and c (let ((n (nth (call-pos c) indices))) (and (realp n) n)))))
+
 
 (defun latest-request (messages)
   "The user's latest request in MESSAGES: (values POS TEXT), TEXT the message's text

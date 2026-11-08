@@ -140,11 +140,6 @@ AGENT: the agent's call, which leaves a note the user pinned as it is."
 (defun lower-first (text)
   (if (plusp (length text)) (concatenate 'string (string-downcase (subseq text 0 1)) (subseq text 1)) text))
 
-(defun file-branch (path)
-  "The entries on PATH's active branch, in file order."
-  (let* ((entries (jsonl-values path)) (ids (active-branch-ids entries)))
-    (coerce (remove-if-not (lambda (e) (and (hash-table-p e) (gethash (json-get e "id") ids))) entries) 'vector)))
-
 (defun carried-pins (entries files)
   "The named notes a new session starts with: the user's of the project's last
 session before it (FILES, newest first), as pin ops of this one, marked with
@@ -157,7 +152,7 @@ holds. Nothing for a session that has a message or a pin already (resumed,
 forked, or carried into once)."
   (unless (or (some #'counted-entry-p entries) (some #'pin-entry-p entries) (null files))
     (let* ((previous (first files))
-           (from (let ((id (json-get (read-header previous) "id"))) (if (stringp id) (subseq id 0 (min 8 (length id))) "")))
+           (from (let ((id (json-get (read-header previous) "id"))) (if (stringp id) (short-id id) "")))
            (id 0))
       (loop for n in (read-pins (file-branch previous))
             when (and (pin-name n) (equal (json-get n "by") "user"))

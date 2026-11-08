@@ -161,6 +161,11 @@ hash set; empty for a file without ids (an old format)."
                 last id))))
     (walk-to-root parent-of last)))
 
+(defun file-branch (path)
+  "The entries on PATH's active branch, in file order."
+  (let* ((entries (jsonl-values path)) (ids (active-branch-ids entries)))
+    (coerce (remove-if-not (lambda (e) (and (hash-table-p e) (gethash (json-get e "id") ids))) entries) 'vector)))
+
 ;;; --- the header and the sessions a fork came from ------------------------------
 
 (defparameter +header-bytes+ (* 64 1024))
@@ -178,15 +183,22 @@ hash set; empty for a file without ids (an old format)."
                for record = (parse-json-or-nil line)
                when (equal (json-get record "type") "session") return record))))))
 
+(defparameter +short-id-chars+ 8 "A session id is named by this many characters or more.")
+
+(defun short-id (id) "ID's first +SHORT-ID-CHARS+ characters, as a session is named to the agent." (subseq id 0 (min +short-id-chars+ (length id))))
+
+(defun absolute-path-p (path)
+  "Whether PATH is absolute, as Node's isAbsolute reads one on either system."
+  (and (plusp (length path))
+       (or (char= (char path 0) #\/) (char= (char path 0) #\\) (rx-test (rx "^[A-Za-z]:[\\\\/]") path))))
+
 (defun parent-session-file (path)
   "The session PATH was forked or branched from, as a file: the header's
 `parentSession`, a path, or a session id in the same directory (omp's files
 are `<timestamp>_<id>.jsonl`)."
   (let ((parent (json-get (read-header path) "parentSession")))
     (when (and (stringp parent) (plusp (length parent)))
-      ;; An absolute path, as Node's isAbsolute reads one on either system.
-      (if (or (char= (char parent 0) #\/) (char= (char parent 0) #\\)
-              (rx-test (rx "^[A-Za-z]:[\\\\/]") parent))
+      (if (absolute-path-p parent)
           (and (probe-file (native-path parent)) parent)
           (let ((suffix (format nil "_~a.jsonl" parent)))
             (loop for name in (directory-files (path-directory path))

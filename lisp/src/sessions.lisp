@@ -11,7 +11,6 @@
 (in-package #:keel)
 
 (defparameter +max-listed-sessions+ 50)
-(defparameter +short-id-chars+ 8)
 
 (defstruct (session-info (:constructor make-session-info (file short started bytes messages title first-request pins)))
   file short started bytes messages title first-request pins)
