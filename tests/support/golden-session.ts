@@ -6,7 +6,8 @@
 //   bun run tests/support/golden-session.ts omp|pi > tests/fixtures/golden-<host>.json
 // The turns are synthetic (a scripted agent's reads, edits, failing and
 // passing tests, commits), so the output is the same on every run.
-import { mkdtempSync, rmSync } from "fs";
+import { mkdtempSync } from "fs";
+import { removeDir } from "./session-files";
 import { tmpdir } from "os";
 import { join, resolve } from "path";
 
@@ -129,5 +130,5 @@ await recall("scope all", { query: "docker restart", scope: "all" });
 await recall("loose", { expand: "#12", scope: "ALL" });
 console.log(JSON.stringify(out, null, 1));
 await session.dispose?.();
-rmSync(work, { recursive: true, force: true });
+removeDir(work);
 process.exit(0);

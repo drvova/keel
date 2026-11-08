@@ -30,7 +30,8 @@ describe("the core's source", () => {
       s = coreStatus();
     }
     expect(s.state).toBe("ready");
-    if (s.state === "ready") expect(s.path).toMatch(/lisp\/build\/keel-core-[0-9a-f]{16}$/);
+    // Named by the hash of the sources; Windows runs no executable without `.exe`.
+    if (s.state === "ready") expect(s.path).toMatch(/[\\/]build[\\/]keel-core-[0-9a-f]{16}(\.exe)?$/);
   }, 180_000);
 
   // Last: "no SBCL" is the answer for a minute, which would keep the build above from starting.

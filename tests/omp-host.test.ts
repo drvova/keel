@@ -6,7 +6,8 @@
 // Runs only where @oh-my-pi/pi-coding-agent is installed (it needs Bun >= 1.4.4):
 //   V=18.14.2; npm install --no-save --ignore-scripts --no-audit --no-fund @oh-my-pi/pi-coding-agent@$V
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "fs";
+import { removeDir } from "./support/session-files";
 import { tmpdir } from "os";
 import { join, resolve } from "path";
 
@@ -100,7 +101,7 @@ describe.skipIf(!ompInstalled)("omp host", () => {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }
-    rmSync(work, { recursive: true, force: true });
+    removeDir(work);
   });
 
   test("omp loads the omp.extensions entry and registers keel_recall as a top-level read tool", () => {

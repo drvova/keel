@@ -19,7 +19,7 @@
   (let ((provider (json-get model "provider")) (id (json-get model "id")))
     (and (truthy-p provider) (truthy-p id) (format nil "~a/~a" (js-string-of provider) (js-string-of id)))))
 
-(defun limits-path (dir &optional (file +limits-file+)) (concatenate 'string (string-right-trim "/" dir) "/" file))
+(defun limits-path (dir &optional (file +limits-file+)) (join-path dir file))
 
 (defun read-limits (dir)
   "The limits file's object (an array too, as JSON.parse gives it), or an empty one."

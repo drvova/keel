@@ -18,7 +18,7 @@
 
 (defun read-file-octets (path)
   "PATH's bytes, or NIL when there is no such file."
-  (with-open-file (in path :element-type '(unsigned-byte 8) :if-does-not-exist nil)
+  (with-open-file (in (native-path path) :element-type '(unsigned-byte 8) :if-does-not-exist nil)
     (when in
       (let ((bytes (make-array (file-length in) :element-type '(unsigned-byte 8))))
         (let ((n (read-sequence bytes in)))
@@ -137,7 +137,7 @@ hash set; empty for a file without ids (an old format)."
 (defun read-header (path)
   "The header: the first `session` entry among the first lines of PATH."
   (ignore-errors
-   (with-open-file (in path :element-type '(unsigned-byte 8) :if-does-not-exist nil)
+   (with-open-file (in (native-path path) :element-type '(unsigned-byte 8) :if-does-not-exist nil)
      (when in
        (let* ((bytes (make-array (min +header-bytes+ (file-length in)) :element-type '(unsigned-byte 8)))
               (n (read-sequence bytes in))
@@ -155,13 +155,15 @@ are `<timestamp>_<id>.jsonl`)."
       ;; An absolute path, as Node's isAbsolute reads one on either system.
       (if (or (char= (char parent 0) #\/) (char= (char parent 0) #\\)
               (rx-test (rx "^[A-Za-z]:[\\\\/]") parent))
-          (and (probe-file parent) parent)
+          (and (probe-file (native-path parent)) parent)
           (let ((suffix (format nil "_~a.jsonl" parent)))
-            (loop for file in (ignore-errors (directory (merge-pathnames "*.jsonl" (directory-namestring path))))
-                  for name = (file-namestring file)
+            (loop for name in (directory-files (path-directory path))
                   when (and (>= (length name) (length suffix))
                             (string= suffix name :start2 (- (length name) (length suffix))))
-                    return (namestring file)))))))
+                    ;; The same form PATH is in, not a namestring DIRECTORY
+                    ;; returns: lineage compares paths as strings, and the
+                    ;; store is joined to them.
+                    return (join-path (path-directory path) name)))))))
 
 (defun session-lineage (path)
   "PATH and the sessions it was forked or branched from, nearest first."

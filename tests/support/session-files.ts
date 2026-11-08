@@ -23,3 +23,18 @@ export const sessionFileOfEntries = (entries: readonly unknown[]): { dir: string
   writeJsonl(file, entries);
   return { dir, file };
 };
+
+/**
+ * Remove DIR, which a just-torn-down session may still hold open: Windows
+ * refuses to unlink a file another handle has, and a host's teardown releases
+ * it a moment after. Removing what it can and trying again settles it; a
+ * directory that stays locked is left, since it is a temp dir.
+ */
+export const removeDir = (dir: string, tries = 20): void => {
+  for (let i = 0; i < tries; i++) {
+    try { rmSync(dir, { recursive: true, force: true }); return; } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "EBUSY" && (e as NodeJS.ErrnoException).code !== "EPERM") return;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+    }
+  }
+};
