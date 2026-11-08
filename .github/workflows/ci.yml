@@ -48,10 +48,11 @@ jobs:
         with:
           bun-version: latest
 
-      # --frozen-lockfile: the compiler and node types bun.lock pins. The hosts
-      # are not in it: they are installed below, at the versions this job tests.
-      # --ignore-scripts: dependency postinstall code does not run in CI.
-      - run: bun install --frozen-lockfile --ignore-scripts
+      # Nothing to install yet: the setup step below is one npm call from an
+      # empty node_modules, and it brings package.json's own dependencies (the
+      # compiler and node types bun.lock pins, at the versions it pins) with
+      # the hosts. Installing them here too would be work the setup step
+      # immediately discards.
 
       - name: Install the hosts (omp at ${{ matrix.omp }}, Pi at ${{ matrix.pi }})
         # One step, one npm call: npm reconciles node_modules against

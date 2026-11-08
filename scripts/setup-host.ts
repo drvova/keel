@@ -1,22 +1,27 @@
 // Install the hosts into node_modules without saving them, each at a version
 // named by an environment variable (default: latest).
 //
-//   bun run setup:omp                       omp at its newest
-//   OMP_VERSION=18.14.0 bun run setup:omp   omp at a version of its own
+//   bun run setup:hosts                     both hosts, at their newest
+//   OMP_VERSION=18.14.0 bun run setup:hosts omp pinned, Pi at its newest
+//   bun run setup:omp                       the same, naming one host
 //
 // omp and Pi are not dependencies: they release often, and a pinned copy would
 // test a version users have long updated past. CI installs each at its floor
 // and at its latest, from the peer ranges in package.json.
 //
-// Both hosts go in one npm call, from an empty node_modules. npm reconciles
-// the tree against package.json on every run and neither host is in it, so any
-// install that starts from an existing tree prunes what is there — installing
-// one host at a time, or rerunning on top of a good tree, deletes both. Starting
-// empty makes the result the same on every run: package.json's dependencies
-// plus both hosts, at the versions asked for.
+// Why npm, from an empty node_modules, both hosts in one call:
+// - npm reconciles the tree against package.json and neither host is in it, so
+//   any install that starts from an existing tree prunes both. Starting empty
+//   makes every run produce the same tree: package.json's dependencies plus
+//   both hosts.
+// - `bun add --no-save` was tried first and cannot pin: it treats an installed
+//   package as satisfying a requested version (a floor pin silently stayed at
+//   the newest), and on an empty tree it installs the hosts without their
+//   dependencies.
 //
-// A script rather than an `npm install …@${VERSION:-latest}` line, whose shell
-// expansion does not happen on Windows, where npm runs a script through cmd.
+// A script rather than the `npm install …@${VERSION:-latest}` line this
+// replaced: that expansion is the shell's, and Windows runs a package script
+// through cmd, which does not do it.
 import { spawnSync } from "node:child_process";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
