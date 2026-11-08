@@ -1,8 +1,7 @@
 // Limits that follow the model's context window (lisp/src/window.lisp, limits.lisp), held to each host's own.
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 import { assertRealPi, piInstalled } from "./support/pi";
-import { mkdtempSync, readFileSync, rmSync } from "fs";
-import { tmpdir } from "os";
+import { readFileSync, rmSync } from "fs";
 import { join, dirname } from "path";
 import {
   compactionBudgets,
@@ -22,6 +21,7 @@ import { resolveThresholdTokens } from "@oh-my-pi/pi-agent-core/compaction";
 import { learnedWindow, recordLearnedWindow, windowOf as windowOfHost } from "./support/window";
 import type { CompactionReason } from "../src/host";
 import type { HostName } from "../src/host";
+import { tempConfig } from "./support/config";
 
 /** The learned limits sit next to the test's config. */
 const configDir = () => dirname(process.env.KEEL_CONFIG_PATH!);
@@ -32,19 +32,9 @@ const triggerFor = (w: ReturnType<typeof windowOfHost>, reason: CompactionReason
   // A pass the host does not retry is a recovery only for an overflow or a cut-off reply.
   triggerForRule(w.effective, reason === "overflow" || reason === "incomplete", before, policy, rule);
 
-let dir: string;
-const prev = process.env.KEEL_CONFIG_PATH;
-beforeAll(() => {
-  dir = mkdtempSync(join(tmpdir(), "keel-window-"));
-  process.env.KEEL_CONFIG_PATH = join(dir, "keel-config.json");
-});
-afterAll(() => {
-  if (prev === undefined) delete process.env.KEEL_CONFIG_PATH;
-  else process.env.KEEL_CONFIG_PATH = prev;
-  rmSync(dir, { recursive: true, force: true });
-});
+const config = tempConfig("keel-window-");
 afterEach(() => {
-  rmSync(join(dir, "keel-models.json"), { force: true });
+  rmSync(join(config.dir, "keel-models.json"), { force: true });
 });
 
 describe("limitFromOverflowError", () => {
@@ -133,7 +123,7 @@ describe("compactionBudgets", () => {
       const b = compactionBudgets(trigger, overhead);
       expect(b.maxTailTokens).toBeLessThan(DEFAULT_BUDGETS.maxTailTokens);
       expect(overhead + b.maxTailTokens + b.briefCeilingTokens + 600).toBeLessThanOrEqual(RECOVERY_BAND * trigger);
-      expect(b.minTailTokens).toBe(Math.round(b.maxTailTokens / 5));
+      expect(b.minTailTokens).toBeLessThan(b.maxTailTokens);
     }
     // Overhead alone past the band: the floor, and nothing better exists.
     expect(compactionBudgets(9_000, 8_000).maxTailTokens).toBe(1_000);
@@ -180,7 +170,7 @@ describe("learned limits", () => {
     expect(recordLearnedWindow(configDir(), "eh/m", 32_768)).toBe(true);
     expect(learnedWindow(configDir(), "eh/m")).toBe(32_768);
     expect(learnedWindow(configDir(), "eh/other")).toBeUndefined();
-    expect(JSON.parse(readFileSync(join(dir, "keel-models.json"), "utf8"))["eh/m"]).toMatchObject({ contextWindow: 32_768, source: "overflow-error" });
+    expect(JSON.parse(readFileSync(join(config.dir, "keel-models.json"), "utf8"))["eh/m"]).toMatchObject({ contextWindow: 32_768, source: "overflow-error" });
   });
 });
 

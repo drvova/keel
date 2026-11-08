@@ -56,7 +56,9 @@ describe("while the core cannot run", () => {
 
   it("keel_recall and keel_pin answer with the reason", async () => {
     const ctx = { sessionManager: { getEntries: () => [], getBranch: () => [] }, model: undefined };
-    for (const t of fakeHost().tools.values()) {
+    const tools = fakeHost().tools;
+    expect([...tools.keys()]).toEqual(expect.arrayContaining(["keel_recall", "keel_pin"]));
+    for (const t of tools.values()) {
       const out = await t.execute("x", t.name === "keel_pin" ? { note: "keep this" } : { query: "anything" }, undefined, undefined, ctx);
       expect({ tool: t.name, text: out.content[0].text }).toEqual({ tool: t.name, text: expect.stringContaining("install SBCL") });
     }

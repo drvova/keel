@@ -2,30 +2,17 @@
 // compaction's details and merged down to the window's line limit. The core
 // builds it (lisp/src/compaction.lisp) and writes it (lisp/src/summary.lisp).
 import { DEFAULT_SUMMARY_LIMITS } from "./support/window";
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+import { describe, expect, it } from "bun:test";
 import type { HistoryRange } from "./support/compile";
 import { COMPACT_INSTRUCTION } from "./support/names";
 import { registerHook } from "./support/host";
 import { sectionLines, summarize } from "./support/summary";
+import { tempConfig } from "./support/config";
 
 const range = (from: number, to: number, extra: Partial<HistoryRange> = {}): HistoryRange =>
   ({ from, to, requests: 1, asks: [`ask ${from}`], files: [], commits: [], commitCount: 0, failed: 0, ...extra });
 
-let dir: string;
-const prev = process.env.KEEL_CONFIG_PATH;
-beforeAll(() => {
-  dir = mkdtempSync(join(tmpdir(), "keel-index-"));
-  process.env.KEEL_CONFIG_PATH = join(dir, "c.json");
-  writeFileSync(process.env.KEEL_CONFIG_PATH, JSON.stringify({ overrideDefaultCompaction: true, smartKeepTail: false }));
-});
-afterAll(() => {
-  if (prev === undefined) delete process.env.KEEL_CONFIG_PATH;
-  else process.env.KEEL_CONFIG_PATH = prev;
-  rmSync(dir, { recursive: true, force: true });
-});
+const config = tempConfig("keel-index-", { overrideDefaultCompaction: true, smartKeepTail: false });
 
 /** The compaction the hook writes of this branch: an automatic one, or /keel keep:N. */
 const compact = (branchEntries: any[], opts: { previousSummary?: string; keep?: number } = {}) => {

@@ -7,6 +7,7 @@ import { join } from "path";
 import { mkdirSync, utimesSync, writeFileSync } from "fs";
 import { fakeHost } from "./support/binding";
 import { freshDir, writeJsonl } from "./support/session-files";
+import { RESUME_NOTICE_TYPE } from "./support/names";
 
 const text = (t: string) => [{ type: "text", text: t }];
 const call = (id: string, name: string, args: Record<string, unknown>) => ({ role: "assistant", content: [{ type: "toolCall", id, name, arguments: args }] });
@@ -40,7 +41,7 @@ describe("a new session starts knowing where the last one stopped", () => {
   it("its request, what it changed, the failure it fixed and how, and what it left open", async () => {
     const sent = await start(work);
     expect(sent).toHaveLength(1);
-    expect(sent[0].message.customType).toBe("keel-resume");
+    expect(sent[0].message.customType).toBe(RESUME_NOTICE_TYPE);
     expect(sent[0].options).toEqual({ deliverAs: "nextTurn" });
     const said = sent[0].message.content as string;
     expect(said).toStartWith("Where the last session (aaaa1111) stopped, read from its transcript:\n");

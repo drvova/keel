@@ -30,7 +30,12 @@ const recall = async (params: Record<string, unknown>) => {
   });
   return out.content[0].text as string;
 };
-const lineOf = (out: string, n: number) => out.split("\n").find((l) => l.startsWith(`#${n} `)) ?? "";
+/** Entry #N's line in OUT; a test fails when there is none, so a check of what it lacks cannot pass on a missing line. */
+const lineOf = (out: string, n: number) => {
+  const line = out.split("\n").find((l) => l.startsWith(`#${n} `));
+  expect(line).toBeDefined();
+  return line!;
+};
 
 describe("recall says what superseded an entry", () => {
   it("a read of a file changed later: the call and its result", async () => {
@@ -47,7 +52,7 @@ describe("recall says what superseded an entry", () => {
 
   it("nothing on what still holds: the edit itself, the passing run, a file never changed", async () => {
     const out = await recall({ range: [0, 10] });
-    for (const n of [5, 6, 7, 8, 9, 10, 11]) expect(lineOf(out, n)).not.toMatch(/\((superseded|fixed):/);
+    for (const n of [5, 6, 7, 8, 9, 10]) expect(lineOf(out, n)).not.toMatch(/\((superseded|fixed):/);
   });
 
   it("on a search hit too", async () => {

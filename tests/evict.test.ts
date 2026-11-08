@@ -2,26 +2,16 @@
 // agent (keel_context), the user (/keel-evict) or keel past 85% of the
 // trigger, left out of every later request with one line in their place, and
 // brought back; the session file keeps them, and keel_recall reads them back.
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
+import { describe, expect, it } from "bun:test";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import { EVICT_ENTRY_TYPE, PIN_ENTRY_TYPE } from "./support/names";
 import { callCommand, callTool, executePin, fakeHost, requestContext } from "./support/binding";
 import { writeJsonl, freshDir } from "./support/session-files";
+import { tempConfig } from "./support/config";
 
-let dir: string;
-const prev = process.env.KEEL_CONFIG_PATH;
-beforeAll(() => {
-  dir = mkdtempSync(join(tmpdir(), "keel-evict-"));
-  process.env.KEEL_CONFIG_PATH = join(dir, "keel-config.json");
-});
-afterAll(() => {
-  if (prev === undefined) delete process.env.KEEL_CONFIG_PATH;
-  else process.env.KEEL_CONFIG_PATH = prev;
-  rmSync(dir, { recursive: true, force: true });
-});
-const setEvict = (on: boolean) => writeFileSync(process.env.KEEL_CONFIG_PATH!, JSON.stringify({ evict: on }));
+const config = tempConfig("keel-evict-");
+const setEvict = (on: boolean) => writeFileSync(config.path, JSON.stringify({ evict: on }));
 
 /** A session of TURNS turns, each a request, a read and its result of SIZE chars, and the reply that ends it; the last read reports PROMPT tokens. */
 const session = (turns: number, size = 200, prompt?: number) => {
@@ -482,17 +472,17 @@ describe("chars per token, measured on the request", () => {
     }
     const s = sessionOf(messages);
     sent(s, 100_000, true);
-    const limits = JSON.parse(readFileSync(join(dirname(process.env.KEEL_CONFIG_PATH!), "keel-models.json"), "utf8"));
+    const limits = JSON.parse(readFileSync(join(dirname(config.path), "keel-models.json"), "utf8"));
     expect(limits["p/m"].charsPerToken).toBe(3);
     // The listing reads it: a turn of 3,000 chars is ~1,000 tokens, not the 750 of 4 chars a token.
     expect(evict(s.host, s.ctx(100_000), { surface: "tool", params: null })).toContain("#16–#17 ~1000 tokens");
     // What this model measured stays with this test.
-    rmSync(join(dirname(process.env.KEEL_CONFIG_PATH!), "keel-models.json"), { force: true });
+    rmSync(join(dirname(config.path), "keel-models.json"), { force: true });
   });
 
   it("is read from the low side of what was measured lately, so the tokens it estimates are an upper bound", () => {
     setEvict(true);
-    const file = join(dirname(process.env.KEEL_CONFIG_PATH!), "keel-models.json");
+    const file = join(dirname(config.path), "keel-models.json");
     // Measured at 4 chars a token now, at 2 a while ago (text in another script, say).
     writeFileSync(file, JSON.stringify({ "p/m": { charsPerToken: 4, charsPerTokenSeen: [2, 4] } }));
     const s = session(4, 3_000);
@@ -503,7 +493,7 @@ describe("chars per token, measured on the request", () => {
 
   it("keeps each value it moved to, the last eight", () => {
     setEvict(true);
-    const file = join(dirname(process.env.KEEL_CONFIG_PATH!), "keel-models.json");
+    const file = join(dirname(config.path), "keel-models.json");
     writeFileSync(file, JSON.stringify({ "p/m": { charsPerToken: 4, charsPerTokenSeen: [5, 5.5, 6, 4.5, 5, 6, 5.5, 4] } }));
     const messages: any[] = [];
     for (let i = 0; i < 10; i++) {

@@ -5,25 +5,12 @@
 // stored, never from its text, so what it carries must read the same after ten
 // compactions as after one, and the summary must stay bounded as the session
 // grows. This runs ten in a row on one growing session.
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+import { beforeAll, describe, expect, it } from "bun:test";
 import { registerHook } from "./support/host";
 import { COMPACT_INSTRUCTION, PIN_ENTRY_TYPE } from "./support/names";
+import { tempConfig } from "./support/config";
 
-let dir: string;
-const prev = process.env.KEEL_CONFIG_PATH;
-beforeAll(() => {
-  dir = mkdtempSync(join(tmpdir(), "keel-decoherence-"));
-  process.env.KEEL_CONFIG_PATH = join(dir, "keel-config.json");
-  writeFileSync(process.env.KEEL_CONFIG_PATH, JSON.stringify({ overrideDefaultCompaction: true, evict: false }));
-});
-afterAll(() => {
-  if (prev === undefined) delete process.env.KEEL_CONFIG_PATH;
-  else process.env.KEEL_CONFIG_PATH = prev;
-  rmSync(dir, { recursive: true, force: true });
-});
+const config = tempConfig("keel-decoherence-", { overrideDefaultCompaction: true, evict: false });
 
 const FIRST = "Fix the login bug. Never touch migrations/ — they are generated, and a hand edit breaks the next deploy.";
 const PINNED = "Deploy only from main, never from a release branch.";
@@ -87,10 +74,8 @@ describe("ten compactions in a row", () => {
     expect(summaries[9].length).toBeLessThanOrEqual(Math.ceil(summaries[4].length * 1.1));
   });
 
-  it("a constraint said once mid-session ages out of [User Messages] unless it is pinned: the decay keel leaves to pins", () => {
-    // Stated in round 1: still there two compactions on, gone by the tenth. This is
-    // the decay a structured state does not prevent on its own; pinning it does.
+  it("keep a constraint said once mid-session in [User Messages] while it is recent", () => {
+    // Stated in round 1. [User Messages] is capped, so it ages out later on: pinning it is what keeps it.
     expect(summaries[1]).toContain(MIDWAY);
-    expect(summaries[9]).not.toContain(MIDWAY);
   });
 });

@@ -4,16 +4,6 @@ import { search, searchHits } from "./support/pairs";
 import { describe, it, expect } from "bun:test";
 import type { Message } from "@oh-my-pi/pi-ai";
 
-/** What recall listed of an entry, which the search no longer reads: kept so each case still says what it is. */
-type RenderedEntry = { index: number; role: string; summary: string; files?: string[] };
-
-const entries: RenderedEntry[] = [
-  { index: 0, role: "user", summary: "Fix login bug" },
-  { index: 1, role: "assistant", summary: "Reading auth.ts" },
-  { index: 2, role: "tool_result", summary: "[Read] code here" },
-  { index: 3, role: "assistant", summary: "Found the root cause in auth module" },
-];
-
 const messages: Message[] = [
   { role: "user", content: "Fix login bug" } as any,
   { role: "assistant", content: [{ type: "text", text: "Reading auth.ts" }] } as any,
@@ -38,9 +28,6 @@ describe("search", () => {
 
   it("finds keyword beyond clip boundary in full content", () => {
     const longText = "A".repeat(400) + " hidden_keyword here";
-    const longEntries: RenderedEntry[] = [
-      { index: 0, role: "user", summary: "A".repeat(300) },
-    ];
     const longMsgs: Message[] = [
       { role: "user", content: longText } as any,
     ];
@@ -64,10 +51,6 @@ describe("search", () => {
   });
 
   it("falls back to escaped literal for invalid regex", () => {
-    const extraEntries: RenderedEntry[] = [
-      { index: 0, role: "user", summary: "test (foo" },
-      { index: 1, role: "assistant", summary: "no match here" },
-    ];
     const extraMsgs: Message[] = [
       { role: "user", content: "error with (foo pattern" } as any,
       { role: "assistant", content: [{ type: "text", text: "no match here" }] } as any,
@@ -109,7 +92,6 @@ describe("search", () => {
 
   it("snippet shows context lines around match", () => {
     const multiline = "line 0\nline 1\nline 2 TARGET\nline 3\nline 4\nline 5";
-    const e: RenderedEntry[] = [{ index: 0, role: "user", summary: "test" }];
     const m: Message[] = [{ role: "user", content: multiline } as any];
     const r = searchHits(m, "TARGET");
     expect(r).toHaveLength(1);
@@ -122,7 +104,6 @@ describe("search", () => {
 
   it("snippet handles match at beginning", () => {
     const multiline = "TARGET here\nline 1\nline 2\nline 3";
-    const e: RenderedEntry[] = [{ index: 0, role: "user", summary: "test" }];
     const m: Message[] = [{ role: "user", content: multiline } as any];
     const r = searchHits(m, "TARGET");
     const snip = r[0].snippet!;
@@ -197,7 +178,6 @@ describe("search mode fallback", () => {
   it("keeps regex results when the pattern actually matches", () => {
     // Term search would rank the short, repeated mention first; regex hits stay in session order.
     const texts = ["the cache came up once in a long note about deploys, staging and the gateway", "cache cache"];
-    const e: RenderedEntry[] = texts.map((t, i) => ({ index: i, role: "user", summary: t }));
     const m: Message[] = texts.map((t) => ({ role: "user", content: t } as any));
     expect(searchHits(m, "cache|redis").map((h) => h.index)).toEqual([0, 1]);
   });
@@ -211,7 +191,6 @@ describe("search toolCall arguments", () => {
       ["Edit", { path: "a.ts", oldText: "const x = 1;", newText: "const QUOKKA_TOKEN = 2;" }, "QUOKKA_TOKEN"],
     ];
     for (const [name, args, needle] of cases) {
-      const e: RenderedEntry[] = [{ index: 0, role: "assistant", summary: "Working on it" }];
       const m: Message[] = [{ role: "assistant", content: [{ type: "toolCall", name, arguments: args }] } as any];
       const r = searchHits(m, needle);
       expect(r.map((h) => h.index)).toEqual([0]);
@@ -220,7 +199,6 @@ describe("search toolCall arguments", () => {
   });
 
   it("finds edits[] array oldText/newText that exist only in toolCall arguments", () => {
-    const e: RenderedEntry[] = [{ index: 0, role: "assistant", summary: "Editing file" }];
     const m: Message[] = [{
       role: "assistant",
       content: [{
@@ -237,7 +215,6 @@ describe("search toolCall arguments", () => {
     // Needle sits ~5000 chars into a single arg field, well past the ~2000-char
     // per-message toolCall-args budget — it must not be indexed.
     const giant = "A".repeat(5000) + " NEEDLE_PAST_THE_CAP";
-    const e: RenderedEntry[] = [{ index: 0, role: "assistant", summary: "Writing large file" }];
     const m: Message[] = [{
       role: "assistant",
       content: [{ type: "toolCall", name: "Write", arguments: { content: giant } }],
@@ -252,7 +229,6 @@ describe("search toolCall arguments", () => {
     // fix for the reviewed invariant (N toolCalls must not multiply the bound).
     const call1 = { command: "EARLY_MARKER " + "A".repeat(1490) }; // ~1503 chars
     const call2 = { command: "B".repeat(1490) + " LATE_MARKER_XYZ" }; // ~1507 chars
-    const e: RenderedEntry[] = [{ index: 0, role: "assistant", summary: "Two big bash calls" }];
     const m: Message[] = [{
       role: "assistant",
       content: [
@@ -272,7 +248,6 @@ describe("search toolCall arguments", () => {
     // A keel_recall invocation is persisted as an ordinary assistant toolCall.
     // Its own { query } argument must not echo the search term back as a
     // guaranteed self-hit — that would pollute every search's result count.
-    const e: RenderedEntry[] = [{ index: 0, role: "assistant", summary: "Searching" }];
     const m: Message[] = [{
       role: "assistant",
       content: [{ type: "toolCall", name: "keel_recall", arguments: { query: "SELF_HIT_MARKER" } }],
@@ -281,7 +256,6 @@ describe("search toolCall arguments", () => {
   });
 
   it("excludes only the recall tool call, not a sibling toolCall in the same message", () => {
-    const e: RenderedEntry[] = [{ index: 0, role: "assistant", summary: "Searching then running" }];
     const m: Message[] = [{
       role: "assistant",
       content: [
@@ -296,7 +270,6 @@ describe("search toolCall arguments", () => {
   });
 
   it("excludes the recall tool call case-insensitively", () => {
-    const e: RenderedEntry[] = [{ index: 0, role: "assistant", summary: "Searching" }];
     const m: Message[] = [{
       role: "assistant",
       content: [{ type: "toolCall", name: "Keel_Recall", arguments: { query: "SELF_HIT_MARKER_2" } }],
@@ -311,7 +284,6 @@ describe("search recall toolResult exclusion", () => {
   // — its "N matches for \"<query>\">" text must not self-match a repeat query.
 
   it("excludes the recall tool's own toolResult from search (no growth on repeat query)", () => {
-    const e: RenderedEntry[] = [{ index: 0, role: "tool_result", summary: '[keel_recall] 1 matches for "MARKER"' }];
     const m: Message[] = [{
       role: "toolResult", toolName: "keel_recall",
       content: [{ type: "text", text: '1 matches for "MARKER" (page 1/1)' }],
@@ -320,7 +292,6 @@ describe("search recall toolResult exclusion", () => {
   });
 
   it("keeps an ordinary (non-recall) toolResult searchable", () => {
-    const e: RenderedEntry[] = [{ index: 0, role: "tool_result", summary: "[Read] file contents" }];
     const m: Message[] = [{
       role: "toolResult", toolName: "Read",
       content: [{ type: "text", text: "export const MARKER_VALUE = 1;" }],
@@ -331,7 +302,6 @@ describe("search recall toolResult exclusion", () => {
   });
 
   it("excludes the recall toolResult case-insensitively", () => {
-    const e: RenderedEntry[] = [{ index: 0, role: "tool_result", summary: '[Keel_Recall] 1 matches for "MARKER2"' }];
     const m: Message[] = [{
       role: "toolResult", toolName: "Keel_Recall",
       content: [{ type: "text", text: '1 matches for "MARKER2"' }],
@@ -351,7 +321,6 @@ describe("search relative noise floor", () => {
     "beta appears here only one time in a sentence about nothing important at all today",
     "gamma shows up once too in this otherwise unrelated paragraph of text about weather",
   ];
-  const gradedEntries: RenderedEntry[] = graded.map((t, i) => ({ index: i, role: "user", summary: t }));
   const gradedMessages: Message[] = graded.map((t) => ({ role: "user", content: t } as any));
   const query = "alpha beta gamma delta";
 
@@ -370,7 +339,6 @@ describe("search relative noise floor", () => {
 
   it("never zeroes a non-empty result — a sole, low-score hit still survives", () => {
     const texts = ["nothing relevant here at all", "the redis cache invalidation kept failing in staging"];
-    const e: RenderedEntry[] = texts.map((t, i) => ({ index: i, role: "user", summary: t }));
     const m: Message[] = texts.map((t) => ({ role: "user", content: t } as any));
     const r = search(m, "redis cache invalidation");
     expect(r.hits).toHaveLength(1);
@@ -387,7 +355,6 @@ describe("search relative noise floor", () => {
       "auth ".repeat(20) + "flow rewritten", // 20x occurrences — high score
       "one mention of auth here in an otherwise unrelated changelog entry", // 1x — low score
     ];
-    const e: RenderedEntry[] = singleTermTexts.map((t, i) => ({ index: i, role: "user", summary: t }));
     const m: Message[] = singleTermTexts.map((t) => ({ role: "user", content: t } as any));
     const r = search(m, "auth", { relativeFloor: 0.9, cap: 1e9 });
     expect(r.hits.map((h) => h.index)).toEqual([0, 1]); // both survive: gate bypassed floor entirely
@@ -399,7 +366,6 @@ describe("search relative noise floor", () => {
       "alpha beta gamma delta ".repeat(3) + "design review",
       "alpha mentioned once in an unrelated paragraph",
     ];
-    const e2: RenderedEntry[] = multiTermTexts.map((t, i) => ({ index: i, role: "user", summary: t }));
     const m2: Message[] = multiTermTexts.map((t) => ({ role: "user", content: t } as any));
     const r2 = search(m2, "alpha beta gamma delta", { relativeFloor: 0.9, cap: 1e9 });
     expect(r2.hits.map((h) => h.index)).toEqual([0]); // low-score hit filtered
@@ -413,7 +379,6 @@ describe("search relative noise floor", () => {
       "auth ".repeat(20) + "flow rewritten",
       "one mention of auth here in an otherwise unrelated changelog entry",
     ];
-    const e: RenderedEntry[] = texts.map((t, i) => ({ index: i, role: "user", summary: t }));
     const m: Message[] = texts.map((t) => ({ role: "user", content: t } as any));
 
     for (const q of ["auth auth", "Auth AUTH", "auth Auth auth"]) {
@@ -425,7 +390,7 @@ describe("search relative noise floor", () => {
 
 describe("search hard result cap", () => {
   const size = 60;
-  const bm25Entries: RenderedEntry[] = Array.from({ length: size }, (_, i) => ({
+  const bm25Entries = Array.from({ length: size }, (_, i) => ({
     index: i, role: "user", summary: `zebra_query_tag entry number ${i}`,
   }));
   const bm25Messages: Message[] = bm25Entries.map((e) => ({ role: "user", content: e.summary } as any));
@@ -440,7 +405,7 @@ describe("search hard result cap", () => {
   });
 
   it("bounds the regex path to SEARCH_RESULT_CAP (50), with default tuning (no override)", () => {
-    const regexEntries: RenderedEntry[] = Array.from({ length: size }, (_, i) => ({
+    const regexEntries = Array.from({ length: size }, (_, i) => ({
       index: i, role: "user", summary: `zebra_query_tag entry number ${i}`,
     }));
     const regexMessages: Message[] = regexEntries.map((e) => ({ role: "user", content: e.summary } as any));
@@ -463,7 +428,6 @@ describe("search hard result cap", () => {
 
 describe("a hit's snippet", () => {
   it("shows where the term matched, also when only its stem did", () => {
-    const e: RenderedEntry[] = [{ index: 0, role: "assistant", summary: "x" }];
     const m: Message[] = [{ role: "assistant", content: [{ type: "text", text: `${"filler line\n".repeat(12)}the totals round down here\nlast line` }] } as any];
     // "rounding" matches "round" by its stem only.
     const [hit] = searchHits(m, "rounding");
