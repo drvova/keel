@@ -83,8 +83,55 @@
 ;;; --- the state ----------------------------------------------------------------------
 
 (defstruct (state (:constructor make-state
-                      (&key early-requests early-slots modified created read commits tracked user-messages (brief ""))))
-  early-requests early-slots modified created read commits tracked user-messages brief)
+                      (&key early-requests early-slots modified created read commits tracked user-messages said-again (brief ""))))
+  "What a summary carries, section by section. SAID-AGAIN holds what the user said
+more than once with turns between (SAID-AGAIN-IN), kept past [User Messages]' cap."
+  early-requests early-slots modified created read commits tracked user-messages said-again brief)
+
+;;; --- what the user said again ---------------------------------------------------------
+;;;
+;;; [User Messages] keeps the newest, so a constraint said once mid-session ages
+;;; out (tests/decoherence.test.ts). One the user says again, after a gap, is the
+;;; one that matters: that it came back is the evidence, as a fact met again after
+;;; a gap is the one people keep (the spacing effect; Cepeda et al., Psychological
+;;; Bulletin 132(3), 2006). It is kept past the cap, a few at most, the latest
+;;; wording, and the summary says so. Alike is by words (SAID-ALIKE-P), not by meaning.
+
+(defparameter +said-again-kept+ 3 "What the user said again, kept past [User Messages]' cap, the latest first to go last.")
+(defparameter +said-again-min-words+ 5 "A message of fewer distinct words is never counted as said again: \"run the tests\" twice is no rule.")
+
+(defun message-words (line)
+  "LINE's distinct words, folded, its numbers and #N refs left out: what two sayings of one thing share."
+  (let ((words (make-hash-table :test 'equal)))
+    (dolist (w (words-of (fold line) 600) words)
+      (unless (every #'digit-char-p w) (setf (gethash w words) t)))))
+
+(defun said-alike-p (a b)
+  "Whether B says A again: every word of one is in the other (numbers aside), so B
+repeats A or adds to it. A different subject in the same template (\"…the billing
+flow…\", \"…the auth flow…\") is not, and neither is a rewording that changes words:
+words cannot tell those two apart, so neither counts."
+  (let ((wa (message-words a)) (wb (message-words b)))
+    (flet ((within (x y) (loop for w being the hash-keys of x always (gethash w y))))
+      (and (>= (hash-table-count wa) +said-again-min-words+) (>= (hash-table-count wb) +said-again-min-words+)
+           (or (within wa wb) (within wb wa))))))
+
+(defun said-again-in (messages kept)
+  "KEPT (what was said again before) and what in MESSAGES (oldest first) the user
+said again: of two alike, the later wording, which replaces the earlier."
+  (let ((all (append kept messages)) (out (copy-list kept)))
+    (loop for (a . later) on all
+          do (dolist (b later)
+               ;; The same words again count too: the strongest case.
+               (when (said-alike-p a b)
+                 (setf out (append (remove-if (lambda (k) (said-alike-p k b)) out) (list b))))))
+    (remove-duplicates out :test #'string= :from-end t)))
+
+(defun user-message-lines (s cap)
+  "[User Messages]: what the user said again (not also among the newest), marked, then the newest CAP."
+  (let* ((newest (last-n (state-user-messages s) cap))
+         (again (remove-if (lambda (k) (some (lambda (m) (or (string= k m) (said-alike-p k m))) newest)) (state-said-again s))))
+    (append (mapcar (lambda (k) (format nil "(said more than once) ~a" k)) again) newest)))
 
 (defun read-state (v)
   "A stored state (details.summaryState) as a state, or NIL when V is none or not a well-formed one.
@@ -110,6 +157,7 @@ A list it lacks is empty; earlySlots it lacks is what the requests it holds leav
                        :tracked (map 'list (lambda (tr) (cons (json-get tr "name") (strings-of (json-get tr "entries"))))
                                      (field v "tracked" (lambda (x) (and (json-array-p x) (every #'tracked-p x))) #()))
                        :user-messages (strings-of (field v "userMessages" #'strings-p #()))
+                       :said-again (strings-of (field v "saidAgain" #'strings-p #()))
                        :brief (field v "brief" #'stringp "")
                        :early-slots (as-integer (field v "earlySlots" (lambda (x) (and (js-integer-p x) (>= x 0)))
                                                        (max 0 (- +early-requests-kept+ (length early))))))))
@@ -124,6 +172,7 @@ A list it lacks is empty; earlySlots it lacks is what the requests it holds leav
                "commits" (map 'vector (lambda (c) (json-object "hash" (commit-hash c) "message" (commit-message c))) (state-commits s))
                "tracked" (map 'vector (lambda (tr) (json-object "name" (car tr) "entries" (coerce (cdr tr) 'vector))) (state-tracked s))
                "userMessages" (coerce (state-user-messages s) 'vector)
+               "saidAgain" (coerce (state-said-again s) 'vector)
                "brief" (state-brief s)))
 
 (defun fresh-state (blocks brief-blocks file-ops track-commands early-slots)
@@ -137,6 +186,7 @@ A list it lacks is empty; earlySlots it lacks is what the requests it holds leav
                   :commits (extract-commits blocks)
                   :tracked (remove-if (lambda (tr) (null (cdr tr))) (extract-tracked-commands blocks track-commands))
                   :user-messages (nthcdr (length early) messages)
+                  :said-again (said-again-in messages '())
                   :brief (wrap-long-lines (compile-brief brief-blocks))))))
 
 (defun append-touched (items more)
@@ -187,6 +237,7 @@ A list it lacks is empty; earlySlots it lacks is what the requests it holds leav
                                                   (setf out (add-commit out c))))
                       :tracked tracked
                       :user-messages (append-touched (state-user-messages prev) (state-user-messages fresh))
+                      :said-again (said-again-in (append (state-user-messages prev) (state-user-messages fresh)) (state-said-again prev))
                       :brief (merge-brief (state-brief prev) (state-brief fresh) (json-get limits "briefLines")))))))
 
 (defun cap-state (s limits)
@@ -198,6 +249,7 @@ A list it lacks is empty; earlySlots it lacks is what the requests it holds leav
                 :commits (last-n (state-commits s) (json-get limits "commits"))
                 :tracked (mapcar (lambda (tr) (cons (car tr) (last-n (cdr tr) (json-get limits "commandsPerName")))) (state-tracked s))
                 :user-messages (last-n (state-user-messages s) (json-get limits "userMessages"))
+                :said-again (last-n (state-said-again s) +said-again-kept+)
                 :brief (state-brief s))))
 
 ;;; --- the text ----------------------------------------------------------------------
@@ -219,7 +271,7 @@ A list it lacks is empty; earlySlots it lacks is what the requests it holds leav
                                                                  (last-n (state-commits s) (json-get limits "commits")))))
                       (list "Tracked Commands" (section "Tracked Commands" (mapcar (lambda (tr) (format nil "~a: ~a" (car tr) (cap-items (mapcar #'tracked-entry (cdr tr)) (json-get limits "commandsPerName") +command-separator+)))
                                                                                    (state-tracked s))))
-                      (list "User Messages" (section "User Messages" (last-n (state-user-messages s) (json-get limits "userMessages"))))
+                      (list "User Messages" (section "User Messages" (user-message-lines s (json-get limits "userMessages"))))
                       (list "History Index" (section "History Index" history))))
          (shown (remove-if (lambda (p) (zerop (length (second p)))) parts))
          (ws (if working-set (format nil "[Working Set]~%~a" (join-strings working-set (nl))) ""))

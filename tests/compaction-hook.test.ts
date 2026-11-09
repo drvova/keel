@@ -1049,7 +1049,8 @@ describe("compaction hook: section sizes follow the window", () => {
     msg(`u${i}`, "user", `please update module ${i} and keep its public API stable`),
     msg(`a${i}`, "assistant", `Updated module ${i}. ${"The change keeps every exported name and signature as it was. ".repeat(4)}`),
   ]).flat();
-  const userLines = (summary: string) => (summary.split("[User Messages]\n")[1] ?? "").split("\n\n")[0].split("\n").filter((l) => l.startsWith("- ")).length;
+  /** The newest user messages the summary lists (what the user said again is kept past the cap, so not counted). */
+  const userLines = (summary: string) => (summary.split("[User Messages]\n")[1] ?? "").split("\n\n")[0].split("\n").filter((l) => l.startsWith("- ") && !l.startsWith("- (said more than once)")).length;
 
   test("a small window keeps fewer user messages, and the details say by how much", () => {
     setConfig({ overrideDefaultCompaction: true });

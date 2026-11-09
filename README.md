@@ -131,7 +131,7 @@ Every `(#N)` is an entry `keel_recall` reads back exactly. A section appears onl
 | `[Files And Changes]` | Files modified, created and read |
 | `[Commits]` | The last 8 commits made in the session |
 | `[Tracked Commands]` | Recent runs of the commands in `trackCommands` (off by default) |
-| `[User Messages]` | The 15 newest later user messages |
+| `[User Messages]` | The 15 newest later user messages, and up to 3 the user said more than once, kept past that, marked `(said more than once)` |
 | `[History Index]` | One line per compacted range back to the session's start: requests, files, commits, failed calls (8 lines; older ranges merge) |
 | `[Working Set]` | What the next step works from, brought back so the agent does not fetch it again: the latest version of each file being worked on, the output of the open failure, and recall's best hits for the latest request. Up to 3,800 tokens, never more than half of what the compaction removes |
 | Brief transcript | The conversation's highest-signal lines in order, one line per tool call, `[failed]` marked |

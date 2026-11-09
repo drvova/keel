@@ -299,11 +299,12 @@ budgets' growthMarginChars), or this share of what it replaces.")
   (let ((roles (mapcar #'item-role items)))
     (if (<= (length roles) 30) roles (append (subseq roles 0 10) (list "...") (last roles 10)))))
 
-(defstruct (assembly (:constructor make-assembly (text state sections summarized history shown growth)))
+(defstruct (assembly (:constructor make-assembly (text state sections summarized history shown growth said-new)))
   "A summary written for a cut: its TEXT, the STATE to store and the SECTIONS it
 shows; how many messages it SUMMARIZED; the HISTORY ranges to store; the #N
-[Working Set] SHOWN; and its GROWTH."
-  text state sections summarized history shown growth)
+[Working Set] SHOWN; its GROWTH; and SAID-NEW, what the user said again that the
+previous summary did not hold yet (summary.lisp SAID-AGAIN-IN), which the user is told of."
+  text state sections summarized history shown growth said-new)
 
 (defstruct (growth (:constructor make-growth (net allowed)))
   "How much a summary adds to the context: NET chars (its length less the previous
@@ -393,7 +394,9 @@ sections and brief that would replace it."
         (multiple-value-bind (text state sections) (compile-summary summary-input)
           (make-assembly text state sections summarized history working-shown
                          (make-growth (- (js-length text) (if previous-summary (js-length previous-summary) 0) removed)
-                                      (max (json-get budgets "growthMarginChars") (js-round (* removed +growth-margin-share+))))))))))
+                                      (max (json-get budgets "growthMarginChars") (js-round (* removed +growth-margin-share+))))
+                         (let ((before (and stored-state (state-said-again stored-state))))
+                           (remove-if (lambda (k) (member k before :test #'string=)) (state-said-again state)))))))))
 
 (defparameter +cut-reasons+
   '((:no-live-messages "no_live_messages" "keel: Nothing to compact (no live messages)")
@@ -528,6 +531,7 @@ and what it was sized from (for debugging a compaction that kept too much or too
                                                 "totalUserTurns" (cut-total-user-turns cut)
                                                 "keptTokensEst" (tokens-from-chars (kept-chars kept) per-token)
                                                 "smartKeepAdjusted" (bool adjusted)
-                                                "budgetCut" (cut-budget-cut cut))
+                                                "budgetCut" (cut-budget-cut cut)
+                                                "saidAgain" (coerce (assembly-said-new a) 'vector))
                            ;; A recovery writes a summary that grows when it keeps part of the window.
                            "growth" (growth-json growth))))))))

@@ -20,7 +20,16 @@
   (if (>= n 1000) (format nil "~ak" (js-to-fixed-1 (/ (coerce n 'double-float) 1000d0))) (js-string-of n)))
 
 (defun format-compaction-stats (stats)
-  "The outcome line: what was kept, and how many messages were summarized."
+  "The outcome line: what was kept, and how many messages were summarized; then,
+for what the user said again this time, that /keel-pin keeps it for good."
+  (let ((line (outcome-line stats)) (again (strings-of (json-get stats "saidAgain" #()))))
+    ;; One line at most, the newest: a routine request said again is no rule, and a line per one would be noise.
+    (if again
+        (format nil "~a~%keel: you said \"~a\" more than once~@[ (and ~d more)~]: /~a-pin keeps it in every summary." line
+                (js-clip (car (last again)) 120) (and (rest again) (length (rest again))) +command+)
+        line)))
+
+(defun outcome-line (stats)
   (let ((cut (json-get stats "budgetCut"))
         (kept (format-tokens (json-get stats "keptTokensEst")))
         (summarized (js-string-of (json-get stats "summarized"))))

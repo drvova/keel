@@ -88,3 +88,17 @@ describe("the provider opt-out", () => {
     expect(handlesHostCompactions(settings(true, ["strasse"]), "Straße")).toBe(true);
   });
 });
+
+describe("the outcome line, for what the user said again", () => {
+  it("names each and says /keel-pin keeps it, only when this compaction found it", () => {
+    const rule = "Run bun test tests/auth before every commit, not the whole suite.";
+    expect(outcomeLine({ ...base, keptTokensEst: 2000, saidAgain: [rule] })).toBe(
+      `${outcomeLine({ ...base, keptTokensEst: 2000 })}\nkeel: you said "${rule}" more than once: /keel-pin keeps it in every summary.`,
+    );
+    expect(outcomeLine({ ...base, keptTokensEst: 2000, saidAgain: [] })).not.toContain("more than once");
+    // One line at most, the newest, however many: a routine request said again is no rule.
+    const line = outcomeLine({ ...base, keptTokensEst: 2000, saidAgain: ["first one said again here", "second one said again here", rule] });
+    expect(line.split("\n")).toHaveLength(2);
+    expect(line).toEndWith(`you said "${rule}" more than once (and 2 more): /keel-pin keeps it in every summary.`);
+  });
+});
