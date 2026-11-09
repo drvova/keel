@@ -25,6 +25,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { dirname, join } from "path";
+import { core } from "../../src/core";
 import { sessionMessages } from "./pairs";
 import { openHostSession, realModel, runStats, textOf, type Host, type HostSession, type RunStats } from "./host-session";
 
@@ -57,6 +58,13 @@ export interface LongHorizonOptions {
   contextWindow?: number;
   /** keel settings for the run, over `overrideDefaultCompaction: true` (e.g. `{ workingSet: false }`). */
   config?: Record<string, unknown>;
+  /**
+   * Turns after each fact's own at which it is scored again during the run (default 10, 30, 60), so
+   * the result shows how what keel keeps of a fact falls off with distance, as a retention curve
+   * does (Cepeda et al. 2006). A probe changes nothing in the run: it searches through the core's op
+   * search, which records nothing, not through keel_recall, whose calls steer eviction.
+   */
+  probeDelays?: number[];
   /** Runs before the temp session is removed: extra queries for debugging. */
   inspect?: (recall: (params: Record<string, unknown>) => Promise<string>, needles: Needle[]) => Promise<void> | void;
 }
@@ -69,6 +77,11 @@ export interface NeedleScore {
   /** The fact's text is in the request the host would send next (after a summary, or with turns out of the context, in what is left). */
   inContext: boolean;
   recallRank: number | null;
+}
+
+/** A fact scored DELAY turns after its own turn, during the run. */
+export interface NeedleProbe extends NeedleScore {
+  delay: number;
 }
 
 export interface LongHorizonResult {
@@ -84,6 +97,8 @@ export interface LongHorizonResult {
   /** The same without [Working Set], which is sized from the landing room, not the sections. */
   sectionChars: number[];
   needles: NeedleScore[];
+  /** Each fact scored again at each probe delay the run reached. */
+  probes: NeedleProbe[];
   finalSummary: string;
 }
 
@@ -202,6 +217,42 @@ const createProject = (proj: string, plans: TurnPlan[]) => {
   run(proj, "git", "commit", "-q", "-m", "init");
 };
 
+/** Where each fact landed, by keel's own #N in MESSAGES (the originals of what omp rewrote in place). */
+const locate = (needles: Needle[], messages: any[]): void => {
+  const at = (pred: (m: any) => boolean): number | undefined => messages.find((x) => pred(x.message))?.index;
+  for (const needle of needles) {
+    if (needle.kind === "early_commit") {
+      const commit = messages.find((x: any) => x.message.role === "toolResult" && textOf(x.message).includes(`feat(${COMPONENTS[needle.turn % COMPONENTS.length]}):`));
+      needle.key = textOf(commit?.message).match(/\[main ([0-9a-f]{7,})\]/)?.[1] ?? "(no commit)";
+      needle.index = commit?.index;
+      continue;
+    }
+    needle.index = at((m) => {
+      if (needle.kind === "constraint" || needle.kind === "mid_request") return m.role === "user" && textOf(m).includes(needle.key);
+      if (needle.kind === "decision") return m.role === "assistant" && textOf(m).includes(needle.key);
+      if (needle.kind === "tool_value") return m.role === "toolResult" && textOf(m).includes(needle.key);
+      if (needle.kind === "fixed_error") return m.role === "toolResult" && m.isError === true && textOf(m).includes(needle.key);
+      // early_file: the edit of the file (however the agent spelled its path).
+      return m.role === "assistant" && Array.isArray(m.content) && m.content.some((p: any) => p?.type === "toolCall" && p.name === "edit" && JSON.stringify(p.arguments ?? {}).includes(needle.key));
+    });
+  }
+};
+
+/** A fact's score, from the latest summary, the next request and the #N recall's first page HITS. */
+const scoreOf = (needle: Needle, summary: string, nextRequest: string, hits: number[]): NeedleScore => {
+  // A hit on the entry or its neighbour counts: a tool call and its result
+  // are adjacent, and recall shows the hit's surroundings on request.
+  const rank = needle.index == null ? -1 : hits.findIndex((h) => Math.abs(h - needle.index!) <= 1);
+  return {
+    kind: needle.kind,
+    turn: needle.turn,
+    inSummary: flat(summary).includes(flat(needle.key)),
+    pointed: pointsAt(summary, needle),
+    inContext: nextRequest.includes(flat(needle.key)),
+    recallRank: rank >= 0 ? rank + 1 : null,
+  };
+};
+
 export const runLongHorizon = async (options: LongHorizonOptions = {}): Promise<LongHorizonResult> => {
   const turns = options.turns ?? 60;
   const compactEvery = options.compactEvery ?? 6;
@@ -216,6 +267,13 @@ export const runLongHorizon = async (options: LongHorizonOptions = {}): Promise<
     createProject(proj, plans);
     hostSession = await openHostSession({ host: options.host, work, cwd: proj, contextWindow: options.contextWindow, config: options.config });
     const { session, sessionManager } = hostSession;
+    const latestSummary = (): string => sessionManager.getBranch().filter((e: any) => e.type === "compaction").at(-1)?.summary ?? "";
+    // The request the host would send next, through its own context hooks (keel's eviction among them).
+    const nextRequestOf = async (): Promise<string> =>
+      flat((await hostSession!.session.extensionRunner.emitContext(structuredClone(sessionManager.buildSessionContext().messages)))
+        .map((m: any) => textOf(m)).join("\n"));
+    const delays = options.probeDelays ?? [10, 30, 60];
+    const probes: NeedleProbe[] = [];
 
     for (let t = 0; t < turns; t++) {
       const plan = plans[t];
@@ -229,6 +287,18 @@ export const runLongHorizon = async (options: LongHorizonOptions = {}): Promise<
       // it never turns down, so as a stand-in for an idle pass it is left out.
       const standIn = hostSession.host === "pi" && options.config?.evict === true;
       if ((t + 1) % compactEvery === 0 && !standIn) await hostSession.periodicCompaction();
+      const due = needles.flatMap((n) => delays.filter((d) => n.turn + d === t).map((delay) => ({ n, delay })));
+      if (due.length > 0) {
+        await sessionManager.flush?.();
+        const file = sessionManager.getSessionFile();
+        locate(needles, sessionMessages(file));
+        const summary = latestSummary();
+        const next = await nextRequestOf();
+        for (const { n, delay } of due) {
+          const hits = (core({ op: "search", file, query: n.query }).hits as Array<{ index: number }>).slice(0, 5).map((h) => h.index);
+          probes.push({ ...scoreOf(n, summary, next, hits), delay });
+        }
+      }
     }
     await sessionManager.flush?.();
 
@@ -244,45 +314,17 @@ export const runLongHorizon = async (options: LongHorizonOptions = {}): Promise<
     const finalSummary: string = compactionEntries.at(-1)?.summary ?? "";
 
     // Where each fact landed, by keel's own #N, in the originals of what omp rewrote in place.
-    const messages = sessionMessages(sessionManager.getSessionFile());
-    const at = (pred: (m: any) => boolean): number | undefined => messages.find((x) => pred(x.message))?.index;
-    for (const needle of needles) {
-      if (needle.kind === "early_commit") {
-        const commit = messages.find((x: any) => x.message.role === "toolResult" && textOf(x.message).includes(`feat(${COMPONENTS[needle.turn % COMPONENTS.length]}):`));
-        needle.key = textOf(commit?.message).match(/\[main ([0-9a-f]{7,})\]/)?.[1] ?? "(no commit)";
-        needle.index = commit?.index;
-        continue;
-      }
-      needle.index = at((m) => {
-        if (needle.kind === "constraint" || needle.kind === "mid_request") return m.role === "user" && textOf(m).includes(needle.key);
-        if (needle.kind === "decision") return m.role === "assistant" && textOf(m).includes(needle.key);
-        if (needle.kind === "tool_value") return m.role === "toolResult" && textOf(m).includes(needle.key);
-        if (needle.kind === "fixed_error") return m.role === "toolResult" && m.isError === true && textOf(m).includes(needle.key);
-        // early_file: the edit of the file (however the agent spelled its path).
-        return m.role === "assistant" && Array.isArray(m.content) && m.content.some((p: any) => p?.type === "toolCall" && p.name === "edit" && JSON.stringify(p.arguments ?? {}).includes(needle.key));
-      });
-    }
+    locate(needles, sessionMessages(sessionManager.getSessionFile()));
 
     // The request the host would send next, through its own context hooks (keel's eviction among them).
-    const nextRequest = flat((await hostSession.session.extensionRunner.emitContext(structuredClone(sessionManager.buildSessionContext().messages)))
-      .map((m: any) => textOf(m)).join("\n"));
+    const nextRequest = await nextRequestOf();
     const recallTool = hostSession.tool("keel_recall");
     const recall = async (params: Record<string, unknown>): Promise<string> =>
       (await recallTool.execute("q", params, undefined, undefined)).content.map((p: any) => p.text ?? "").join("\n");
     const scores: NeedleScore[] = [];
     for (const needle of needles) {
       const hits = [...(await recall({ query: needle.query })).matchAll(/^#(\d+) \[/gm)].map((m) => Number(m[1]));
-      // A hit on the entry or its neighbour counts: a tool call and its result
-      // are adjacent, and recall shows the hit's surroundings on request.
-      const rank = needle.index == null ? -1 : hits.findIndex((h) => Math.abs(h - needle.index!) <= 1);
-      scores.push({
-        kind: needle.kind,
-        turn: needle.turn,
-        inSummary: flat(finalSummary).includes(flat(needle.key)),
-        pointed: pointsAt(finalSummary, needle),
-        inContext: nextRequest.includes(flat(needle.key)),
-        recallRank: rank >= 0 ? rank + 1 : null,
-      });
+      scores.push(scoreOf(needle, finalSummary, nextRequest, hits));
     }
     await options.inspect?.(recall, needles);
     return {
@@ -294,6 +336,7 @@ export const runLongHorizon = async (options: LongHorizonOptions = {}): Promise<
       summaryChars,
       sectionChars,
       needles: scores,
+      probes,
       finalSummary,
     };
   } finally {

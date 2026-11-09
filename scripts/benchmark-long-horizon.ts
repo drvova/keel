@@ -19,6 +19,9 @@
  * summary has its exact (#N) ref or a [History Index] range naming it; context =
  * the fact's text is in the request the host would send next; recall = rank of
  * its entry on page 1 of a reworded keel_recall query (- = not found).
+ *
+ * Then the same four, for each fact again 10, 30 and 60 turns after its own
+ * (where the run reaches): how what keel keeps of a fact falls off with distance.
  */
 import { runLongHorizon } from "../tests/support/long-horizon";
 import { statsLine } from "../tests/support/host-session";
@@ -45,4 +48,14 @@ for (const contextWindow of windows) for (const t of [turns, turns * 2]) {
   const k = r.needles.length;
   const count = (f: (n: (typeof r.needles)[number]) => boolean) => r.needles.filter(f).length;
   console.log(`totals: summary ${count((n) => n.inSummary)}/${k}, pointer ${count((n) => n.pointed)}/${k}, context ${count((n) => n.inContext)}/${k}, recall@5 ${count((n) => n.recallRank != null)}/${k}`);
+  // How what keel keeps of a fact falls off with distance: each fact scored again N turns after its own.
+  const delays = [...new Set(r.probes.map((p) => p.delay))].sort((a, b) => a - b);
+  if (delays.length > 0) {
+    console.log("delay  facts  summary  pointer  context  recall@5");
+    for (const d of delays) {
+      const at = r.probes.filter((p) => p.delay === d);
+      const of = (f: (p: (typeof at)[number]) => boolean) => `${at.filter(f).length}/${at.length}`.padEnd(7);
+      console.log(`${String(d).padStart(5)}  ${String(at.length).padStart(5)}  ${of((p) => p.inSummary)}  ${of((p) => p.pointed)}  ${of((p) => p.inContext)}  ${of((p) => p.recallRank != null)}`);
+    }
+  }
 }
