@@ -35,9 +35,32 @@
   "LIST's elements PRED holds for, and the others, each in LIST's order: (values YES NO)."
   (values (remove-if-not pred list) (remove-if pred list)))
 
-(defun held-turn-p (turn recent)
-  "Whether the agent recalled any of TURN recently (RECENT-RECALLS): it leaves last."
-  (some (lambda (r) (<= (turn-from turn) (car r) (turn-to turn))) recent))
+(defparameter +came-back-hold-turns+ 12
+  "A turn the agent came back to, in recalls far apart, is held this many turns after the last.")
+
+(defun recall-episodes (turn recalls turns)
+  "How many times the agent came back to TURN: its RECALLS ((N . AT)), in runs of
+turns no more than +recall-hold-turns+ apart, each run one; and the index in TURNS
+of the latest. (values EPISODES LAST)."
+  (let ((at (sort (remove-duplicates (loop for (n . at) in recalls
+                                           when (<= (turn-from turn) n (turn-to turn)) collect (turn-index-at at turns)))
+                  #'<)))
+    (values (if at (1+ (loop for (a b) on at when (and b (> (- b a) +recall-hold-turns+)) count t)) 0)
+            (car (last at)))))
+
+(defun came-back-p (turn recalls turns)
+  "Whether the agent came back to TURN in recalls far apart (two episodes or more),
+the last within +came-back-hold-turns+: a need that lasts, not a lookup. Recalls in
+one run read a turn once and move on; ones that come back after a gap are what
+lasts (the spacing effect; Cepeda et al., Psychological Bulletin 132(3), 2006)."
+  (multiple-value-bind (episodes last) (recall-episodes turn recalls turns)
+    (and (>= episodes 2) (<= (- (1- (length turns)) last) +came-back-hold-turns+))))
+
+(defun held-turn-p (turn recalls turns)
+  "Whether TURN leaves last: the agent recalled it in the last +recall-hold-turns+
+turns (RECENT-RECALLS), or came back to it across gaps lately (CAME-BACK-P)."
+  (or (some (lambda (r) (<= (turn-from turn) (car r) (turn-to turn))) (recent-recalls recalls turns))
+      (came-back-p turn recalls turns)))
 
 (defun recalled-out-turns (turns branch recent)
   "The finished TURNS out of the context now that the agent recalled since they

@@ -217,6 +217,31 @@ describe("the evict command and keel_context", () => {
     expect(ops(s)).toEqual([expect.objectContaining({ from: 4, to: 7 })]);
   });
 
+  it("a turn the agent came back to across gaps leaves last for twelve turns after; recalls in one run do not", () => {
+    // Twenty turns (#4i–#4i+3); the running one is turn 19. Turn 0 recalled at turn 2 and again at turn 8: two visits.
+    const back = session(reads(20), 30_000, 80_000);
+    recalled(back, [1], 9);
+    recalled(back, [1], 33);
+    sent(back);
+    const out = ops(back).filter((o) => o.op === "evict");
+    expect(out.length).toBeGreaterThan(0);
+    expect(out.every((o) => o.from > 3)).toBe(true);
+    // The same two recalls in one run (turns 8 and 9) are one visit: by turn 19 nothing holds turn 0.
+    const once = session(reads(20), 30_000, 80_000);
+    recalled(once, [1], 33);
+    recalled(once, [1], 37);
+    sent(once);
+    expect(ops(once)[0]).toMatchObject({ op: "evict", from: 0 });
+  });
+
+  it("the listing says how often the agent came back to a turn, and to pin what it needs of it", () => {
+    const s = session(reads(20));
+    recalled(s, [1], 9);
+    recalled(s, [1], 33);
+    const list = callTool("keel_context", null, s.ctx(), s.host);
+    expect(list.split("\n").find((l) => l.includes("#0–#3"))).toEndWith("(you came back to it 2 times: it leaves last; keel_pin what you need of it)");
+  });
+
   it("the listing marks a turn the agent recalled lately, which keel leaves in", () => {
     const s = session(reads(5));
     recalled(s, [5], 19);

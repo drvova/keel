@@ -342,7 +342,7 @@ out) the pinned notes stand first, in one block (NOTES-BLOCK)."
               ;; What each eviction before cost, by kind of turn (credit.lisp): a kind this
               ;; model keeps recalling once out leaves after the others.
               (setf credit (eviction-credit branch turns recalls by-n) rates (kind-rates credit credit-prior))
-              (let* ((finished (multiple-value-bind (held free) (partition (lambda (u) (held-turn-p u recent)) (turns-in turns outs))
+              (let* ((finished (multiple-value-bind (held free) (partition (lambda (u) (held-turn-p u recalls turns)) (turns-in turns outs))
                                  (append (credit-order free rates by-n) held)))
                      ;; Then the running turn: first each of its tool results big enough to
                      ;; matter on its own, its call kept, so the turn's reasoning stays in view
@@ -531,22 +531,25 @@ it is sent as the user's and can carry text, else a message of its own before it
 
 (defun refs-of (v) (remove nil (mapcar #'ref-range (if (json-array-p v) (coerce v 'list) (and v (not (unset-p v)) (list v))))))
 
-(defun turn-line (tr chars per-token messages-by-n outs &optional recent)
+(defun turn-line (tr chars per-token messages-by-n outs recalls turns)
   (let ((m (gethash (turn-from tr) messages-by-n)))
-    (format nil "~a ~~~a tokens~@[ \"~a\"~]~:[~; (older steps out)~]~:[~; (you recalled it lately: it leaves last)~]" (range-text (turn-from tr) (turn-to tr))
+    (format nil "~a ~~~a tokens~@[ \"~a\"~]~:[~; (older steps out)~]~a" (range-text (turn-from tr) (turn-to tr))
             (js-string-of (tokens-from-chars (turn-chars tr chars outs) per-token))
             (and m (request-line m))
             (some (lambda (o) (overlaps-p (out-from o) (out-to o) (turn-from tr) (turn-to tr))) outs)
-            (held-turn-p tr recent))))
+            (cond ((came-back-p tr recalls turns)
+                   (format nil " (you came back to it ~d times: it leaves last; keel_pin what you need of it)" (recall-episodes tr recalls turns)))
+                  ((held-turn-p tr recalls turns) " (you recalled it lately: it leaves last)")
+                  (t "")))))
 
-(defun list-context (turns outs chars by-n pins per-token &optional recent)
+(defun list-context (turns outs chars by-n pins per-token recalls)
   (let* ((in (remove-if (lambda (tr) (turn-out-p tr outs)) turns))
          (shown (last-n in +turns-listed+)))
     (format nil "In context: ~a, ~~~a tokens of messages (the last is the one running, which stays).~@[~%  (+~d older)~]~{~%  ~a~}~%~a~a"
             (plural (length in) "turn")
             (js-string-of (tokens-from-chars (reduce #'+ (mapcar (lambda (tr) (turn-chars tr chars outs)) in)) per-token))
             (and (> (length in) (length shown)) (- (length in) (length shown)))
-            (mapcar (lambda (tr) (turn-line tr chars per-token by-n outs recent)) shown)
+            (mapcar (lambda (tr) (turn-line tr chars per-token by-n outs recalls turns)) shown)
             (if outs
                 (format nil "Out of context:~{~%  ~a~}"
                         (mapcar (lambda (o) (format nil "~a (~a)" (range-text (out-from o) (out-to o)) (span-what (out-from o) (out-to o) turns))) outs))
@@ -720,7 +723,7 @@ evictions must pay, by the session's own prices (EVICTION-PAYBACK over BY-N), un
                           (and (equal by "agent") (not (getf action :force)) (payback-of by-n))))
            (back (ranges) (restore-turns ranges outs by count)))
       (ecase (getf action :kind)
-        (:list (values (list-context turns outs chars by-n (read-pins branch) per-token (recent-recalls (read-recalls branch) turns)) '()))
+        (:list (values (list-context turns outs chars by-n (read-pins branch) per-token (read-recalls branch)) '()))
         (:undo (undo-last branch by count))
         (:restore (back (with-linked (getf action :ranges) turns outs by-n)))
         (:restore-all (back (list (cons 0 most-positive-fixnum))))
