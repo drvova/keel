@@ -20,7 +20,7 @@
 ;;;; the previous summary keeps only the sections it knows), so it stays bounded
 ;;;; and is never rewritten. Nothing depends on wording: paths, failure flags,
 ;;;; recency, recall's own ranking, and what the agent recalled itself lately
-;;;; (feedback.lisp *recalled*), which says what it needs more surely than any of them.
+;;;; (feedback.lisp recalled-newest-first), which says what it needs more surely than any of them.
 
 (in-package #:keel)
 
@@ -50,13 +50,19 @@
 (defun excerpt-chars (text) (reduce #'+ (mapcar #'line-cost (nonblank-lines text))))
 (defun line-count (text) (length (nonblank-lines text)))
 
+
 (defstruct (ws-item (:constructor make-ws-item (index title note text from-end &optional whole))) index title note text from-end whole)
 
-(defun select-working-set (history indices kept max-chars)
+(defun select-working-set (history indices kept max-chars &optional recalled)
+  "The items to bring back; RECALLED, the #N the agent recalled lately, newest first (feedback.lisp)."
   (unless (>= max-chars +min-item-chars+) (return-from select-working-set '()))
   (multiple-value-bind (all-calls results) (read-calls history :indices indices)
     (when (null results) (return-from select-working-set '()))
-    (let* ((kept-calls (read-calls kept))
+    (let* ((changes (file-changes history :indices indices))
+           ;; What a read showed of a file changed after it no longer holds (MemTrace,
+           ;; arXiv:2610.04838, reuses evidence only while it matches the repository).
+           (stale (lambda (r) (multiple-value-bind (p n) (stale-read r changes) (and p (format nil "~a changed at #~a" p (js-string-of n))))))
+           (kept-calls (read-calls kept))
            (request (or (nth-value 1 (latest-request kept)) (nth-value 1 (latest-request history)) ""))
            (items '()) (used (make-hash-table))
            (last-user-pos (or (latest-request history) -1))
@@ -139,7 +145,7 @@
       ;; 3. What the agent recalled lately: it went looking for these, so the
       ;; next step is likelier to need them than what a ranking guesses.
       (let ((taken 0))
-        (dolist (n *recalled*)
+        (dolist (n recalled)
           (when (>= taken +max-recalled+) (return))
           (let ((r (find-if (lambda (r) (and (result-index r) (not (gethash (result-index r) used)) (not (result-error r))
                                               (plusp (length (js-trim (result-text r))))
@@ -148,7 +154,11 @@
                                                   (and (result-call r) (eql (nth (call-pos (result-call r)) indices) n)))))
                             results)))
             (when r
-              (push (make-ws-item (result-index r) (title-of (result-call r)) "recalled lately" (result-text r) nil) items)
+              (push (make-ws-item (result-index r) (title-of (result-call r))
+                                  (let ((stale (funcall stale r)))
+                                    (if stale (format nil "recalled lately; ~a, so this may not hold" stale) "recalled lately"))
+                                  (result-text r) nil)
+                    items)
               (setf (gethash (result-index r) used) t)
               (incf taken)))))
       ;; 4. What recall ranks highest for the latest request.
@@ -162,6 +172,8 @@
               (unless (or (null (result-index r)) (gethash (result-index r) used) (result-error r) (zerop (length (js-trim (result-text r))))
                           (and c (or (edits-p c) (writes-whole-p c)))
                           (and c (/= (gethash (run-of c) latest-run) (result-pos r)))
+                          ;; A read of a file changed after it: what it shows no longer holds.
+                          (funcall stale r)
                           (some (lambda (p) (or (member p in-context :test #'string=) (member p chosen :test #'string=))) (and c (files-of c))))
                 (let ((message (nth (result-pos r) history)))
                   (destructuring-bind (role summary files) (render-entry message)
@@ -216,8 +228,8 @@ told apart by them), and an indented line never reads as a section header."
               (decf left (reduce #'+ (mapcar (lambda (l) (1+ (js-length l))) block))))))))
     (values lines (nreverse shown))))
 
-(defun build-working-set (history indices kept budget-chars removed-chars)
+(defun build-working-set (history indices kept budget-chars removed-chars &optional recalled)
   "The section for a compaction that removes REMOVED-CHARS, within BUDGET-CHARS
 (the budgets' workingSetTokens) and at most half of what it removes."
   (let ((max (js-round (min budget-chars (* removed-chars 0.5d0)))))
-    (format-working-set (select-working-set history indices kept max) max)))
+    (format-working-set (select-working-set history indices kept max recalled) max)))

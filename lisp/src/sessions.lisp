@@ -10,9 +10,6 @@
 
 (in-package #:keel)
 
-(defparameter +max-listed-sessions+ 50)
-(defparameter +short-id-chars+ 8)
-
 (defstruct (session-info (:constructor make-session-info (file short started bytes messages title first-request pins)))
   file short started bytes messages title first-request pins)
 
@@ -71,11 +68,8 @@
               (cond ((equal type "message")
                      (when (line-holds-message-p line) (incf messages))
                      (when (and (null first-request) (search "\"role\":\"user\"" line))
-                       (let ((m (json-get (parse-json-or-nil line) "message")))
-                         (when (and (equal (json-get m "role") "user") (not (extension-user-p m)))
-                           (let ((words (values (user-words (text-of (or (json-get m "content") ""))))))
-                             (when (plusp (length words)) (setf first-request (js-clip words 100))))))))
-                    ((equal type "compaction"))
+                       (let ((words (request-words (json-get (parse-json-or-nil line) "message"))))
+                         (when (plusp (length words)) (setf first-request (js-clip words 100))))))
                     (t (let ((e (parse-json-or-nil line)))
                          (if (or (pin-entry-p e) (equal (json-get e "type") +reset-entry-type+))
                              (push e pin-entries)

@@ -1,31 +1,15 @@
 // The omp entry (index.ts) against a fake omp extension API that hands it omp's
 // real convertToLlm. tests/omp-host.test.ts runs the same entry inside a real omp.
-import { afterAll, beforeAll, beforeEach, describe, expect, jest, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
+import { beforeEach, describe, expect, jest, test } from "bun:test";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import registerOmp from "../index";
 import { ompConvertToLlm } from "./support/host";
 import { COMPACT_INSTRUCTION } from "./support/names";
+import { tempConfig } from "./support/config";
 
-let dir: string;
-let previousConfig: string | undefined;
-
-beforeAll(() => {
-  dir = mkdtempSync(join(tmpdir(), "keel-omp-entry-"));
-  previousConfig = process.env.KEEL_CONFIG_PATH;
-  process.env.KEEL_CONFIG_PATH = join(dir, "keel-config.json");
-});
-
-afterAll(() => {
-  if (previousConfig === undefined) delete process.env.KEEL_CONFIG_PATH;
-  else process.env.KEEL_CONFIG_PATH = previousConfig;
-  rmSync(dir, { recursive: true, force: true });
-});
-
-beforeEach(() => {
-  writeFileSync(process.env.KEEL_CONFIG_PATH!, JSON.stringify({ overrideDefaultCompaction: true, smartKeepTail: false, evict: false }));
-});
+const config = tempConfig("keel-omp-entry-");
+beforeEach(() => config.write({ overrideDefaultCompaction: true, smartKeepTail: false, evict: false }));
 
 function createOmp(mode: "tui" | "rpc" = "rpc") {
   const handlers = new Map<string, Array<(event: any, ctx: any) => any>>();
@@ -68,7 +52,7 @@ function createOmp(mode: "tui" | "rpc" = "rpc") {
     registerTool: (t: any) => tools.push(t),
     sendMessage: (m: any, o: any) => customMessages.push({ m, o }),
     sendUserMessage: (c: string) => userMessages.push(c),
-    pi: { convertToLlm: ompConvertToLlm, getAgentDir: () => dir },
+    pi: { convertToLlm: ompConvertToLlm, getAgentDir: () => config.dir },
   };
   registerOmp(pi);
 
@@ -115,7 +99,7 @@ describe("omp entry: registration", () => {
   });
 
   test("out of the box (no config) eviction is on: keel_context is there", () => {
-    writeFileSync(process.env.KEEL_CONFIG_PATH!, JSON.stringify({}));
+    config.write({});
     expect(createOmp().tools.map((t: any) => t.name)).toEqual(["keel_recall", "keel_pin", "keel_context"]);
   });
 
@@ -131,7 +115,7 @@ describe("omp entry: registration", () => {
 
   test("keel_recall repairs its own arguments, since omp has no prepareArguments", async () => {
     const [tool] = createOmp().tools;
-    const sessionManager = { getSessionFile: () => join(dir, "missing.jsonl"), getBranch: () => [] };
+    const sessionManager = { getSessionFile: () => join(config.dir, "missing.jsonl"), getBranch: () => [] };
     const result = await tool.execute("t", { expand: "#3", bogus: 1 }, undefined, undefined, { sessionManager });
     expect(result.content[0].text).toContain("bogus");
   });
@@ -328,7 +312,7 @@ describe("omp entry: a turn still running", () => {
 });
 
 describe("omp entry: the model's real window", () => {
-  const limitsFile = () => join(dir, "keel-models.json");
+  const limitsFile = () => join(config.dir, "keel-models.json");
   const model = { provider: "electronhub", id: "small-model", api: "openai-completions", contextWindow: 128_000 };
   const big = () => Array.from({ length: 12 }, (_, i) => [user(`request ${i}: ${"word ".repeat(400)}`), assistant(`done ${i}: ${"word ".repeat(400)}`)]).flat();
   const overflow = (omp: ReturnType<typeof createOmp>, text: string) =>
@@ -349,7 +333,7 @@ describe("omp entry: the model's real window", () => {
 
   test("what keel learned as omp-vcc (omp-vcc-models.json) is read, and carried into keel-models.json", () => {
     rmSync(limitsFile(), { force: true });
-    const old = join(dir, "omp-vcc-models.json");
+    const old = join(config.dir, "omp-vcc-models.json");
     writeFileSync(old, JSON.stringify({ "electronhub/small-model": { contextWindow: 32_768 } }));
     const omp = createOmp();
     omp.ctx.model = model;
@@ -486,7 +470,7 @@ describe("omp entry: the model's real window", () => {
   });
 
   test("no compaction of its own for a provider in skipForProviders: omp's own would run", async () => {
-    writeFileSync(process.env.KEEL_CONFIG_PATH!, JSON.stringify({ skipForProviders: [model.provider] }));
+    config.write({ skipForProviders: [model.provider] });
     recordLimit(32_768);
     const omp = createOmp();
     omp.ctx.model = model;
@@ -498,11 +482,11 @@ describe("omp entry: the model's real window", () => {
     await new Promise((r) => setTimeout(r, 5));
     expect(omp.compactCalls).toHaveLength(0);
     rmSync(limitsFile(), { force: true });
-    writeFileSync(process.env.KEEL_CONFIG_PATH!, JSON.stringify({}));
+    config.write({});
   });
 
   test("no compaction of its own with overrideDefaultCompaction off, or when omp's window is right", async () => {
-    writeFileSync(process.env.KEEL_CONFIG_PATH!, JSON.stringify({ overrideDefaultCompaction: false }));
+    config.write({ overrideDefaultCompaction: false });
     recordLimit(32_768);
     const off = createOmp();
     off.ctx.model = model;
@@ -510,7 +494,7 @@ describe("omp entry: the model's real window", () => {
     off.ctx.getContextUsage = () => ({ tokens: 30_000, contextWindow: 128_000, percent: 23 });
     off.fire("agent_end", { messages: [] });
     rmSync(limitsFile(), { force: true });
-    writeFileSync(process.env.KEEL_CONFIG_PATH!, JSON.stringify({ overrideDefaultCompaction: true }));
+    config.write({ overrideDefaultCompaction: true });
     const right = createOmp();
     right.ctx.model = model;
     right.ctx.isIdle = () => true;

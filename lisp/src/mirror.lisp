@@ -30,6 +30,8 @@
 (defparameter +mirror-last-suffix+ ".keel-context.last")
 
 (defun mirror-path (session-file) (concatenate 'string session-file +mirror-suffix+))
+(defun mirror-last-path (session-file) "The copy of the file as written, which the agent's edit is compared with." (concatenate 'string session-file +mirror-last-suffix+))
+(defun note-marker (n) "The marker of the agent's note after #N." (format nil "[[CTX_NOTE after #~d]]" n))
 
 (defun mirror-header (path)
   "The line that tells the agent where its context's file is: the first in every
@@ -50,10 +52,11 @@ with every request, and its line must hold still while the agent edits the file.
     (declare (ignore files))
     (format nil "[~a~@[ #~d~]] ~a" role n summary)))
 
-(defun render-mirror (messages n-of dropped outs turns inserts)
-  "The file for this request: a block for each turn in it, each run of what is out
-and each of the agent's notes, in request order."
-  (let ((out (make-string-output-stream)) (current nil) (running (car (last turns))))
+(defun render-mirror (messages plan inserts)
+  "The file for this request (PLAN, evict.lisp): a block for each turn in it, each
+run of what is out and each of the agent's notes, in request order."
+  (let* ((n-of (plan-n-of plan)) (dropped (plan-sent-as plan)) (outs (plan-outs plan)) (turns (plan-turns plan))
+         (out (make-string-output-stream)) (current nil) (running (car (last turns))))
     (flet ((open-block (marker) (setf current marker) (format out "~%~a~%" marker)))
       (loop for i from 0 below (length messages)
             for m = (aref messages i)
@@ -74,12 +77,12 @@ and each of the agent's notes, in request order."
                         ;; The running turn's messages are left out: it grows with every request,
                         ;; and a file that changes under the agent's edit is an edit misread.
                         (unless (and tr (eq tr running))
-                          (format out "~a~%" (if (eq (aref dropped i) :replace)
-                                                 (format nil "[toolResult #~d] ~a" n (result-stub-text n m))
+                          (format out "~a~%" (if (stringp (aref dropped i))
+                                                 (format nil "[toolResult #~d] ~a" n (aref dropped i))
                                                  (message-mirror-text m n))))
                         (let ((note (and n (cdr (assoc n inserts)))))
                           (when note
-                            (format out "~%~a~%~a~%" (format nil "[[CTX_NOTE after #~d]]" n) note)
+                            (format out "~%~a~%~a~%" (note-marker n) note)
                             (setf current (list :note n)))))))))
     (get-output-stream-string out)))
 
@@ -152,7 +155,7 @@ IGNORED the running turn's block when the agent changed it."
                                 do (if first (rewrite (car r) (cdr r) text) (push (evict-op "evict" (car r) (cdr r) "agent" count) ops)))))
                        ((and text (gethash marker by-marker))
                         (let ((k (gethash marker by-marker)))
-                          (push (json-object "v" 1 "op" "insert" "after" (mblock-to k) "text" text "by" "agent" "at" count) ops)))))))
+                          (push (insert-op (mblock-to k) text "agent" count) ops)))))))
       (let ((removed '()) (prev :start))
         (dolist (b before)
           (let ((now (gethash (mblock-marker b) by-marker)))
@@ -165,14 +168,14 @@ IGNORED the running turn's block when the agent changed it."
                                   (setf ignored t)
                                   (rewrite (mblock-from b) (mblock-to b) (mblock-body now))))
                        (:out (rewrite (mblock-from b) (mblock-to b) (mblock-body now)))
-                       (:note (push (json-object "v" 1 "op" "insert" "after" (mblock-from b) "text" (mblock-body now) "by" "agent" "at" count) ops)))))
+                       (:note (push (insert-op (mblock-from b) (mblock-body now) "agent" count) ops)))))
                   (t
                    (case (mblock-kind b)
                      (:turn (if (mblock-running b)
                                 (setf ignored t)
                                 (let ((tr (find (mblock-from b) turns :key #'turn-from)))
                                   (when tr (push tr removed)))))
-                     (:note (push (json-object "v" 1 "op" "insert" "after" (mblock-from b) "text" "" "by" "agent" "at" count) ops))
+                     (:note (push (insert-op (mblock-from b) "" "agent" count) ops))
                      ;; An [[CTX_OUT]] block deleted: it stays out, as it was.
                      (t nil))))))
         (flush (nreverse removed) prev)))
@@ -199,7 +202,7 @@ an edit that names a block twice is one edit of it."
   "The ops the agent's edit of its context's file makes, and whether it changed the
 running turn: (values OPS IGNORED). Nothing when the file is as it was written."
   (let* ((path (mirror-path session-file))
-         (written (read-text-file (concatenate 'string session-file +mirror-last-suffix+)))
+         (written (read-text-file (mirror-last-path session-file)))
          (edited (read-text-file path)))
     (if (and written edited (string/= written edited))
         (mirror-ops written edited branch index count)
@@ -208,7 +211,7 @@ running turn: (values OPS IGNORED). Nothing when the file is as it was written."
 (defun write-mirror (session-file text)
   "Write the file for this request, and the copy the next request compares the agent's edit with."
   (write-text-file (mirror-path session-file) text)
-  (write-text-file (concatenate 'string session-file +mirror-last-suffix+) text))
+  (write-text-file (mirror-last-path session-file) text))
 
 (defun mirror-notice (ops ignored)
   "What the user is told of the agent's edit of its context's file."

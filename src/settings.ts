@@ -3,13 +3,13 @@
 // each setting is described with its default).
 import { existsSync } from "fs";
 import { dirname, join } from "path";
-import { core, CoreUnavailable } from "./core";
+import { core, CoreUnavailable, env } from "./core";
 
 const SETTINGS_FILE = "keel-config.json";
 /** The files keel read under its earlier names, omp-vcc and pi-vcc: the first there is is copied to SETTINGS_FILE once. */
 const LEGACY_SETTINGS_FILES = ["omp-vcc-config.json", "pi-vcc-config.json"];
 /** The config path a user named, under keel's name or omp-vcc's. */
-const namedPath = () => process.env.KEEL_CONFIG_PATH ?? process.env.OMP_VCC_CONFIG_PATH;
+const namedPath = () => env("CONFIG_PATH");
 
 /** The settings the binding itself reads; the core reads the rest. */
 export interface KeelSettings {

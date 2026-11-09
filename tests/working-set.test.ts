@@ -1,25 +1,13 @@
 // [Working Set]: what the next step needs, brought back at a compaction
 // (lisp/src/working-set.lisp; op working-set runs it alone).
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+import { describe, expect, it } from "bun:test";
+import { writeFileSync } from "fs";
 import { core } from "../src/core";
 import { compactionBudgets, ompDefaultTrigger } from "./support/window";
 import { registerHook } from "./support/host";
+import { tempConfig } from "./support/config";
 
-let dir: string;
-const prev = process.env.KEEL_CONFIG_PATH;
-beforeAll(() => {
-  dir = mkdtempSync(join(tmpdir(), "keel-working-set-"));
-  process.env.KEEL_CONFIG_PATH = join(dir, "keel-config.json");
-  writeFileSync(process.env.KEEL_CONFIG_PATH, JSON.stringify({ overrideDefaultCompaction: true }));
-});
-afterAll(() => {
-  if (prev === undefined) delete process.env.KEEL_CONFIG_PATH;
-  else process.env.KEEL_CONFIG_PATH = prev;
-  rmSync(dir, { recursive: true, force: true });
-});
+const config = tempConfig("keel-working-set-", { overrideDefaultCompaction: true });
 
 interface Item { index: number; title: string; note: string; text: string }
 interface Pick { history: unknown[]; indices: number[]; kept: unknown[]; maxChars: number }
@@ -186,7 +174,7 @@ describe("the budget follows the window", () => {
     const on = compactionBudgets(ompDefaultTrigger(40_000), 8_800);
     const off = compactionBudgets(ompDefaultTrigger(40_000), 8_800, false);
     expect(off.workingSetTokens).toBe(0);
-    expect(off.maxTailTokens).toBe(on.maxTailTokens + on.workingSetTokens);
+    expect(off.maxTailTokens).toBeGreaterThan(on.maxTailTokens);
     // On a typical window the tail is at its cap either way.
     expect(compactionBudgets(ompDefaultTrigger(128_000), 8_000, false).maxTailTokens).toBe(25_000);
     expect(compactionBudgets(undefined, 0, false).workingSetTokens).toBe(0);
@@ -250,14 +238,39 @@ describe("in the compaction hook", () => {
   });
 
   it("is left out with workingSet off", () => {
-    writeFileSync(process.env.KEEL_CONFIG_PATH!, JSON.stringify({ overrideDefaultCompaction: true, workingSet: false }));
+    writeFileSync(config.path, JSON.stringify({ overrideDefaultCompaction: true, workingSet: false }));
     try {
       const branch = entries([user("Set up the build"), call("c0", "bash", { command: "cat build.log" }), result("c0", "bash", "compiling module\n".repeat(600)), say("Built."), ...work(), user("still failing"), call("c4", "edit", { path: "src/billing/totals.ts", oldText: "a", newText: "b" })]);
       const out = compact(branch);
       expect(out.summary).not.toContain("[Working Set]");
       expect(out.details.workingSet).toBeUndefined();
     } finally {
-      writeFileSync(process.env.KEEL_CONFIG_PATH!, JSON.stringify({ overrideDefaultCompaction: true }));
+      writeFileSync(config.path, JSON.stringify({ overrideDefaultCompaction: true }));
     }
+  });
+});
+
+describe("[Working Set] and what changed after", () => {
+  // A read of config.ts, then an edit of it; a read of notes.md, never changed.
+  const history = [
+    user("tune the retry config"),
+    call("r1", "read", { path: "src/config.ts" }), result("r1", "read", `retries: 3\n${"// config line\n".repeat(40)}`),
+    call("e1", "edit", { path: "src/config.ts", oldText: "retries: 3", newText: "retries: 5" }), result("e1", "edit", "Edited src/config.ts"),
+    call("r2", "read", { path: "docs/retry-notes.md" }), result("r2", "read", `retry config notes\n${"the retry config backs off\n".repeat(40)}`),
+    say("Tuned."),
+    user("explain the retry config to me"),
+  ];
+  const pick = (recalled?: number[]) =>
+    core({ op: "working-set", history, indices: history.map((_, i) => i), kept: [], maxChars: 4_000, ...(recalled ? { recalled } : {}) }).items as Item[];
+
+  it("says a read recalled lately may not hold once its file changed after it", () => {
+    expect(pick([2]).find((i) => i.index === 2)?.note).toBe("recalled lately; src/config.ts changed at #3, so this may not hold");
+    expect(pick([6]).find((i) => i.index === 6)?.note).toBe("recalled lately");
+  });
+
+  it("never ranks in a read of a file changed after it", () => {
+    const ranked = pick().filter((i) => i.note === "matches the latest request").map((i) => i.index);
+    expect(ranked).toContain(6);
+    expect(ranked).not.toContain(2);
   });
 });

@@ -2,26 +2,16 @@
 // agent (keel_context), the user (/keel-evict) or keel past 85% of the
 // trigger, left out of every later request with one line in their place, and
 // brought back; the session file keeps them, and keel_recall reads them back.
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
+import { describe, expect, it } from "bun:test";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import { EVICT_ENTRY_TYPE, PIN_ENTRY_TYPE } from "./support/names";
 import { callCommand, callTool, executePin, fakeHost, requestContext } from "./support/binding";
 import { writeJsonl, freshDir } from "./support/session-files";
+import { tempConfig } from "./support/config";
 
-let dir: string;
-const prev = process.env.KEEL_CONFIG_PATH;
-beforeAll(() => {
-  dir = mkdtempSync(join(tmpdir(), "keel-evict-"));
-  process.env.KEEL_CONFIG_PATH = join(dir, "keel-config.json");
-});
-afterAll(() => {
-  if (prev === undefined) delete process.env.KEEL_CONFIG_PATH;
-  else process.env.KEEL_CONFIG_PATH = prev;
-  rmSync(dir, { recursive: true, force: true });
-});
-const setEvict = (on: boolean) => writeFileSync(process.env.KEEL_CONFIG_PATH!, JSON.stringify({ evict: on }));
+const config = tempConfig("keel-evict-");
+const setEvict = (on: boolean) => writeFileSync(config.path, JSON.stringify({ evict: on }));
 
 /** A session of TURNS turns, each a request, a read and its result of SIZE chars, and the reply that ends it; the last read reports PROMPT tokens. */
 const session = (turns: number, size = 200, prompt?: number) => {
@@ -166,6 +156,40 @@ describe("the line in place of what is out", () => {
     // As omp's prune does: the old result blanked in place.
     const blanked = s.request().map((m: any) => (m.toolCallId === "b1" ? { ...m, content: [{ type: "text", text: "[Output truncated - 9 tokens]" }] } : m));
     expect(texts(requestContext(blanked, s.ctx(), s.host).messages)[0]).toBe(first);
+  });
+});
+
+describe("a repeated tool output", () => {
+  // The same test run three times with the same failure, and once more after a fix.
+  const reruns = () => {
+    const fail = `bun test tests/billing\n1 fail: totals rounding\n${"  at roundTotals (src/billing/totals.ts:42)\n".repeat(20)}`;
+    const messages: any[] = [{ role: "user", content: "fix the rounding" }];
+    for (const [i, out] of [fail, fail, fail, "12 pass"].entries()) {
+      messages.push({ role: "assistant", content: [{ type: "toolCall", id: `t${i}`, name: "bash", arguments: { command: "bun test tests/billing" } }] });
+      messages.push({ role: "toolResult", toolCallId: `t${i}`, toolName: "bash", isError: out !== "12 pass", content: [{ type: "text", text: out }] });
+    }
+    return sessionOf(messages);
+  };
+
+  it("is sent as a line naming the first, every call kept", () => {
+    setEvict(true);
+    const s = reruns();
+    const all = sent(s, 100_000).messages as any[];
+    const results = all.filter((m) => m.role === "toolResult");
+    expect(results).toHaveLength(4);
+    expect(results[0].content[0].text).toStartWith("bun test tests/billing\n1 fail");
+    expect(results[1].content).toEqual([{ type: "text", text: "[#4: the same output as #2, word for word. keel_recall expand:[4] reads it.]" }]);
+    expect(results[2].content[0].text).toBe("[#6: the same output as #2, word for word. keel_recall expand:[6] reads it.]");
+    // A short output, and one that differs, go as they are.
+    expect(results[3].content[0].text).toBe("12 pass");
+    // Nothing is recorded: the line is made again, the same, for each request.
+    expect(s.appended).toEqual([]);
+    expect(texts(sent(s, 100_000).messages)).toEqual(texts(all));
+  });
+
+  it("goes as it is with eviction off", () => {
+    setEvict(false);
+    expect(sent(reruns(), 100_000).messages).toBeUndefined();
   });
 });
 
@@ -409,20 +433,6 @@ describe("undo", () => {
   });
 });
 
-describe("the context's size on keel's own results", () => {
-  it("ends the agent's keel_context, keel_recall and keel_pin results while eviction is on, not the user's commands", () => {
-    const s = session(3);
-    const ctx = { ...s.ctx(100_000), getContextUsage: () => ({ tokens: 41_808 }) } as any;
-    const readout = "[context: ~41808 tokens, 50% of where the host compacts (~83616); ~41808 left]";
-    setEvict(true);
-    expect(evict(s.host, ctx, { surface: "tool", params: null })).toEndWith(`\n${readout}`);
-    expect(evict(s.host, ctx, { surface: "command", args: "list" })).not.toContain("[context:");
-    expect(executePin({ note: "a note" }, s.host, ctx.sessionManager, ctx)).toEndWith(`\n${readout}`);
-    setEvict(false);
-    expect(executePin({ note: "another note" }, s.host, ctx.sessionManager, ctx)).not.toContain("[context:");
-  });
-});
-
 describe("when an eviction pays, by the session's own prices", () => {
   /** SESSION(10)'s messages, every assistant message with this usage. */
   const priced = (usage: Record<string, unknown>) => {
@@ -462,17 +472,17 @@ describe("chars per token, measured on the request", () => {
     }
     const s = sessionOf(messages);
     sent(s, 100_000, true);
-    const limits = JSON.parse(readFileSync(join(dirname(process.env.KEEL_CONFIG_PATH!), "keel-models.json"), "utf8"));
+    const limits = JSON.parse(readFileSync(join(dirname(config.path), "keel-models.json"), "utf8"));
     expect(limits["p/m"].charsPerToken).toBe(3);
     // The listing reads it: a turn of 3,000 chars is ~1,000 tokens, not the 750 of 4 chars a token.
     expect(evict(s.host, s.ctx(100_000), { surface: "tool", params: null })).toContain("#16–#17 ~1000 tokens");
     // What this model measured stays with this test.
-    rmSync(join(dirname(process.env.KEEL_CONFIG_PATH!), "keel-models.json"), { force: true });
+    rmSync(join(dirname(config.path), "keel-models.json"), { force: true });
   });
 
   it("is read from the low side of what was measured lately, so the tokens it estimates are an upper bound", () => {
     setEvict(true);
-    const file = join(dirname(process.env.KEEL_CONFIG_PATH!), "keel-models.json");
+    const file = join(dirname(config.path), "keel-models.json");
     // Measured at 4 chars a token now, at 2 a while ago (text in another script, say).
     writeFileSync(file, JSON.stringify({ "p/m": { charsPerToken: 4, charsPerTokenSeen: [2, 4] } }));
     const s = session(4, 3_000);
@@ -483,7 +493,7 @@ describe("chars per token, measured on the request", () => {
 
   it("keeps each value it moved to, the last eight", () => {
     setEvict(true);
-    const file = join(dirname(process.env.KEEL_CONFIG_PATH!), "keel-models.json");
+    const file = join(dirname(config.path), "keel-models.json");
     writeFileSync(file, JSON.stringify({ "p/m": { charsPerToken: 4, charsPerTokenSeen: [5, 5.5, 6, 4.5, 5, 6, 5.5, 4] } }));
     const messages: any[] = [];
     for (let i = 0; i < 10; i++) {
@@ -656,32 +666,6 @@ describe("as the context fills", () => {
     const plain = Number(sent(session(10, 30_000, 80_000), 100_000).notice!.match(/Context ~(\d+)/)![1]);
     // Turn 0 (about 7,500 tokens) was not in the 80,000, so the context now holds that much more.
     expect(restored - plain).toBeGreaterThan(7_000);
-  });
-
-  it("tells the model how full the context is once per tenth of the trigger past half, as a message of its own", () => {
-    setEvict(true);
-    // 10 turns of 20,000 chars, 50,000 tokens counted: past half of 83,616, short of 85%.
-    const s = session(10, 20_000, 50_000);
-    const first = sent(s, 100_000, true);
-    // Nothing leaves the request (its turns only gain their #N): the note is stored and sent before the next model call.
-    expect((first.messages as any[]).length).toBe(s.request().length);
-    expect(first.note).toMatch(/^\[keel: the context is past \d0% of where the host compacts \(~83616 tokens\); past 85% the oldest turns leave by themselves\. keel_context lists what is in it and takes old turns out, with a note of what to keep\.\]$/);
-    expect(s.appended.map((e) => e.data.op)).toEqual(["budget"]);
-    // The same tenth again: nothing more is said.
-    expect(sent(s, 100_000, true).note).toBeUndefined();
-    // Without keel_context the note would name a tool that is not there; below half nothing is said.
-    expect(sent(session(10, 20_000, 50_000), 100_000, false).note).toBeUndefined();
-    expect(sent(session(10, 1_000, 20_000), 100_000, true).note).toBeUndefined();
-  });
-
-  it("tells again from half once the agent or the user shrank the context, not after keel's own eviction", () => {
-    setEvict(true);
-    const s = session(10, 20_000, 50_000);
-    expect(sent(s, 100_000, true).note).toBeDefined();
-    record(s, { op: "evict", from: 0, to: 3, by: "auto" });
-    expect(sent(s, 100_000, true).note).toBeUndefined();
-    record(s, { op: "evict", from: 4, to: 7, by: "agent" });
-    expect(sent(s, 100_000, true).note).toBeDefined();
   });
 
   it("says nothing of the context's size when nothing can leave it", () => {

@@ -64,7 +64,13 @@
 
 (defun space-unit-p (u) (js-whitespace-p (code-char u)))
 
-(defun line-terminator-p (u) (member u '(10 13 #x2028 #x2029)))
+(defun word-char-p (c) "Whether C is a word character to \\w: A-Z, a-z, 0-9, _." (word-unit-p (char-code c)))
+
+(defun line-terminator-p (u) "Whether code unit U ends a line to JavaScript." (member u '(10 13 #x2028 #x2029)))
+
+(defparameter +regex-metachars+ ".*+?^${}()|[]\\" "The characters a regex reads as syntax.")
+
+(defun regex-metachar-p (char) (find char +regex-metachars+))
 
 (defvar *ignore-case* t "The /i flag, read while a pattern is parsed and compiled.")
 (defvar *multiline* nil "The /m flag, read while a pattern is compiled.")
@@ -413,6 +419,12 @@ name and index. A name used twice is a syntax error."
 (defvar *regex-deadline* nil "Internal real time past which a match is abandoned, or NIL.")
 (defvar *steps* 0)
 
+(defmacro with-regex-deadline ((ms) &body body)
+  "BODY with every match in it abandoned past MS milliseconds (it signals REGEX-ABORTED)."
+  `(let ((*regex-deadline* (+ (get-internal-real-time) (* ,ms (/ internal-time-units-per-second 1000))))
+         (*steps* 0))
+     ,@body))
+
 (declaim (type units *input*) (type fixnum *steps*))
 
 (defun tick ()
@@ -584,7 +596,7 @@ when given, is that vector to reuse, cleared here."
   "STRING with every regex metacharacter escaped, to match as text."
   (with-output-to-string (out)
     (loop for c across string
-          do (when (find c ".*+?^${}()|[]\\") (write-char #\\ out))
+          do (when (regex-metachar-p c) (write-char #\\ out))
              (write-char c out))))
 
 (defun unbounded-repeat-p (node) (and (eq (first node) :repeat) (null (third node))))
@@ -602,3 +614,21 @@ matches backwards)."
       (handler-case (compile-regex pattern)
         ((or regex-syntax-error regex-unsupported) () (values nil nil)))
     (if (and regex (not (nested-quantifier-p tree))) regex (compile-regex (escape-regex pattern)))))
+
+;;; The one string type the core makes: passes over it are declared on it (search.lisp).
+(deftype text () '(simple-array character (*)))
+
+(defun as-text (string)
+  "STRING as a TEXT, copied only when it is some other kind of string."
+  (if (typep string 'text) string (coerce string 'text)))
+
+(defun fold (string)
+  "STRING with every character as a non-unicode /i regex compares it."
+  (let* ((s (as-text string)) (n (length s)) (out (make-string n)))
+    (declare (text s out) (fixnum n) (optimize speed))
+    (dotimes (i n out)
+      (let* ((c (schar s i)) (code (char-code c)))
+        (setf (schar out i) (cond ((< code 97) c)
+                                  ((<= code 122) (code-char (- code 32)))
+                                  ((< code 128) c)
+                                  (t (js-canonical c))))))))

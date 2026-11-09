@@ -28,6 +28,32 @@
   "BYTES as text; a malformed sequence reads as U+FFFD, as Buffer.toString does."
   (sb-ext:octets-to-string bytes :external-format '(:utf-8 :replacement #\REPLACEMENT_CHARACTER)))
 
+(defun native-path (path) (sb-ext:parse-native-namestring path))
+
+(defun path-directory (path)
+  "PATH's directory, as Node's dirname writes it: both separators
+count, since a Windows path is written with `\` and a host's settings
+may carry either."
+  (let ((at (position-if (lambda (c) (or (char= c #\/) (char= c #\\))) path :from-end t)))
+    (cond ((null at) ".")
+          ((zerop at) (subseq path 0 1))
+          (t (subseq path 0 at)))))
+
+(defun path-separator (path)
+  "The separator PATH is written with: `\` when it uses one, else `/`."
+  (if (find #\\ path) #\\ #\/))
+
+(defun join-path (dir name)
+  "DIR and NAME joined with DIR's own separator, a trailing one not doubled."
+  (concatenate 'string (string-right-trim "/\\" dir) (string (path-separator dir)) name))
+
+(defun directory-files (dir)
+  "DIR's files, as names, listed without SBCL's pathname syntax: a Windows
+path handed to DIRECTORY comes back in a namestring with `/`, which then
+matches no path written the way the host writes it."
+  ;; A directory that is not there (or not readable) has no files.
+  (mapcar #'file-namestring (ignore-errors (directory (merge-pathnames "*.*" (native-path (concatenate 'string dir "/")))))))
+
 (defun parse-jsonl (text)
   "The JSON value of each line of TEXT that parses, in order."
   ;; Each line is parsed where it lies in the decoded text, not copied out first.
@@ -129,6 +155,15 @@ hash set; empty for a file without ids (an old format)."
                 last id))))
     (walk-to-root parent-of last)))
 
+(defun position-of-id (id entries)
+  "The position in ENTRIES of the entry with ID, or NIL."
+  (position id entries :key (lambda (e) (json-get e "id")) :test #'equal))
+
+(defun file-branch (path)
+  "The entries on PATH's active branch, in file order."
+  (let* ((entries (jsonl-values path)) (ids (active-branch-ids entries)))
+    (coerce (remove-if-not (lambda (e) (and (hash-table-p e) (gethash (json-get e "id") ids))) entries) 'vector)))
+
 ;;; --- the header and the sessions a fork came from ------------------------------
 
 (defparameter +header-bytes+ (* 64 1024))
@@ -146,15 +181,22 @@ hash set; empty for a file without ids (an old format)."
                for record = (parse-json-or-nil line)
                when (equal (json-get record "type") "session") return record))))))
 
+(defparameter +short-id-chars+ 8 "A session id is named by this many characters or more.")
+
+(defun short-id (id) "ID's first +SHORT-ID-CHARS+ characters, as a session is named to the agent." (subseq id 0 (min +short-id-chars+ (length id))))
+
+(defun absolute-path-p (path)
+  "Whether PATH is absolute, as Node's isAbsolute reads one on either system."
+  (and (plusp (length path))
+       (or (char= (char path 0) #\/) (char= (char path 0) #\\) (rx-test (rx "^[A-Za-z]:[\\\\/]") path))))
+
 (defun parent-session-file (path)
   "The session PATH was forked or branched from, as a file: the header's
 `parentSession`, a path, or a session id in the same directory (omp's files
 are `<timestamp>_<id>.jsonl`)."
   (let ((parent (json-get (read-header path) "parentSession")))
     (when (and (stringp parent) (plusp (length parent)))
-      ;; An absolute path, as Node's isAbsolute reads one on either system.
-      (if (or (char= (char parent 0) #\/) (char= (char parent 0) #\\)
-              (rx-test (rx "^[A-Za-z]:[\\\\/]") parent))
+      (if (absolute-path-p parent)
           (and (probe-file (native-path parent)) parent)
           (let ((suffix (format nil "_~a.jsonl" parent)))
             (loop for name in (directory-files (path-directory path))
@@ -218,7 +260,6 @@ it forked, and their originals are in the parent's store."
           (when (= (hash-table-count found) (hash-table-count wanted)) (return)))))
     found))
 
-
 (defun restore-originals (messages ids file)
   "MESSAGES with the original content keel kept in FILE's raw store put back
 where omp rewrote them (IDS parallel to MESSAGES)."
@@ -281,3 +322,68 @@ no content (KEPT NIL) leaves MESSAGE as it is."
                                              p))
                            'vector))
              copy)))))
+
+(defun last-index-of-type (branch type &optional stop-at)
+  "The index of the last entry of TYPE, -1 for none; with STOP-AT, -1 also when an entry of that type comes after it."
+  (loop for i from (1- (length branch)) downto 0
+        for ty = (json-get (aref branch i) "type")
+        when (equal ty type) return i
+        when (and stop-at (equal ty stop-at)) return -1
+        finally (return -1)))
+
+(defun last-reset-index (branch) (last-index-of-type branch +reset-entry-type+))
+
+(defun last-compaction-index (branch) (last-index-of-type branch "compaction" +reset-entry-type+))
+
+(defun live-window-start (branch)
+  "The index of the first branch entry still in the model's context.
+With no compaction, the whole branch (after omp's /clear). After one, its
+firstKeptEntryId; when that is \"\" (a compact-all's sentinel) or no longer on
+the branch, right after the compaction, or right after an omp native-replay
+compaction's providerReplayThroughEntryId, where omp's own kept tail starts. A
+reset_boundary (omp's /clear) after the latest compaction starts the window
+after it, and one before it bounds where the kept id is looked for, as omp's
+prepareCompaction does."
+  (let ((reset (last-reset-index branch)) (compaction (last-compaction-index branch)))
+    (if (< compaction 0)
+        (1+ reset)
+        (let ((c (aref branch compaction)))
+          (flet ((find-after-reset (id)
+                   (if (and (stringp id) (plusp (length id)))
+                       (or (loop for i from (1+ reset) below (length branch)
+                                 when (equal (json-get (aref branch i) "id") id) return i)
+                           -1)
+                       -1)))
+            (let ((kept (find-after-reset (json-get c "firstKeptEntryId"))))
+              (if (>= kept 0)
+                  kept
+                  (let ((replay (find-after-reset (json-get c "providerReplayThroughEntryId"))))
+                    (if (and (>= replay 0) (< replay compaction)) (1+ replay) (1+ compaction))))))))))
+
+(defun js-date-ms (v)
+  "new Date(V).getTime() for the timestamps the hosts write (an ISO string or milliseconds), or NIL."
+  (cond ((realp v) v)
+        ((stringp v)
+         (let ((m (rx-exec (rx "^(\\d{4})-(\\d{2})-(\\d{2})T(\\d{2}):(\\d{2}):(\\d{2})(?:\\.(\\d{1,3})\\d*)?Z$") v)))
+           (when m
+             (flet ((g (i) (parse-integer (rx-group m i))))
+               (+ (* 1000 (- (encode-universal-time (g 6) (g 5) (g 4) (g 3) (g 2) (g 1) 0) 2208988800))
+                  (let ((ms (rx-group m 7))) (if ms (* (parse-integer ms) (expt 10 (- 3 (length ms)))) 0)))))))))
+
+(defun live-message (entry)
+  "A branch entry's message in the context, or NIL: a message entry's own; a
+custom_message or a branch summary as the host's context builds it, with what
+the host's convertToLlm reads of it (an extension's attribution and details)."
+  (let ((type (json-get entry "type")))
+    (cond ((and (equal type "message") (truthy-p (json-get entry "message"))) (json-get entry "message"))
+          ((equal type "custom_message")
+           (let ((m (json-object "role" "custom" "customType" (json-get entry "customType") "content" (json-get entry "content")
+                                 "display" (json-get entry "display") "details" (json-get entry "details")
+                                 "timestamp" (js-date-ms (json-get entry "timestamp")))))
+             (multiple-value-bind (a present) (gethash "attribution" entry)
+               (when present (setf (gethash "attribution" m) a)))
+             m))
+          ((equal type "branch_summary")
+           (json-object "role" "branchSummary" "summary" (json-get entry "summary") "fromId" (json-get entry "fromId")
+                        "timestamp" (js-date-ms (json-get entry "timestamp"))))
+          (t nil))))

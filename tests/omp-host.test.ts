@@ -10,6 +10,7 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "fs";
 import { removeDir } from "./support/session-files";
 import { tmpdir } from "os";
 import { join, resolve } from "path";
+import { PIN_ENTRY_TYPE, RAW_STORE_SUFFIX } from "./support/names";
 
 const ompInstalled = (() => {
   try {
@@ -161,7 +162,7 @@ describe.skipIf(!ompInstalled)("omp host", () => {
     expect(pin.approval).toBe("read");
     const result = await pin.execute("p", { note: "Never edit anything under migrations/." }, undefined, undefined);
     expect(result.content[0].text).toMatch(/^Pinned \[1\] Never edit anything under migrations\/\. \(agent, #\d+\)\.$/);
-    expect(sessionManager.getBranch().some((e: any) => e.type === "custom" && e.customType === "keel.pin")).toBe(true);
+    expect(sessionManager.getBranch().some((e: any) => e.type === "custom" && e.customType === PIN_ENTRY_TYPE)).toBe(true);
     user("Then add a dry-run flag");
     assistant([{ type: "text", text: "Dry-run flag added." }]);
     user("And document it");
@@ -193,7 +194,7 @@ describe.skipIf(!ompInstalled)("omp host", () => {
     // omp tells extensions of a finished turn; keel copies what omp may rewrite from omp's own entries.
     await session.extensionRunner.emit({ type: "turn_end", turnIndex: 0, message: undefined, toolResults: [] });
     const file = sessionManager.getSessionFile();
-    expect(existsSync(`${file}.keel-raw`)).toBe(true);
+    expect(existsSync(`${file}${RAW_STORE_SUFFIX}`)).toBe(true);
     // As omp's prune does: blank the first read's output in place and persist the rewrite.
     const entries = sessionManager.getEntries().filter((e: any) => e.type === "message");
     const read = entries.find((e: any) => e.message.role === "toolResult" && e.message.toolCallId === "c1");

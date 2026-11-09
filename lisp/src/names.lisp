@@ -16,9 +16,7 @@
 (defparameter +recall-tool+ "keel_recall")
 (defparameter +recall-params+ '("query" "range" "expand" "page" "scope" "mode" "session"))
 (defparameter +pin-tool+ "keel_pin")
-(defparameter +pin-params+ '("note" "name" "unpin"))
 (defparameter +context-tool+ "keel_context")
-(defparameter +context-params+ '("drop" "oldest" "restore" "note" "undo" "force"))
 
 ;;; What keel writes into a session.
 (defparameter +pin-entry-type+ "keel.pin" "Custom entries that hold a pin or unpin: in the session file, never in the context.")
@@ -40,8 +38,10 @@
 (defparameter +legacy-notice-types+ '("omp-vcc-pin" "omp-vcc-budget"))
 (defparameter +legacy-raw-store-suffix+ ".vcc-raw")
 
-(defun pin-entry-type-p (type) (member type (list +pin-entry-type+ +legacy-pin-entry-type+) :test #'equal))
-(defun evict-entry-type-p (type) (member type (list +evict-entry-type+ +legacy-evict-entry-type+) :test #'equal))
+(defun pin-entry-types () (list +pin-entry-type+ +legacy-pin-entry-type+))
+(defun evict-entry-types () (list +evict-entry-type+ +legacy-evict-entry-type+))
+(defun pin-entry-type-p (type) (member type (pin-entry-types) :test #'equal))
+(defun evict-entry-type-p (type) (member type (evict-entry-types) :test #'equal))
 (defun recall-entry-type-p (type) (equal type +recall-entry-type+))
 (defun notice-type-p (type)
   "Whether TYPE is a notice keel sent the agent: a summary leaves those out."
@@ -59,6 +59,11 @@
 (defparameter +search-page-size+ 5 "Hits on one page of a search.")
 (defparameter +range-page-size+ 20 "Entries on one page of a range.")
 (defparameter +recall-output-chars+ (* 50 1024) "One recall result's ceiling, 50 KB like a read tool's; less on a small window (recall-output-chars).")
+
+(defparameter +max-listed-sessions+ 50 "The earlier sessions mode:'sessions' lists.")
+
+(defparameter +max-kept-chars+ 1000000
+  "One message's kept text is clipped here, so a stray multi-megabyte result cannot double the session's size alone.")
 (defparameter +pin-chars+ 300 "A pinned note is clipped to this many characters.")
 (defparameter +pin-name-chars+ 40 "A pinned note's name is at most this many characters.")
 (defparameter +context-note-chars+ 300 "A keel_context note is clipped to this many characters.")
@@ -66,15 +71,8 @@
 (defparameter +session-ref-min-chars+ 4 "The shortest id prefix session:'id' takes.")
 
 (defun names-json ()
-  "Every name and limit above, as op names hands them over."
-  (json-object "recallTool" +recall-tool+ "recallParams" (coerce +recall-params+ 'vector)
-               "pinTool" +pin-tool+ "pinParams" (coerce +pin-params+ 'vector)
-               "contextTool" +context-tool+ "contextParams" (coerce +context-params+ 'vector)
-               "pinEntryType" +pin-entry-type+ "evictEntryType" +evict-entry-type+ "pinNoticeType" +pin-notice-type+ "budgetNoticeType" +budget-notice-type+
-               "recallCommandMessageType" +recall-command-message-type+
-               "compactor" +compactor+ "legacyCompactors" (coerce +legacy-compactors+ 'vector)
-               "legacyPinEntryType" +legacy-pin-entry-type+ "legacyEvictEntryType" +legacy-evict-entry-type+
-               "compactInstruction" +compact-instruction+
-               "searchPageSize" +search-page-size+ "rangePageSize" +range-page-size+
-               "recallOutputChars" +recall-output-chars+ "pinChars" +pin-chars+ "pinNameChars" +pin-name-chars+ "evictAtPercent" +evict-at-percent+ "contextNoteChars" +context-note-chars+
-               "sessionRefMinChars" +session-ref-min-chars+))
+  "The names and limits tests write into sessions, instructions and expectations, as op names hands them over."
+  (json-object "pinEntryType" +pin-entry-type+ "evictEntryType" +evict-entry-type+ "recallEntryType" +recall-entry-type+
+               "pinNoticeType" +pin-notice-type+ "resumeNoticeType" +resume-notice-type+ "rawStoreSuffix" +raw-store-suffix+
+               "compactInstruction" +compact-instruction+ "pinChars" +pin-chars+ "recallOutputChars" +recall-output-chars+
+               "maxListedSessions" +max-listed-sessions+ "maxKeptChars" +max-kept-chars+))

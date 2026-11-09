@@ -8,42 +8,24 @@
  * lineage checks after branching). Ported from k0valik/pi-blackhole
  * commit f82e07a, adapted to this repo's harness (bun:test).
  */
-import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } from "bun:test";
-import { existsSync, unlinkSync, writeFileSync, mkdtempSync, rmSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { existsSync, unlinkSync } from "fs";
 import { compile as compileAt, type CompileInput } from "./support/compile";
 import { DEFAULT_SUMMARY_LIMITS } from "./support/window";
 import { COMPACT_INSTRUCTION } from "./support/names";
 import { registerHook } from "./support/host";
 import { userMsg, assistantWithToolCall, toolResult } from "./fixtures";
+import { tempConfig } from "./support/config";
 /** compile at a ~128K window's section limits unless a test sets its own. */
 const compile = (input: Omit<CompileInput, "limits"> & { limits?: CompileInput["limits"] }) => compileAt({ limits: DEFAULT_SUMMARY_LIMITS, ...input });
 
-let tmpDir: string;
-let CONFIG_PATH: string;
-const savedConfigPath = process.env.KEEL_CONFIG_PATH;
-
-beforeAll(() => {
-  tmpDir = mkdtempSync(join(tmpdir(), "keel-gidx-"));
-  CONFIG_PATH = join(tmpDir, "keel-config.json");
-  process.env.KEEL_CONFIG_PATH = CONFIG_PATH;
-});
-
-afterAll(() => {
-  if (savedConfigPath === undefined) delete process.env.KEEL_CONFIG_PATH;
-  else process.env.KEEL_CONFIG_PATH = savedConfigPath;
-  rmSync(tmpDir, { recursive: true, force: true });
-});
-
+const config = tempConfig("keel-gidx-");
 beforeEach(() => setConfig({ debug: false, overrideDefaultCompaction: false }));
 afterEach(() => {
-  if (existsSync(CONFIG_PATH)) unlinkSync(CONFIG_PATH);
+  if (existsSync(config.path)) unlinkSync(config.path);
 });
 
-function setConfig(cfg: Record<string, unknown>) {
-  writeFileSync(CONFIG_PATH, JSON.stringify(cfg));
-}
+const setConfig = (cfg: Record<string, unknown>) => config.write(cfg);
 
 // How #N is counted: lisp/test/numbers.lisp; reading it from a session file: tests/session-read.test.ts.
 

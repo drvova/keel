@@ -10,6 +10,7 @@ import { assertRealPi, piInstalled } from "./support/pi";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { dirname, join, resolve } from "path";
+import { PIN_ENTRY_TYPE } from "./support/names";
 
 
 
@@ -179,7 +180,7 @@ describe.skipIf(!piInstalled())("Pi host", () => {
   test("a keel_pin note is stored by Pi and leads the next summary", async () => {
     const result = await agentTool("keel_pin").execute("p", { note: "Never edit anything under migrations/." }, undefined, undefined);
     expect(result.content[0].text).toMatch(/^Pinned \[1\] Never edit anything under migrations\/\. \(agent, #\d+\)\.$/);
-    expect(sessionManager.getBranch().some((e: any) => e.type === "custom" && e.customType === "keel.pin")).toBe(true);
+    expect(sessionManager.getBranch().some((e: any) => e.type === "custom" && e.customType === PIN_ENTRY_TYPE)).toBe(true);
     user("Add an index to orders");
     assistant([{ type: "text", text: "Added." }], "stop");
     await session.prompt("/keel");

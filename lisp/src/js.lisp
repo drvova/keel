@@ -121,3 +121,5 @@ changed in place, as nothing read is.")
         (let ((value (funcall thunk)))
           (push (cons key value) (gethash object *derived*))
           value))))
+
+(defun plural (n one) "N and ONE, with an s unless N is 1." (format nil "~d ~a~a" n one (if (= n 1) "" "s")))

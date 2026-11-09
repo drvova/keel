@@ -1,25 +1,12 @@
 // [Task State] (lisp/src/task-state.lisp): where the work stands, read off the
 // transcript since /clear by rule, at every compaction.
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+import { describe, expect, it } from "bun:test";
 import { COMPACT_INSTRUCTION } from "./support/names";
 import { registerHook } from "./support/host";
 import { sectionLines } from "./support/summary";
+import { tempConfig } from "./support/config";
 
-let dir: string;
-const prev = process.env.KEEL_CONFIG_PATH;
-beforeAll(() => {
-  dir = mkdtempSync(join(tmpdir(), "keel-task-"));
-  process.env.KEEL_CONFIG_PATH = join(dir, "c.json");
-  writeFileSync(process.env.KEEL_CONFIG_PATH, JSON.stringify({ overrideDefaultCompaction: true, smartKeepTail: false }));
-});
-afterAll(() => {
-  if (prev === undefined) delete process.env.KEEL_CONFIG_PATH;
-  else process.env.KEEL_CONFIG_PATH = prev;
-  rmSync(dir, { recursive: true, force: true });
-});
+const config = tempConfig("keel-task-", { overrideDefaultCompaction: true, smartKeepTail: false });
 
 const user = (text: string, extra: Record<string, unknown> = {}) => ({ role: "user", content: text, ...extra });
 const call = (id: string, name: string, args: Record<string, unknown>) => ({ role: "assistant", content: [{ type: "toolCall", id, name, arguments: args }] });

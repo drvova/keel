@@ -15,49 +15,10 @@
 ;;; Japanese, Thai, Lao, Khmer, Myanmar), UAX #29 makes each ideograph a word
 ;;; and a run of Thai one, where ICU finds the dictionary's words.
 
-(defun word-segments (text)
-  "TEXT's segments as (SEGMENT START END), START and END in code units."
-  (let ((at 0))
-    (mapcar (lambda (seg) (prog1 (list seg at (+ at (js-length seg))) (incf at (js-length seg))))
-            (sb-unicode:words text))))
-
-(defun letter-or-number-p (c)
-  (member (sb-unicode:general-category c) '(:lu :ll :lt :lm :lo :nd :nl :no)))
-
-(defun wordish-p (segment) (some #'letter-or-number-p segment))
-
-(defun two-words-p (text)
-  "TEXT holds two words or more, as Intl.Segmenter counts them. Two runs of ASCII
-letters or digits with whitespace between are two words under any segmenter,
-which settles most text without segmenting it."
-  (or (rx-test (rx "[A-Za-z0-9]\\s+[A-Za-z0-9]") text)
-      (>= (segment-word-count text) 2)))
-
-(defun segment-word-count (text)
-  "TEXT's words as Intl.Segmenter counts them: segments holding a letter or a number."
-  (count-if (lambda (s) (wordish-p (first s))) (word-segments text)))
-
 ;;; --- [User Messages] and [Early Session Requests] ---------------------------------
 
 (defparameter +user-message-chars+ 300 "Each user message is clipped to this many characters.")
 (defparameter +early-requests-kept+ 3 "[Early Session Requests] keeps this many of the first messages.")
-
-(defun collapse-whitespace (text)
-  "TEXT with each run of whitespace one space: replace(/\\s+/g, \" \")."
-  (rx-replace (rx "\\s+") text " " :all t))
-
-(defun user-words (text)
-  "The user's own words in a message on one line, and the skills it expanded:
-(values WORDS SKILLS), WORDS \"\" when there are none. An expanded skill alone is
-not the user's words; text that opens with a tag (`<peer_message …>`) was put
-there by a tool, and one-word replies (\"ok\") say little: both are none."
-  (let* ((skills '())
-         (rest (js-trim (collapse-whitespace
-                         (rx-replace (skill-block-regex) text
-                                     (lambda (m) (push (rx-group m 1) skills) " ")
-                                     :all t)))))
-    (values (if (or (starts-with "<" rest) (not (two-words-p rest))) "" rest)
-            (nreverse skills))))
 
 (defun user-line (text index)
   "A user message as the summary lists it, behind a `[skill: name]` tag when it
@@ -164,11 +125,13 @@ first; the same message hashless and hashed is one commit, kept hashed."
                (message (or heredoc (first-line-of (clean-message (or (rx-group m 1) (rx-group m 2) (rx-group m 3) ""))))))
           (if (and (null heredoc) (rx-test (rx "^\\$\\(cat\\s+<<") message)) "" message)))))
 
-(defparameter +git-commit-head+ "\\[[^\\]\\s]+(?:\\s+\\([^)]*\\))?\\s+([0-9a-f]{7,12})\\]"
+(defparameter +commit-hash+ "[0-9a-f]{7,12}" "A commit's abbreviated hash, as git prints it.")
+
+(defparameter +git-commit-head+ (format nil "\\[[^\\]\\s]+(?:\\s+\\([^)]*\\))?\\s+(~a)\\]" +commit-hash+)
   "What git commit prints first: `[branch (root-commit) hash]`, the hash its one group.")
 
 (defun hash-subject-regex ()
-  (rx (format nil "(?:~a|^\\s*([0-9a-f]{7,12})(?:\\s+\\([^)]*\\))?)\\s+(.*)" +git-commit-head+)))
+  (rx (format nil "(?:~a|^\\s*(~a)(?:\\s+\\([^)]*\\))?)\\s+(.*)" +git-commit-head+ +commit-hash+)))
 
 (defun result-lines (results) (mapcan (lambda (text) (split-string text #\Newline)) results))
 
@@ -188,7 +151,7 @@ first; the same message hashless and hashed is one commit, kept hashed."
           (when m (return (rx-group m 1)))))
       (hash-for-subject results message)
       (dolist (text results)
-        (let ((m (rx-exec (rx "\\b([0-9a-f]{7,12})\\.\\.([0-9a-f]{7,12})\\b") text)))
+        (let ((m (rx-exec (rx (format nil "\\b(~a)\\.\\.(~a)\\b" +commit-hash+ +commit-hash+)) text)))
           (when m (return (rx-group m 2)))))
       (dolist (line (result-lines results))
         (let ((m (rx-exec (rx "^\\s*([0-9a-f]{7,40})\\s*$") line)))
@@ -216,6 +179,9 @@ first; the same message hashless and hashed is one commit, kept hashed."
           do (let ((segments (commit-segments (or (command-of b) ""))))
                (when segments
                  (multiple-value-bind (results failed) (outcome-of blocks i)
+                   (flet ((hash-of (message)
+                            ;; One commit in the command: the results' hash; several: each by its subject.
+                            (if (= (length segments) 1) (hash-from-results results message) (hash-for-subject results message))))
                    (dolist (seg segments)
                      (let* ((amend (rx-test (rx "\\s--amend\\b") seg))
                             (message (subject-of seg)))
@@ -226,7 +192,7 @@ first; the same message hashless and hashed is one commit, kept hashed."
                              (let* ((reported (if (plusp (length message)) nil (amended-commit results)))
                                     (subject (if (plusp (length message)) message (and reported (commit-message reported))))
                                     (hash (if (plusp (length message))
-                                              (if (= (length segments) 1) (hash-from-results results message) (hash-for-subject results message))
+                                              (hash-of message)
                                               (and reported (commit-hash reported))))
                                     (target (find-if (lambda (c) (if (and (zerop (length message)) subject)
                                                                      (string= (commit-message c) subject)
@@ -237,9 +203,7 @@ first; the same message hashless and hashed is one commit, kept hashed."
                                      (subject (setf commits (append commits (list (make-commit subject hash)))))))
                              (when (plusp (length message))
                                (setf commits (add-commit commits
-                                                         (make-commit message (if (= (length segments) 1)
-                                                                                  (hash-from-results results message)
-                                                                                  (hash-for-subject results message))))))))))))))
+                                                         (make-commit message (hash-of message))))))))))))))
     commits))
 
 ;;; --- [Tracked Commands] ----------------------------------------------------------------

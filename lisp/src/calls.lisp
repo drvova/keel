@@ -58,9 +58,30 @@ position's #N is its element in INDICES."
 (defparameter +line-selector+ "L?\\d+(?:(?:-|\\.\\.|\\+)L?\\d*)?|-\\d+(?:[-+]\\d+)?"
   "omp's read selector for lines: `50-100`, `L50-L60`, `50+10`, `50..60`, `-20` (the last 20).")
 
-
 (defun lines-selector-p (chunk)
   (rx-test (rx (format nil "^(?:~a)$" +line-selector+) "i") chunk))
+
+(defun url-path-p (path) (rx-test (rx "^[a-z][a-z0-9+.-]*:\\/\\/" "i") path))
+
+(defun read-selector-regex ()
+  "A read path's selector: `:raw`, `:img`, `:conflicts` or lines, several joined by `,` or `:`."
+  (rx (format nil ":(?:raw|img|conflicts|~a)(?:[,:](?:raw|img|conflicts|~a))*$" +line-selector+ +line-selector+) "i"))
+
+(defun strip-read-selector (path)
+  "A read's path without omp's selector (`:50-100`, `:raw`)."
+  (let ((m (rx-exec (read-selector-regex) path)))
+    (if (and m (plusp (rx-match-start m))) (js-slice path 0 (rx-match-start m)) path)))
+
+(defun files-of (call)
+  "The files a call works on: its named paths less URLs, a read's selector dropped; none for a search or a shell."
+  (when (eq (call-files call) :unset)
+    (setf (call-files call)
+          (let ((kind (call-kind call)))
+            (if (member kind '(:search :shell))
+                '()
+                (let ((paths (remove-if #'url-path-p (named-paths (call-args call)))))
+                  (if (eq kind :read) (mapcar #'strip-read-selector paths) paths))))))
+  (call-files call))
 
 (defun reads-part-p (c)
   "A read of part of a file, by omp's line selector (`path:L10-20`) or Pi's offset and limit."
@@ -87,23 +108,64 @@ the tool (any read of a file is one run) and the file, else the subject (a shell
             (format nil "~a ~a" (call-name c) (json-string (if (> (js-length arg) 80) (concatenate 'string (js-slice arg 0 80) "…") arg)))
             (call-name c)))))
 
-;;; --- what is still open, and what was asked --------------------------------------
+;;; --- what a later entry superseded, what is still open, and what was asked ---------------
+
+(defun file-changes (messages &key indices)
+  "Every change of a file MESSAGES make, oldest first, as (PATH POS N): N the #N of
+the message making it (its element in INDICES)."
+  (let ((indices (coerce indices 'vector)))
+    (loop for m in messages for pos from 0
+          when (and (json-object-p m) (equal (json-get m "role") "assistant"))
+            nconc (loop for c in (tool-calls-of m pos)
+                        when (changes-p c)
+                          nconc (loop for p in (files-of c)
+                                      collect (list p pos (and (< pos (length indices)) (aref indices pos))))))))
+
+(defun stale-read (r changes)
+  "When the file R's call read or edited was changed after R (CHANGES, FILE-CHANGES):
+(values PATH N), the first such change; what R shows of it no longer holds."
+  (let ((c (result-call r)))
+    (when (and c (on-file-p c))
+      (loop for p in (files-of c)
+            for later = (find-if (lambda (ch) (and (> (second ch) (result-pos r)) (string= (first ch) p))) changes)
+            when later return (values p (third later))))))
+
+(defun fixes-of (results)
+  "Each failed result of RESULTS, to the first later success of the same run (calls
+are the same run by RUN-OF), in an EQ hash. A failure whose call is unknown has no
+run, so nothing fixes it."
+  (let ((fixes (make-hash-table :test 'eq)) (waiting (make-hash-table :test 'equal)))
+    (dolist (r results fixes)
+      (let ((key (and (result-call r) (run-of (result-call r)))))
+        (when key
+          (if (result-error r)
+              (push r (gethash key waiting))
+              (progn (dolist (f (gethash key waiting)) (setf (gethash f fixes) r))
+                     (remhash key waiting))))))))
 
 (defun open-failures (results)
-  "The failed RESULTS no later success of the same run fixed, newest first.
-A failure whose call is unknown has no run, so nothing fixes it."
-  (let ((fixed (make-hash-table :test 'equal)) (open '()))
-    (dolist (r (reverse results) (nreverse open))
-      (let ((key (and (result-call r) (run-of (result-call r)))))
-        (cond ((not (result-error r)) (when key (setf (gethash key fixed) t)))
-              ((not (and key (gethash key fixed))) (push r open)))))))
+  "The failed RESULTS no later success of the same run fixed, newest first."
+  (let ((fixes (fixes-of results)))
+    (reverse (remove-if-not (lambda (r) (and (result-error r) (not (gethash r fixes)))) results))))
+
+(defun call-index (r indices)
+  "The #N of the message holding R's call, or NIL."
+  (let ((c (result-call r))) (and c (let ((n (nth (call-pos c) indices))) (and (realp n) n)))))
+
+(defun request-text (m)
+  "M's text without the host's injected blocks, when M is a request the user made;
+NIL otherwise: another role, a message another extension sent in the user's name,
+or one that holds no words of the user's own (only injected text or a skill's expansion)."
+  (when (and (json-object-p m) (equal (json-get m "role") "user") (not (extension-user-p m)))
+    (let ((text (rx-replace (host-block-regex) (text-of (json-get m "content")) "" :all t)))
+      (and (plusp (length (user-words text))) text))))
+
+(defun request-words (m)
+  "The user's own words of request M on one line, \"\" when M is no request."
+  (let ((text (request-text m))) (if text (values (user-words text)) "")))
 
 (defun latest-request (messages)
-  "The user's latest request in MESSAGES: (values POS TEXT), TEXT the message's text
-without the host's injected blocks; NIL when there is none. A user message that holds
-no words of the user's own (only injected text or a skill's expansion) is no request,
-nor is one another extension sent in the user's name."
+  "The user's latest request in MESSAGES: (values POS TEXT), TEXT as REQUEST-TEXT reads it; NIL when there is none."
   (loop for m in (reverse messages) for pos downfrom (1- (length messages))
-        when (and (json-object-p m) (equal (json-get m "role") "user") (not (extension-user-p m)))
-          do (let ((text (rx-replace (host-block-regex) (text-of (json-get m "content")) "" :all t)))
-               (when (plusp (length (user-words text))) (return (values pos text))))))
+        for text = (request-text m)
+        when text return (values pos text)))

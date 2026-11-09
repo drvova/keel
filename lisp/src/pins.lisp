@@ -9,64 +9,11 @@
 
 (in-package #:keel)
 
-(defun js-id (n)
-  "An id as JavaScript holds it: an integer past 2^53 is the nearest double."
-  (if (and (integerp n) (> (abs n) +double-exact+)) (coerce n 'double-float) n))
-
-(defun format-pin (n)
-  "A note as it is shown, in a listing and in [Pinned Notes]: [ID] NAME: TEXT (BY, #AT), NAME only for a named one."
-  (let ((at (let ((a (json-get n "at"))) (and (not (eq a :null)) a))))
-    (format nil "[~a] ~@[~a: ~]~a (~a~a)" (js-string-of (js-id (json-get n "id"))) (pin-name n) (json-get n "text") (json-get n "by")
-            (cond (at (format nil ", #~a" (js-string-of (js-id at))))
-                  ((stringp (json-get n "from")) (format nil ", from session ~a" (json-get n "from")))
-                  (t "")))))
-
-(defun pin-name (n) (let ((name (json-get n "name"))) (and (stringp name) name)))
-
-(defun pin-name-of (value)
-  "A note's name as given: trimmed and lowercased, letters, digits and . _ - only,
-starting with a letter or digit, up to +PIN-NAME-CHARS+; NIL for anything else."
-  (when (stringp value)
-    (let ((name (string-downcase (js-trim value))))
-      (and (<= 1 (length name) +pin-name-chars+)
-           (rx-test (rx "^[a-z0-9][a-z0-9._-]*$") name)
-           name))))
-
 (defun format-pin-list (notes)
   (if (null notes)
       "No pinned notes."
       (format nil "Pinned notes (kept at the top of every summary):~%~a"
               (join-strings (mapcar (lambda (n) (format nil "- ~a" (format-pin n))) notes) (string #\Newline)))))
-
-(defun pin-entry-p (e)
-  "A pin or unpin entry: keel's custom entry, its data an object (an array is one to JavaScript too)."
-  (and (equal (json-get e "type") "custom") (pin-entry-type-p (json-get e "customType"))
-       (let ((d (json-get e "data"))) (or (json-object-p d) (json-array-p d)))))
-
-(defun read-pins (branch)
-  "The notes pinned on BRANCH since its last /clear, oldest first, as JSON: each
-pin and unpin replayed along it, so a branch keeps the pins made on it."
-  (let ((notes (make-hash-table)))
-    (loop for i from (1+ (last-reset-index branch)) below (length branch)
-          for e = (aref branch i)
-          do (let ((op (json-get e "data")))
-               (when (and (pin-entry-p e) (json-object-p op) (js-integer-p (json-get op "id")))
-                 (let ((id (as-integer (json-get op "id"))) (text (json-get op "text")))
-                   (cond ((and (equal (json-get op "op") "add") (stringp text) (plusp (length (js-trim text))))
-                          (let ((name (pin-name-of (json-get op "name"))))
-                            ;; A name defined again replaces the note it named.
-                            (when name
-                              (loop for k being the hash-keys of notes using (hash-value n)
-                                    when (equal (pin-name n) name) do (remhash k notes)))
-                            (setf (gethash id notes)
-                                  (let ((note (json-object "id" id "text" text "by" (if (equal (json-get op "by") "agent") "agent" "user")
-                                                           "at" (and (js-integer-p (json-get op "at")) (as-integer (json-get op "at"))))))
-                                    (when name (setf (gethash "name" note) name))
-                                    (when (stringp (json-get op "from")) (setf (gethash "from" note) (json-get op "from")))
-                                    note))))
-                         ((equal (json-get op "op") "remove") (remhash id notes)))))))
-    (let ((ids (sort (loop for k being the hash-keys of notes collect k) #'<)))
-      (mapcar (lambda (id) (gethash id notes)) ids))))
 
 (defun next-pin-id (branch)
   "The next note's id: one past every id used on this branch, unpinned ones included."
@@ -106,8 +53,7 @@ the new note replaces the one it named."
         (return-from add-pin (values nil (users-note named "defined again") nil)))
       (let* ((counted (count-if #'counted-entry-p entries))
              (at (and (plusp counted) (1- counted)))
-             (op (json-object "v" 1 "op" "add" "id" (next-pin-id branch) "text" text "by" by "at" at)))
-        (when name (setf (gethash "name" op) name))
+             (op (pin-op "add" (next-pin-id branch) :text text :by by :at at :name name)))
         (values t (format nil "~:[Pinned~;Redefined~] ~a~a.~@[ It replaces ~a.~]" named (format-pin op)
                           (if clipped (format nil " (clipped to ~d chars)" +pin-chars+) "")
                           (and named (format-pin named)))
@@ -130,7 +76,7 @@ AGENT: the agent's call, which leaves a note the user pinned as it is."
       ((and note agent (equal (json-get note "by") "user"))
        (values nil (users-note note "unpinned") nil))
       (note
-        (values t (format nil "Unpinned ~a." (format-pin note)) (json-object "v" 1 "op" "remove" "id" (json-get note "id"))))
+        (values t (format nil "Unpinned ~a." (format-pin note)) (pin-op "remove" (json-get note "id"))))
       (t
         (values nil (format nil "No pinned note ~a. ~a"
                             (if id (format nil "[~a]" (js-string-of id)) (json-string value))
@@ -139,11 +85,6 @@ AGENT: the agent's call, which leaves a note the user pinned as it is."
 
 (defun lower-first (text)
   (if (plusp (length text)) (concatenate 'string (string-downcase (subseq text 0 1)) (subseq text 1)) text))
-
-(defun file-branch (path)
-  "The entries on PATH's active branch, in file order."
-  (let* ((entries (jsonl-values path)) (ids (active-branch-ids entries)))
-    (coerce (remove-if-not (lambda (e) (and (hash-table-p e) (gethash (json-get e "id") ids))) entries) 'vector)))
 
 (defun carried-pins (entries files)
   "The named notes a new session starts with: the user's of the project's last
@@ -157,14 +98,11 @@ holds. Nothing for a session that has a message or a pin already (resumed,
 forked, or carried into once)."
   (unless (or (some #'counted-entry-p entries) (some #'pin-entry-p entries) (null files))
     (let* ((previous (first files))
-           (from (let ((id (json-get (read-header previous) "id"))) (if (stringp id) (subseq id 0 (min 8 (length id))) "")))
+           (from (let ((id (json-get (read-header previous) "id"))) (if (stringp id) (short-id id) "")))
            (id 0))
       (loop for n in (read-pins (file-branch previous))
             when (and (pin-name n) (equal (json-get n "by") "user"))
-              collect (let ((op (json-object "v" 1 "op" "add" "id" (incf id) "name" (pin-name n) "text" (json-get n "text")
-                                             "by" (json-get n "by") "at" :null)))
-                        (setf (gethash "from" op) from)
-                        op)))))
+              collect (pin-op "add" (incf id) :text (json-get n "text") :by (json-get n "by") :at :null :name (pin-name n) :from from)))))
 
 (defun run-pin (input)
   "One keel_pin call or /…-pin, /…-unpin command: (values DONE TEXT OP SEVERITY AGENT-NOTE).

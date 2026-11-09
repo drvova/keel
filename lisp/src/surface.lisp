@@ -22,8 +22,6 @@
 
 ;;; --- the tools ---------------------------------------------------------------------
 
-(defun lines (&rest strings) (join-strings strings (string #\Newline)))
-
 (defparameter +refs-schema+
   '(:any-of ((:array (:any-of (:number :string))) :number :string))
   "#N refs or ranges: a list of numbers or strings, or one of either.")
@@ -160,9 +158,9 @@ tool's definition is part of the prompt the provider caches."
    "command" +command+
    "tools" (vector (recall-tool) (pin-tool) (context-tool))
    "commands" (map 'vector (lambda (c) (json-object "suffix" (first c) "description" (second c))) +commands+)
-   "dataEntryTypes" (vector +pin-entry-type+ +legacy-pin-entry-type+ +evict-entry-type+ +legacy-evict-entry-type+ +recall-entry-type+)
+   "dataEntryTypes" (coerce (append (pin-entry-types) (evict-entry-types) (list +recall-entry-type+)) 'vector)
    ;; With eviction off, a request is left as it is unless one of these is on its branch.
-   "evictEntryTypes" (vector +evict-entry-type+ +legacy-evict-entry-type+)))
+   "evictEntryTypes" (coerce (evict-entry-types) 'vector)))
 
 ;;; --- effects -----------------------------------------------------------------------
 
@@ -180,11 +178,15 @@ tool's definition is part of the prompt the provider caches."
 ;;; --- calls through it --------------------------------------------------------------
 
 (defun pin-call (request call)
-  (gethash "pin" (handle-pin (json-object "host" (json-get request "host") "call" call))))
+  "One pin call (pins.lisp run-pin) in REQUEST's snapshot: (values DONE TEXT OP SEVERITY AGENT-NOTE)."
+  (run-pin (pin-input (read-snapshot (json-get request "host")) call)))
 
 (defun recall-call (request call)
-  (gethash "recall" (handle-recall (json-object "host" (json-get request "host") "call" call
-                                                "projectFiles" (json-get request "projectFiles" #())))))
+  "One recall call (recall.lisp run-recall) in REQUEST's snapshot: (values OK TEXT SEVERITY SHOWN AT),
+SHOWN what it showed of this session and AT the #N count then (feedback.lisp)."
+  (let ((s (read-snapshot (json-get request "host"))))
+    (multiple-value-bind (ok text severity shown) (run-recall (recall-input s call (json-get request "projectFiles" #())))
+      (values ok text severity shown (snapshot-count s)))))
 
 (defun handle-tool (request)
   "One call of a keel tool: its text for the agent, and the entries it records."
@@ -192,11 +194,13 @@ tool's definition is part of the prompt the provider caches."
          (call (json-object "surface" "tool" "params" (json-get request "params" :null))))
     (cond ((equal name +recall-tool+)
            ;; What the agent recalled is kept as a signal of what it needs (feedback.lisp).
-           (let* ((r (recall-call request call)) (shown (json-get r "shown")))
-             (call-answer (json-get r "text") (and (plusp (length shown)) (list (append-effect +recall-entry-type+ (recall-op shown (json-get r "at"))))))))
+           (multiple-value-bind (ok text severity shown at) (recall-call request call)
+             (declare (ignore ok severity))
+             (call-answer text (and shown (list (append-effect +recall-entry-type+ (recall-op shown at)))))))
           ((equal name +pin-tool+)
-           (let ((pin (pin-call request call)))
-             (call-answer (json-get pin "text") (and (truthy-p (json-get pin "op")) (list (append-effect +pin-entry-type+ (json-get pin "op")))))))
+           (multiple-value-bind (done text op) (pin-call request call)
+             (declare (ignore done))
+             (call-answer text (and (truthy-p op) (list (append-effect +pin-entry-type+ op))))))
           ((equal name +context-tool+)
            (let ((reply (evict-for-host (read-snapshot (json-get request "host")) call)))
              (call-answer (json-get reply "text") (appends +evict-entry-type+ (json-get reply "ops")))))
@@ -206,17 +210,18 @@ tool's definition is part of the prompt the provider caches."
   "One of keel's commands typed by the user (all but /keel): what the user is told and the agent sent."
   (let* ((suffix (json-get request "suffix")) (args (or (json-get request "args") "")))
     (cond ((equal suffix "recall")
-           (let ((r (recall-call request (json-object "surface" "command" "name" (format nil "~a-recall" +command+) "args" args))))
-             (call-answer nil (list (if (eq (json-get r "ok") :true)
-                                   (send-effect "the recall result" +recall-command-message-type+ (json-get r "text") (json-object "triggerTurn" :true))
-                                   (tell-effect (json-get r "text") (json-get r "severity")))))))
+           (multiple-value-bind (ok text severity) (recall-call request (json-object "surface" "command" "name" suffix "args" args))
+             (call-answer nil (list (if ok
+                                        (send-effect "the recall result" +recall-command-message-type+ text (json-object "triggerTurn" :true))
+                                        (tell-effect text severity))))))
           ((member suffix '("pin" "unpin") :test #'equal)
-           (let ((pin (pin-call request (json-object "surface" "command" "name" suffix "args" args))))
-             (call-answer nil (list (and (truthy-p (json-get pin "op")) (append-effect +pin-entry-type+ (json-get pin "op")))
-                               (tell-effect (json-get pin "text") (let ((s (json-get pin "severity"))) (if (stringp s) s "info")))
-                               ;; The agent hears it on its next request, without a turn of its own.
-                               (and (stringp (json-get pin "agentNote"))
-                                    (send-effect "the pin to the agent" +pin-notice-type+ (json-get pin "agentNote") (json-object "deliverAs" "nextTurn")))))))
+           (multiple-value-bind (done text op severity note) (pin-call request (json-object "surface" "command" "name" suffix "args" args))
+             (declare (ignore done))
+             (call-answer nil (list (and (truthy-p op) (append-effect +pin-entry-type+ op))
+                                    (tell-effect text (or severity "info"))
+                                    ;; The agent hears it on its next request, without a turn of its own.
+                                    (and (stringp note)
+                                         (send-effect "the pin to the agent" +pin-notice-type+ note (json-object "deliverAs" "nextTurn")))))))
           ((equal suffix "evict")
            (let ((reply (evict-for-host (read-snapshot (json-get request "host")) (json-object "surface" "command" "args" args))))
              (call-answer nil (append (appends +evict-entry-type+ (json-get reply "ops")) (list (tell-effect (json-get reply "text")))))))
@@ -229,12 +234,13 @@ prompt (resume.lisp)."
   (let ((files (json-get request "projectFiles" #())))
     (if (zerop (length files))
         (call-answer nil nil)
-        (let* ((pin (pin-call request (json-object "surface" "carry" "files" files))) (ops (json-get pin "op")))
+        (multiple-value-bind (done text ops) (pin-call request (json-object "surface" "carry" "files" files))
+          (declare (ignore done))
           ;; Read before the pins land: a session with nothing in it yet.
           (let ((briefing (resume-briefing (coerce (snapshot-tree (read-snapshot (json-get request "host"))) 'list)
                                            (coerce files 'list))))
             (call-answer nil (append (and (plusp (length (or ops #())))
-                                          (append (appends +pin-entry-type+ ops) (list (tell-effect (format nil "keel: ~a" (json-get pin "text"))))))
+                                          (append (appends +pin-entry-type+ ops) (list (tell-effect (format nil "keel: ~a" text)))))
                                      (and briefing
                                           (list (send-effect "where the last session stopped" +resume-notice-type+ briefing
                                                              (json-object "deliverAs" "nextTurn")))))))))))
@@ -292,11 +298,6 @@ own), or as a message of its own."
          (reply (context-for-host (read-snapshot (json-get request "host")) messages (eq (json-get request "tool") :true)))
          (drop (json-get reply "drop")) (stubs (coerce (json-get reply "stubs") 'list)))
     (let ((out (call-answer nil (append (appends +evict-entry-type+ (json-get reply "ops"))
-                                   (and (stringp (json-get reply "notice")) (list (tell-effect (json-get reply "notice"))))
-                                   ;; A message of its own, stored in the session, before the next model call: the provider's cache keeps it.
-                                   (and (stringp (json-get reply "note"))
-                                        (list (json-object "do" "send" "what" "the context's size to the agent"
-                                                           "message" (json-object "customType" +budget-notice-type+ "content" (json-get reply "note") "display" :false)
-                                                           "options" (json-object "deliverAs" "nextTurn"))))))))
+                                   (and (stringp (json-get reply "notice")) (list (tell-effect (json-get reply "notice"))))))))
       (setf (gethash "messages" out) (if (or (plusp (length drop)) stubs) (splice-request messages drop stubs) :null))
       out)))

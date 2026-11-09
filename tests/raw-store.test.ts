@@ -3,13 +3,12 @@
 // session.lisp), with no omp setting changed. Putting an original back is held
 // to its rules in lisp/test/store.lisp.
 import { ompBinding, recallTool } from "./support/binding";
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
+import { describe, expect, it } from "bun:test";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 
 /** The store beside a session file. */
-const rawStorePath = (file: string): string => `${file}.keel-raw`;
+const rawStorePath = (file: string): string => `${file}${RAW_STORE_SUFFIX}`;
 /** What the store keeps, by id: the first copy of each (the store's format: one {id, content} line each). */
 const readRawStore = (file: string, ids: Set<string>): Map<string, unknown> => {
   const kept = new Map<string, unknown>();
@@ -23,25 +22,17 @@ const readRawStore = (file: string, ids: Set<string>): Map<string, unknown> => {
   return kept;
 };
 import { captureNewEntries, createRawCaptureState, pointPlaceholders, registerRawCapture } from "../src/raw-capture";
+import { MAX_KEPT_CHARS, RAW_STORE_SUFFIX } from "./support/names";
+import { tempConfig } from "./support/config";
 
-let dir: string;
-const prev = process.env.KEEL_CONFIG_PATH;
-beforeAll(() => {
-  dir = mkdtempSync(join(tmpdir(), "keel-raw-"));
-  process.env.KEEL_CONFIG_PATH = join(dir, "keel-config.json");
-});
-afterAll(() => {
-  if (prev === undefined) delete process.env.KEEL_CONFIG_PATH;
-  else process.env.KEEL_CONFIG_PATH = prev;
-  rmSync(dir, { recursive: true, force: true });
-});
+const config = tempConfig("keel-raw-");
 
 const text = (t: string) => [{ type: "text", text: t }];
 
 describe("what is kept", () => {
   /** What one capture of these messages keeps in the store, by id. */
   const keptOf = (name: string, messages: unknown[]): Map<string, unknown> => {
-    const file = join(dir, `${name}.jsonl`);
+    const file = join(config.dir, `${name}.jsonl`);
     const entries = messages.map((message, i) => ({ type: "message", id: `k${i}`, message }));
     captureNewEntries(createRawCaptureState(), { getSessionFile: () => file, getEntries: () => entries });
     return readRawStore(file, new Set(entries.map((e) => e.id)));
@@ -63,10 +54,10 @@ describe("what is kept", () => {
   it("keeps text (clipped) and drops image data", () => {
     const kept = keptOf("what", [
       { role: "toolResult", content: [{ type: "text", text: "a" }, { type: "image", mimeType: "image/png", data: "QUJD".repeat(1000) }] },
-      { role: "toolResult", content: text("b".repeat(1_000_010)) },
+      { role: "toolResult", content: text("b".repeat(MAX_KEPT_CHARS + 10)) },
     ]);
     expect(kept.get("k0")).toEqual([{ type: "text", text: "a" }, { type: "image", mimeType: "image/png" }]);
-    expect((kept.get("k1") as any[])[0].text).toEndWith("...[keel kept the first 1000000 of 1000010 chars]");
+    expect((kept.get("k1") as any[])[0].text).toEndWith(`...[keel kept the first ${MAX_KEPT_CHARS} of ${MAX_KEPT_CHARS + 10} chars]`);
   });
 });
 
@@ -78,10 +69,10 @@ describe("with omp's own session manager", () => {
   };
 
   it("recall reads what omp blanked or shook, from the copy taken as the messages landed", async () => {
-    writeFileSync(process.env.KEEL_CONFIG_PATH!, JSON.stringify({ keepOriginals: true }));
+    writeFileSync(config.path, JSON.stringify({ keepOriginals: true }));
     const omp: any = await import("@oh-my-pi/pi-coding-agent");
-    const sessions = join(dir, "sessions");
-    const sm = omp.SessionManager.create(dir, sessions);
+    const sessions = join(config.dir, "sessions");
+    const sm = omp.SessionManager.create(config.dir, sessions);
     const now = Date.now();
     const usage = { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
     const assistant = (content: unknown[]) => sm.appendMessage({ role: "assistant", content, api: "anthropic-messages", provider: "anthropic", model: "m", stopReason: "toolUse", usage, timestamp: now });
@@ -132,15 +123,15 @@ describe("with omp's own session manager", () => {
   it("is taken on omp's events, and not when keepOriginals is off", () => {
     const handlers = new Map<string, Array<(e: unknown, c: unknown) => void>>();
     registerRawCapture({ on: (name: string, h: any) => handlers.set(name, [...(handlers.get(name) ?? []), h]) } as any, ompBinding);
-    const file = join(dir, "events.jsonl");
+    const file = join(config.dir, "events.jsonl");
     const entries: any[] = [{ type: "message", id: "r1", message: { role: "toolResult", toolCallId: "c", content: text("out") } }];
     const ctx = { sessionManager: { getSessionFile: () => file, getEntries: () => entries } };
     const fireAll = () => { for (const hs of handlers.values()) for (const h of hs) h({ messages: [] }, ctx); };
-    writeFileSync(process.env.KEEL_CONFIG_PATH!, JSON.stringify({ keepOriginals: false }));
+    writeFileSync(config.path, JSON.stringify({ keepOriginals: false }));
     fireAll();
     expect(existsSync(rawStorePath(file))).toBe(false);
     // Off, the events passed the message by without taking it as seen.
-    writeFileSync(process.env.KEEL_CONFIG_PATH!, JSON.stringify({ keepOriginals: true }));
+    writeFileSync(config.path, JSON.stringify({ keepOriginals: true }));
     handlers.get("message_end")![0]({}, ctx);
     expect([...readRawStore(file, new Set(["r1"])).values()]).toEqual([text("out")]);
   });
@@ -148,7 +139,7 @@ describe("with omp's own session manager", () => {
 
 describe("the summary is written from the originals", () => {
   it("a write that fails is tried again on the next event, not given up", () => {
-    const file = join(dir, "retry.jsonl");
+    const file = join(config.dir, "retry.jsonl");
     const entries = [{ type: "message", id: "t1", message: { role: "toolResult", toolCallId: "c", content: text("out") } }];
     const sm = { getSessionFile: () => file, getEntries: () => entries };
     const state = createRawCaptureState();
@@ -161,8 +152,8 @@ describe("the summary is written from the originals", () => {
   });
 
   it("a switch to another session and back copies nothing twice", () => {
-    const a = join(dir, "switch-a.jsonl");
-    const b = join(dir, "switch-b.jsonl");
+    const a = join(config.dir, "switch-a.jsonl");
+    const b = join(config.dir, "switch-b.jsonl");
     const entries = (p: string) => [{ type: "message", id: `${p}1`, message: { role: "toolResult", toolCallId: "c", content: text(`${p} out`) } }];
     const state = createRawCaptureState();
     let file = a;
@@ -177,8 +168,8 @@ describe("the summary is written from the originals", () => {
   });
 
   it("a fork's capture skips what its parent's store keeps already, and copies what it does not", () => {
-    const parent = join(dir, "parent.jsonl");
-    const child = join(dir, "child.jsonl");
+    const parent = join(config.dir, "parent.jsonl");
+    const child = join(config.dir, "child.jsonl");
     writeFileSync(parent, `${JSON.stringify({ type: "session", id: "p" })}\n`);
     writeFileSync(child, `${JSON.stringify({ type: "session", id: "c", parentSession: parent })}\n`);
     writeFileSync(rawStorePath(parent), `${JSON.stringify({ id: "f1", content: text("the parent's copy") })}\n`);
@@ -188,11 +179,11 @@ describe("the summary is written from the originals", () => {
   });
 
   it("a commit whose git output omp blanked before keel compacted is still in [Commits]", async () => {
-    writeFileSync(process.env.KEEL_CONFIG_PATH!, JSON.stringify({ overrideDefaultCompaction: true }));
+    writeFileSync(config.path, JSON.stringify({ overrideDefaultCompaction: true }));
     const { registerHook } = await import("./support/host");
     let handler: any;
     registerHook({ on: (name: string, fn: any) => { if (name === "session_before_compact") handler = fn; } });
-    const file = join(dir, "hook.jsonl");
+    const file = join(config.dir, "hook.jsonl");
     const msg = (id: string, message: Record<string, unknown>) => ({ type: "message", id, message });
     const entries = [
       msg("u1", { role: "user", content: "commit the rounding fix please" }),
@@ -248,10 +239,10 @@ describe("omp's placeholders point at the original", () => {
 
 describe("a fork reads its parent's originals", () => {
   it("what the parent kept before the fork, recall in the fork still finds", async () => {
-    writeFileSync(process.env.KEEL_CONFIG_PATH!, JSON.stringify({ keepOriginals: true }));
+    writeFileSync(config.path, JSON.stringify({ keepOriginals: true }));
     const omp: any = await import("@oh-my-pi/pi-coding-agent");
-    const sessions = join(dir, "fork-sessions");
-    const sm = omp.SessionManager.create(dir, sessions);
+    const sessions = join(config.dir, "fork-sessions");
+    const sm = omp.SessionManager.create(config.dir, sessions);
     const now = Date.now();
     const usage = { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
     sm.appendMessage({ role: "user", content: "check the deploy log", timestamp: now });

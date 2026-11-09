@@ -92,7 +92,7 @@ const VERBS = ["add retries to", "add metrics to", "clean up", "add validation t
 const FEATURES = ["the client", "the handler", "the worker", "the scheduler", "the parser", "the serializer"];
 
 /** Planted facts, by turn. Early ones have to survive many compactions. */
-export const NEEDLES = (turns: number): Needle[] => [
+const NEEDLES = (turns: number): Needle[] => [
   { kind: "constraint", turn: 2, key: "never edit anything under migrations/", query: "migrations directory rule", topic: "migrations" },
   { kind: "early_file", turn: 4, key: "src/legacy/exporter.ts", query: "legacy exporter changes", topic: "legacy" },
   { kind: "early_commit", turn: 5, key: "", query: `commit for the ${COMPONENTS[5]} work`, topic: COMPONENTS[5] },

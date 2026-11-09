@@ -56,6 +56,49 @@ a text part's text is a string."
         (first parts)
         (join-strings parts (string #\Newline)))))
 
+(defun host-block-regex () (rx "<system-reminder\\b[^>]*>[\\s\\S]*?<\\/system-reminder>"))
+
+(defun skill-block-regex () (rx "<skill\\s+name=\"([^\"]+)\"[^>]*>[\\s\\S]*?(?:<\\/skill>|$)"))
+
+(defun letter-or-number-p (c)
+  (member (sb-unicode:general-category c) '(:lu :ll :lt :lm :lo :nd :nl :no)))
+
+(defun word-segments (text)
+  "TEXT's segments as (SEGMENT START END), START and END in code units."
+  (let ((at 0))
+    (mapcar (lambda (seg) (prog1 (list seg at (+ at (js-length seg))) (incf at (js-length seg))))
+            (sb-unicode:words text))))
+
+(defun wordish-p (segment) (some #'letter-or-number-p segment))
+
+(defun segment-word-count (text)
+  "TEXT's words as Intl.Segmenter counts them: segments holding a letter or a number."
+  (count-if (lambda (s) (wordish-p (first s))) (word-segments text)))
+
+(defun two-words-p (text)
+  "TEXT holds two words or more, as Intl.Segmenter counts them. Two runs of ASCII
+letters or digits with whitespace between are two words under any segmenter,
+which settles most text without segmenting it."
+  (or (rx-test (rx "[A-Za-z0-9]\\s+[A-Za-z0-9]") text)
+      (>= (segment-word-count text) 2)))
+
+(defun collapse-whitespace (text)
+  "TEXT with each run of whitespace one space: replace(/\\s+/g, \" \")."
+  (rx-replace (rx "\\s+") text " " :all t))
+
+(defun user-words (text)
+  "The user's own words in a message on one line, and the skills it expanded:
+(values WORDS SKILLS), WORDS \"\" when there are none. An expanded skill alone is
+not the user's words; text that opens with a tag (`<peer_message …>`) was put
+there by a tool, and one-word replies (\"ok\") say little: both are none."
+  (let* ((skills '())
+         (rest (js-trim (collapse-whitespace
+                         (rx-replace (skill-block-regex) text
+                                     (lambda (m) (push (rx-group m 1) skills) " ")
+                                     :all t)))))
+    (values (if (or (starts-with "<" rest) (not (two-words-p rest))) "" rest)
+            (nreverse skills))))
+
 ;;; --- tool calls --------------------------------------------------------------
 
 (defstruct (call (:constructor make-call (name args &optional id pos)))
@@ -98,7 +141,7 @@ read once."
   (let ((lines '()) (start 0))
     (loop for i from 0 below (length text)
           for code = (char-code (char text i))
-          when (member code '(10 13 #x2028 #x2029))
+          when (line-terminator-p code)
             do (push (subseq text start i) lines) (setf start (1+ i)))
     (push (subseq text start) lines)
     (nreverse lines)))
@@ -191,6 +234,15 @@ argument it came from (NIL for the files in an omp edit's `input`)."
 
 ;;; --- one message, rendered -----------------------------------------------------
 
+(defun execution-of (message)
+  "A command the user ran in the host (omp's ! and $ prompts) as MESSAGE holds it:
+(values COMMAND OUTPUT PROMPT LABEL LANG), or NIL for any other message."
+  (let ((role (json-get message "role")))
+    (cond ((equal role "bashExecution")
+           (values (or-empty (json-get message "command")) (or-empty (json-get message "output")) "$" "bash" nil))
+          ((equal role "pythonExecution")
+           (values (or-empty (json-get message "code")) (or-empty (json-get message "output")) ">>>" "python" "python")))))
+
 (defun file-mention-paths (message)
   (let ((files (json-get message "files")))
     (when (json-array-p files)
@@ -263,10 +315,9 @@ Worked out once for each message and these arguments."
       (cond ((equal role "user") (list "user" (clipped 300) nil))
             ((equal role "toolResult")
              (list "tool_result" (format nil "[~a] ~a" (js-string-of (json-get message "toolName")) (clipped 200)) nil))
-            ((equal role "bashExecution")
-             (list "bash" (maybe-clip (format nil "$ ~a~%~a" (or-empty (json-get message "command")) (or-empty (json-get message "output"))) 300) nil))
-            ((equal role "pythonExecution")
-             (list "python" (maybe-clip (format nil ">>> ~a~%~a" (or-empty (json-get message "code")) (or-empty (json-get message "output"))) 300) nil))
+            ((execution-of message)
+             (multiple-value-bind (command output prompt label) (execution-of message)
+               (list label (maybe-clip (format nil "~a ~a~%~a" prompt command output) 300) nil)))
             ((equal role "fileMention")
              (let ((paths (file-mention-paths message)))
                (list "file" (join-strings (mapcar (lambda (p) (concatenate 'string "@" p)) paths) " ") paths)))
@@ -292,10 +343,8 @@ Worked out once for each message and these arguments."
 
 (defun search-text-anew (message)
   (let ((role (json-get message "role")))
-    (cond ((equal role "bashExecution")
-           (format nil "~a ~a" (or-empty (json-get message "command")) (or-empty (json-get message "output"))))
-          ((equal role "pythonExecution")
-           (format nil "~a ~a" (or-empty (json-get message "code")) (or-empty (json-get message "output"))))
+    (cond ((execution-of message)
+           (multiple-value-bind (command output) (execution-of message) (format nil "~a ~a" command output)))
           ((equal role "fileMention") (join-strings (file-mention-paths message) " "))
           ((and (equal role "toolResult") (own-tool-p (json-get message "toolName") +recall-tool+)) "")
           (t

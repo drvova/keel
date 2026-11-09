@@ -1,15 +1,13 @@
 // The summary's stored state (lisp/src/summary.lisp): what one compaction's
 // window adds, and how the next compaction merges into what this one stored.
-import { afterAll, beforeAll, describe, it, expect } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+import { describe, it, expect } from "bun:test";
 import { compileSummary, type SummaryState } from "./support/compile";
 import { DEFAULT_SUMMARY_LIMITS } from "./support/window";
 import { COMPACT_INSTRUCTION } from "./support/names";
 import type { NormalizedBlock } from "./support/compile";
 import { registerHook } from "./support/host";
 import { sectionLines, summarize } from "./support/summary";
+import { tempConfig } from "./support/config";
 
 const compile = (input: Omit<Parameters<typeof compileSummary>[0], "limits">) => compileSummary({ limits: DEFAULT_SUMMARY_LIMITS, ...input }).text;
 /** What a window of these blocks adds to the state, with EARLY of the session's first requests still to take. */
@@ -21,18 +19,7 @@ const freshState = ({ blocks, trackCommands, earlySlots }: { blocks: NormalizedB
   }).state;
 
 describe("a stored state read back", () => {
-  let dir: string;
-  const prev = process.env.KEEL_CONFIG_PATH;
-  beforeAll(() => {
-    dir = mkdtempSync(join(tmpdir(), "keel-state-"));
-    process.env.KEEL_CONFIG_PATH = join(dir, "c.json");
-    writeFileSync(process.env.KEEL_CONFIG_PATH, JSON.stringify({ overrideDefaultCompaction: true, smartKeepTail: false }));
-  });
-  afterAll(() => {
-    if (prev === undefined) delete process.env.KEEL_CONFIG_PATH;
-    else process.env.KEEL_CONFIG_PATH = prev;
-    rmSync(dir, { recursive: true, force: true });
-  });
+  tempConfig("keel-state-", { overrideDefaultCompaction: true, smartKeepTail: false });
   const stored = { earlyRequests: ["goal"], files: { modified: ["a.ts"], created: [], read: [] }, commits: [{ hash: "abc1234", message: "m" }], userMessages: [], brief: "[user]\ngoal" };
   /** The state the next compaction stores, after one that stored SUMMARYSTATE. */
   const next = (summaryState: unknown): SummaryState => {

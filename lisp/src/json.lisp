@@ -93,7 +93,6 @@ whitespace around it."
                  (incf pos 4)))
              (str ()
                (incf pos)
-               ;; Most strings hold no escape: copied out whole, not character by character.
                (let ((end (position-if (lambda (c) (or (char= c #\") (char= c #\\) (< (char-code c) 32))) text :start pos :end n)))
                  (when (and end (char= (char text end) #\"))
                    (return-from str (prog1 (subseq text pos end) (setf pos (1+ end))))))

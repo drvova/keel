@@ -11,7 +11,7 @@
 
 (in-package #:keel)
 
-(defparameter +range-asks+ 4 "The longest requests a range keeps.")
+(defparameter +range-asks+ 1 "The longest requests a range keeps (its line names the longest).")
 (defparameter +range-files+ 24 "The changed files a range keeps; a range at the cap says `24+`.")
 (defparameter +range-commits+ 4 "The latest commits a range keeps.")
 
@@ -107,8 +107,6 @@ merged, never the newest range, which stays on its own as the latest work."
 
 ;;; --- the lines ------------------------------------------------------------------
 
-(defun plural (n one) (format nil "~d ~a~a" n one (if (= n 1) "" "s")))
-
 (defun history-files (files)
   (if (<= (length files) 3)
       (format nil "changed ~a" (join-strings (mapcar (lambda (p) (join-strings (last (split-string p #\/) 2) "/")) files) ", "))
@@ -139,7 +137,7 @@ merged, never the newest range, which stays on its own as the latest work."
     (cond ((null requests) (push "earlier, not indexed; search it with keel_recall" parts))
           ((> requests 0)
            (push (format nil "~a: ~a" (plural requests "request")
-                         (join-strings (mapcar (lambda (a) (format nil "\"~a\"" a)) (first-n (range-asks r) 1)) ", "))
+                         (format nil "~{\"~a\"~}" (first-n (range-asks r) 1)))
                  parts)))
     (setf parts (append (nreverse parts) (range-work r)))
     (format nil "#~d–#~d~:[~;: ~a~]" (range-from r) (range-to r) parts (join-strings parts " · "))))

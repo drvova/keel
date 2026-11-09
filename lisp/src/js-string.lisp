@@ -91,13 +91,12 @@ leaves an empty string at that edge, and \"\" splits into (\"\")."
     (push (subseq string start) parts)
     (nreverse parts)))
 
-
 ;;; --- Canonicalize --------------------------------------------------------------
 ;;;
 ;;; How a non-unicode /i regex compares characters (the spec's Canonicalize):
 ;;; a code unit's uppercase when that is one code unit and does not take a
 ;;; non-ASCII character to ASCII, from SBCL's full Unicode case mapping, the
-;;; one toUpperCase uses. Both the regex engine and the term search fold by it.---------------------------------------------------------
+;;; one toUpperCase uses. Both the regex engine and the term search fold by it.
 
 (defun canonical-unit (unit)
   (let ((upper (sb-unicode:uppercase (string (code-char unit)))))
@@ -145,6 +144,8 @@ the BMP are compared as their code units, which no case maps."
     (loop for (s . rest) on strings
           do (write-string s out)
              (when rest (write-string separator out)))))
+
+(defun lines (&rest strings) (join-strings strings (string #\Newline)))
 
 (defun js-code-unit (string unit)
   "The UTF-16 code unit at UNIT of STRING, or NIL past its end."

@@ -7,6 +7,7 @@
 // (tests/support/long-horizon.ts, tests/support/cybench.ts).
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { join, resolve } from "path";
+import { EVICT_ENTRY_TYPE } from "./names";
 
 const REPO = resolve(import.meta.dir, "../..");
 
@@ -287,7 +288,7 @@ export const runStats = (branch: any[]): RunStats => {
   const all = sum("input") + sum("cacheRead") + sum("cacheWrite");
   const evictions = { agent: 0, user: 0, auto: 0 };
   for (const e of branch) {
-    if (e.type === "custom" && e.customType === "keel.evict" && e.data?.op === "evict" && e.data.by in evictions) evictions[e.data.by as keyof typeof evictions]++;
+    if (e.type === "custom" && e.customType === EVICT_ENTRY_TYPE && e.data?.op === "evict" && e.data.by in evictions) evictions[e.data.by as keyof typeof evictions]++;
   }
   return { requests: usages.length, promptTokens: sum("input") + sum("cacheRead"), cacheShare: all ? sum("cacheRead") / all : 0, uncachedTokens: sum("input") + sum("cacheWrite"), evictions };
 };

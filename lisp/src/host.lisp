@@ -37,36 +37,6 @@
                     :tree (coerce (json-get json "tree" #()) 'vector)
                     :branch-ids (strings-of (json-get json "branch")))))
 
-(defun path-directory (path)
-  "PATH's directory, as Node's dirname writes it: both separators
-count, since a Windows path is written with `\` and a host's settings
-may carry either."
-  (let ((at (position-if (lambda (c) (or (char= c #\/) (char= c #\\))) path :from-end t)))
-    (cond ((null at) ".")
-          ((zerop at) (subseq path 0 1))
-          (t (subseq path 0 at)))))
-
-(defun path-separator (path)
-  "The separator PATH is written with: `\` when it uses one, else `/`."
-  (if (find #\\ path) #\\ #\/))
-
-(defun join-path (dir name)
-  "DIR and NAME joined with DIR's own separator, a trailing one not doubled."
-  (concatenate 'string (string-right-trim "/\\" dir) (string (path-separator dir)) name))
-
-(defun directory-files (dir)
-  "DIR's files, as names, listed without SBCL's pathname syntax: a Windows
-path handed to DIRECTORY comes back in a namestring with `/`, which then
-matches no path written the way the host writes it."
-  (let ((names '()) (seen (make-hash-table :test 'equal)))
-    (dolist (pattern (list (merge-pathnames "*.*" (native-path (concatenate 'string dir "/")))))
-      (ignore-errors
-       (dolist (file (directory pattern))
-         (let ((name (file-namestring file)))
-           (unless (nth-value 1 (gethash name seen))
-             (setf (gethash name seen) t) (push name names))))))
-    (nreverse names)))
-
 (defun snapshot-config-dir (s)
   "Where keel keeps what it learns, beside its config file."
   (path-directory (snapshot-config-path s)))
@@ -164,25 +134,6 @@ accepted."
 
 ;;; --- turns out of the context (evict.lisp) -----------------------------------------
 
-(defun context-readout (s)
-  "How full the context is, for the end of a keel tool's result while eviction
-is on: models judge their own context's length poorly past a few thousand tokens
-(Context Language Models, appendix G), so each result says it, as that paper's
-tools do. Written once into the result, it reads the same on every later
-request. NIL when the host has not counted the context, or the trigger is unknown."
-  (let ((tokens (snapshot-context-tokens s)) (trigger (snapshot-trigger s)))
-    (and (realp tokens) (realp trigger) (> trigger 0)
-         ;; What is left, as budget-aware agents are told it (Liu et al., arXiv 2511.17006): a model
-         ;; reads a remaining budget better than a share.
-         (format nil "[context: ~~~a tokens, ~d% of where the host compacts (~~~a); ~~~a left]"
-                 (js-string-of (round tokens)) (round (* 100 tokens) trigger) (js-string-of (round trigger))
-                 (js-string-of (max 0 (round (- trigger tokens))))))))
-
-(defun with-readout (s text)
-  "TEXT with the context readout after it, when eviction is on and there is one."
-  (let ((readout (and (eq (json-get (snapshot-settings s) "evict") :true) (context-readout s))))
-    (if (and readout (stringp text)) (format nil "~a~%~a" text readout) text)))
-
 (defun snapshot-count (s) "How many entries #N counts now: the next one's #N." (count-if #'counted-entry-p (snapshot-tree s)))
 
 (defun snapshot-trigger (s)
@@ -194,9 +145,8 @@ request. NIL when the host has not counted the context, or the trigger is unknow
 (defun context-for-host (s messages tool)
   "The host's next request MESSAGES with what is out of the context left out: the
 indices to drop, the lines to put in their place (where, and as what), the
-evictions keel records itself as the context fills (the evict setting), the
-note telling the model how full its context is (TOOL: keel_context is
-registered), and what to tell the user."
+evictions keel records itself as the context fills (the evict setting), and what
+to tell the user. TOOL: keel_context is registered."
   (let* ((auto (eq (json-get (snapshot-settings s) "evict") :true))
          (trigger (and auto (snapshot-trigger s))) (count (snapshot-count s)) (branch (snapshot-branch s))
          (file (snapshot-session-file s))
@@ -210,23 +160,23 @@ registered), and what to tell the user."
       (when edit-ops
         (setf branch (concatenate 'vector branch
                                   (mapcar (lambda (op) (json-object "type" "custom" "customType" +evict-entry-type+ "data" op)) edit-ops)))))
-    (multiple-value-bind (drop stubs ops before after n-of dropped outs turns fit reread reread-trials)
-        (let ((*chars-per-token* (model-chars-per-token s)))
-          (evict-request branch (snapshot-index s) (coerce messages 'vector) :file file
-                         :trigger trigger :auto auto :count count :mark tool :mirror mirror
-                         :reread-prior (learned-reread (snapshot-config-dir s) (model-key (snapshot-model s)))))
+    (let* ((plan (evict-request branch (snapshot-index s) (coerce messages 'vector) :file file
+                                :trigger trigger :auto auto :count count :mark tool :mirror mirror
+                                :chars-per-token (model-chars-per-token s)
+                                :reread-prior (learned-reread (snapshot-config-dir s) (model-key (snapshot-model s)))
+                                :credit-prior (learned-recall-by-kind (snapshot-config-dir s) (model-key (snapshot-model s)))))
+           (ops (plan-ops plan)) (reread (plan-reread plan)) (reread-trials (plan-reread-trials plan)) (fit (plan-fit plan)))
       ;; What this request measured of the model's tokens, kept for the next session and for keel_context;
       ;; and, once the session has shown enough of it, how often the model recalls a turn again (feedback.lisp).
-      (when (or fit (and reread (>= reread-trials +reread-prior-weight+)))
-        (record-evidence (snapshot-config-dir s) (model-key (snapshot-model s)) :chars-per-token fit
-                         :reread (and (>= reread-trials +reread-prior-weight+) reread)))
+      (let ((by-kind (credit-shown (plan-rates plan) (plan-credit plan))))
+        (when (or fit (and reread (>= reread-trials +reread-prior-weight+)) by-kind)
+          (record-evidence (snapshot-config-dir s) (model-key (snapshot-model s)) :chars-per-token fit
+                           :reread (and (>= reread-trials +reread-prior-weight+) reread)
+                           :recall-by-kind by-kind)))
       (stamp-call ops branch)
       (when mirror
-        (write-mirror file (render-mirror (coerce messages 'vector) n-of dropped outs turns (read-inserts branch))))
-      (multiple-value-bind (note note-op)
-          ;; After an eviction this request, the context just shrank: no note.
-          (and auto (null ops) (budget-note branch (snapshot-index s) after trigger tool count))
-        (json-object "drop" (coerce drop 'vector)
+        (write-mirror file (render-mirror (coerce messages 'vector) plan (read-inserts branch))))
+      (json-object "drop" (coerce (plan-drop plan) 'vector)
                      "stubs" (map 'vector (lambda (st)
                                             (destructuring-bind ((at . how) . text) st
                                               (json-object "at" at "how" how "text" text
@@ -234,22 +184,20 @@ registered), and what to tell the user."
                                                            "message" (and (equal how "insert")
                                                                           (json-object "role" "user" "content" (vector (json-object "type" "text" "text" text))
                                                                                        "timestamp" (json-get (aref (coerce messages 'vector) at) "timestamp"))))))
-                                  stubs)
-                     "ops" (coerce (append edit-ops ops (and note-op (list note-op))) 'vector)
-                     "note" note
+                                  (plan-stubs plan))
+                     "ops" (coerce (append edit-ops ops) 'vector)
                      "notice" (let ((lines (remove nil (list (and (or edit-ops ignored) (mirror-notice edit-ops ignored))
-                                                             (and ops (auto-notice ops before after))))))
-                                (and lines (join-strings lines (string #\Newline)))))))))
+                                                             (and ops (auto-notice ops (plan-before plan) (plan-after plan)))))))
+                                (and lines (join-strings lines (string #\Newline))))))))
 
 (defun evict-for-host (s call)
   "One keel_context call or evict command: what to tell, and the entries to append. Turn sizes come from the session file."
-  (let ((chars (make-hash-table)) (by-n (make-hash-table)) (file (snapshot-session-file s))
-        (*chars-per-token* (model-chars-per-token s)))
+  (let ((chars (make-hash-table)) (by-n (make-hash-table)) (file (snapshot-session-file s)))
     (when (and file (probe-file (native-path file)))
       (loop for (index nil message) in (read-session file)
             do (setf (gethash index chars) (message-chars message) (gethash index by-n) message)))
-    (multiple-value-bind (text ops) (run-evict call (snapshot-branch s) (snapshot-index s) chars by-n (snapshot-count s))
-      (json-object "text" (if (equal (json-get call "surface") "tool") (with-readout s text) text)
+    (multiple-value-bind (text ops) (run-evict call (snapshot-branch s) (snapshot-index s) chars by-n (snapshot-count s) (model-chars-per-token s))
+      (json-object "text" text
                    "ops" (coerce (stamp-call ops (snapshot-branch s)) 'vector)))))
 
 ;;; --- a compaction, in two calls --------------------------------------------------
@@ -301,9 +249,6 @@ pass is not keel's to answer; with it, what the hook returns."
               (return-from compact-for-host (json-object "kind" "convert" "messages" (coerce wanted 'vector))))
             (let* ((reason (json-get event "reason"))
                    (will-retry (json-get event "willRetry"))
-                   ;; What the agent recalled lately, which [Working Set] brings back first (feedback.lisp).
-                   (*recalled* (let ((b (snapshot-branch s)))
-                                 (recalled-newest-first (recent-recalls (read-recalls b) (branch-turns b (snapshot-index s))))))
                    (window (snapshot-window s))
                    (input (json-object "settings" settings
                                        "keepUserTurns" (or keep :null)
@@ -321,6 +266,9 @@ pass is not keel's to answer; with it, what the hook returns."
                                        ;; Whether a finished turn is left to take out (evict.lisp), for the evict setting's policy.
                                        "evictRoom" (bool (room-to-evict-p (snapshot-branch s) (snapshot-index s)))
                                        "sessionFile" file
+                                       ;; What the agent recalled lately, which [Working Set] brings back first (feedback.lisp).
+                                       "recalled" (let ((b (snapshot-branch s)))
+                                                    (coerce (recalled-newest-first (recent-recalls (read-recalls b) (branch-turns b (snapshot-index s)))) 'vector))
                                        "previousSummary" (json-get event "previousSummary")
                                        "fileOps" (json-get event "fileOps")))
                    (plan (plan-compaction input branch (host-notes branch live originals (or converted #()) (snapshot-index s)))))

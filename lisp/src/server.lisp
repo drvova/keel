@@ -50,7 +50,7 @@
 ;;;;       "params":{...},"dropped":[D...]} (params and dropped for the tool's params)
 ;;;;
 ;;;; names: keel's own names and the limits its tools state (names.lisp), for the tests
-;;;;   {"op":"names"} -> {"ok":true,"names":{recallTool, recallParams, pinTool, ..., sessionRefMinChars}}
+;;;;   {"op":"names"} -> {"ok":true,"names":{pinEntryType, evictEntryType, recallEntryType, ..., recallOutputChars}}
 ;;;;
 ;;;; context-edits: a branch as Pi's context holds it (context-edits.lisp), for the parity test
 ;;;;   {"op":"context-edits","branch":[ENTRY...]} -> {"ok":true,"entries":[ENTRY...]}
@@ -208,17 +208,17 @@ costs where there is no live core."
                                  "messages" (map 'vector #'item-live (cut-items cut))
                                  "selectedIds" (map 'vector #'item-id (cut-items cut))
                                  "firstKeptEntryId" (cut-first-kept cut)
-                                 "compactAll" (if (cut-compact-all cut) :true :false)
+                                 "compactAll" (bool (cut-compact-all cut))
                                  "keptUserTurns" (cut-kept-user-turns cut)
                                  "totalUserTurns" (cut-total-user-turns cut)
-                                 "keepFallbackToCompactAll" (if (cut-fallback cut) :true :false))))
+                                 "keepFallbackToCompactAll" (bool (cut-fallback cut)))))
              (when (cut-budget-cut cut) (setf (gethash "budgetCut" o) (cut-budget-cut cut)))
              o))))
 
 (defun json-cut (v live)
   "The cut a test hands back (cut-json's shape) on the LIVE items it was made of."
   (if (not (eq (json-get v "ok") :true))
-      (if (equal (json-get v "reason") "no_live_messages") :no-live-messages :too-few-live-messages)
+      (first (find (json-get v "reason") +cut-reasons+ :key #'second :test #'equal))
       (%make-cut :items (subseq live 0 (length (json-get v "messages" #())))
                  :first-kept (json-get v "firstKeptEntryId")
                  :compact-all (eq (json-get v "compactAll") :true)
@@ -256,9 +256,8 @@ compact, it first asks for what the host's convertToLlm makes of the messages."
   "The items [Working Set] picks of REQUEST's history, and the section's lines."
   (let* ((max (json-get request "maxChars"))
          ;; What the agent recalled lately, newest first (feedback.lisp), as a compaction reads it from the session.
-         (*recalled* (loop for n across (coerce (json-get request "recalled" #()) 'vector) when (js-integer-p n) collect (as-integer n)))
          (items (select-working-set (coerce (json-get request "history" #()) 'list) (coerce (json-get request "indices" #()) 'list)
-                                    (coerce (json-get request "kept" #()) 'list) max)))
+                                    (coerce (json-get request "kept" #()) 'list) max (recalled-of request))))
     (multiple-value-bind (lines shown) (format-working-set items max)
       (json-object "ok" :true
                    "items" (map 'vector (lambda (i) (json-object "index" (ws-item-index i) "title" (ws-item-title i)
@@ -276,7 +275,7 @@ compact, it first asks for what the host's convertToLlm makes of the messages."
       ((:touched :sessions) (json-object "kind" (string-downcase (symbol-name kind)) "page" (first rest)))
       (:recent (json-object "kind" "recent"))
       (:drill (destructuring-bind (index path full offset limit) rest
-                (json-object "kind" "drill" "target" (json-object "index" index "pathPattern" path "full" (if full :true :false)
+                (json-object "kind" "drill" "target" (json-object "index" index "pathPattern" path "full" (bool full)
                                                                    "offset" offset "limit" limit))))
       (t (json-object "kind" (string-downcase (symbol-name kind)))))))
 
@@ -298,15 +297,6 @@ compact, it first asks for what the host's convertToLlm makes of the messages."
           (setf (gethash "params" out) p (gethash "dropped" out) (coerce dropped 'vector)))))
     out))
 
-(defun handle-recall (request)
-  "One recall call (recall.lisp run-recall) in the session REQUEST's snapshot names."
-  (let ((s (read-snapshot (json-get request "host"))) (call (json-get request "call")))
-    (multiple-value-bind (ok text severity shown) (run-recall (recall-input s call (json-get request "projectFiles" #())))
-      (json-object "ok" :true "recall" (json-object "ok" (bool ok) "text" (if (equal (json-get call "surface") "tool") (with-readout s text) text)
-                                                    "severity" severity
-                                                    ;; What it showed of this session, and the #N count then (feedback.lisp).
-                                                    "shown" (coerce shown 'vector) "at" (snapshot-count s))))))
-
 (defun handle-context-edits (request)
   "The branch REQUEST carries, Pi's context edits applied (context-edits.lisp)."
   (let ((branch (coerce (json-get request "branch" #()) 'vector)))
@@ -320,17 +310,10 @@ compact, it first asks for what the host's convertToLlm makes of the messages."
       (scaffold-settings path (let ((l (json-get request "legacy"))) (and (stringp l) l))))
     (json-object "ok" :true "settings" (load-settings path))))
 
-(defun handle-pin (request)
-  "A pin call (pins.lisp run-pin): what to tell, and the op the host appends."
-  (let* ((s (read-snapshot (json-get request "host"))) (call (json-get request "call")))
-    (multiple-value-bind (done text op severity note) (run-pin (pin-input s call))
-      (json-object "ok" :true "pin" (json-object "done" (bool done) "text" (if (equal (json-get call "surface") "tool") (with-readout s text) text)
-                                                 "op" op "severity" severity "agentNote" note)))))
-
 (defun handle-raw-capture (request)
   "Copy the entries REQUEST carries that omp may rewrite into the store (raw-capture.lisp)."
   (multiple-value-bind (written stored lineage) (capture-entries (json-get request "input"))
-    (json-object "ok" :true "written" (coerce written 'vector) "stored" (if stored :true :false)
+    (json-object "ok" :true "written" (coerce written 'vector) "stored" (bool stored)
                  "lineage" (and lineage (coerce lineage 'vector)))))
 
 (defun handle-placeholders (request)
@@ -415,17 +398,27 @@ when stdin is a pipe, which is how every host runs the core."
         (incf at (cdr c)))
       (sb-ext:octets-to-string bytes :external-format :utf-8))))
 
+(defun respond (request-text &optional seconds)
+  "REQUEST-TEXT's response, within SECONDS when given (the live core's bound,
+live.lisp). Anything that fails, the heap or the stack running out too, is an
+answer that says so: the caller tells the core failed."
+  (handler-case (if seconds
+                    (sb-ext:with-timeout seconds (handle-request (parse-json request-text)))
+                    (handle-request (parse-json request-text)))
+    (sb-ext:timeout () (json-object "ok" :false "error" (format nil "the core ran past ~d s on this request" seconds)))
+    (serious-condition (e) (json-object "ok" :false "error" (princ-to-string e)))))
+
 (defun main ()
   "Entry point of the dumped executable: one request on stdin, or with --serve DIR
 requests one after another (live.lisp)."
   (let ((args (rest sb-ext:*posix-argv*)))
     (when (equal (first args) "--serve")
-      (handler-case (serve (second args)) (serious-condition () nil))
+      ;; A core that cannot serve says why and exits failed: the host falls back to one process a request.
+      (handler-case (serve (second args))
+        (serious-condition (e) (format *error-output* "keel's core could not serve: ~a~%" e) (finish-output *error-output*)
+          (sb-ext:exit :code 1 :abort t)))
       (sb-ext:exit :code 0 :abort t)))
-  (let ((response (handler-case
-                      (handle-request (parse-json (read-stdin)))
-                    ;; The heap or the stack running out too: the caller says the core failed.
-                    (serious-condition (e) (json-object "ok" :false "error" (princ-to-string e))))))
+  (let ((response (respond (read-stdin))))
     (write-json response *standard-output*)
     (terpri *standard-output*)
     (finish-output *standard-output*)

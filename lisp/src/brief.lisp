@@ -221,12 +221,12 @@ to be the deciding edits and writes, the head exploration.")
         (when (string= stripped raw) (return raw))
         (setf raw stripped)))))
 
-(defun segment-closing-p (blocks i &key (key #'identity))
-  "The assistant block I of BLOCKS (each read through KEY) is the last thing said
-before the next user turn: only tool results come between it and one, or the end."
-  (and (eq (block-kind (funcall key (aref blocks i))) :assistant)
+(defun segment-closing-p (blocks i)
+  "The assistant block I of BLOCKS is the last thing said before the next user
+turn: only tool results come between it and one, or the end."
+  (and (eq (block-kind (aref blocks i)) :assistant)
        (let ((next (loop for j from (1+ i) below (length blocks)
-                         for b = (funcall key (aref blocks j))
+                         for b = (aref blocks j)
                          unless (eq (block-kind b) :tool-result) return b)))
          (or (null next) (eq (block-kind next) :user)))))
 
@@ -382,10 +382,10 @@ not what a turn did."
               when (eq (block-kind (ranked-block (aref ranked i))) :assistant) do (award (aref ranked i) 7 "near-important-event") (return))
         (loop for i from (1+ idx) to (min (1- (length ranked)) (+ idx 4))
               when (member (block-kind (ranked-block (aref ranked i))) '(:assistant :bash)) do (award (aref ranked i) 5 "after-important-event") (return))))
-    (dotimes (i (length ranked))
-      (let ((b (ranked-block (aref ranked i))))
-        (when (and (>= (js-length (js-trim (block-text b))) 120)
-                   (segment-closing-p ranked i :key #'ranked-block))
+    (let ((blocks (map 'vector #'ranked-block ranked)))
+      (dotimes (i (length ranked))
+        (when (and (>= (js-length (js-trim (block-text (aref blocks i)))) 120)
+                   (segment-closing-p blocks i))
           (award (aref ranked i) 14 "segment-closing-assistant"))))
     ranked))
 
@@ -448,7 +448,6 @@ a small one stays at the floor."
                        (unless (or (gethash i selected) (eq (block-kind b) :tool-result))
                          (let ((key (dedup-key b)))
                            (unless (and key (gethash key seen))
-                             ;; Skipped, not stopped at, so smaller high-value blocks still fit.
                              (unless (and costs (> (+ used (aref costs i)) budget))
                                (when costs (incf used (aref costs i)))
                                (setf (gethash i selected) t)

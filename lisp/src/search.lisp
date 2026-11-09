@@ -58,9 +58,6 @@
   '("ations" "ation" "ings" "ing" "ures" "ure" "ies" "ers" "er" "ed" "es" "ly" "s"))
 (defparameter +min-stem+ 4)
 
-(defun regex-metachar-p (char)
-  (find char "|*+?{}()[]\\^$."))
-
 (defun ascii-letter-p (char)
   (or (char<= #\a char #\z) (char<= #\A char #\Z)))
 
@@ -91,22 +88,6 @@
 ;;; the core makes: untyped, a pass reads each character through SBCL's
 ;;; generic array access, and a search over 5,000 entries cost half a second.
 
-(deftype text () '(simple-array character (*)))
-
-(defun as-text (string)
-  "STRING as a TEXT, copied only when it is some other kind of string."
-  (if (typep string 'text) string (coerce string 'text)))
-
-(defun fold (string)
-  "STRING with every character as a non-unicode /i regex compares it."
-  (let* ((s (as-text string)) (n (length s)) (out (make-string n)))
-    (declare (text s out) (fixnum n) (optimize speed))
-    (dotimes (i n out)
-      (let* ((c (schar s i)) (code (char-code c)))
-        (setf (schar out i) (cond ((< code 97) c)
-                                  ((<= code 122) (code-char (- code 32)))
-                                  ((< code 128) c)
-                                  (t (js-canonical c))))))))
 
 (defstruct (term (:constructor make-term
                      (text &aux (stem (stem-of text)) (word (fold text)) (folded-stem (and stem (fold stem)))
@@ -302,18 +283,14 @@ list of terms, or a regex (the regex path's one pattern)."
   "Search aborted: query too deeply nested to search. Use fewer or more specific words; for a regex, avoid nested quantifiers such as (a+)+."
   "What a search that ran out of stack says: a regex that recurses that deep is one too costly to search.")
 
-(defvar *interference* t "Whether the search running now re-ranks for interference.")
-
 (defun search-docs (query docs &key (floor +relative-floor+) (cap +result-cap+) (interference t))
   "Rank DOCS, a vector of (ROLE TEXT FILES), for QUERY. Returns the hits as a list of (INDEX . SNIPPET) best first, the
 count before the cap, and whether the cap cut it; or (values :ABORTED MESSAGE)
 past the time budget or the stack, MESSAGE saying which. With INTERFERENCE (the
 default, for a page of results someone reads) near-copies push each other down;
 without it each hit is ranked alone, as [Working Set] wants its few picks."
-  (let ((*regex-deadline* (+ (get-internal-real-time)
-                             (* +search-budget-ms+ (/ internal-time-units-per-second 1000))))
-        (*steps* 0))
-    (handler-case (let ((*interference* interference)) (search-docs-within query docs floor cap))
+  (with-regex-deadline (+search-budget-ms+)
+    (handler-case (search-docs-within query docs floor cap interference)
       (regex-aborted () (values :aborted +search-aborted+))
       (storage-condition () (values :aborted +search-too-deep+)))))
 
@@ -321,7 +298,7 @@ without it each hit is ranked alone, as [Working Set] wants its few picks."
   (let ((total (length hits)))
     (values (subseq hits 0 (min cap total)) total (> total cap))))
 
-(defun search-docs-within (query docs floor cap)
+(defun search-docs-within (query docs floor cap interference)
   (let ((raw-query (js-trim query)))
     (when (zerop (length raw-query))
       (return-from search-docs-within (values '() 0 nil)))
@@ -341,7 +318,7 @@ without it each hit is ranked alone, as [Working Set] wants its few picks."
                             when (regex-test regex (hay-units (aref hays i)))
                               collect (cons i (line-snippet (aref texts i) regex)))))
             (when hits (return-from search-docs-within (cap-hits hits cap))))))
-      (search-terms raw-query texts hays floor cap))))
+      (search-terms raw-query texts hays floor cap interference))))
 
 ;;; --- interference: near-duplicate hits push each other down ------------------------
 ;;;
@@ -358,8 +335,6 @@ without it each hit is ranked alone, as [Working Set] wants its few picks."
 (defparameter +interference-from+ 0.5d0 "Below this cosine two hits do not interfere.")
 (defparameter +interference-words+ 600 "A hit's words read for its likeness to another, from its start.")
 (defparameter +interference-candidates+ 40 "Only this many of the best hits are re-ranked: eight pages of five.")
-
-(defun word-char-p (c) (or (char<= #\A c #\Z) (char<= #\a c #\z) (char<= #\0 c #\9) (char= c #\_)))
 
 (defun words-of (text limit)
   "TEXT's words (runs of letters A-Z or a-z, digits and _, two chars or more), the first LIMIT of them. TEXT is folded already (FOLD maps to upper case, as JavaScript's /i does)."
@@ -385,7 +360,7 @@ without it each hit is ranked alone, as [Working Set] wants its few picks."
     (maphash (lambda (w c) (unless (gethash w skip) (incf nb (* c c)))) b)
     (if (or (zerop na) (zerop nb)) 0d0 (/ dot (sqrt (* (coerce na 'double-float) nb))))))
 
-(defun with-interference (scored hays terms)
+(defun with-interference (scored hays terms interference)
   "SCORED ((INDEX SCORE SNIPPET) best first) re-ranked greedily by score less its
 interference with the hits ranked above it; past +interference-candidates+ as it was."
   (let* ((head (subseq scored 0 (min (length scored) +interference-candidates+)))
@@ -395,7 +370,7 @@ interference with the hits ranked above it; past +interference-candidates+ as it
                  (dolist (term terms h) (dolist (w (words-of (fold (term-text term)) 100)) (setf (gethash w h) t)))))
          (picked '())
          (pairs (make-hash-table :test 'equal)))
-    (when (or (not *interference*) (<= top 0d0) (< (length head) 2)) (return-from with-interference scored))
+    (when (or (not interference) (<= top 0d0) (< (length head) 2)) (return-from with-interference scored))
     (loop while head
           do (let ((best nil) (best-value nil))
                (dolist (s head)
@@ -415,7 +390,7 @@ interference with the hits ranked above it; past +interference-candidates+ as it
                (setf head (remove best head :test #'eq :count 1))))
     (append (nreverse picked) tail)))
 
-(defun search-terms (raw-query texts hays floor cap)
+(defun search-terms (raw-query texts hays floor cap interference)
   "The term search: BM25 over HAYS for RAW-QUERY's meaningful words."
   (let* ((terms (mapcar #'make-term (meaningful-terms (js-split-whitespace raw-query))))
          (n (length hays)))
@@ -455,5 +430,5 @@ interference with the hits ranked above it; past +interference-candidates+ as it
                          (remove-if (lambda (s) (< (second s) (* top floor))) scored)
                          scored))
 )
-          (multiple-value-bind (hits total truncated) (cap-hits (with-interference kept hays terms) cap)
+          (multiple-value-bind (hits total truncated) (cap-hits (with-interference kept hays terms interference) cap)
             (values (mapcar (lambda (s) (cons (first s) (third s))) hits) total truncated)))))))

@@ -18,7 +18,7 @@ import { compactAndWait, deliver, hostSnapshot, registerCommand, tell, tellLater
 import { SURFACE } from "./surface";
 
 /** The compaction keel wrote on the last pass, until the host has applied it. */
-export interface WrittenCompaction {
+interface WrittenCompaction {
   summary: string;
   /** The outcome line, told once the host has applied it. */
   statsLine: string;
@@ -147,8 +147,6 @@ export const registerCompaction = (pi: ExtensionAPI, host: Binding, state: Compa
             if (typeof r.text === "string") tell(ctx, r.text, r.severity as "warning" | "error");
           },
         });
-      } catch {
-        // A compact() that throws has reported through onError.
       } finally {
         state.pendingManualInstructions = null;
       }

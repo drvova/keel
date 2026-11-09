@@ -80,7 +80,8 @@ export const register = (pi: ExtensionAPI, host: Host): void => {
   const evictTypes = new Set<string>(SURFACE.evictEntryTypes);
   pi.on("context", (event, ctx) =>
     whenCore(() => {
-      // With the setting off and nothing taken out, the request is spared the call.
+      // With the setting off and nothing taken out, the request is spared the call, and the
+      // snapshot (the whole session tree, serialized) is never built for it.
       const out = hostBranch((ctx as HostCtx).sessionManager)?.some((e: any) => e?.type === "custom" && evictTypes.has(e.customType));
       if (!out && !binding.config.load().evict) return undefined;
       const reply = ask(ctx, { op: "context", messages: event.messages, tool: evictOn });

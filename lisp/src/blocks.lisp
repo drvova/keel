@@ -14,15 +14,12 @@
 
 (defun sanitize (text)
   "TEXT with CRLF and CR as LF, ANSI escapes and other control characters removed."
-  ;; Most text holds no control character at all, and is its own answer.
   (when (notany (lambda (c) (let ((code (char-code c))) (and (< code 32) (/= code 9) (/= code 10)))) text)
     (return-from sanitize text))
   (let ((s (rx-replace (rx "\\r\\n") text (string #\Newline) :all t)))
     (setf s (rx-replace (rx "\\r") s (string #\Newline) :all t))
     (setf s (rx-replace (rx "\\x1b\\[[0-9;]*[A-Za-z]") s "" :all t))
     (rx-replace (rx "[\\x00-\\x08\\x0b\\x0c\\x0e-\\x1f]") s "" :all t)))
-
-(defun skill-block-regex () (rx "<skill\\s+name=\"([^\"]+)\"[^>]*>[\\s\\S]*?(?:<\\/skill>|$)"))
 
 (defun collapse-skill-text (text)
   "Each expanded <skill name=\"X\">…</skill> block as `[skill: X]`."
@@ -61,12 +58,10 @@
                  when (and (json-object-p part) (equal (json-get part "type") "image"))
                    do (push (make-block :kind :user :text (format nil "[image: ~a]" (js-string-of (json-get part "mimeType"))) :index index) blocks)))
          (if blocks (nreverse blocks) (list (make-block :kind :user :text "" :index index)))))
-      ((equal role "bashExecution")
-       (list (make-block :kind :bash :command (or-empty (json-get message "command")) :output (or-empty (json-get message "output"))
-                         :exit-code (json-get message "exitCode") :index index)))
-      ((equal role "pythonExecution")
-       (list (make-block :kind :bash :command (or-empty (json-get message "code")) :output (or-empty (json-get message "output"))
-                         :exit-code (json-get message "exitCode") :index index :lang "python")))
+      ((execution-of message)
+       (multiple-value-bind (command output prompt label lang) (execution-of message)
+         (declare (ignore prompt label))
+         (list (make-block :kind :bash :command command :output output :exit-code (json-get message "exitCode") :index index :lang lang))))
       ((equal role "toolResult")
        (list (make-block :kind :tool-result
                          :call-id (let ((id (json-get message "toolCallId"))) (and (stringp id) id))
@@ -89,8 +84,6 @@
 (defun nonzero-exit-p (code)
   "`exitCode != null && exitCode !== 0`."
   (and code (not (eq code :null)) (not (eql code 0))))
-
-(defun host-block-regex () (rx "<system-reminder\\b[^>]*>[\\s\\S]*?<\\/system-reminder>"))
 
 (defun filter-noise (blocks)
   "BLOCKS without omp's <system-reminder> text in user messages, and without a
@@ -129,26 +122,4 @@ vector parallel to MESSAGES, or NIL for positions), host noise left out."
     (:bash (and (null (block-lang b)) (block-command b)))
     (:tool-call (and (eq (call-kind (block-call b)) :shell)
                      (let ((c (json-get (block-args b) "command"))) (and (stringp c) c))))))
-
-(defun url-path-p (path) (rx-test (rx "^[a-z][a-z0-9+.-]*:\\/\\/" "i") path))
-
-(defun read-selector-regex ()
-  "A read path's selector: `:raw`, `:img`, `:conflicts` or lines, several joined by `,` or `:`."
-  (rx (format nil ":(?:raw|img|conflicts|~a)(?:[,:](?:raw|img|conflicts|~a))*$" +line-selector+ +line-selector+) "i"))
-
-(defun strip-read-selector (path)
-  "A read's path without omp's selector (`:50-100`, `:raw`)."
-  (let ((m (rx-exec (read-selector-regex) path)))
-    (if (and m (plusp (rx-match-start m))) (js-slice path 0 (rx-match-start m)) path)))
-
-(defun files-of (call)
-  "The files a call works on: its named paths less URLs, a read's selector dropped; none for a search or a shell."
-  (when (eq (call-files call) :unset)
-    (setf (call-files call)
-          (let ((kind (call-kind call)))
-            (if (member kind '(:search :shell))
-                '()
-                (let ((paths (remove-if #'url-path-p (named-paths (call-args call)))))
-                  (if (eq kind :read) (mapcar #'strip-read-selector paths) paths))))))
-  (call-files call))
 

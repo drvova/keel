@@ -10,7 +10,7 @@ export interface SearchResult { hits: SearchHit[]; totalBeforeCap: number; trunc
 let n = 0;
 
 /** A session file of these messages, one entry each on one branch. */
-export const sessionFileOf = (messages: readonly unknown[]): string => {
+const sessionFileOf = (messages: readonly unknown[]): string => {
   // A directory of its own: no other test's file reads as this project's earlier session.
   const file = join(freshDir(), `s${++n}.jsonl`);
   const lines = [

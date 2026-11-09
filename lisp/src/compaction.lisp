@@ -20,90 +20,10 @@
 
 ;;; --- token estimates ---------------------------------------------------------------
 
-(defparameter +image-content-chars+ 4800)
-(defparameter +default-chars-per-token+ 4)
-
-(defun js-json-length (value)
-  "The length of JSON.stringify(VALUE ?? \"\")."
-  (js-length (json-string (if (or (null value) (eq value :null)) "" value))))
-
-(defun content-chars (content)
-  "The chars of every token-bearing part of a message's content."
-  (cond ((stringp content) (js-length content))
-        ((not (json-array-p content)) 0)
-        (t (loop for part across content
-                 sum (if (not (json-object-p part))
-                         0
-                         (let ((type (json-get part "type")) (text (json-get part "text")))
-                           (cond ((equal type "text") (if (stringp text) (js-length text) 0))
-                                 ((equal type "thinking") (let ((th (json-get part "thinking"))) (if (stringp th) (js-length th) 0)))
-                                 ((equal type "toolCall")
-                                  (let* ((a (json-get part "arguments"))
-                                         (args (if (or (null a) (eq a :null)) (json-get part "input") a))
-                                         (name (json-get part "name")))
-                                    (+ (if (stringp name) (js-length name) 0)
-                                       (if (stringp args) (js-length args) (js-json-length args)))))
-                                 ((equal type "toolResult")
-                                  (let ((c (json-get part "content"))) (if (stringp c) (js-length c) (js-json-length c))))
-                                 ((equal type "image") +image-content-chars+)
-                                 (t (if (stringp text) (js-length text) 0)))))))))
-
-(defun message-chars (m)
-  "The chars of one message, whatever its shape."
-  (if (not (json-object-p m))
-      0
-      (flet ((len (v) (if (stringp v) (js-length v) 0)))
-        (let ((role (json-get m "role")))
-          (cond ((equal role "bashExecution") (+ (len (json-get m "command")) (len (json-get m "output"))))
-                ((equal role "pythonExecution") (+ (len (json-get m "code")) (len (json-get m "output"))))
-                ((member role '("branchSummary" "compactionSummary") :test #'equal) (len (json-get m "summary")))
-                ((equal role "fileMention")
-                 (let ((files (json-get m "files")))
-                   (if (json-array-p files)
-                       (loop for f across files
-                             sum (+ (len (json-get f "path")) (len (json-get f "content"))
-                                    (if (truthy-p (json-get f "image")) +image-content-chars+ 0)))
-                       0)))
-                (t (content-chars (json-get m "content"))))))))
-
-(defun tokens-from-chars (chars &optional (per-token +default-chars-per-token+))
-  "Math.ceil(chars / charsPerToken)."
-  (ceiling (/ (coerce chars 'double-float) per-token)))
-
-(defun message-tokens (m per-token) (tokens-from-chars (message-chars m) (or per-token +default-chars-per-token+)))
-
 ;;; --- the live window ----------------------------------------------------------------
 ;;;
 ;;; An item of the window is (ENTRY LIVE NOTE): the branch entry, its message as
 ;;; the context holds it, and its note from HOST-NOTES.
-
-(defun js-date-ms (v)
-  "new Date(V).getTime() for the timestamps the hosts write (an ISO string or milliseconds), or NIL."
-  (cond ((realp v) v)
-        ((stringp v)
-         (let ((m (rx-exec (rx "^(\\d{4})-(\\d{2})-(\\d{2})T(\\d{2}):(\\d{2}):(\\d{2})(?:\\.(\\d{1,3})\\d*)?Z$") v)))
-           (when m
-             (flet ((g (i) (parse-integer (rx-group m i))))
-               (+ (* 1000 (- (encode-universal-time (g 6) (g 5) (g 4) (g 3) (g 2) (g 1) 0) 2208988800))
-                  (let ((ms (rx-group m 7))) (if ms (* (parse-integer ms) (expt 10 (- 3 (length ms)))) 0)))))))))
-
-(defun live-message (entry)
-  "A branch entry's message in the context, or NIL: a message entry's own; a
-custom_message or a branch summary as the host's context builds it, with what
-the host's convertToLlm reads of it (an extension's attribution and details)."
-  (let ((type (json-get entry "type")))
-    (cond ((and (equal type "message") (truthy-p (json-get entry "message"))) (json-get entry "message"))
-          ((equal type "custom_message")
-           (let ((m (json-object "role" "custom" "customType" (json-get entry "customType") "content" (json-get entry "content")
-                                 "display" (json-get entry "display") "details" (json-get entry "details")
-                                 "timestamp" (js-date-ms (json-get entry "timestamp")))))
-             (multiple-value-bind (a present) (gethash "attribution" entry)
-               (when present (setf (gethash "attribution" m) a)))
-             m))
-          ((equal type "branch_summary")
-           (json-object "role" "branchSummary" "summary" (json-get entry "summary") "fromId" (json-get entry "fromId")
-                        "timestamp" (js-date-ms (json-get entry "timestamp"))))
-          (t nil))))
 
 ;;; --- what the host's convertToLlm makes of each message, for the summary ---------
 
@@ -177,42 +97,6 @@ MESSAGES-TO-CONVERT, in that order."
 (defun item-note (item) (third item))
 (defun item-id (item) (json-get (item-entry item) "id"))
 (defun item-role (item) (json-get (item-live item) "role"))
-
-(defun last-index-of-type (branch type &optional stop-at)
-  "The index of the last entry of TYPE, -1 for none; with STOP-AT, -1 also when an entry of that type comes after it."
-  (loop for i from (1- (length branch)) downto 0
-        for ty = (json-get (aref branch i) "type")
-        when (equal ty type) return i
-        when (and stop-at (equal ty stop-at)) return -1
-        finally (return -1)))
-
-(defun last-reset-index (branch) (last-index-of-type branch +reset-entry-type+))
-(defun last-compaction-index (branch) (last-index-of-type branch "compaction" +reset-entry-type+))
-
-(defun live-window-start (branch)
-  "The index of the first branch entry still in the model's context.
-With no compaction, the whole branch (after omp's /clear). After one, its
-firstKeptEntryId; when that is \"\" (a compact-all's sentinel) or no longer on
-the branch, right after the compaction, or right after an omp native-replay
-compaction's providerReplayThroughEntryId, where omp's own kept tail starts. A
-reset_boundary (omp's /clear) after the latest compaction starts the window
-after it, and one before it bounds where the kept id is looked for, as omp's
-prepareCompaction does."
-  (let ((reset (last-reset-index branch)) (compaction (last-compaction-index branch)))
-    (if (< compaction 0)
-        (1+ reset)
-        (let ((c (aref branch compaction)))
-          (flet ((find-after-reset (id)
-                   (if (and (stringp id) (plusp (length id)))
-                       (or (loop for i from (1+ reset) below (length branch)
-                                 when (equal (json-get (aref branch i) "id") id) return i)
-                           -1)
-                       -1)))
-            (let ((kept (find-after-reset (json-get c "firstKeptEntryId"))))
-              (if (>= kept 0)
-                  kept
-                  (let ((replay (find-after-reset (json-get c "providerReplayThroughEntryId"))))
-                    (if (and (>= replay 0) (< replay compaction)) (1+ replay) (1+ compaction))))))))))
 
 (defun live-items (branch notes)
   (loop for i from (live-window-start branch) below (length branch)
@@ -366,7 +250,7 @@ last assistant message, would then have nothing. A kept user-turn tail over
 
 (defun branch-from (branch id)
   "The entries of BRANCH from the one whose id is ID, or NIL when there is none."
-  (let ((at (position id branch :key (lambda (e) (json-get e "id")) :test #'equal)))
+  (let ((at (position-of-id id branch)))
     (and at (coerce (subseq branch at) 'list))))
 
 (defun tail-tokens-for-keep (branch notes keep skip per-token)
@@ -374,7 +258,7 @@ last assistant message, would then have nothing. A kept user-turn tail over
 everything, so smart keep-tail stops growing instead of losing the tail."
   (let ((cut (build-own-cut branch notes keep skip)))
     (when (and (cut-p cut) (not (cut-compact-all cut)))
-      (let ((kept (position (cut-first-kept cut) branch :key (lambda (e) (json-get e "id")) :test #'equal)))
+      (let ((kept (position-of-id (cut-first-kept cut) branch)))
         (and kept (tokens-from-chars (kept-chars (coerce (subseq branch kept) 'list)) per-token))))))
 
 (defun resolve-smart-keep (branch notes requested smart skip min-tokens max-tokens per-token)
@@ -405,8 +289,6 @@ cut would summarize everything."
     (let ((own (if (own-p details) details (json-get details "hookDetails"))))
       (and (own-p own) own))))
 
-;;; --- restoring the originals keel kept ------------------------------------------------
-
 ;;; --- the plan --------------------------------------------------------------------------------
 
 (defparameter +growth-margin-share+ 0.25d0
@@ -416,8 +298,6 @@ budgets' growthMarginChars), or this share of what it replaces.")
 (defun live-roles (items)
   (let ((roles (mapcar #'item-role items)))
     (if (<= (length roles) 30) roles (append (subseq roles 0 10) (list "...") (last roles 10)))))
-
-(defun budget (budgets key) (json-get budgets key))
 
 (defstruct (assembly (:constructor make-assembly (text state sections summarized history shown growth)))
   "A summary written for a cut: its TEXT, the STATE to store and the SECTIONS it
@@ -467,7 +347,7 @@ sections and brief that would replace it."
                                                   (if (> (range-from window-range) 0) (list (unindexed-range (1- (range-from window-range)))) '())
                                                   stored-index)
                                               window-range
-                                              (json-get (budget budgets "summary") "historyRanges"))))
+                                              (json-get (json-get budgets "summary") "historyRanges"))))
            (working-lines nil) (working-shown nil)
            ;; Every message since /clear, as the original keel kept where omp rewrote it: (BRANCH-POS MESSAGE #N).
            (since (loop for i from (1+ (last-reset-index branch)) below (length branch)
@@ -477,15 +357,15 @@ sections and brief that would replace it."
       ;; (what this compaction summarizes and what earlier ones did), so the agent
       ;; does not spend its next requests fetching it again. The budgets give it
       ;; no room when the setting is off.
-      (when (> (budget budgets "workingSetTokens") 0)
+      (when (> (json-get budgets "workingSetTokens") 0)
         (let* ((kept-at (if (plusp (length (cut-first-kept cut)))
-                            (or (position (cut-first-kept cut) branch :key (lambda (e) (json-get e "id")) :test #'equal) -1)
+                            (or (position-of-id (cut-first-kept cut) branch) -1)
                             -1))
                (kept (if (>= kept-at 0) (remove nil (map 'list #'live-message (subseq branch kept-at))) '()))
                (past (remove-if (lambda (s) (and (>= kept-at 0) (>= (first s) kept-at))) since)))
           (multiple-value-bind (lines shown)
               (build-working-set (mapcar #'second past) (mapcar #'third past) kept
-                                 (* (budget budgets "workingSetTokens") per-token) removed)
+                                 (* (json-get budgets "workingSetTokens") per-token) removed (recalled-of input))
             (when lines (setf working-lines lines working-shown shown)))))
       (let* ((task-lines
                ;; [Task State], from everything since /clear: what is summarized, then what stays.
@@ -505,15 +385,15 @@ sections and brief that would replace it."
                 :task-state task-lines
                 :file-ops (json-get input "fileOps")
                 :track-commands (strings-of (json-get (json-get input "settings") "trackCommands"))
-                :limits (budget budgets "summary")
-                :ranking (json-object "maxBriefChars" (js-round (* (budget budgets "briefTokens") per-token))
-                                      "maxBriefCharsCeiling" (js-round (* (budget budgets "briefCeilingTokens") per-token))
-                                      "briefCharsPerBlock" (js-round (* (budget budgets "briefTokensPerBlock") per-token))
-                                      "maxBlocks" (budget budgets "briefMaxBlocks")))))
+                :limits (json-get budgets "summary")
+                :ranking (json-object "maxBriefChars" (js-round (* (json-get budgets "briefTokens") per-token))
+                                      "maxBriefCharsCeiling" (js-round (* (json-get budgets "briefCeilingTokens") per-token))
+                                      "briefCharsPerBlock" (js-round (* (json-get budgets "briefTokensPerBlock") per-token))
+                                      "maxBlocks" (json-get budgets "briefMaxBlocks")))))
         (multiple-value-bind (text state sections) (compile-summary summary-input)
           (make-assembly text state sections summarized history working-shown
                          (make-growth (- (js-length text) (if previous-summary (js-length previous-summary) 0) removed)
-                                      (max (budget budgets "growthMarginChars") (js-round (* removed +growth-margin-share+))))))))))
+                                      (max (json-get budgets "growthMarginChars") (js-round (* removed +growth-margin-share+))))))))))
 
 (defparameter +cut-reasons+
   '((:no-live-messages "no_live_messages" "keel: Nothing to compact (no live messages)")
@@ -545,7 +425,7 @@ and what it was sized from (for debugging a compaction that kept too much or too
      "sections" (json-get plan "sections")
      "summaryState" (json-get plan "summaryState")
      "sourceMessageCount" (json-get plan "summarized")
-     "previousSummaryUsed" (if (truthy-p (json-get input "previousSummary")) :true :false)
+     "previousSummaryUsed" (bool (truthy-p (json-get input "previousSummary")))
      "reason" (json-get input "reason")
      "willRetry" (json-get input "willRetry")
      "historyIndex" (json-get plan "historyIndex")
@@ -567,7 +447,7 @@ and what it was sized from (for debugging a compaction that kept too much or too
          (per-token (json-get (json-get sizing "tokenEstimate") "charsPerToken"))
          (requested (let ((k (json-get input "keepUserTurns"))) (and (realp k) k)))
          (recovering (eq (json-get input "recovering") :true))
-         (max-tail (budget budgets "maxTailTokens")))
+         (max-tail (json-get budgets "maxTailTokens")))
     ;; A pass keel started itself went by the policy as last recorded; this one
     ;; carries the current policy, which may since say no: compaction off, or a
     ;; trigger the context (measured as the end-of-run check measured it) is under.
@@ -590,7 +470,7 @@ and what it was sized from (for debugging a compaction that kept too much or too
       (return-from plan-sized (json-object "kind" "cancel" "why" "evict")))
     (multiple-value-bind (keep adjusted)
         (resolve-smart-keep branch notes requested (eq (json-get settings "smartKeepTail") :true) skip
-                            (budget budgets "minTailTokens") max-tail per-token)
+                            (json-get budgets "minTailTokens") max-tail per-token)
       (let ((cut (build-own-cut branch notes keep skip)))
         (when (and (cut-p cut) (null requested)) (setf cut (apply-tail-budget branch notes cut max-tail per-token skip)))
         ;; An automatic pass on a turn still running (its last message is a tool
@@ -647,7 +527,7 @@ and what it was sized from (for debugging a compaction that kept too much or too
                                                 "keptUserTurns" (cut-kept-user-turns cut)
                                                 "totalUserTurns" (cut-total-user-turns cut)
                                                 "keptTokensEst" (tokens-from-chars (kept-chars kept) per-token)
-                                                "smartKeepAdjusted" (if adjusted :true :false)
+                                                "smartKeepAdjusted" (bool adjusted)
                                                 "budgetCut" (cut-budget-cut cut))
                            ;; A recovery writes a summary that grows when it keeps part of the window.
                            "growth" (growth-json growth))))))))

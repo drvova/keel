@@ -33,8 +33,6 @@
     (loop for (key . value) in +default-settings+ do (setf (gethash key settings) (default-setting value)))
     settings))
 
-(defun native-path (path) (sb-ext:parse-native-namestring path))
-
 (defun read-json-file (path)
   "JSON.parse(readFileSync(PATH, \"utf-8\")), or NIL when it does not read or parse."
   (ignore-errors
@@ -64,11 +62,12 @@
       (loop for (key . value) in +default-settings+
             when (member value '(:true :false))
               do (let ((on (switch-of (json-get parsed key)))) (when on (setf (gethash key settings) on))))
-      (setf (gethash "skipForProviders" settings) (coerce (strings-of (json-get parsed "skipForProviders")) 'vector)
-            (gethash "skipCustomTypes" settings) (coerce (strings-of (json-get parsed "skipCustomTypes")) 'vector)
-            ;; Blank names would match every command; duplicates would repeat lines.
-            (gethash "trackCommands" settings)
-            (coerce (remove-duplicates (remove "" (mapcar #'js-trim (strings-of (json-get parsed "trackCommands"))) :test #'string=)
+      (loop for (key . value) in +default-settings+
+            when (eq value :list)
+              do (setf (gethash key settings) (coerce (strings-of (json-get parsed key)) 'vector)))
+      ;; Blank command names would match every command; duplicates would repeat lines.
+      (setf (gethash "trackCommands" settings)
+            (coerce (remove-duplicates (remove "" (map 'list #'js-trim (gethash "trackCommands" settings)) :test #'string=)
                                        :test #'string= :from-end t)
                     'vector)))
     settings))

@@ -18,7 +18,7 @@ import { tmpdir } from "os";
 import { basename, join, resolve } from "path";
 import { openHostSession, runStats, textOf, type Host, type HostSession, type ModelCost, type RunStats } from "./host-session";
 
-export const CYBENCH_REPO = "https://github.com/andyzorigin/cybench.git";
+const CYBENCH_REPO = "https://github.com/andyzorigin/cybench.git";
 export const CYBENCH_COMMIT = "ca483c6443f17a20ba7d6bac3d274859a1721e51";
 const CACHE = resolve(import.meta.dir, "../../research/cybench");
 
@@ -141,7 +141,7 @@ const measuredCharsPerToken = (branch: any[]): number | undefined => {
 };
 
 /** Cybench's repository at the pinned commit, only the tasks' directories (research/cybench). */
-export const fetchCybench = (dir = CACHE): string => {
+const fetchCybench = (dir = CACHE): string => {
   const marker = join(dir, ".keel-commit");
   if (existsSync(marker) && readFileSync(marker, "utf8").trim() === CYBENCH_COMMIT) return dir;
   rmSync(dir, { recursive: true, force: true });

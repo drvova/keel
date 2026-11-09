@@ -8,9 +8,9 @@ import { executeRecall, fakeHost } from "./support/binding";
 import { core } from "../src/core";
 import { PIN_ENTRY_TYPE } from "./support/names";
 import { writeJsonl } from "./support/session-files";
+import { MAX_LISTED_SESSIONS } from "./support/names";
 
 /** How many sessions a listing shows (lisp/src/sessions.lisp). */
-const MAX_LISTED_SESSIONS = 50;
 const parseCommandRequest = (args: string) => core({ op: "request", args }).request as Record<string, unknown>;
 
 const header = (id: string, ts: string) => ({ type: "session", version: 3, id, timestamp: ts, cwd: "/work/app" });

@@ -21,50 +21,8 @@
 
 (in-package #:keel)
 
-;;; A turn as eviction counts them (evict.lisp branch-turns), which this file and links.lisp read.
-(defstruct (turn (:constructor make-turn (from to))) "A turn's first and last #N." from to)
-
-;;; A run of #N out of the context, as the ledger replays it (evict.lisp read-evictions).
-(defstruct (out (:constructor make-out (from to by note at &optional text)))
-  "A run of #N out of the context: FROM to TO inclusive, by \"agent\", \"user\" or
-\"auto\", the agent's NOTE, AT the #N count when it was recorded (requests
-made after that left it out), and TEXT, what the agent rewrote it as in its
-context's file (mirror.lisp), which stands in its place instead of the line."
-  from to by note at text)
-
 (defparameter +recall-hold-turns+ 3 "A recall counts for this many turns after it: the turn it was in, and the next ones.")
 (defparameter +recall-max-shown+ 50 "The #N one recall entry holds at most.")
-
-;;; What recall showed, while it runs (recall.lisp binds it for this session's
-;;; view only; another session's #N are its own). :OFF when nothing records.
-(defvar *shown-entries* :off)
-
-(defun note-shown (indices)
-  "INDICES were shown to the agent by the recall running now."
-  (when (listp *shown-entries*)
-    (dolist (n indices) (when (integerp n) (push n *shown-entries*)))))
-
-(defun shown-entries ()
-  "What the recall running now showed, oldest call first, each #N once, at most +recall-max-shown+."
-  (if (listp *shown-entries*)
-      (let ((ns (remove-duplicates (reverse *shown-entries*) :from-end t)))
-        (subseq ns 0 (min (length ns) +recall-max-shown+)))
-      '()))
-
-(defun recall-op (ns at) (json-object "v" 1 "ns" (coerce ns 'vector) "at" at))
-
-(defun recall-entry-p (e)
-  (and (equal (json-get e "type") "custom") (recall-entry-type-p (json-get e "customType"))
-       (json-object-p (json-get e "data"))))
-
-(defun read-recalls (branch)
-  "Every #N the agent recalled on BRANCH since its last /clear, as (N . AT), AT the #N count then, oldest first."
-  (loop for i from (1+ (last-reset-index branch)) below (length branch)
-        for e = (aref branch i)
-        when (recall-entry-p e)
-          nconc (let ((at (op-at (json-get e "data"))) (ns (json-get (json-get e "data") "ns")))
-                  (and (json-array-p ns)
-                       (loop for n across ns when (js-integer-p n) collect (cons (as-integer n) at))))))
 
 (defun recent-recalls (recalls turns)
   "RECALLS made in the last +recall-hold-turns+ of TURNS (the running one counts)."
@@ -90,10 +48,7 @@ recalls would bring it back on every request (a real run did: 171 restores in
   (let ((outs (read-evictions branch)))
     (loop for tr in (finished-turns turns)
           for left = (and (turn-out-p tr outs) (out-at (out-of (turn-to tr) outs)))
-          for k = (and left (length (remove-duplicates
-                                     (loop for (n . at) in recent
-                                           when (and (<= (turn-from tr) n (turn-to tr)) (> at left))
-                                             collect at))))
+          for k = (and left (length (recalls-while-out (turn-from tr) (turn-to tr) left nil recent)))
           when (and k (plusp k)) collect (cons tr k))))
 
 ;;; --- whether bringing a turn back pays, for this model -----------------------------
@@ -116,37 +71,17 @@ recalls would bring it back on every request (a real run did: 171 restores in
 (defparameter +reread-prior-weight+ 4 "How many recalls that prior counts as.")
 (defparameter +reread-max+ 0.95d0 "Q is capped here, so a run of continuations never reads as certainty.")
 
-(defun out-periods (branch)
-  "Each run of #N the ledger took out on BRANCH since its last /clear, as
-(FROM TO START END): START the #N count it left at, END the one it came back at, NIL while it is out."
-  (let ((periods '()))
-    (loop for i from (1+ (last-reset-index branch)) below (length branch)
-          for e = (aref branch i)
-          when (evict-entry-p e)
-            do (let* ((op (json-get e "data")) (from (json-get op "from")) (to (json-get op "to")))
-                 (when (and (js-integer-p from) (js-integer-p to))
-                   (let ((from (as-integer from)) (to (as-integer to)) (at (op-at op)))
-                     (cond ((equal (json-get op "op") "evict") (push (list from to at nil) periods))
-                           ((equal (json-get op "op") "restore")
-                            (dolist (p periods)
-                              (when (and (null (fourth p)) (overlaps-p (first p) (second p) from to)) (setf (fourth p) at)))))))))
-    (nreverse periods)))
-
 (defun reread-evidence (branch turns recalls)
   "(values CONTINUED TRIALS) for the chance of recalling a turn out of the context again, from RECALLS ((N . AT)) on BRANCH."
-  (let ((continued 0) (trials 0)
-        (turn-at (lambda (at) (or (position-if (lambda (tr) (<= (turn-from tr) at)) turns :from-end t) 0))))
+  (let ((continued 0) (trials 0))
     (dolist (p (out-periods branch))
       (destructuring-bind (from to start end) p
-        (let ((ats (sort (remove-duplicates (loop for (n . at) in recalls
-                                                  when (and (<= from n to) (> at start) (or (null end) (<= at end)))
-                                                    collect at))
-                         #'<)))
+        (let ((ats (recalls-while-out from to start end recalls)))
           (loop for (at next) on ats
-                for i = (funcall turn-at at)
-                do (cond ((and next (<= (- (funcall turn-at next) i) +recall-hold-turns+)) (incf continued) (incf trials))
+                for i = (turn-index-at at turns)
+                do (cond ((and next (<= (- (turn-index-at next turns) i) +recall-hold-turns+)) (incf continued) (incf trials))
                          ;; Cut short by a restore before its window passed: unknown.
-                         ((and end (<= (- (funcall turn-at end) i) +recall-hold-turns+)))
+                         ((and end (<= (- (turn-index-at end turns) i) +recall-hold-turns+)))
                          ;; Its window has passed with no recall: a stop.
                          ((> (- (1- (length turns)) i) +recall-hold-turns+) (incf trials)))))))
     (values continued trials)))
@@ -158,8 +93,9 @@ recalls would bring it back on every request (a real run did: 171 restores in
             trials)))
 
 
-;;; What [Working Set] reads: the entries recalled, newest recall first.
-(defvar *recalled* '())
+(defun recalled-of (json)
+  "The #N JSON's \"recalled\" lists: what the agent recalled lately, newest first, as a compaction reads it."
+  (loop for n across (coerce (json-get json "recalled" #()) 'vector) when (js-integer-p n) collect (as-integer n)))
 
 (defun recalled-newest-first (recalls)
   (remove-duplicates (mapcar #'car (sort (copy-list recalls) #'> :key #'cdr)) :from-end t))

@@ -45,6 +45,10 @@
      (:file "render")
      ;; calls: tool calls and their results, read one way for every section.
      (:file "calls")
+     ;; ledger: what keel records in the session (context edits, recalls, pins), and the turns it counts in.
+     (:file "ledger")
+     ;; estimate: how many tokens a message holds, by its chars.
+     (:file "estimate")
      ;; The summary pipeline: blocks,
      ;; the section extractors, the brief and its ranking, the summary itself.
      (:file "blocks")
@@ -57,13 +61,15 @@
      ;; turns that carry on one another; eviction and [Working Set] read them.
      (:file "feedback")
      (:file "links")
+     ;; credit: what each eviction cost, by kind of turn, learned per model.
+     (:file "credit")
      (:file "working-set")
      (:file "task-state")
+     ;; window: where the host compacts next, and the budgets below it.
+     (:file "window")
      ;; context-edits: Pi's context edits, applied before the cut reads the branch.
      (:file "context-edits")
      (:file "compaction")
-     ;; window: where the host compacts next, and the budgets below it.
-     (:file "window")
      ;; settings and pins: the config file, and pinning and unpinning notes.
      (:file "settings")
      (:file "pins")

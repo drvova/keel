@@ -30,17 +30,17 @@ export const core = (request: object): Record<string, unknown> => {
   if (status.state !== "ready") throw new CoreUnavailable(status);
   const input = JSON.stringify(request);
   const answered = liveAnswer(status.path, input);
-  if (answered !== undefined) {
-    let reply: any;
-    try { reply = JSON.parse(answered); } catch {}
-    if (reply?.ok === true) return reply;
-    throw new Error(`keel's core failed: ${reply?.error ?? answered.slice(0, 500)}`);
-  }
+  if (answered !== undefined) return replyOf(answered, answered.slice(0, 500));
   const run = spawnSync(status.path, [], { input, encoding: "utf8", maxBuffer: 1 << 30 });
+  return replyOf(run.error || run.status !== 0 ? undefined : run.stdout, run.error?.message ?? (run.stderr || `exit ${run.status}`));
+};
+
+/** The core's answer in TEXT, or an error with its own reason, else WHY. */
+const replyOf = (text: string | undefined, why: string): Record<string, unknown> => {
   let reply: any;
-  try { reply = run.error || run.status !== 0 ? undefined : JSON.parse(run.stdout); } catch {}
+  try { reply = text === undefined ? undefined : JSON.parse(text); } catch {}
   if (reply?.ok === true) return reply;
-  throw new Error(`keel's core failed: ${reply?.error ?? run.error?.message ?? (run.stderr || `exit ${run.status}`)}`);
+  throw new Error(`keel's core failed: ${reply?.error ?? why}`);
 };
 
 // --- the live core ----------------------------------------------------------------
@@ -59,7 +59,7 @@ const sleep = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(
 const code = (e: unknown) => (e as NodeJS.ErrnoException)?.code;
 
 /** KEEL_<NAME>, or OMP_VCC_<NAME> as keel read it under its earlier name. */
-const env = (name: string): string | undefined => process.env[`KEEL_${name}`] ?? process.env[`OMP_VCC_${name}`];
+export const env = (name: string): string | undefined => process.env[`KEEL_${name}`] ?? process.env[`OMP_VCC_${name}`];
 
 /** Whether this host process runs one core for every request: not on Windows (no named pipes there), not with KEEL_CORE_LIVE=off. */
 const liveWanted = () => process.platform !== "win32" && env("CORE_LIVE") !== "off";
@@ -184,13 +184,10 @@ const buildDir = (): string => env("CORE_BUILD_DIR") || join(LISP_DIR, "build");
 /** A lock older than this is a build that died with its process: built again. */
 const STALE_LOCK_MS = 15 * 60_000;
 
-/** The sources the core is built from, every .lisp and .asd under lisp/ but the build. */
+/** The sources the core is built from: the system, its src files and build.lisp (not its tests or the lint). */
 const sourceFiles = (dir: string): string[] =>
-  readdirSync(dir, { withFileTypes: true }).flatMap((d) => {
-    const p = join(dir, d.name);
-    if (d.isDirectory()) return d.name === "build" ? [] : sourceFiles(p);
-    return /\.(lisp|asd)$/.test(d.name) ? [p] : [];
-  }).sort();
+  [join(dir, "keel-core.asd"), join(dir, "build.lisp"),
+   ...readdirSync(join(dir, "src")).filter((f) => f.endsWith(".lisp")).map((f) => join(dir, "src", f))].sort();
 
 let sourcesHash: string | undefined;
 /** The build of these sources: its path is named by their hash, so an update builds again. */
@@ -231,13 +228,25 @@ const failed = (status: Exclude<CoreStatus, { state: "ready" | "building" }>): C
 
 /** What builds the core: build.lisp, writing the executable where KEEL_CORE_OUT says. */
 const BUILD_ARGS = ["--noinform", "--non-interactive", "--load", join(LISP_DIR, "build.lisp")];
+const sbclPath = () => process.env.SBCL ?? "sbcl";
 const hasSbcl = (sbcl: string): boolean => spawnSync(sbcl, ["--version"], { stdio: "ignore" }).status === 0;
+/** Where a build of PATH by this process writes, and the env that says so. */
+const buildTarget = (path: string) => {
+  mkdirSync(buildDir(), { recursive: true });
+  const out = `${path}.tmp-${process.pid}`;
+  return { out, env: { ...process.env, KEEL_CORE_OUT: out } };
+};
 
-/** A finished build OUT installed as PATH, the builds of older sources removed. */
+/** Builds kept in the build directory: two installed copies sharing one (KEEL_CORE_BUILD_DIR) keep each other's. */
+const KEPT_BUILDS = 3;
+
+/** A finished build OUT installed as PATH; past KEPT_BUILDS, the least recently built ones removed. */
 const install = (out: string, path: string): void => {
   renameSync(out, path);
   const dir = buildDir();
-  for (const f of readdirSync(dir)) if (/^keel-core-[0-9a-f]+(\.exe)?$/.test(f) && join(dir, f) !== path) rmSync(join(dir, f), { force: true });
+  const builds = readdirSync(dir).filter((f) => /^keel-core-[0-9a-f]+(\.exe)?$/.test(f)).map((f) => join(dir, f))
+    .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
+  for (const f of builds.slice(KEPT_BUILDS)) if (f !== path) rmSync(f, { force: true });
 };
 
 /**
@@ -248,11 +257,10 @@ const install = (out: string, path: string): void => {
 export const buildCoreNow = (): string | undefined => {
   const { path } = buildOfSources();
   if (existsSync(path)) return path;
-  const sbcl = process.env.SBCL ?? "sbcl";
+  const sbcl = sbclPath();
   if (!hasSbcl(sbcl)) return undefined;
-  mkdirSync(buildDir(), { recursive: true });
-  const out = `${path}.tmp-${process.pid}`;
-  const run = spawnSync(sbcl, BUILD_ARGS, { env: { ...process.env, KEEL_CORE_OUT: out }, encoding: "utf8" });
+  const { out, env } = buildTarget(path);
+  const run = spawnSync(sbcl, BUILD_ARGS, { env, encoding: "utf8" });
   if (run.status !== 0 || !existsSync(out)) {
     rmSync(out, { force: true });
     throw new Error(`keel's core did not build:\n${run.stdout}\n${run.stderr}`);
@@ -265,9 +273,9 @@ const startBuild = (path: string): CoreStatus => {
   // Another process (another omp or Pi session) may be building it already.
   const lock = `${path}.lock`;
   if (existsSync(lock) && Date.now() - statSync(lock).mtimeMs <= STALE_LOCK_MS) return { state: "building" };
-  const sbcl = process.env.SBCL ?? "sbcl";
+  const sbcl = sbclPath();
   if (!hasSbcl(sbcl)) return failed({ state: "no-sbcl", sbcl });
-  mkdirSync(buildDir(), { recursive: true });
+  const { out, env } = buildTarget(path);
   try {
     rmSync(lock, { force: true });
     closeSync(openSync(lock, "wx"));
@@ -275,10 +283,9 @@ const startBuild = (path: string): CoreStatus => {
     return { state: "building" };
   }
   ownBuild = true;
-  const out = `${path}.tmp-${process.pid}`;
   let stderr = "";
   const child = spawn(sbcl, BUILD_ARGS, {
-    env: { ...process.env, KEEL_CORE_OUT: out },
+    env,
     stdio: ["ignore", "ignore", "pipe"],
     detached: true,
   });

@@ -30,8 +30,6 @@
 
 (in-package #:keel)
 
-(defun dbl (x) (coerce x 'double-float))
-
 (defun positive (v) "V when it is a number over 0, else NIL." (and (realp v) (> v 0) v))
 (defun positive-floor (v) "V floored when it is a number over 0, else NIL." (let ((p (positive v))) (and p (floor p))))
 
@@ -242,55 +240,6 @@ working set (the setting off), its room goes to the kept tail."
 
 ;;; --- the context, measured ---------------------------------------------------------
 
-(defparameter +chars-per-token-range+ '(0.8d0 . 6)
-  "What a calibration can come to. Code and agent text run 3.5-4 chars per token,
-English prose about 5.4, shell listings about 2, and Chinese and Japanese 1-2
-(measured on cl100k, o200k, Llama 3, Qwen 3 and DeepSeek V3 tokenizers).")
-
-(defun cjk-char-p (c)
-  (let ((code (char-code c)))
-    (or (<= #x3040 code #x30FF) (<= #x3400 code #x4DBF) (<= #x4E00 code #x9FFF) (<= #xAC00 code #xD7AF) (<= #xF900 code #xFAFF))))
-
-(defun cjk-share (texts)
-  "The share of TEXTS' characters in Chinese, Japanese or Korean script."
-  (let ((all 0) (cjk 0))
-    (dolist (text texts)
-      (when (stringp text)
-        (incf all (length text))
-        (incf cjk (count-if #'cjk-char-p text))))
-    (if (zerop all) 0 (/ cjk all))))
-
-(defun clamp-chars-per-token (raw &optional (cjk 0))
-  "RAW within +CHARS-PER-TOKEN-RANGE+, its floor 2 for text in no CJK script and
-lower as the share CJK of it grows: below 2 chars a token only CJK text goes,
-and elsewhere it is a measurement gone wrong (a prompt counted with what the
-messages do not hold)."
-  (let* ((floor (max (car +chars-per-token-range+) (- 2 (* 1.2d0 cjk))))
-         (c (min (cdr +chars-per-token-range+) (max floor raw))))
-    (if (= c (ftruncate c)) (truncate c) c)))
-
-(defun calibrate-chars-per-token (chars tokens &optional (cjk 0))
-  "Chars per token from CHARS of messages the host counted as TOKENS, clamped
-(CLAMP-CHARS-PER-TOKEN, CJK the share of them in CJK script); the 4-char
-heuristic when the host counted none."
-  (if (or (not (realp tokens)) (<= tokens 0) (<= chars 0))
-      (json-object "mode" "heuristic" "charsPerToken" +default-chars-per-token+)
-      (let ((raw (/ (dbl chars) (dbl tokens))))
-        (json-object "mode" "calibrated"
-                     "charsPerToken" (clamp-chars-per-token raw cjk)
-                     "sourceChars" chars "sourceTokens" tokens
-                     "rawCharsPerToken" (if (= raw (ftruncate raw)) (truncate raw) raw)))))
-
-(defun number-or-zero (v) (or (js-number-of v) 0))
-
-(defun usage-prompt-tokens (m)
-  "The prompt the provider counted for the request that made assistant message M
-(input, cache reads and cache writes), or NIL."
-  (let ((u (and (json-object-p m) (equal (json-get m "role") "assistant") (json-get m "usage"))))
-    (when (truthy-p u)
-      (let ((n (+ (number-or-zero (json-get u "input")) (number-or-zero (json-get u "cacheRead")) (number-or-zero (json-get u "cacheWrite")))))
-        (and (> n 0) n)))))
-
 (defun measured-overhead-tokens (branch)
   "Prompt tokens of the session's first request less what its messages account for, or NIL."
   (let ((chars 0))
@@ -350,5 +299,5 @@ alone, so a token budget maps to the chars the messages take."
                                        (let ((v (json-get c "tokensBefore"))) (and (realp v) v)) policy rule)))
              (overhead (let ((v (json-get c "overheadTokens"))) (if (realp v) v 0))))
         (json-object "policy" policy "trigger" trigger
-                     "autoCompacts" (if (rule-auto-compacts-p rule policy) :true :false)
+                     "autoCompacts" (bool (rule-auto-compacts-p rule policy))
                      "budgets" (compaction-budgets trigger overhead (working-set-on-p (json-get c "workingSet")))))))

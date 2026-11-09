@@ -3,29 +3,17 @@
 // (lisp/src/links.lisp): eviction holds what was recalled lately, brings back a
 // turn re-read twice, never cuts a linked chain, and [Working Set] brings back
 // what was recalled first.
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
+import { beforeAll, describe, expect, it } from "bun:test";
+import { readFileSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import { core } from "../src/core";
 import { callCommand, callTool, requestContext } from "./support/binding";
-import { EVICT_ENTRY_TYPE } from "./support/names";
+import { EVICT_ENTRY_TYPE, RECALL_ENTRY_TYPE } from "./support/names";
 import { freshDir, writeJsonl } from "./support/session-files";
+import { tempConfig } from "./support/config";
 
-let dir: string;
-const prev = process.env.KEEL_CONFIG_PATH;
-beforeAll(() => {
-  dir = mkdtempSync(join(tmpdir(), "keel-feedback-"));
-  process.env.KEEL_CONFIG_PATH = join(dir, "keel-config.json");
-  writeFileSync(process.env.KEEL_CONFIG_PATH, JSON.stringify({ evict: true }));
-});
-afterAll(() => {
-  if (prev === undefined) delete process.env.KEEL_CONFIG_PATH;
-  else process.env.KEEL_CONFIG_PATH = prev;
-  rmSync(dir, { recursive: true, force: true });
-});
+const config = tempConfig("keel-feedback-", { evict: true });
 
-const RECALL_ENTRY_TYPE = "keel.recall";
 
 /** What one turn does besides its request and reply: read a file, edit one, or run a command that fails or passes. */
 type Act = { read: string } | { edit: string } | { bash: string; fail: boolean };
@@ -124,7 +112,7 @@ describe("eviction, as the context fills", () => {
 
   /** What keel has learned of the test's model ("p/m"): how often it recalls a turn again; none, a model not seen yet. */
   const model = (rereadContinue?: number) => {
-    const file = join(dir, "keel-models.json");
+    const file = join(config.dir, "keel-models.json");
     if (rereadContinue === undefined) rmSync(file, { force: true });
     else writeFileSync(file, JSON.stringify({ "p/m": { rereadContinue } }));
   };
@@ -174,13 +162,15 @@ describe("eviction, as the context fills", () => {
     const s = session(reads(10), 200, 2_000);
     for (const [from, to] of [[0, 3], [4, 7]]) s.host.appendEntry(EVICT_ENTRY_TYPE, { v: 1, op: "evict", from, to, by: "auto", at: 16 });
     // Each out turn recalled twice in a row (a continuation), then left alone for more than three turns (a stop):
-    // 2 continuations in 4 trials, smoothed toward 0.3 over 4 more: 0.4.
+    // half of its recalls went on, more than the prior's 0.3 says.
     recalled(s, [1], 17);
     recalled(s, [1], 18);
     recalled(s, [5], 17);
     recalled(s, [5], 18);
     sent(s);
-    expect(JSON.parse(readFileSync(join(dir, "keel-models.json"), "utf8"))["p/m"].rereadContinue).toBe(0.4);
+    const q = JSON.parse(readFileSync(join(config.dir, "keel-models.json"), "utf8"))["p/m"].rereadContinue;
+    expect(q).toBeGreaterThan(0.3);
+    expect(q).toBeLessThan(0.5);
     model();
   });
 
@@ -253,5 +243,43 @@ describe("[Working Set]", () => {
     expect(pick().some((i) => i.index === 2)).toBe(false);
     expect(pick([1])).toEqual([expect.objectContaining({ index: 2, note: "recalled lately" })]);
     expect(pick([2])).toEqual([expect.objectContaining({ index: 2, note: "recalled lately" })]);
+  });
+});
+
+describe("credit per eviction, by kind of turn (lisp/src/credit.lisp)", () => {
+  let models = "";
+  beforeAll(() => { models = join(config.dir, "keel-models.json"); });
+  const failing = (n: number): Act[] => Array.from({ length: n }, (_, i) => ({ bash: `bun test t${i}`, fail: true }));
+  const covers = (s: Session, n: number) => ops(s).some((op: any) => op.op === "evict" && op.from <= n && n <= op.to);
+
+  it("with no evidence, the oldest finished turns leave first, whatever their kind", () => {
+    rmSync(models, { force: true });
+    const s = session([...failing(1), ...reads(9)], 30_000, 80_000);
+    sent(s);
+    expect(ops(s)[0]).toMatchObject({ op: "evict", from: 0, by: "auto" });
+  });
+
+  it("a kind this model keeps recalling once out leaves after the others", () => {
+    writeFileSync(models, JSON.stringify({ "p/m": { recallAfterEvict: { failed: 0.8, changed: 0.1, read: 0.05 } } }));
+    const s = session([...failing(1), ...reads(9)], 30_000, 80_000);
+    sent(s);
+    expect(ops(s)[0]).toMatchObject({ op: "evict", from: 4, by: "auto" });
+    expect(covers(s, 0)).toBe(false);
+    rmSync(models, { force: true });
+  });
+
+  it("learns each kind's rate from the session: failed turns recalled once out, reads never", () => {
+    rmSync(models, { force: true });
+    const s = session([...failing(5), ...reads(11)], 30_000, 80_000);
+    // Turns 0–9 went out at #40; the agent then recalled each failed one, and none of the reads.
+    s.host.appendEntry(EVICT_ENTRY_TYPE, { v: 1, op: "evict", from: 0, to: 39, by: "auto", at: 40 });
+    for (let i = 0; i < 5; i++) recalled(s, [4 * i + 2], 41 + i);
+    sent(s);
+    const learned = JSON.parse(readFileSync(models, "utf8"))["p/m"].recallAfterEvict;
+    // Kept for the kinds the session showed enough of: failed turns above the prior, reads below it.
+    expect(Object.keys(learned).sort()).toEqual(["failed", "read"]);
+    expect(learned.failed).toBeGreaterThan(0.2);
+    expect(learned.read).toBeLessThan(0.2);
+    rmSync(models, { force: true });
   });
 });

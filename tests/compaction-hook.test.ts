@@ -2,24 +2,17 @@ import { describe, test, expect, beforeEach, afterEach, beforeAll, afterAll, jes
 import { existsSync, unlinkSync, writeFileSync, readFileSync, mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { COMPACT_INSTRUCTION } from "./support/names";
+import { COMPACT_INSTRUCTION, PIN_ENTRY_TYPE, EVICT_ENTRY_TYPE } from "./support/names";
+import { tempConfig } from "./support/config";
 import { applyTailBudget, buildOwnCut, getLastCompactionStats, registerHook, type RegisteredHook } from "./support/host";
 
-let tmpDir: string;
+const config = tempConfig("keel-test-");
 let CONFIG_PATH: string;
 /** The debug setting writes each pass's decisions beside the config. */
 let DEBUG_PATH: string;
-
 beforeAll(() => {
-  tmpDir = mkdtempSync(join(tmpdir(), "keel-test-"));
-  CONFIG_PATH = join(tmpDir, "keel-config.json");
-  DEBUG_PATH = join(tmpDir, "keel-debug.json");
-  process.env.KEEL_CONFIG_PATH = CONFIG_PATH;
-});
-
-afterAll(() => {
-  delete process.env.KEEL_CONFIG_PATH;
-  rmSync(tmpDir, { recursive: true, force: true });
+  CONFIG_PATH = config.path;
+  DEBUG_PATH = join(config.dir, "keel-debug.json");
 });
 
 // The stats toast is shown 500 ms after session_compact (tellLater, src/host.ts).
@@ -177,7 +170,7 @@ describe("compaction hook: cancel paths", () => {
     // Two tiny messages beside long pinned notes: any summary of them is bigger
     // than they are, and no method of omp's would shrink this context either.
     const pins = Array.from({ length: 5 }, (_, i) => ({
-      id: `p${i}`, type: "custom", customType: "keel.pin",
+      id: `p${i}`, type: "custom", customType: PIN_ENTRY_TYPE,
       data: { v: 1, op: "add", id: i + 1, text: `Constraint ${i + 1}: ${"keep the legacy SSO flow untouched until the migration lands. ".repeat(3)}`, by: "user" },
     }));
     const tiny = [...pins, msg("m1", "user"), msg("m2", "assistant")];
@@ -282,7 +275,7 @@ describe("compaction hook: compact-all path", () => {
     expect(invokeBefore(makeEvent(entries, undefined, { reason: "overflow", willRetry: true })).compaction).toBeDefined();
     expect(invokeBefore(makeEvent(entries)).compaction).toBeDefined();
     // With every finished turn out already there is nothing left to evict: the summary runs.
-    const out = { type: "custom", id: "x1", parentId: "m4", customType: "keel.evict", data: { v: 1, op: "evict", from: 0, to: 1, by: "auto", at: 4 } };
+    const out = { type: "custom", id: "x1", parentId: "m4", customType: EVICT_ENTRY_TYPE, data: { v: 1, op: "evict", from: 0, to: 1, by: "auto", at: 4 } };
     tree = [...entries, out];
     expect(invokeBefore(makeEvent(tree, undefined, { reason: "threshold", willRetry: false })).compaction).toBeDefined();
     setConfig({ debug: false, overrideDefaultCompaction: true });
@@ -1006,7 +999,7 @@ describe("compaction hook: growth guard", () => {
   });
 
   const pinned = (n: number) => Array.from({ length: n }, (_, i) => ({
-    id: `p${i}`, type: "custom", customType: "keel.pin",
+    id: `p${i}`, type: "custom", customType: PIN_ENTRY_TYPE,
     data: { v: 1, op: "add", id: i + 1, text: `Constraint ${i + 1}: ${"keep the legacy SSO flow untouched until the migration lands. ".repeat(3)}`, by: "user" },
   }));
   const tiny = () => [...pinned(5), msg("m1", "user", "ok go"), msg("m2", "assistant", "done"), msg("m3", "user", "next"), msg("m4", "assistant", "fine")];

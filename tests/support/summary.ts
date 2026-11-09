@@ -12,7 +12,7 @@ import { DEFAULT_SUMMARY_LIMITS } from "./window";
 export const UNCAPPED = { userMessages: 1000, filesPerCategory: 1000, commits: 1000, historyRanges: 1000, briefLines: 100000, commandsPerName: 1000 };
 
 /** The messages these blocks are of, and the #N of each (the blocks' sourceIndex; none where a block has none). */
-export const messagesOf = (blocks: readonly NormalizedBlock[]): { messages: any[]; sourceIndices: Array<number | undefined> } => {
+const messagesOf = (blocks: readonly NormalizedBlock[]): { messages: any[]; sourceIndices: Array<number | undefined> } => {
   const failed = new Set(blocks.flatMap((b) => (b.kind === "tool_call" && b.failed && b.id ? [b.id] : [])));
   const messages: any[] = [];
   const sourceIndices: Array<number | undefined> = [];
