@@ -45,6 +45,10 @@ All notable changes to `@drvova/keel` (formerly `@drvova/omp-vcc`, and before th
 
 - **The README, reorganized** — what omp-vcc does and its two ways of making room up front, then install, a quick start, the commands and tools in tables, the summary, turns out whole, recall, pinned notes, the window and tokens, config as a table, each host's details folded away, and a section on the Lisp core: how it runs and why Common Lisp on SBCL.
 
+- **Core calls recorded for replay** — with `KEEL_REPLAY_OUT` naming a file, every call through the core is appended as one JSON line (the request and what the core said, or why it failed), on the live core and on a process of its own alike, and recording never breaks the call. `lisp/keel-replay.el` steps such a log through the connected SLIME image (`C-c k r` to start, `n`/`p` to step, `a` to run to the end), diffing each answer with the previous step's and the recording, so a core change that moves an answer is caught in the editor instead of in `bun test`; `lisp/replay-sample.jsonl` is one to start from.
+
+- **A shorter README** — the same sections in the same order, but the prose around them cut roughly in half, the request-mirror example folded into a paragraph, and the paper list and the omp-vcc/pi-vcc migration notes behind expanders.
+
 - **The window and the tokens, learned from the provider** — catalogs disagree (one DeepSeek model is listed at 131K to 1.05M across providers, and one Claude model moved from 1M to 200K between two Pi releases), so omp-vcc keeps, per model in `omp-vcc-models.json`, what the provider proved:
   - the largest prompt it accepted, which overrules a stated limit it has since outgrown;
   - the limit an overflow error stated, now also in the shapes LiteLLM, Together, Mistral, Kimi, DashScope, OpenRouter's Poolside and DS4 servers send;

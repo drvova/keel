@@ -2,8 +2,8 @@
 
 Context management for [omp](https://github.com/can1357/oh-my-pi) (oh-my-pi) and [Pi](https://github.com/earendil-works/pi) coding agents, without an LLM call. When the context fills, keel makes room in two ways, both on out of the box, and nothing it removes is lost:
 
-- **Turns out whole**: old turns leave the request word for word, a one-line pointer stands in their place, and the agent can shape its own context, as [Context Language Models](https://arxiv.org/abs/2609.37725) does.
-- **A summary**, built by extraction, not by a model, for every compaction the host still runs (`/compact`, an overflow, nothing left to take out): what the work is, where it stands, the files and commits, a pointer to every range it replaces, and the files the next step works from.
+- **Turns out whole**: old turns leave the request word for word, a one-line pointer stands in their place.
+- **A summary**, built by extraction, not by a model, for every compaction the host still runs (`/compact`, an overflow, nothing left to take out).
 
 Either way the session file keeps everything, and the agent reads any of it back with `keel_recall`, across the project's earlier sessions too. Pinned notes stay in view throughout.
 
@@ -11,7 +11,7 @@ Either way the session file keeps everything, and the agent reads any of it back
 
 Earlier releases were called omp-vcc and, before that, pi-vcc. Sessions, configs and commands written under those names still work ([coming from an earlier release](#coming-from-omp-vcc-or-pi-vcc)).
 
-keel grew out of [pi-vcc](https://github.com/sting8k/pi-vcc) by [@sting8k](https://github.com/sting8k), inspired by [VCC](https://github.com/lllyasviel/VCC) (View-oriented Conversation Compiler). It is its own project now: a native entry for each host (`index.ts` for omp, `pi.ts` for Pi) over one core in Common Lisp ([why](#the-core-common-lisp-on-sbcl)).
+keel grew out of [pi-vcc](https://github.com/sting8k/pi-vcc) by [@sting8k](https://github.com/sting8k), inspired by [VCC](https://github.com/lllyasviel/VCC) (View-oriented Conversation Compiler). It is its own project now: a native entry for each host over one core in Common Lisp ([why](#the-core-common-lisp-on-sbcl)).
 
 |  | The host's own summary | keel |
 |---|---|---|
@@ -23,7 +23,7 @@ keel grew out of [pi-vcc](https://github.com/sting8k/pi-vcc) by [@sting8k](https
 | **After it** | Old messages gone | Every word searchable with `keel_recall` |
 | **Again and again** | Each rewrite can lose more | Sections merge from stored data and stay capped |
 
-Size and latency were measured by pi-vcc over 1,884 real sessions, before `[Working Set]` (up to 3,800 tokens more); the pipeline is the same.
+Measured by pi-vcc over 1,884 real sessions, before `[Working Set]` (up to 3,800 tokens more); the pipeline is the same.
 
 ## Contents
 
@@ -43,17 +43,9 @@ omp install https://github.com/drvova/keel
 pi install git:github.com/drvova/keel
 ```
 
-It needs omp 18.14+ or Pi 1.0+, and [SBCL](https://www.sbcl.org/) (Steel Bank Common Lisp) on the `PATH` (or named by `SBCL`):
+It needs omp 18.14+ or Pi 1.0+, and [SBCL](https://www.sbcl.org/) on the `PATH` (or named by `SBCL`): `sudo apt install sbcl` on Debian/Ubuntu, `brew install sbcl` on macOS.
 
-```bash
-sudo apt install sbcl   # Debian, Ubuntu
-```
-
-```bash
-brew install sbcl       # macOS
-```
-
-The first time it loads, keel builds its core with that SBCL: a few seconds, once per version, into `lisp/build/` (or `KEEL_CORE_BUILD_DIR` when the install directory is read-only). Until the core is there, or without SBCL, keel steps aside, says why once, and the host compacts as it would without it.
+The first load builds the core with that SBCL: a few seconds, once per version, into `lisp/build/` (`KEEL_CORE_BUILD_DIR` when the install directory is read-only). Until it is built, or without SBCL, keel steps aside, says why once, and the host compacts as it would without it.
 
 ## Quick start
 
@@ -79,7 +71,7 @@ The commands start `/keel` on both hosts; their old names (`/omp-vcc…` on omp,
 | `keel_pin` | Pin, name, redefine or unpin a note |
 | `keel_context` | With `evict` on: list what is in context, take turns out or bring them back, undo |
 
-In print mode (`omp -p "/keel"`, `pi --print "/keel"`) the commands report on stderr. On a short session `/keel` may answer "Nothing to compact yet": the host keeps a recent part (`compaction.keepRecentTokens`) before any extension runs.
+In print mode the commands report on stderr. On a short session `/keel` may answer "Nothing to compact yet": the host holds back a recent part (`compaction.keepRecentTokens`) before any extension runs.
 
 ## The summary
 
@@ -125,8 +117,8 @@ Every `(#N)` is an entry `keel_recall` reads back exactly. A section appears onl
 
 | Section | What it holds |
 |---|---|
-| `[Pinned Notes]` | The notes pinned with `keel_pin` or `/keel-pin`, verbatim (the newest 20) |
-| `[Task State]` | Where the work stands: the latest request, the calls since and their failures, the files changed, the last result, and the failure no later run fixed. Built again each time |
+| `[Pinned Notes]` | Pinned notes, verbatim (the newest 20) |
+| `[Task State]` | Where the work stands: the latest request, the calls since and their failures, the files changed, the last result, the failure no later run fixed. Rebuilt each time |
 | `[Early Session Requests]` | The session's first 3 user messages, as written |
 | `[Files And Changes]` | Files modified, created and read |
 | `[Commits]` | The last 8 commits made in the session |
@@ -136,11 +128,11 @@ Every `(#N)` is an entry `keel_recall` reads back exactly. A section appears onl
 | `[Working Set]` | What the next step works from, brought back so the agent does not fetch it again: the latest version of each file being worked on, the output of the open failure, and recall's best hits for the latest request. Up to 3,800 tokens, never more than half of what the compaction removes |
 | Brief transcript | The conversation's highest-signal lines in order, one line per tool call, `[failed]` marked |
 
-The sizes are those of a ~128K–200K window; they follow the model's ([The window and the tokens](#the-window-and-the-tokens)). On the next compaction the sections merge with the stored state of the previous one, never rewritten from its text, so detail is not lost compaction after compaction; `[Working Set]` and `[Task State]` are chosen again. None of it depends on wording, so it works in every language.
+Sizes fit a ~128K–200K window and follow the model's ([The window and the tokens](#the-window-and-the-tokens)). Sections merge from the previous compaction's stored state, never rewritten from its text, so detail survives compaction after compaction; `[Working Set]` and `[Task State]` are chosen fresh each time. None of it depends on wording, so it works in every language.
 
 ## Turns out whole
 
-Instead of a summary over the oldest part of the window, old turns leave the request whole. Nothing is summarized or rewritten; the session keeps every word. A turn is a request the user made and everything after it, so a call never leaves without its result; the running turn's older steps can leave too, its request and newest step never. In a long running turn, a big tool result (a sixteenth of the trigger or more) leaves on its own before any step does: its call stays, its content becomes one line (`[#12 out of context: this read result, on its own; its call stays. It reads back word for word with keel_recall expand:[12].]`), so the turn's reasoning stays in view. A tool output the same, word for word, as one still in the request (a test re-run with the same failure, a file read twice) is sent as one line naming the first: `[#6: the same output as #2, word for word. keel_recall expand:[6] reads it.]`.
+Instead of a summary over the oldest part of the window, old turns leave the request whole: nothing summarized or rewritten, the session keeps every word. A turn is a request and everything after it, so a call never leaves without its result; the running turn's older steps can leave too, its request and newest step never. A big tool result (a sixteenth of the trigger or more) leaves on its own first — its call stays, its content becomes one line pointing at `keel_recall expand` — and a tool output word for word one still in the request is sent as one line naming the first.
 
 **You** take turns out with `/keel-evict` at any time, with eviction on or off:
 
@@ -154,31 +146,14 @@ Instead of a summary over the oldest part of the window, old turns leave the req
 
 **With eviction on** (the default; `"evict": false` turns it off):
 
-- **The agent** decides too, with `keel_context`: no params lists; `drop`, `oldest`, `restore`, `undo`, a `note` kept in their place. A drop that would cost more than it saves is held back with the run that would pay, and `force: true` takes it out anyway.
-- **keel** takes the oldest finished turns out by itself past 85% of the host's trigger, down to half of it, and turns the host's threshold and idle passes down while a finished turn is left to take out. An overflow recovery, `/compact` and `/keel` still summarize.
-- **What the agent recalls steers it.** Each `keel_recall` call notes the entries it showed. A turn the agent recalled in the last three turns leaves last of the finished turns, whatever its age (but before the running turn is cut into), and `keel_context` marks it. A turn that is out and that the agent recalled since it left comes back by itself when that costs less than the recalls it would still take. That depends on the model, so keel learns it: how often this model recalls a turn again having recalled it once, measured in each session and kept per model in `keel-models.json`, weighed at the session's own prices. A model that keeps going back gets its turns back; one that reads a turn once and moves on never pays for it. At a compaction, `[Working Set]` brings back what was recalled lately before anything its ranking guesses.
-- **What each eviction cost is learned, by kind of turn.** A turn keel took out that the agent then recalled cost a request; one it never went back to cost nothing. keel counts that for each kind of turn (one with a failed run, one that changed files, one that only read) and keeps each kind's rate per model (`recallAfterEvict` in `keel-models.json`). A free finished turn of a kind this model recalls twice as often as the cheapest kind, or more, leaves after the others. With no evidence every kind reads the same, and the oldest go first.
-- **Linked turns stay together.** A turn that changes a file an earlier turn changed, or passes a command or test that failed in it, carries that turn on. Where keel picks the cut (as the context fills, and `/keel-evict` with no text), it never falls inside such a chain, so a fix never stays without its failure. Bringing a turn back brings back the turns linked to it. A range the agent or the user names is taken as given.
-- **The context as a file**, the design of [Context Language Models](https://arxiv.org/abs/2609.37725): each request is mirrored beside the session (`<session>.jsonl.keel-context.md`), one block per turn under a `[[CTX_TURN #12–#19]]` line, its path the first line of the context. The agent edits it with its own tools: delete a block and the turn leaves, rewrite it and what it wrote stands in its place, write between blocks and it stays as a note. The next request sends what the file says; the running turn is not in the file, so it holds still while the agent edits it.
+- **The agent** decides too, with `keel_context`: `drop`, `oldest`, `restore`, `undo`, a `note` kept in their place. A drop that would cost more than it saves is held back with the run that would pay for it; `force: true` takes it out anyway.
+- **keel** takes the oldest finished turns out by itself past 85% of the host's trigger, down to half of it. An overflow recovery, `/compact` and `/keel` still summarize.
+- **What the agent recalls steers it.** A turn recalled in the last three turns leaves last of the finished turns, whatever its age, and a turn out of context that the agent recalled since comes back by itself when that costs less than the recalls it would still take. keel learns that per model — how often it recalls a turn again having recalled it once, weighed at the session's own prices — and a compaction's `[Working Set]` brings back what was recalled lately first.
+- **What each eviction cost is learned, by kind of turn.** A turn recalled after eviction cost a request; one never revisited cost nothing. keel counts that per kind (a failed run, changed files, only reads) per model, and a kind the model recalls twice as often as the cheapest leaves after the others. With no evidence, the oldest go first.
+- **Linked turns stay together.** A turn that changes a file an earlier turn changed, or passes what failed in it, carries that turn along: keel never cuts inside such a chain, and bringing one back brings the linked ones.
+- **The context as a file.** Each request is mirrored beside the session (`<session>.jsonl.keel-context.md`), one block per turn; the agent edits it with its own tools — delete a block and the turn leaves, rewrite it and that stands instead. Every edit is a `keel.evict` entry, so a branch keeps its own and `/tree` back past one undoes it. Turns leave in large runs from the oldest end, since every edit makes the provider re-read all that follows it.
 
-What the request then carries, each part written to read the same on every request so the provider's prompt cache keeps it:
-
-```text
-[Your context is mirrored in …/session.jsonl.keel-context.md, block by block as this request sends it. …]
-[Pinned notes, as of #40 (keel_pin; …):
-- [3] auth-plan: refresh after reset; never touch SSO (user, #12)]
-[#0–#20 out of context: 7 turns, by keel as the context filled. Requests: "fix the auth bug"; … It changed 5 files in auth, billing; 2 commits, last 3f2a1c9 fix refresh; 1 failed call. Each entry reads back word for word with keel_recall expand:[0]; keel_recall query searches them.]
-[#21] add the refresh test
-…
-[context: ~41808 tokens, 50% of where the host compacts (~83616), ~41808 left · 12 turns in, largest #88–#97 ~6120, #60–#71 ~4410, #72–#87 ~3980 · 7 turns out (#0–#20) · keel_context drops or restores turns by #N]
-```
-
-- **The line for what is out** says what it was and did, from the originals keel kept, and how to read it back.
-- **Turn numbers** (`[#21]`) let the agent name turns without listing them.
-- **The pinned notes** stand first, brought up to date only when turns leave or come back: an edit at the start of a request makes the provider read all of it again (7.7 appended turns, by the paper's count).
-- **The dashboard** ends every request: how full the context is, the largest turns in it by `#N`, and what is out. It is the design of VISTA ([LightSpeed, Tencent, arXiv:2606.30005](https://arxiv.org/abs/2606.30005)), whose agents misjudged their own context by 43–84% without one and not at all with it, and lost 13 points of accuracy without it even with archiving and recovery kept. It is made again for each request and never kept, so it costs the provider's cache only its own few dozen tokens. Models misjudge their own context's length (Context Language Models, appendix G) and read a remaining budget better than a share ([Liu et al.](https://arxiv.org/abs/2511.17006)), so it says what is left.
-
-Every edit is an `keel.evict` entry, replayed along the branch, so a branch keeps its own and `/tree` back past one undoes it. Turns leave in large runs from the oldest end, since every edit makes the provider read all that follows it again. Whether a drop pays is worked out from the session itself: the cache's price from each request's usage and cost, over as many requests ahead as the session has made.
+What the request then carries, each part worded to read the same on every request so the provider's prompt cache keeps it: a line per range out (what it was, how to read it back), the turns still in (`[#21]` numbers let the agent name turns without listing them), the pinned notes first, and a **dashboard** last — how full the context is, the largest turns by `#N`, what is out. Agents misjudge their own context by 43–84% without one and not at all with it ([VISTA](https://arxiv.org/abs/2606.30005)); it is remade each request and never kept, and says what is left, since models read a remaining budget better than a share.
 
 ## Recall
 
@@ -196,31 +171,30 @@ keel_recall({ query: "auth token", scope: "project" })  // search them too
 keel_recall({ session: "01a194d8", expand: [12] })      // inside another session (its own #N)
 ```
 
-An entry something later replaced says so: a read or edit of a file changed afterwards `(superseded: src/auth.ts changed at #52)`, a failed run that later passed `(fixed: passed at #61)`. Results come 5 a page (`page`). Near-copies push each other down, so a page shows five things rather than one test's output five times: a hit's score is lowered by its likeness to the hits above it, as in the quantum probability ranking principle ([Zuccon et al.](https://arxiv.org/abs/2007.04357), surveyed), counted only past half alike, so related but different entries keep their order. One result is capped at 50 KB, or a tenth of the model's window when that is smaller. The tool repairs the loose forms agents send (`"#12"`, `"10-20"`), and names a param it cannot use instead of dropping it. `/keel-recall auth token scope:all` runs the same search for you.
+Superseded entries say so (`(superseded: src/auth.ts changed at #52)`, `(fixed: passed at #61)`). Results come 5 a page; near-copies push each other down so a page shows five different things, and one result is capped at 50 KB or a tenth of the window. The tool repairs the loose forms agents send (`"#12"`, `"10-20"`) and names a param it cannot use instead of dropping it. `/keel-recall auth token scope:all` runs the same search for you.
 
 ## Pinned notes
 
-What must survive everything: a decision and its reason, a constraint, the command the task runs. Pinned notes are kept verbatim at the top of every summary, and first in the request with eviction on.
+What must survive everything: a decision and its reason, a constraint, the command the task runs. Kept verbatim at the top of every summary, and first in the request with eviction on.
 
-- **Named notes:** `keel_pin {note, name: "auth-plan"}` (or `/keel-pin name:auth-plan …`). Pinning the name again replaces its note, so a plan stays current under one name.
+- **Named notes** (`keel_pin {note, name}` or `/keel-pin name:…`): pinning the name again replaces the note, so a plan stays current under one name.
 - **Yours stay yours:** the agent cannot redefine or unpin a note you pinned; it is told to ask you.
-- **Into the next session:** your named notes carry into the project's next session (a restart, `/new`). The agent's do not: a note it pinned may hold what a page told it, and an instruction carried into every later session is how an injection persists (the paper's section 6). It finds them with `keel_recall` sessions and pins again what still holds.
-- **Where the last session stopped:** a new session in the project (a restart, `/new`) gets one message with your first prompt: the last session's request, the calls since and what they changed, the failure it left open, and the failures it fixed with what fixed them (`Fixed: bash "bun test tests/auth" failed (#2); passed (#6) after src/auth.ts changed.`), read from its transcript by rule, with no model, and a `keel_recall session:` pointer to read any of it. What a tool printed is not carried, only the calls and their `#N`. A file it worked on that was written since it ended is named (`Changed since it ended: src/auth.ts. What it says of it may no longer hold.`), by the file's own write time. Nothing is sent into a resumed or forked session.
+- **Into the next session:** your named notes carry over (a restart, `/new`). The agent's do not — an instruction carried into every later session is how an injection persists — but it finds them with `keel_recall` sessions and re-pins what still holds.
+- **Where the last session stopped:** a new session gets one message with your first prompt — the last session's request, its calls and what they changed, the failure it left open, the failures it fixed and what fixed them — read from its transcript by rule, with no model. Tool output is not carried, only calls and `#N`; a file written since is named (`Changed since it ended: src/auth.ts. What it says of it may no longer hold.`).
 
 ## The window and the tokens
 
-Every size follows the model's real window, learned from what the provider proves rather than trusted from a catalog. Catalogs disagree: one DeepSeek model is listed at 131K to 1.05M across providers, and one Claude model changed from 1M to 200K between two Pi releases.
+Every size follows the model's real window, learned from what the provider proves rather than trusted from a catalog. Catalogs disagree: one DeepSeek model is listed anywhere from 131K to 1.05M across providers, and one Claude model moved from 1M to 200K between two Pi releases.
 
-- **The window** is the host's (on omp the provider's when its discovery is configured, else its catalog or `models.yml`; on Pi its catalog or `models.json`), lowered to a limit an overflow error stated ("maximum context length is 32768 tokens", in the shapes of OpenAI, Anthropic, Google, DeepSeek, OpenRouter, vLLM, LiteLLM, Together, Mistral, Kimi, Qwen and others). If the provider later accepts a prompt larger than that limit, the limit was wrong and is dropped.
-- **Tokens** are counted at the model's own chars per token, measured on each request from two of the provider's counts (the messages added between them over the tokens they added). Code runs about 3.8 chars a token, English prose 5.4, Chinese and Japanese 1–2. keel sizes from the lowest of the last eight values it measured for the model, so its estimate errs high: too high and a turn leaves a little early, too low and the request overflows.
+- **The window** is the host's (on omp the provider's when its discovery is configured, else its catalog or `models.yml`; on Pi its catalog or `models.json`), lowered to any limit an overflow error stated, however the provider phrases it. If the provider later accepts a larger prompt, the limit was wrong and is dropped.
+- **Tokens** are counted at the model's own chars per token, measured on each request from the provider's counts (code runs ~3.8, English prose ~5.4, Chinese and Japanese 1–2). keel sizes from the lowest of the last eight values measured, so its estimate errs high: too high and a turn leaves a little early, too low and the request overflows.
 - **What it learns is kept** per model in `keel-models.json` beside the config, so the next session starts with it. keel makes no network call of its own.
 - **The trigger** is where the host compacts, from the host's own settings for the model, applied as the host applies them (omp's threshold, reserve and per-model thresholds; Pi's `reserveTokens`).
-- **The budgets** are shares of the trigger: the kept tail (25k), the summary and its sections, `[Working Set]` and recall's cap are their usual size on a ~128K window, smaller on a small one, larger on ~1M. Each compaction records what it sized from (`details.limits`).
-- **A host window that is too high** (an overflow says less) never triggers the host, so keel compacts at the end of a run past the real window's trigger, and says so once.
+- **The budgets** are shares of the trigger, sized for the window (a 25k kept tail on ~128K; each compaction records what it sized from). A window set too high never triggers the host, so keel compacts at the end of a run past the real trigger, and says so once.
 
 ## Config
 
-`keel-config.json` in the host's agent directory (`~/.omp/agent` or the active profile's; `~/.pi/agent`; `$PI_CODING_AGENT_DIR`; `$KEEL_CONFIG_PATH` overrides), created with these defaults. An omp-vcc or pi-vcc config there is copied over.
+`keel-config.json` lives in the host's agent directory (`~/.omp/agent` or the active profile's; `~/.pi/agent`; `$PI_CODING_AGENT_DIR`); `$KEEL_CONFIG_PATH` overrides. It is created with these defaults; an omp-vcc or pi-vcc config there is copied over.
 
 ```json
 {
@@ -253,11 +227,11 @@ Every size follows the model's real window, learned from what the provider prove
 <details>
 <summary><b>On omp</b></summary>
 
-- keel writes the compaction on `/compact`, a full context, an overflow, idle maintenance and a cut-off reply. Every omp method that writes a summary (server compaction, snapcompact, handoff, soft, notes-backed windows) asks keel first, and keel answers every pass, so none of them writes one. On an overflow inside a running turn it keeps the turn's newest steps and summarizes the rest; when nothing summarized could shrink the context, it says so.
-- omp's shake works with it: on an overflow shake can run first and hand over to soft (keel), and after a compaction that still leaves too much, omp's rescue shakes the output it kept.
-- A threshold or idle pass that would summarize away a running turn that fits the tail waits until the turn ends. omp resumes the run itself after automatic compactions, and skips its background compaction while keel is installed (keel takes milliseconds).
-- omp rewrites messages in place between compactions (it shakes output into `artifact://` files and blanks old or superseded results). keel keeps every original as it lands (`keepOriginals`), so recall reads what was there, the summary is written from it, and omp's placeholder points at it: `[Output truncated - 1200 tokens] (the original: keel_recall expand:[12])`.
-- After `/clear`, the summary, the history index and the notes cover what follows it. A message the user sends mid-run (a steer, which omp marks) stays in the running turn.
+- keel writes the compaction on `/compact`, a full context, an overflow, idle maintenance and a cut-off reply, answering every omp method that writes a summary so none of them writes one. On an overflow inside a running turn it keeps the turn's newest steps and summarizes the rest.
+- omp's shake still works with it: on an overflow shake can run first and hand over to soft (keel), and after a compaction that still leaves too much, omp's rescue shakes the output it kept.
+- A pass that would summarize away a running turn that fits the tail waits until the turn ends. omp resumes the run itself after automatic compactions, and skips its background compaction while keel is installed (keel takes milliseconds).
+- omp rewrites messages in place between compactions (shaking output into `artifact://` files, blanking old or superseded results). keel keeps every original as it lands (`keepOriginals`), so recall reads what was there and omp's placeholder points at it: `[Output truncated - 1200 tokens] (the original: keel_recall expand:[12])`.
+- After `/clear`, the summary, the history index and the notes cover what follows it. A message the user sends mid-run stays in the running turn.
 
 </details>
 
@@ -265,7 +239,7 @@ Every size follows the model's real window, learned from what the provider prove
 <summary><b>On Pi</b></summary>
 
 - keel writes the compaction on `/compact`, Pi's threshold and its overflow recovery; Pi asks it for every one, and resumes the run itself.
-- Pi never rewrites the session file; what it changes in the context are `context_edit` entries (a failed attempt left out before a retry, a redacted result). The summary reads the branch through them as Pi does; recall reads the raw history.
+- Pi never rewrites the session file; what it changes in the context are `context_edit` entries. The summary reads the branch through them as Pi does; recall reads the raw history.
 - A `!cmd` is one line of the summary; a `!!cmd`, which Pi keeps out of the context, is left out of it too.
 - When an overflow shows the real window is smaller than Pi's, keel compacts at its own trigger once the run settles, and says how to set the window in `models.json`.
 
@@ -279,19 +253,19 @@ Everything keel decides is decided in one core, `lisp/`, written in Common Lisp 
 
 **Why Common Lisp and SBCL:**
 
-- **One core for two hosts.** omp and Pi each get an entry written against their own API, but the summary, recall, eviction and window rules exist once, so the two hosts cannot drift apart.
-- **Nothing to fetch.** The core depends on SBCL alone: its JSON, regex engine and test runner are its own. An install pulls no package from a registry, so there is no supply chain to trust beyond SBCL itself.
-- **Native speed and a long-lived image.** SBCL compiles to machine code. A Lisp image is meant to stay up as one process holding its state, which is what lets the core keep sessions parsed between requests instead of re-reading them every time.
-- **A system made of definitions.** A Lisp program is a set of named definitions in a running image, the shape of the design keel follows (the agent working on named entries of its context, with nodecode's Lisp image as the model).
-- **Exactness where it matters.** The core keeps JavaScript's arithmetic (lengths in UTF-16 code units, doubles where JavaScript has them) and JavaScript's regex dialect, checked against JavaScript itself on 1,620 patterns, so every number it hands the TypeScript side means the same there. Session text is never given to the Lisp reader.
+- **One core for two hosts.** The summary, recall, eviction and window rules exist once, so the two hosts cannot drift apart.
+- **Nothing to fetch.** Only SBCL is needed — the JSON, regex engine and test runner are its own — so there is no registry supply chain beyond SBCL itself.
+- **Native speed and a long-lived image.** SBCL compiles to machine code, and a Lisp image stays up holding state, which lets the core keep sessions parsed between requests.
+- **A system made of definitions.** A Lisp program is named definitions in a running image — the shape keel follows with the agent's named context entries.
+- **Exactness where it matters.** JavaScript's arithmetic and regex dialect, checked against JavaScript itself on 1,620 patterns, so every number handed to TypeScript means the same there. Session text is never given to the Lisp reader.
 
 The cost: SBCL has to be installed. Contributor notes on the core, its ops and its tests are in [AGENTS.md](./AGENTS.md).
 
 ## Benchmarks
 
-On a real model, DeepSeek V4.1 Flash in omp, with omp told a smaller window than the model's so the context fills (`scripts/benchmark-long-horizon.ts`, `scripts/benchmark-cybench.ts`; both also run in Pi with `--host=pi`). Single runs unless noted. The brief's own benchmarks against pi-vcc 0.3.18 are in [`benchmarks/README.md`](./benchmarks/README.md).
+On a real model — DeepSeek V4.1 Flash in omp, told a smaller window so the context fills (`scripts/benchmark-long-horizon.ts`, `scripts/benchmark-cybench.ts`; `--host=pi` for Pi). Single runs unless noted. The brief's own benchmarks against pi-vcc 0.3.18 are in [`benchmarks/README.md`](./benchmarks/README.md).
 
-**[Cybench](https://arxiv.org/abs/2408.08926)**: all 17 file-only capture-the-flag tasks (binaries to reverse, a pcap, emails, crypto) in one session on a 64K window, each task's own questions with at most 15 requests each, and earlier answers asked again tasks later.
+**[Cybench](https://arxiv.org/abs/2408.08926)**: all 17 file-only capture-the-flag tasks in one session on a 64K window, ≤15 requests per task, earlier answers asked again tasks later.
 
 | | keel summary | without `[Working Set]` | omp's own (LLM) | keel, turns out whole |
 |---|---|---|---|---|
@@ -300,15 +274,18 @@ On a real model, DeepSeek V4.1 Flash in omp, with omp told a smaller window than
 | Tool calls to answer again | 39–41 | – | 8 | 56 |
 | Compactions | 8 | – | – | 4 |
 
-omp's own compaction, which writes its summary with the model, answered most re-asked questions from its context; keel looked more of them up again, at no summarization cost. On GLM 5.3 Flash: 51/62 with keel, 50 without `[Working Set]`, 50 with omp's own.
+omp's own compaction answered most re-asked questions from its context; keel looked more of them up again, at no summarization cost. On GLM 5.3 Flash: 51/62 with keel, 50 without `[Working Set]`, 50 with omp's own.
 
 ![Cybench, three compactors](./benchmarks/images/cybench-runs.png)
 
-**Long horizon**: 7 facts planted in 60 or 120 coding turns (read, edit, test, commit). On a 128K window, turns out whole never compacted and still held all 7 facts word for word after 60 turns (4 after 120, where the summary held 1). On a 32K window one turn fills much of it, eviction often has nothing to take, and the summary carries the session.
+**Long horizon**: 7 facts planted in 60 or 120 coding turns. On a 128K window, turns out whole never compacted and still held all 7 facts word for word after 60 turns (4 after 120, where the summary held 1). On a 32K window one turn fills much of it, eviction often has nothing to take, and the summary carries the session.
 
 **`[Working Set]`**: a five-step coding task on a 40K window, 4 runs a side: every run with it finished every step, one without did.
 
 ## Research
+
+<details>
+<summary>The papers it builds on</summary>
 
 | Paper | What keel does with it |
 |---|---|
@@ -330,15 +307,21 @@ omp's own compaction, which writes its summary with the model, answered most re-
 
 Also read: [LLMs Get Lost In Multi-Turn Conversation](https://arxiv.org/abs/2505.06120), [Evaluating Goal Drift](https://arxiv.org/abs/2505.02709), [Generative Agents](https://arxiv.org/abs/2304.03442), [Recursively Summarizing](https://arxiv.org/abs/2308.15022), [Slipstream](https://arxiv.org/abs/2605.08580), and [nodecode](https://nodecode.ai/docs/context)'s context design.
 
+</details>
+
 ## Coming from omp-vcc or pi-vcc
 
-keel is those releases, renamed. Nothing you wrote under either name is stranded:
-- The commands are `/keel`, `/keel-recall`, `/keel-pin`, `/keel-unpin` and `/keel-evict` on both hosts. The old names still run them: `/omp-vcc…` on omp, `/pi-vcc…` on Pi.
-- The tools are `keel_recall`, `keel_pin` and `keel_context` (they were `vcc_…`). A summary written before the rename still names `vcc_recall`; the next compaction rewrites it from its stored state with the new name.
-- What omp-vcc wrote into sessions is read as keel's: its summaries (`compactor: "omp-vcc"`, and pi-vcc's `"pi-vcc"`), so their history index carries on; its pinned notes and the turns it took out (`omp-vcc.pin`, `omp-vcc.evict`); and the originals it kept beside omp's sessions (`.vcc-raw`).
-- The config is `keel-config.json`, copied once from `omp-vcc-config.json` (else `pi-vcc-config.json`) in the same directory. `OMP_VCC_CONFIG_PATH`, `OMP_VCC_CORE`, `OMP_VCC_CORE_BUILD_DIR` and `OMP_VCC_CORE_LIVE` are still read when the `KEEL_` name is not set. What it learned of models moves to `keel-models.json`, read from `omp-vcc-models.json` until then.
-- From pi-vcc: `continueAfterThresholdCompact` is gone, as both hosts resume the run on their own.
-- The package is `@drvova/keel`, from [drvova/keel](https://github.com/drvova/keel), its own repository. The earlier `drvova/pi-vcc` repository is archived and its README points here.
+<details>
+<summary>keel is those releases, renamed — nothing written under either name is stranded</summary>
+
+- Commands `/keel`, `/keel-recall`, `/keel-pin`, `/keel-unpin`, `/keel-evict` on both hosts; the old names still run them (`/omp-vcc…` on omp, `/pi-vcc…` on Pi).
+- Tools `keel_recall`, `keel_pin`, `keel_context` (were `vcc_…`). A pre-rename summary still names `vcc_recall` until the next compaction rewrites it from stored state.
+- Sessions carry over: summaries (`compactor: "omp-vcc"` / `"pi-vcc"`), pinned notes and evicted turns (`omp-vcc.pin`, `omp-vcc.evict`), and omp's kept originals (`.vcc-raw`).
+- Config is `keel-config.json`, copied once from `omp-vcc-config.json` (else `pi-vcc-config.json`). `OMP_VCC_CONFIG_PATH`, `OMP_VCC_CORE`, `OMP_VCC_CORE_BUILD_DIR`, `OMP_VCC_CORE_LIVE` are still read when the `KEEL_` name is unset; learned models move to `keel-models.json`, read from `omp-vcc-models.json` until then.
+- From pi-vcc: `continueAfterThresholdCompact` is gone — both hosts resume the run on their own.
+- The package is `@drvova/keel` from [drvova/keel](https://github.com/drvova/keel). The earlier `drvova/pi-vcc` repository is archived and points here.
+
+</details>
 
 ## Acknowledgments
 
