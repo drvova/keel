@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { closeSync, constants, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmSync, statSync, writeSync } from "node:fs";
+import { appendFileSync, closeSync, constants, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmSync, statSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -30,9 +30,41 @@ export const core = (request: object): Record<string, unknown> => {
   if (status.state !== "ready") throw new CoreUnavailable(status);
   const input = JSON.stringify(request);
   const answered = liveAnswer(status.path, input);
-  if (answered !== undefined) return replyOf(answered, answered.slice(0, 500));
+  if (answered !== undefined) return tapReplay(input, answered, () => replyOf(answered, answered.slice(0, 500)));
   const run = spawnSync(status.path, [], { input, encoding: "utf8", maxBuffer: 1 << 30 });
-  return replyOf(run.error || run.status !== 0 ? undefined : run.stdout, run.error?.message ?? (run.stderr || `exit ${run.status}`));
+  const text = run.error || run.status !== 0 ? undefined : run.stdout;
+  return tapReplay(input, text, () => replyOf(text, run.error?.message ?? (run.stderr || `exit ${run.status}`)));
+};
+
+/**
+ * Run `answer`, recording the request and what the core said (or why it
+ * failed) when KEEL_REPLAY_OUT (or OMP_VCC_REPLAY_OUT) names a file: one
+ * JSON object per line, the sequence `keel-replay` in lisp/keel-replay.el
+ * steps through. Recording never breaks the call: the answer is returned
+ * (or thrown) unchanged. The live core records one line per request, a
+ * process of its own one per process.
+ */
+const tapReplay = (input: string, raw: string | undefined, answer: () => Record<string, unknown>): Record<string, unknown> => {
+  const path = env("REPLAY_OUT");
+  if (!path) return answer();
+  try {
+    const out = answer();
+    appendReplayLine(path, input, out);
+    return out;
+  } catch (err) {
+    appendReplayLine(path, input, null, err instanceof Error ? err.message : String(err));
+    throw err;
+  }
+};
+
+/** One replay line appended to PATH: the request and its response (or the error). Never throws. */
+const appendReplayLine = (path: string, input: string, response: unknown, error?: string): void => {
+  try {
+    const line = error === undefined
+      ? { request: JSON.parse(input), response }
+      : { request: JSON.parse(input), response: null, error };
+    appendFileSync(path, `${JSON.stringify(line)}\n`, "utf8");
+  } catch { /* recording never breaks the call */ }
 };
 
 /** The core's answer in TEXT, or an error with its own reason, else WHY. */
